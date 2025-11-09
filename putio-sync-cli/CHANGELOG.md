@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Command-line argument parsing with clap
 - Global options: config path, verbosity, quiet mode
 - Login command with token and interactive options
+- Login command for OAuth token management
+  - Interactive and non-interactive modes
+  - Token verification against Put.io API
+  - Automatic config file creation and updates
+  - Secure file permissions for config file (0600)
+  - Token masking in logs
+  - Security warnings for CLI token usage
+  - Account information display after successful login
+  - Integration tests for login functionality
 - List command with filtering, sorting, and output formats
 - Version and help commands
 - Verbosity control via -v flags (WARN -> INFO -> DEBUG -> TRACE)
