@@ -37,3 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Download URL generation (get_download_url)
 - Support for folder navigation via parent_id
 - Unit tests for all file/folder operations with mock server
+- Account information API endpoint (get_account_info)
+- Token verification capability (verify_token)
+- Returns complete account details (username, disk usage, quota)
+- Unit tests for account operations and token validation
