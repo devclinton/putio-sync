@@ -235,6 +235,7 @@ mod tests {
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
 
         #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
         struct TestResponse {
             status: String,
         }
@@ -261,6 +262,7 @@ mod tests {
         let client = ApiClient::with_base_url("bad_token".to_string(), server.url());
 
         #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
         struct TestResponse {
             status: String,
         }
@@ -303,6 +305,7 @@ mod tests {
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
 
         #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
         struct TestResponse {
             status: String,
         }
@@ -330,6 +333,7 @@ mod tests {
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
 
         #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
         struct TestResponse {
             status: String,
         }

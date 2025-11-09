@@ -53,3 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sorting by name, size, and date
 - Reverse sort order support
 - Comprehensive unit tests for all filtering and sorting logic
+
+### Testing
+- Comprehensive unit test coverage (61 tests, 80%+ coverage goal)
+- Unit tests for all config operations (save, load, validate, builder)
+- Unit tests for API client with mocked HTTP server (mockito)
+- Unit tests for error handling and type conversions
+- Unit tests for filtering and sorting logic
+- Unit tests for path resolution with mock API responses
+- All tests passing with zero warnings
+- Mock server tests for retry logic and error handling
+- Test coverage for all API data model parsing
