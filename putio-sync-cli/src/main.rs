@@ -3,8 +3,10 @@
 //! Command-line interface for putio-sync
 
 mod cli;
-mod commands;
 mod logging;
+
+// Import from library
+use putio_sync_cli::commands;
 
 use cli::{Cli, Commands};
 use tracing::{debug, error, info};
@@ -45,43 +47,22 @@ async fn main() {
             output,
             output_file,
         } => {
-            info!("List command");
-            if let Some(p) = &path {
-                debug!("Path: {}", p);
-            } else if let Some(i) = id {
-                debug!("ID: {}", i);
-            } else {
-                debug!("Path: / (root)");
-            }
-
-            if recursive {
-                debug!("Recursive listing enabled");
-            }
-            if long {
-                debug!("Long format enabled");
-            }
-            if let Some(f) = &filter {
-                debug!("Filter: {}", f);
-            }
-            if let Some(t) = &file_type {
-                debug!("Type filter: {}", t);
-            }
-            if let Some(s) = &min_size {
-                debug!("Min size: {}", s);
-            }
-            if let Some(s) = &max_size {
-                debug!("Max size: {}", s);
-            }
-            if let Some(s) = &sort {
-                debug!("Sort by: {}", s);
-            }
-            if reverse {
-                debug!("Reverse sort enabled");
-            }
-            debug!("Output format: {}", output);
-
-            info!("List functionality coming soon!");
-            Ok(())
+            commands::execute_list(
+                path,
+                id,
+                recursive,
+                long,
+                filter,
+                file_type,
+                min_size,
+                max_size,
+                sort,
+                reverse,
+                output,
+                output_file,
+                args.config,
+            )
+            .await
         }
     };
 
