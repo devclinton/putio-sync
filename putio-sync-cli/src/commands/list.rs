@@ -6,11 +6,12 @@
 use anyhow::{anyhow, Context, Result};
 use putio_sync_core::api::{ApiClient, FileEntry};
 use putio_sync_core::config::Config;
-use putio_sync_core::filter::{FileFilter, FileTypeFilter, SortField, parse_size, sort_files};
+use putio_sync_core::filter::{parse_size, sort_files, FileFilter, FileTypeFilter, SortField};
 use std::path::PathBuf;
+use std::str::FromStr;
 use tracing::{debug, info, warn};
 
-use crate::output::{OutputFormat, format_and_output};
+use crate::output::{format_and_output, OutputFormat};
 
 /// Execute the list command
 #[allow(clippy::too_many_arguments)]
@@ -74,7 +75,7 @@ pub async fn execute_list(
 
     // Format and output
     let output_format = OutputFormat::from_str(&output)
-        .ok_or_else(|| anyhow!("Invalid output format: {}", output))?;
+        .map_err(|e| anyhow!("Invalid output format '{}': {}", output, e))?;
 
     format_and_output(&files, output_format, output_file.as_deref())
         .context("Failed to write output")?;
@@ -149,21 +150,19 @@ fn apply_filters(
 
     if let Some(ft) = file_type {
         let type_filter = FileTypeFilter::from_str(&ft)
-            .ok_or_else(|| anyhow!("Invalid file type: {}", ft))?;
+            .map_err(|e| anyhow!("Invalid file type '{}': {}", ft, e))?;
         debug!("Applying file type filter: {:?}", type_filter);
         file_filter = file_filter.with_file_type(type_filter);
     }
 
     if let Some(min) = min_size {
-        let size = parse_size(&min)
-            .map_err(|e| anyhow!("Invalid min size '{}': {}", min, e))?;
+        let size = parse_size(&min).map_err(|e| anyhow!("Invalid min size '{}': {}", min, e))?;
         debug!("Applying min size filter: {} bytes", size);
         file_filter = file_filter.with_min_size(size);
     }
 
     if let Some(max) = max_size {
-        let size = parse_size(&max)
-            .map_err(|e| anyhow!("Invalid max size '{}': {}", max, e))?;
+        let size = parse_size(&max).map_err(|e| anyhow!("Invalid max size '{}': {}", max, e))?;
         debug!("Applying max size filter: {} bytes", size);
         file_filter = file_filter.with_max_size(size);
     }
@@ -179,7 +178,7 @@ fn apply_sorting(
 ) -> Result<Vec<FileEntry>> {
     if let Some(sort_field_str) = sort {
         let sort_field = SortField::from_str(&sort_field_str)
-            .ok_or_else(|| anyhow!("Invalid sort field: {}", sort_field_str))?;
+            .map_err(|e| anyhow!("Invalid sort field '{}': {}", sort_field_str, e))?;
         debug!("Sorting by: {:?}, reverse: {}", sort_field, reverse);
         Ok(sort_files(files, sort_field, reverse))
     } else if reverse {

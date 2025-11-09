@@ -71,10 +71,7 @@ pub enum Commands {
         interactive: bool,
 
         /// Skip token verification
-        #[arg(
-            long = "no-verify",
-            help = "Skip token verification before saving"
-        )]
+        #[arg(long = "no-verify", help = "Skip token verification before saving")]
         no_verify: bool,
     },
 
@@ -82,10 +79,7 @@ pub enum Commands {
     #[command(about = "List files and folders from Put.io")]
     List {
         /// Remote folder path or ID to list
-        #[arg(
-            value_name = "PATH",
-            help = "Remote folder path or ID [default: root]"
-        )]
+        #[arg(value_name = "PATH", help = "Remote folder path or ID [default: root]")]
         path: Option<String>,
 
         /// List folder by ID instead of path
@@ -99,11 +93,7 @@ pub enum Commands {
         id: Option<i64>,
 
         /// List files recursively
-        #[arg(
-            short = 'r',
-            long = "recursive",
-            help = "List files recursively"
-        )]
+        #[arg(short = 'r', long = "recursive", help = "List files recursively")]
         recursive: bool,
 
         /// Long format with details
@@ -157,10 +147,7 @@ pub enum Commands {
         sort: Option<String>,
 
         /// Reverse sort order
-        #[arg(
-            long = "reverse",
-            help = "Reverse sort order"
-        )]
+        #[arg(long = "reverse", help = "Reverse sort order")]
         reverse: bool,
 
         /// Output format
@@ -203,7 +190,7 @@ mod tests {
     #[test]
     fn test_default_output_format() {
         // Verify default output format for list command
-        let cli = Cli::try_parse_from(&["putio-sync", "list"]).unwrap();
+        let cli = Cli::try_parse_from(["putio-sync", "list"]).unwrap();
         if let Commands::List { output, .. } = cli.command {
             assert_eq!(output, "table");
         } else {
@@ -213,29 +200,34 @@ mod tests {
 
     #[test]
     fn test_verbose_flag() {
-        let cli = Cli::try_parse_from(&["putio-sync", "-vvv", "list"]).unwrap();
+        let cli = Cli::try_parse_from(["putio-sync", "-vvv", "list"]).unwrap();
         assert_eq!(cli.verbose, 3);
     }
 
     #[test]
     fn test_quiet_flag() {
-        let cli = Cli::try_parse_from(&["putio-sync", "--quiet", "list"]).unwrap();
-        assert_eq!(cli.quiet, true);
+        let cli = Cli::try_parse_from(["putio-sync", "--quiet", "list"]).unwrap();
+        assert!(cli.quiet);
     }
 
     #[test]
     fn test_config_flag() {
-        let cli = Cli::try_parse_from(&["putio-sync", "-c", "/tmp/config.toml", "list"]).unwrap();
+        let cli = Cli::try_parse_from(["putio-sync", "-c", "/tmp/config.toml", "list"]).unwrap();
         assert_eq!(cli.config, Some(PathBuf::from("/tmp/config.toml")));
     }
 
     #[test]
     fn test_login_with_token() {
-        let cli = Cli::try_parse_from(&["putio-sync", "login", "--token", "abc123"]).unwrap();
-        if let Commands::Login { token, interactive, no_verify } = cli.command {
+        let cli = Cli::try_parse_from(["putio-sync", "login", "--token", "abc123"]).unwrap();
+        if let Commands::Login {
+            token,
+            interactive,
+            no_verify,
+        } = cli.command
+        {
             assert_eq!(token, Some("abc123".to_string()));
-            assert_eq!(interactive, false);
-            assert_eq!(no_verify, false);
+            assert!(!interactive);
+            assert!(!no_verify);
         } else {
             panic!("Expected Login command");
         }
@@ -243,10 +235,13 @@ mod tests {
 
     #[test]
     fn test_login_interactive() {
-        let cli = Cli::try_parse_from(&["putio-sync", "login", "--interactive"]).unwrap();
-        if let Commands::Login { token, interactive, .. } = cli.command {
+        let cli = Cli::try_parse_from(["putio-sync", "login", "--interactive"]).unwrap();
+        if let Commands::Login {
+            token, interactive, ..
+        } = cli.command
+        {
             assert_eq!(token, None);
-            assert_eq!(interactive, true);
+            assert!(interactive);
         } else {
             panic!("Expected Login command");
         }
@@ -254,7 +249,7 @@ mod tests {
 
     #[test]
     fn test_list_with_filters() {
-        let cli = Cli::try_parse_from(&[
+        let cli = Cli::try_parse_from([
             "putio-sync",
             "list",
             "--filter",
@@ -265,10 +260,16 @@ mod tests {
         ])
         .unwrap();
 
-        if let Commands::List { filter, file_type, long, .. } = cli.command {
+        if let Commands::List {
+            filter,
+            file_type,
+            long,
+            ..
+        } = cli.command
+        {
             assert_eq!(filter, Some("*.mp4".to_string()));
             assert_eq!(file_type, Some("video".to_string()));
-            assert_eq!(long, true);
+            assert!(long);
         } else {
             panic!("Expected List command");
         }

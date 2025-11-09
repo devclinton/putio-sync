@@ -88,7 +88,7 @@ mod tests {
         assert_eq!(info.user_id, 12345);
         assert_eq!(info.username, "testuser");
         assert_eq!(info.mail, "test@example.com");
-        assert_eq!(info.account_active, true);
+        assert!(info.account_active);
         assert_eq!(info.disk_quota, 10737418240);
 
         mock.assert_async().await;
@@ -123,7 +123,7 @@ mod tests {
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let result = client.verify_token().await;
 
-        assert_eq!(result, true);
+        assert!(result);
         mock.assert_async().await;
     }
 
@@ -142,7 +142,7 @@ mod tests {
         let client = ApiClient::with_base_url("bad_token".to_string(), server.url());
         let result = client.verify_token().await;
 
-        assert_eq!(result, false);
+        assert!(!result);
         mock.assert_async().await;
     }
 }

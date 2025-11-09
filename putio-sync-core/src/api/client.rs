@@ -93,7 +93,7 @@ impl ApiClient {
             .get(&url)
             .header(header::AUTHORIZATION, format!("Bearer {}", self.token))
             .build()
-            .map_err(|e| CoreError::HttpError(e))?;
+            .map_err(CoreError::HttpError)?;
 
         self.execute_with_retry(request).await
     }
@@ -101,10 +101,7 @@ impl ApiClient {
     /// Execute a request with exponential backoff retry logic
     ///
     /// Retries on network errors and 5xx server errors.
-    async fn execute_with_retry<T: DeserializeOwned>(
-        &self,
-        request: Request,
-    ) -> CoreResult<T> {
+    async fn execute_with_retry<T: DeserializeOwned>(&self, request: Request) -> CoreResult<T> {
         let mut attempts = 0;
         let mut delay_ms = INITIAL_RETRY_DELAY_MS;
 
@@ -165,9 +162,8 @@ impl ApiClient {
         let body = response.text().await.map_err(CoreError::HttpError)?;
         trace!("Response body: {}", body);
 
-        serde_json::from_str(&body).map_err(|e| {
-            CoreError::SerializationError(format!("Failed to parse response: {}", e))
-        })
+        serde_json::from_str(&body)
+            .map_err(|e| CoreError::SerializationError(format!("Failed to parse response: {}", e)))
     }
 
     /// Handle error API response
@@ -184,10 +180,14 @@ impl ApiClient {
         trace!("Error response body: {}", body);
 
         let error_msg = match status {
-            StatusCode::UNAUTHORIZED => "Authentication failed. Invalid or expired token.".to_string(),
+            StatusCode::UNAUTHORIZED => {
+                "Authentication failed. Invalid or expired token.".to_string()
+            }
             StatusCode::FORBIDDEN => "Access forbidden. Check your permissions.".to_string(),
             StatusCode::NOT_FOUND => "Resource not found.".to_string(),
-            StatusCode::TOO_MANY_REQUESTS => "Rate limit exceeded. Please try again later.".to_string(),
+            StatusCode::TOO_MANY_REQUESTS => {
+                "Rate limit exceeded. Please try again later.".to_string()
+            }
             _ => format!("API error ({}): {}", status, body),
         };
 

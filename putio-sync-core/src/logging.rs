@@ -68,7 +68,11 @@ mod tests {
 
         for level in levels {
             let filter = EnvFilter::try_new(level);
-            assert!(filter.is_ok(), "Failed to create filter for level: {}", level);
+            assert!(
+                filter.is_ok(),
+                "Failed to create filter for level: {}",
+                level
+            );
         }
     }
 }

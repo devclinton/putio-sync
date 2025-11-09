@@ -46,8 +46,8 @@ pub fn init(verbosity: u8, quiet: bool) {
         }
     };
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(level.as_str()));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level.as_str()));
 
     tracing_subscriber::registry()
         .with(filter)

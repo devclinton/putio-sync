@@ -183,10 +183,7 @@ async fn display_account_info(token: &str) -> Result<()> {
                 format_bytes(info.disk_quota),
                 (info.disk_used as f64 / info.disk_quota as f64) * 100.0
             );
-            println!(
-                "  Available: {}",
-                format_bytes(info.disk_available)
-            );
+            println!("  Available: {}", format_bytes(info.disk_available));
             Ok(())
         }
         Err(e) => {

@@ -108,16 +108,16 @@ mod tests {
 
     #[test]
     fn test_serde_json_error_conversion() {
-        let json_err = serde_json::from_str::<serde_json::Value>("{invalid json}")
-            .expect_err("should fail");
+        let json_err =
+            serde_json::from_str::<serde_json::Value>("{invalid json}").expect_err("should fail");
         let err: CoreError = json_err.into();
         assert!(matches!(err, CoreError::SerializationError(_)));
     }
 
     #[test]
     fn test_toml_error_conversion() {
-        let toml_err = toml::from_str::<toml::Value>("invalid = toml = syntax")
-            .expect_err("should fail");
+        let toml_err =
+            toml::from_str::<toml::Value>("invalid = toml = syntax").expect_err("should fail");
         let err: CoreError = toml_err.into();
         assert!(matches!(err, CoreError::ConfigError(_)));
     }

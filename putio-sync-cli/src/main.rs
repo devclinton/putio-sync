@@ -30,9 +30,11 @@ async fn main() {
 
     // Handle commands
     let result = match args.command {
-        Commands::Login { token, interactive, no_verify } => {
-            commands::execute_login(token, interactive, no_verify, args.config).await
-        }
+        Commands::Login {
+            token,
+            interactive,
+            no_verify,
+        } => commands::execute_login(token, interactive, no_verify, args.config).await,
         Commands::List {
             path,
             id,

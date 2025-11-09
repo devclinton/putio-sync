@@ -707,7 +707,7 @@ id,name,size,type,modified
 ## 8. GitHub Workflows
 
 ### 8.1 CI Workflow
-**Feature**: Continuous Integration on GitHub Actions
+**Feature**: Continuous Integration on GitHub Actions. Ensure workflows can be run locally by developers through bash or powershell scripts(depending on os. Test both locally, even if we have to install powershell). add a makefile with help target to guide developers for local builds and development tasks
 
 **Workflow File**: `.github/workflows/ci.yml`
 
