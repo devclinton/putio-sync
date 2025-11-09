@@ -9,7 +9,10 @@
 
 #![warn(missing_docs)]
 
+/// Structured logging infrastructure
+pub mod logging;
+
 /// Re-export commonly used types
 pub mod prelude {
-    // Will be populated as modules are added
+    pub use crate::logging;
 }
