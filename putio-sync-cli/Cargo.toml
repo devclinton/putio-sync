@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "CLI application for putio-sync"
 
+[lib]
+name = "putio_sync_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "putio-sync"
 path = "src/main.rs"
@@ -39,3 +43,4 @@ atty = "0.2"
 tempfile = "3.8"
 assert_cmd = "2.0"
 predicates = "3.0"
+assert_fs = "1.1"
