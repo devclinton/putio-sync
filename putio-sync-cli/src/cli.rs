@@ -172,6 +172,14 @@ pub enum Commands {
             help = "Output format (table, json, csv, tree)"
         )]
         output: String,
+
+        /// Output filename
+        #[arg(
+            long = "output-file",
+            value_name = "FILE",
+            help = "Output filename (to be used with -o). Optional"
+        )]
+        output_file: Option<PathBuf>,
     },
 }
 

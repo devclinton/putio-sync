@@ -498,6 +498,7 @@ Options:
   --sort <FIELD>               Sort by field [possible values: name, size, date]
   --reverse                    Reverse sort order
   -o, --output <FORMAT>        Output format [default: table] [possible values: table, json, csv, tree]
+  -of, --output-file <FILE>    Output Filename(to be used with -o). Optional
   -h, --help                   Print help
 ```
 
@@ -511,8 +512,7 @@ ID          Name                Size        Modified             Type
 12345679    example.mkv         4.2 GB      2025-11-05 14:22     video
 12345680    document.pdf        2.5 MB      2025-11-04 09:15     file
 ```
-
-**Option B: Tree Format**
+**Option B: Tree Format** 
 ```
 .
 ├── Movies/
@@ -523,7 +523,7 @@ ID          Name                Size        Modified             Type
     └── document.pdf (2.5 MB)
 ```
 
-**Option C: JSON Format**
+**Option C: JSON Format** 
 ```json
 {
   "files": [
