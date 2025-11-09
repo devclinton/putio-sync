@@ -121,6 +121,7 @@ pub struct Config {
     pub auth: Option<AuthConfig>,
     pub sync: SyncConfig,
     pub download: DownloadConfig,
+    pub watch: WatchConfig
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -132,6 +133,7 @@ pub struct AuthConfig {
 pub struct SyncConfig {
     pub local_path: PathBuf,
     pub remote_parent_id: Option<i64>,  // Default to root (0)
+    pub delete_after_download: bool // Default: true
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -139,6 +141,14 @@ pub struct DownloadConfig {
     pub max_concurrent: usize,  // Default: 3
     pub chunk_size_mb: Option<usize>,  // Default: None (disabled)
     pub resume_enabled: bool,  // Default: true
+    pub whitelist_patterns: Option<String>, // Glob patterns to whitelist files. Optional, eg  *.mk4
+    pub blacklist_patterns: Option<String> // Optional glob patterns to block files download, eg (*.exe)
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WatchConfig {
+    pub refresh_cycle: i8, // how often should refresh happen. only used when notify events can't be set
+    pub paths: Vec<String> // paths to watch
 }
 ```
 
