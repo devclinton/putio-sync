@@ -21,7 +21,7 @@ const INITIAL_RETRY_DELAY_MS: u64 = 100;
 /// and request/response logging.
 pub struct ApiClient {
     client: Client,
-    base_url: String,
+    pub(crate) base_url: String,
     token: String,
 }
 

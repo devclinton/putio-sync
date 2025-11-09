@@ -4,6 +4,7 @@
 //! with authentication, retry logic, and proper error handling.
 
 mod client;
+mod files;
 mod models;
 
 pub use client::{ApiClient, DEFAULT_BASE_URL};
