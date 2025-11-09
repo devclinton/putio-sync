@@ -14,3 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Login command with token and interactive options
 - List command with filtering, sorting, and output formats
 - Version and help commands
+- Verbosity control via -v flags (WARN -> INFO -> DEBUG -> TRACE)
+- Quiet mode for minimal output (ERROR only)
+- Colored log output support with terminal detection
+- Logging integration with tracing
