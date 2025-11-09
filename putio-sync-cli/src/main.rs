@@ -43,6 +43,7 @@ async fn main() {
             sort,
             reverse,
             output,
+            output_file,
         } => {
             info!("List command");
             if let Some(p) = &path {
