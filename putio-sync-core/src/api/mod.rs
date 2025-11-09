@@ -7,6 +7,7 @@ mod account;
 mod client;
 mod files;
 mod models;
+mod path;
 
 pub use client::{ApiClient, DEFAULT_BASE_URL};
 pub use models::*;
