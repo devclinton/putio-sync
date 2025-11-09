@@ -19,3 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for custom config paths via environment variable and CLI
 - Auto-creation of config directory
 - Secure file permissions (0600) for config files on Unix systems
+- Configuration validation with comprehensive checks
+- Default values for all config options
+- Builder pattern for config creation with fluent API
