@@ -63,6 +63,48 @@ pub struct WatchConfig {
     pub paths: Vec<String>,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            auth: None,
+            sync: SyncConfig::default(),
+            download: DownloadConfig::default(),
+            watch: WatchConfig::default(),
+        }
+    }
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        SyncConfig {
+            local_path: PathBuf::from("./putio-downloads"),
+            remote_parent_id: Some(0), // Root folder
+            delete_after_download: false,
+        }
+    }
+}
+
+impl Default for DownloadConfig {
+    fn default() -> Self {
+        DownloadConfig {
+            max_concurrent: 3,
+            chunk_size_mb: None, // Disabled by default
+            resume_enabled: true,
+            whitelist_patterns: None,
+            blacklist_patterns: None,
+        }
+    }
+}
+
+impl Default for WatchConfig {
+    fn default() -> Self {
+        WatchConfig {
+            refresh_cycle: 60, // 60 seconds
+            paths: vec![],
+        }
+    }
+}
+
 impl Config {
     /// Returns the default configuration file path
     ///
@@ -194,6 +236,164 @@ impl Config {
 
         Ok(())
     }
+
+    /// Validate the configuration
+    ///
+    /// Checks that all required fields are present and valid.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use putio_sync_core::config::Config;
+    ///
+    /// let config = Config::default();
+    /// assert!(config.validate().is_ok());
+    /// ```
+    pub fn validate(&self) -> CoreResult<()> {
+        // Validate max_concurrent is at least 1
+        if self.download.max_concurrent == 0 {
+            return Err(CoreError::ConfigError(
+                "max_concurrent must be at least 1".to_string(),
+            ));
+        }
+
+        // Validate chunk_size_mb is reasonable if set
+        if let Some(chunk_size) = self.download.chunk_size_mb {
+            if chunk_size == 0 {
+                return Err(CoreError::ConfigError(
+                    "chunk_size_mb must be greater than 0 if set".to_string(),
+                ));
+            }
+            if chunk_size > 10240 {
+                // 10GB max chunk size
+                return Err(CoreError::ConfigError(
+                    "chunk_size_mb must not exceed 10240 (10GB)".to_string(),
+                ));
+            }
+        }
+
+        // Validate refresh_cycle is positive
+        if self.watch.refresh_cycle <= 0 {
+            return Err(CoreError::ConfigError(
+                "refresh_cycle must be greater than 0".to_string(),
+            ));
+        }
+
+        // Validate remote_parent_id is non-negative if set
+        if let Some(parent_id) = self.sync.remote_parent_id {
+            if parent_id < 0 {
+                return Err(CoreError::ConfigError(
+                    "remote_parent_id must be non-negative".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Create a new config builder
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use putio_sync_core::config::Config;
+    /// use std::path::PathBuf;
+    ///
+    /// let config = Config::builder()
+    ///     .local_path(PathBuf::from("/downloads"))
+    ///     .max_concurrent(5)
+    ///     .build();
+    /// ```
+    pub fn builder() -> ConfigBuilder {
+        ConfigBuilder::default()
+    }
+}
+
+/// Builder for creating Config instances
+#[derive(Default)]
+pub struct ConfigBuilder {
+    auth: Option<AuthConfig>,
+    sync: SyncConfig,
+    download: DownloadConfig,
+    watch: WatchConfig,
+}
+
+impl ConfigBuilder {
+    /// Set the authentication token
+    pub fn token(mut self, token: String) -> Self {
+        self.auth = Some(AuthConfig { token });
+        self
+    }
+
+    /// Set the local sync path
+    pub fn local_path(mut self, path: PathBuf) -> Self {
+        self.sync.local_path = path;
+        self
+    }
+
+    /// Set the remote parent folder ID
+    pub fn remote_parent_id(mut self, id: i64) -> Self {
+        self.sync.remote_parent_id = Some(id);
+        self
+    }
+
+    /// Set whether to delete files after download
+    pub fn delete_after_download(mut self, delete: bool) -> Self {
+        self.sync.delete_after_download = delete;
+        self
+    }
+
+    /// Set the maximum number of concurrent downloads
+    pub fn max_concurrent(mut self, max: usize) -> Self {
+        self.download.max_concurrent = max;
+        self
+    }
+
+    /// Set the chunk size in MB
+    pub fn chunk_size_mb(mut self, size: usize) -> Self {
+        self.download.chunk_size_mb = Some(size);
+        self
+    }
+
+    /// Enable or disable resume support
+    pub fn resume_enabled(mut self, enabled: bool) -> Self {
+        self.download.resume_enabled = enabled;
+        self
+    }
+
+    /// Set whitelist patterns
+    pub fn whitelist_patterns(mut self, patterns: String) -> Self {
+        self.download.whitelist_patterns = Some(patterns);
+        self
+    }
+
+    /// Set blacklist patterns
+    pub fn blacklist_patterns(mut self, patterns: String) -> Self {
+        self.download.blacklist_patterns = Some(patterns);
+        self
+    }
+
+    /// Set the refresh cycle in seconds
+    pub fn refresh_cycle(mut self, seconds: i8) -> Self {
+        self.watch.refresh_cycle = seconds;
+        self
+    }
+
+    /// Set the paths to watch
+    pub fn watch_paths(mut self, paths: Vec<String>) -> Self {
+        self.watch.paths = paths;
+        self
+    }
+
+    /// Build the Config
+    pub fn build(self) -> Config {
+        Config {
+            auth: self.auth,
+            sync: self.sync,
+            download: self.download,
+            watch: self.watch,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -308,5 +508,120 @@ mod tests {
         let metadata = fs::metadata(&config_path).unwrap();
         let permissions = metadata.permissions();
         assert_eq!(permissions.mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn test_config_default() {
+        let config = Config::default();
+        assert!(config.auth.is_none());
+        assert_eq!(config.sync.local_path, PathBuf::from("./putio-downloads"));
+        assert_eq!(config.sync.remote_parent_id, Some(0));
+        assert_eq!(config.sync.delete_after_download, false);
+        assert_eq!(config.download.max_concurrent, 3);
+        assert_eq!(config.download.chunk_size_mb, None);
+        assert_eq!(config.download.resume_enabled, true);
+        assert_eq!(config.watch.refresh_cycle, 60);
+        assert_eq!(config.watch.paths.len(), 0);
+    }
+
+    #[test]
+    fn test_config_validate_success() {
+        let config = Config::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_max_concurrent_zero() {
+        let mut config = Config::default();
+        config.download.max_concurrent = 0;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CoreError::ConfigError(_)));
+    }
+
+    #[test]
+    fn test_config_validate_chunk_size_zero() {
+        let mut config = Config::default();
+        config.download.chunk_size_mb = Some(0);
+        let result = config.validate();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_validate_chunk_size_too_large() {
+        let mut config = Config::default();
+        config.download.chunk_size_mb = Some(20000);
+        let result = config.validate();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_validate_negative_refresh_cycle() {
+        let mut config = Config::default();
+        config.watch.refresh_cycle = -1;
+        let result = config.validate();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_validate_negative_parent_id() {
+        let mut config = Config::default();
+        config.sync.remote_parent_id = Some(-5);
+        let result = config.validate();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_builder() {
+        let config = Config::builder()
+            .token("test_token".to_string())
+            .local_path(PathBuf::from("/test"))
+            .remote_parent_id(123)
+            .delete_after_download(true)
+            .max_concurrent(5)
+            .chunk_size_mb(512)
+            .resume_enabled(false)
+            .whitelist_patterns("*.mp4".to_string())
+            .blacklist_patterns("*.exe".to_string())
+            .refresh_cycle(30)
+            .watch_paths(vec!["/path1".to_string(), "/path2".to_string()])
+            .build();
+
+        assert_eq!(config.auth.unwrap().token, "test_token");
+        assert_eq!(config.sync.local_path, PathBuf::from("/test"));
+        assert_eq!(config.sync.remote_parent_id, Some(123));
+        assert_eq!(config.sync.delete_after_download, true);
+        assert_eq!(config.download.max_concurrent, 5);
+        assert_eq!(config.download.chunk_size_mb, Some(512));
+        assert_eq!(config.download.resume_enabled, false);
+        assert_eq!(config.download.whitelist_patterns, Some("*.mp4".to_string()));
+        assert_eq!(config.download.blacklist_patterns, Some("*.exe".to_string()));
+        assert_eq!(config.watch.refresh_cycle, 30);
+        assert_eq!(config.watch.paths, vec!["/path1", "/path2"]);
+    }
+
+    #[test]
+    fn test_sync_config_default() {
+        let config = SyncConfig::default();
+        assert_eq!(config.local_path, PathBuf::from("./putio-downloads"));
+        assert_eq!(config.remote_parent_id, Some(0));
+        assert_eq!(config.delete_after_download, false);
+    }
+
+    #[test]
+    fn test_download_config_default() {
+        let config = DownloadConfig::default();
+        assert_eq!(config.max_concurrent, 3);
+        assert_eq!(config.chunk_size_mb, None);
+        assert_eq!(config.resume_enabled, true);
+        assert_eq!(config.whitelist_patterns, None);
+        assert_eq!(config.blacklist_patterns, None);
+    }
+
+    #[test]
+    fn test_watch_config_default() {
+        let config = WatchConfig::default();
+        assert_eq!(config.refresh_cycle, 60);
+        assert_eq!(config.paths.len(), 0);
     }
 }

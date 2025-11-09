@@ -20,7 +20,9 @@ pub mod logging;
 
 /// Re-export commonly used types
 pub mod prelude {
-    pub use crate::config::{AuthConfig, Config, DownloadConfig, SyncConfig, WatchConfig};
+    pub use crate::config::{
+        AuthConfig, Config, ConfigBuilder, DownloadConfig, SyncConfig, WatchConfig,
+    };
     pub use crate::error::{CoreError, CoreResult};
     pub use crate::logging;
 }
