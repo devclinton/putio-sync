@@ -14,3 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Custom error types using `thiserror`
 - CoreError enum with variants for different error categories
 - CoreResult type alias for ergonomic error handling
+- Configuration management with TOML format
+- Default config location at ~/.putiosync/config.toml
+- Support for custom config paths via environment variable and CLI
+- Auto-creation of config directory
+- Secure file permissions (0600) for config files on Unix systems
