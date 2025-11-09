@@ -31,6 +31,6 @@ pub mod prelude {
         AuthConfig, Config, ConfigBuilder, DownloadConfig, SyncConfig, WatchConfig,
     };
     pub use crate::error::{CoreError, CoreResult};
-    pub use crate::filter::{FileFilter, FileTypeFilter, SortField, parse_size, sort_files};
+    pub use crate::filter::{parse_size, sort_files, FileFilter, FileTypeFilter, SortField};
     pub use crate::logging;
 }

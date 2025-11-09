@@ -48,21 +48,30 @@ impl ApiClient {
             return Ok(0);
         }
 
-        debug!("Resolving path '{}' with {} components", path, components.len());
+        debug!(
+            "Resolving path '{}' with {} components",
+            path,
+            components.len()
+        );
 
         // Start from root (ID 0) and traverse each component
         let mut current_id = 0;
 
         for (index, component) in components.iter().enumerate() {
-            trace!("Looking for component '{}' in folder {}", component, current_id);
+            trace!(
+                "Looking for component '{}' in folder {}",
+                component,
+                current_id
+            );
 
             // List files in current folder
             let response = self.list_files(current_id).await?;
 
             // Find the folder matching this component
-            let found = response.files.iter().find(|f| {
-                f.file_type == "FOLDER" && f.name.eq_ignore_ascii_case(component)
-            });
+            let found = response
+                .files
+                .iter()
+                .find(|f| f.file_type == "FOLDER" && f.name.eq_ignore_ascii_case(component));
 
             match found {
                 Some(folder) => {
@@ -75,7 +84,8 @@ impl ApiClient {
                         "Path component '{}' not found in /{}\nAvailable folders: {}",
                         component,
                         partial_path,
-                        response.files
+                        response
+                            .files
                             .iter()
                             .filter(|f| f.file_type == "FOLDER")
                             .map(|f| f.name.as_str())

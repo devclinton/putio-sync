@@ -44,6 +44,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Colored log output support with terminal detection
 - Logging integration with tracing
 
+### CI/CD
+- GitHub Actions CI workflow for multi-platform testing (Linux, macOS, Windows)
+- Automated formatting checks with rustfmt
+- Automated linting with clippy (all warnings as errors)
+- Automated test execution across all platforms
+- Release build verification in CI pipeline
+- Dependency caching for faster CI runs
+- Beta Rust version testing (continue-on-error)
+
+### Development
+- Makefile with comprehensive development tasks
+- Local CI execution scripts for Unix (bash) and Windows (PowerShell)
+- Development workflow commands (build, test, fmt, lint, watch, etc.)
+- Convenience commands for login and list operations
+- Code coverage support (cargo-tarpaulin integration)
+- Security audit support (cargo-audit integration)
+- Binary size analysis support (cargo-bloat integration)
+- Development tool setup automation
+
 ### Testing
 - Comprehensive unit test coverage (27 tests, 70%+ coverage goal)
 - Unit tests for all output formatters (table, json, csv, tree)

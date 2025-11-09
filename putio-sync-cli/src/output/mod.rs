@@ -14,6 +14,7 @@ use putio_sync_core::api::FileEntry;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
+use std::str::FromStr;
 
 /// Output format options
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,15 +29,16 @@ pub enum OutputFormat {
     Tree,
 }
 
-impl OutputFormat {
-    /// Parse output format from string
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for OutputFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "table" => Some(Self::Table),
-            "json" => Some(Self::Json),
-            "csv" => Some(Self::Csv),
-            "tree" => Some(Self::Tree),
-            _ => None,
+            "table" => Ok(Self::Table),
+            "json" => Ok(Self::Json),
+            "csv" => Ok(Self::Csv),
+            "tree" => Ok(Self::Tree),
+            _ => Err(format!("Invalid output format: {}", s)),
         }
     }
 }

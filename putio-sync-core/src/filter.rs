@@ -6,6 +6,7 @@
 use crate::api::FileEntry;
 use glob::Pattern;
 use std::cmp::Ordering;
+use std::str::FromStr;
 
 /// Sort field options
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,14 +19,15 @@ pub enum SortField {
     Date,
 }
 
-impl SortField {
-    /// Parse sort field from string
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for SortField {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "name" => Some(Self::Name),
-            "size" => Some(Self::Size),
-            "date" | "created" => Some(Self::Date),
-            _ => None,
+            "name" => Ok(Self::Name),
+            "size" => Ok(Self::Size),
+            "date" | "created" => Ok(Self::Date),
+            _ => Err(format!("Invalid sort field: {}", s)),
         }
     }
 }
@@ -47,20 +49,23 @@ pub enum FileTypeFilter {
     Archive,
 }
 
-impl FileTypeFilter {
-    /// Parse file type from string
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for FileTypeFilter {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "file" => Some(Self::File),
-            "folder" => Some(Self::Folder),
-            "video" => Some(Self::Video),
-            "audio" => Some(Self::Audio),
-            "image" => Some(Self::Image),
-            "archive" => Some(Self::Archive),
-            _ => None,
+            "file" => Ok(Self::File),
+            "folder" => Ok(Self::Folder),
+            "video" => Ok(Self::Video),
+            "audio" => Ok(Self::Audio),
+            "image" => Ok(Self::Image),
+            "archive" => Ok(Self::Archive),
+            _ => Err(format!("Invalid file type filter: {}", s)),
         }
     }
+}
 
+impl FileTypeFilter {
     /// Check if a file matches this type filter
     pub fn matches(&self, file: &FileEntry) -> bool {
         match self {
@@ -227,7 +232,12 @@ pub fn sort_files(mut files: Vec<FileEntry>, field: SortField, reverse: bool) ->
 mod tests {
     use super::*;
 
-    fn create_test_file(name: &str, size: i64, file_type: &str, extension: Option<&str>) -> FileEntry {
+    fn create_test_file(
+        name: &str,
+        size: i64,
+        file_type: &str,
+        extension: Option<&str>,
+    ) -> FileEntry {
         FileEntry {
             id: 1,
             name: name.to_string(),
@@ -248,22 +258,28 @@ mod tests {
 
     #[test]
     fn test_sort_field_from_str() {
-        assert_eq!(SortField::from_str("name"), Some(SortField::Name));
-        assert_eq!(SortField::from_str("size"), Some(SortField::Size));
-        assert_eq!(SortField::from_str("date"), Some(SortField::Date));
-        assert_eq!(SortField::from_str("created"), Some(SortField::Date));
-        assert_eq!(SortField::from_str("invalid"), None);
+        assert_eq!(SortField::from_str("name"), Ok(SortField::Name));
+        assert_eq!(SortField::from_str("size"), Ok(SortField::Size));
+        assert_eq!(SortField::from_str("date"), Ok(SortField::Date));
+        assert_eq!(SortField::from_str("created"), Ok(SortField::Date));
+        assert!(SortField::from_str("invalid").is_err());
     }
 
     #[test]
     fn test_file_type_filter_from_str() {
-        assert_eq!(FileTypeFilter::from_str("file"), Some(FileTypeFilter::File));
-        assert_eq!(FileTypeFilter::from_str("folder"), Some(FileTypeFilter::Folder));
-        assert_eq!(FileTypeFilter::from_str("video"), Some(FileTypeFilter::Video));
-        assert_eq!(FileTypeFilter::from_str("audio"), Some(FileTypeFilter::Audio));
-        assert_eq!(FileTypeFilter::from_str("image"), Some(FileTypeFilter::Image));
-        assert_eq!(FileTypeFilter::from_str("archive"), Some(FileTypeFilter::Archive));
-        assert_eq!(FileTypeFilter::from_str("invalid"), None);
+        assert_eq!(FileTypeFilter::from_str("file"), Ok(FileTypeFilter::File));
+        assert_eq!(
+            FileTypeFilter::from_str("folder"),
+            Ok(FileTypeFilter::Folder)
+        );
+        assert_eq!(FileTypeFilter::from_str("video"), Ok(FileTypeFilter::Video));
+        assert_eq!(FileTypeFilter::from_str("audio"), Ok(FileTypeFilter::Audio));
+        assert_eq!(FileTypeFilter::from_str("image"), Ok(FileTypeFilter::Image));
+        assert_eq!(
+            FileTypeFilter::from_str("archive"),
+            Ok(FileTypeFilter::Archive)
+        );
+        assert!(FileTypeFilter::from_str("invalid").is_err());
     }
 
     #[test]
@@ -306,9 +322,7 @@ mod tests {
 
     #[test]
     fn test_file_filter_size() {
-        let filter = FileFilter::new()
-            .with_min_size(100)
-            .with_max_size(1000);
+        let filter = FileFilter::new().with_min_size(100).with_max_size(1000);
 
         let small = create_test_file("small.txt", 50, "FILE", Some("txt"));
         let medium = create_test_file("medium.txt", 500, "FILE", Some("txt"));
@@ -345,7 +359,10 @@ mod tests {
         assert_eq!(parse_size("1MB").unwrap(), 1024 * 1024);
         assert_eq!(parse_size("1GB").unwrap(), 1024 * 1024 * 1024);
         assert_eq!(parse_size("1TB").unwrap(), 1024 * 1024 * 1024 * 1024);
-        assert_eq!(parse_size("1.5GB").unwrap(), (1.5 * 1024.0 * 1024.0 * 1024.0) as i64);
+        assert_eq!(
+            parse_size("1.5GB").unwrap(),
+            (1.5 * 1024.0 * 1024.0 * 1024.0) as i64
+        );
 
         // Case insensitive
         assert_eq!(parse_size("1gb").unwrap(), 1024 * 1024 * 1024);

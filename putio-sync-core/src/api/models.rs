@@ -197,7 +197,7 @@ mod tests {
         assert_eq!(file.size, 1024000);
         assert_eq!(file.file_type, "VIDEO");
         assert_eq!(file.parent_id, 0);
-        assert_eq!(file.is_folder, false);
+        assert!(!file.is_folder);
     }
 
     #[test]
@@ -287,7 +287,7 @@ mod tests {
         assert_eq!(info.user_id, 12345);
         assert_eq!(info.username, "testuser");
         assert_eq!(info.mail, "test@example.com");
-        assert_eq!(info.account_active, true);
+        assert!(info.account_active);
     }
 
     #[test]

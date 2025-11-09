@@ -40,13 +40,7 @@ async fn test_login_empty_token() {
     let config_path = temp_dir.path().join("config.toml");
 
     // Execute login with empty token
-    let result = execute_login(
-        Some("".to_string()),
-        false,
-        true,
-        Some(config_path.clone()),
-    )
-    .await;
+    let result = execute_login(Some("".to_string()), false, true, Some(config_path.clone())).await;
 
     // Should fail
     assert!(result.is_err(), "Login should fail with empty token");

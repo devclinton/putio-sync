@@ -9,15 +9,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Main configuration structure
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Config {
     /// Authentication configuration
     pub auth: Option<AuthConfig>,
     /// Sync configuration
+    #[serde(default)]
     pub sync: SyncConfig,
     /// Download configuration
+    #[serde(default)]
     pub download: DownloadConfig,
     /// Watch configuration
+    #[serde(default)]
     pub watch: WatchConfig,
 }
 
@@ -61,17 +64,6 @@ pub struct WatchConfig {
     pub refresh_cycle: i8,
     /// Paths to watch for changes
     pub paths: Vec<String>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            auth: None,
-            sync: SyncConfig::default(),
-            download: DownloadConfig::default(),
-            watch: WatchConfig::default(),
-        }
-    }
 }
 
 impl Default for SyncConfig {
@@ -129,8 +121,9 @@ impl Config {
         }
 
         // Use home directory
-        let home = dirs::home_dir()
-            .ok_or_else(|| CoreError::ConfigError("Could not determine home directory".to_string()))?;
+        let home = dirs::home_dir().ok_or_else(|| {
+            CoreError::ConfigError("Could not determine home directory".to_string())
+        })?;
 
         Ok(home.join(".putiosync").join("config.toml"))
     }
@@ -447,18 +440,21 @@ mod tests {
         let loaded = Config::load(&config_path).unwrap();
 
         // Verify loaded config matches
-        assert_eq!(
-            loaded.auth.as_ref().unwrap().token,
-            "test_token_123"
-        );
+        assert_eq!(loaded.auth.as_ref().unwrap().token, "test_token_123");
         assert_eq!(loaded.sync.local_path, PathBuf::from("/tmp/putio"));
         assert_eq!(loaded.sync.remote_parent_id, Some(0));
-        assert_eq!(loaded.sync.delete_after_download, true);
+        assert!(loaded.sync.delete_after_download);
         assert_eq!(loaded.download.max_concurrent, 3);
         assert_eq!(loaded.download.chunk_size_mb, Some(256));
-        assert_eq!(loaded.download.resume_enabled, true);
-        assert_eq!(loaded.download.whitelist_patterns, Some("*.mkv".to_string()));
-        assert_eq!(loaded.download.blacklist_patterns, Some("*.exe".to_string()));
+        assert!(loaded.download.resume_enabled);
+        assert_eq!(
+            loaded.download.whitelist_patterns,
+            Some("*.mkv".to_string())
+        );
+        assert_eq!(
+            loaded.download.blacklist_patterns,
+            Some("*.exe".to_string())
+        );
         assert_eq!(loaded.watch.refresh_cycle, 60);
         assert_eq!(loaded.watch.paths, vec!["/remote/movies"]);
     }
@@ -473,7 +469,11 @@ mod tests {
     #[test]
     fn test_save_creates_directory() {
         let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("nested").join("dir").join("config.toml");
+        let config_path = temp_dir
+            .path()
+            .join("nested")
+            .join("dir")
+            .join("config.toml");
 
         let config = create_test_config();
         config.save(&config_path).unwrap();
@@ -516,10 +516,10 @@ mod tests {
         assert!(config.auth.is_none());
         assert_eq!(config.sync.local_path, PathBuf::from("./putio-downloads"));
         assert_eq!(config.sync.remote_parent_id, Some(0));
-        assert_eq!(config.sync.delete_after_download, false);
+        assert!(!config.sync.delete_after_download);
         assert_eq!(config.download.max_concurrent, 3);
         assert_eq!(config.download.chunk_size_mb, None);
-        assert_eq!(config.download.resume_enabled, true);
+        assert!(config.download.resume_enabled);
         assert_eq!(config.watch.refresh_cycle, 60);
         assert_eq!(config.watch.paths.len(), 0);
     }
@@ -590,12 +590,18 @@ mod tests {
         assert_eq!(config.auth.unwrap().token, "test_token");
         assert_eq!(config.sync.local_path, PathBuf::from("/test"));
         assert_eq!(config.sync.remote_parent_id, Some(123));
-        assert_eq!(config.sync.delete_after_download, true);
+        assert!(config.sync.delete_after_download);
         assert_eq!(config.download.max_concurrent, 5);
         assert_eq!(config.download.chunk_size_mb, Some(512));
-        assert_eq!(config.download.resume_enabled, false);
-        assert_eq!(config.download.whitelist_patterns, Some("*.mp4".to_string()));
-        assert_eq!(config.download.blacklist_patterns, Some("*.exe".to_string()));
+        assert!(!config.download.resume_enabled);
+        assert_eq!(
+            config.download.whitelist_patterns,
+            Some("*.mp4".to_string())
+        );
+        assert_eq!(
+            config.download.blacklist_patterns,
+            Some("*.exe".to_string())
+        );
         assert_eq!(config.watch.refresh_cycle, 30);
         assert_eq!(config.watch.paths, vec!["/path1", "/path2"]);
     }
@@ -605,7 +611,7 @@ mod tests {
         let config = SyncConfig::default();
         assert_eq!(config.local_path, PathBuf::from("./putio-downloads"));
         assert_eq!(config.remote_parent_id, Some(0));
-        assert_eq!(config.delete_after_download, false);
+        assert!(!config.delete_after_download);
     }
 
     #[test]
@@ -613,7 +619,7 @@ mod tests {
         let config = DownloadConfig::default();
         assert_eq!(config.max_concurrent, 3);
         assert_eq!(config.chunk_size_mb, None);
-        assert_eq!(config.resume_enabled, true);
+        assert!(config.resume_enabled);
         assert_eq!(config.whitelist_patterns, None);
         assert_eq!(config.blacklist_patterns, None);
     }
