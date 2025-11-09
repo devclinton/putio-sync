@@ -18,6 +18,9 @@ pub mod config;
 /// Error types and result aliases
 pub mod error;
 
+/// File filtering and sorting logic
+pub mod filter;
+
 /// Structured logging infrastructure
 pub mod logging;
 
@@ -28,5 +31,6 @@ pub mod prelude {
         AuthConfig, Config, ConfigBuilder, DownloadConfig, SyncConfig, WatchConfig,
     };
     pub use crate::error::{CoreError, CoreResult};
+    pub use crate::filter::{FileFilter, FileTypeFilter, SortField, parse_size, sort_files};
     pub use crate::logging;
 }
