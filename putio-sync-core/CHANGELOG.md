@@ -22,3 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Configuration validation with comprehensive checks
 - Default values for all config options
 - Builder pattern for config creation with fluent API
+- Put.io API client with reqwest HTTP client
+- OAuth2 token authentication via Bearer token
+- Request retry with exponential backoff (up to 3 attempts)
+- Request/response logging with tracing
+- Mock server tests for API client reliability

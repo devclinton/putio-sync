@@ -9,6 +9,9 @@
 
 #![warn(missing_docs)]
 
+/// Put.io API client
+pub mod api;
+
 /// Configuration management
 pub mod config;
 
@@ -20,6 +23,7 @@ pub mod logging;
 
 /// Re-export commonly used types
 pub mod prelude {
+    pub use crate::api::ApiClient;
     pub use crate::config::{
         AuthConfig, Config, ConfigBuilder, DownloadConfig, SyncConfig, WatchConfig,
     };
