@@ -50,7 +50,7 @@ impl ApiClient {
     /// # Arguments
     ///
     /// * `token` - OAuth2 token for Put.io API authentication
-    /// * `base_url` - Base URL for the API (e.g., "https://api.put.io/v2")
+    /// * `base_url` - Base URL for the API (e.g., <https://api.put.io/v2>)
     ///
     /// # Examples
     ///
