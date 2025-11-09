@@ -41,3 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Token verification capability (verify_token)
 - Returns complete account details (username, disk usage, quota)
 - Unit tests for account operations and token validation
+- Path resolution to convert folder paths to IDs
+- Case-insensitive folder matching for navigation
+- Folder traversal logic with helpful error messages
+- Comprehensive tests for path resolution with mock API
+- File filtering by name, type, and size
+- Glob pattern matching for name filters
+- File type detection and filtering (file, folder, video, audio, image, archive)
+- Size comparison logic with min/max support
+- Human-readable size parsing (KB, MB, GB, TB)
+- Sorting by name, size, and date
+- Reverse sort order support
+- Comprehensive unit tests for all filtering and sorting logic
