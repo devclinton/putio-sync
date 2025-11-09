@@ -9,10 +9,14 @@
 
 #![warn(missing_docs)]
 
+/// Error types and result aliases
+pub mod error;
+
 /// Structured logging infrastructure
 pub mod logging;
 
 /// Re-export commonly used types
 pub mod prelude {
+    pub use crate::error::{CoreError, CoreResult};
     pub use crate::logging;
 }
