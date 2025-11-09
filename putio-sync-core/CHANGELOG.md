@@ -27,3 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Request retry with exponential backoff (up to 3 attempts)
 - Request/response logging with tracing
 - Mock server tests for API client reliability
+- Data models for Put.io API entities
+- FileEntry, Transfer, AccountInfo structs with full field coverage
+- JSON serialization/deserialization with serde
+- ApiResponse<T> wrapper for generic API responses
+- Comprehensive tests for all data model parsing
