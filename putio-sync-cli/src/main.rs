@@ -3,12 +3,14 @@
 //! Command-line interface for putio-sync
 
 mod cli;
+mod commands;
 mod logging;
 
 use cli::{Cli, Commands};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args = Cli::parse_args();
 
     // Initialize logging based on verbosity flags
@@ -25,17 +27,9 @@ fn main() {
     debug!("Quiet mode: {}", args.quiet);
 
     // Handle commands
-    match args.command {
+    let result = match args.command {
         Commands::Login { token, interactive, no_verify } => {
-            info!("Login command");
-            if let Some(t) = &token {
-                debug!("Token provided: {}...", &t[..t.len().min(8)]);
-            }
-            if interactive {
-                debug!("Interactive mode enabled");
-            }
-            debug!("Verify token: {}", !no_verify);
-            warn!("Login functionality coming soon!");
+            commands::execute_login(token, interactive, no_verify, args.config).await
         }
         Commands::List {
             path,
@@ -85,7 +79,14 @@ fn main() {
             }
             debug!("Output format: {}", output);
 
-            warn!("List functionality coming soon!");
+            info!("List functionality coming soon!");
+            Ok(())
         }
+    };
+
+    // Handle command execution errors
+    if let Err(e) = result {
+        error!("Error: {}", e);
+        std::process::exit(1);
     }
 }
