@@ -32,6 +32,7 @@ sqlx = { workspace = true }
 
 # Utilities
 dirs = { workspace = true }
+glob = "0.3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
