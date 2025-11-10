@@ -24,11 +24,89 @@ pub struct Config {
     pub watch: WatchConfig,
 }
 
+/// Authentication method
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase")]
+pub enum AuthMethod {
+    /// OAuth token authentication (Bearer token)
+    Token,
+    /// App-specific password authentication (Basic Auth)
+    AppPassword,
+}
+
+impl Default for AuthMethod {
+    fn default() -> Self {
+        AuthMethod::Token
+    }
+}
+
 /// Authentication configuration
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AuthConfig {
-    /// OAuth token for Put.io API
-    pub token: String,
+    /// Authentication method to use
+    #[serde(default)]
+    pub auth_method: AuthMethod,
+
+    /// OAuth token (used when auth_method is Token)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+
+    /// Put.io username/email (used when auth_method is AppPassword)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+
+    /// App-specific password (used when auth_method is AppPassword)
+    /// Create at: https://app.put.io/account/app-specific-passwords
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+}
+
+impl AuthConfig {
+    /// Create a new AuthConfig with OAuth token
+    pub fn with_token(token: String) -> Self {
+        Self {
+            auth_method: AuthMethod::Token,
+            token: Some(token),
+            username: None,
+            password: None,
+        }
+    }
+
+    /// Create a new AuthConfig with app-specific password
+    pub fn with_app_password(username: String, password: String) -> Self {
+        Self {
+            auth_method: AuthMethod::AppPassword,
+            token: None,
+            username: Some(username),
+            password: Some(password),
+        }
+    }
+
+    /// Validate the authentication configuration
+    pub fn validate(&self) -> CoreResult<()> {
+        match self.auth_method {
+            AuthMethod::Token => {
+                if self.token.is_none() || self.token.as_ref().unwrap().is_empty() {
+                    return Err(CoreError::ConfigError(
+                        "Token is required for Token authentication".to_string(),
+                    ));
+                }
+            }
+            AuthMethod::AppPassword => {
+                if self.username.is_none() || self.username.as_ref().unwrap().is_empty() {
+                    return Err(CoreError::ConfigError(
+                        "Username is required for AppPassword authentication".to_string(),
+                    ));
+                }
+                if self.password.is_none() || self.password.as_ref().unwrap().is_empty() {
+                    return Err(CoreError::ConfigError(
+                        "Password is required for AppPassword authentication".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Sync configuration
@@ -312,9 +390,53 @@ pub struct ConfigBuilder {
 }
 
 impl ConfigBuilder {
-    /// Set the authentication token
+    /// Set the authentication token (OAuth)
     pub fn token(mut self, token: String) -> Self {
-        self.auth = Some(AuthConfig { token });
+        self.auth = Some(AuthConfig::with_token(token));
+        self
+    }
+
+    /// Set authentication with username and app-specific password
+    pub fn credentials(mut self, username: String, password: String) -> Self {
+        self.auth = Some(AuthConfig::with_app_password(username, password));
+        self
+    }
+
+    /// Set the authentication method
+    pub fn auth_method(mut self, method: AuthMethod) -> Self {
+        if let Some(auth) = &mut self.auth {
+            auth.auth_method = method;
+        }
+        self
+    }
+
+    /// Set username (for AppPassword authentication)
+    pub fn username(mut self, username: String) -> Self {
+        if let Some(auth) = &mut self.auth {
+            auth.username = Some(username);
+        } else {
+            self.auth = Some(AuthConfig {
+                auth_method: AuthMethod::AppPassword,
+                token: None,
+                username: Some(username),
+                password: None,
+            });
+        }
+        self
+    }
+
+    /// Set password (for AppPassword authentication)
+    pub fn password(mut self, password: String) -> Self {
+        if let Some(auth) = &mut self.auth {
+            auth.password = Some(password);
+        } else {
+            self.auth = Some(AuthConfig {
+                auth_method: AuthMethod::AppPassword,
+                token: None,
+                username: None,
+                password: Some(password),
+            });
+        }
         self
     }
 
@@ -396,9 +518,7 @@ mod tests {
 
     fn create_test_config() -> Config {
         Config {
-            auth: Some(AuthConfig {
-                token: "test_token_123".to_string(),
-            }),
+            auth: Some(AuthConfig::with_token("test_token_123".to_string())),
             sync: SyncConfig {
                 local_path: PathBuf::from("/tmp/putio"),
                 remote_parent_id: Some(0),
@@ -440,7 +560,9 @@ mod tests {
         let loaded = Config::load(&config_path).unwrap();
 
         // Verify loaded config matches
-        assert_eq!(loaded.auth.as_ref().unwrap().token, "test_token_123");
+        let auth = loaded.auth.as_ref().unwrap();
+        assert_eq!(auth.auth_method, AuthMethod::Token);
+        assert_eq!(auth.token.as_ref().unwrap(), "test_token_123");
         assert_eq!(loaded.sync.local_path, PathBuf::from("/tmp/putio"));
         assert_eq!(loaded.sync.remote_parent_id, Some(0));
         assert!(loaded.sync.delete_after_download);
@@ -587,7 +709,9 @@ mod tests {
             .watch_paths(vec!["/path1".to_string(), "/path2".to_string()])
             .build();
 
-        assert_eq!(config.auth.unwrap().token, "test_token");
+        let auth = config.auth.as_ref().unwrap();
+        assert_eq!(auth.auth_method, AuthMethod::Token);
+        assert_eq!(auth.token.as_ref().unwrap(), "test_token");
         assert_eq!(config.sync.local_path, PathBuf::from("/test"));
         assert_eq!(config.sync.remote_parent_id, Some(123));
         assert!(config.sync.delete_after_download);
@@ -629,5 +753,102 @@ mod tests {
         let config = WatchConfig::default();
         assert_eq!(config.refresh_cycle, 60);
         assert_eq!(config.paths.len(), 0);
+    }
+
+    #[test]
+    fn test_auth_config_with_token() {
+        let auth = AuthConfig::with_token("test_token".to_string());
+        assert_eq!(auth.auth_method, AuthMethod::Token);
+        assert_eq!(auth.token.as_ref().unwrap(), "test_token");
+        assert!(auth.username.is_none());
+        assert!(auth.password.is_none());
+        assert!(auth.validate().is_ok());
+    }
+
+    #[test]
+    fn test_auth_config_with_app_password() {
+        let auth = AuthConfig::with_app_password("user@example.com".to_string(), "pass123".to_string());
+        assert_eq!(auth.auth_method, AuthMethod::AppPassword);
+        assert!(auth.token.is_none());
+        assert_eq!(auth.username.as_ref().unwrap(), "user@example.com");
+        assert_eq!(auth.password.as_ref().unwrap(), "pass123");
+        assert!(auth.validate().is_ok());
+    }
+
+    #[test]
+    fn test_auth_config_validate_token_missing() {
+        let auth = AuthConfig {
+            auth_method: AuthMethod::Token,
+            token: None,
+            username: None,
+            password: None,
+        };
+        assert!(auth.validate().is_err());
+    }
+
+    #[test]
+    fn test_auth_config_validate_token_empty() {
+        let auth = AuthConfig {
+            auth_method: AuthMethod::Token,
+            token: Some("".to_string()),
+            username: None,
+            password: None,
+        };
+        assert!(auth.validate().is_err());
+    }
+
+    #[test]
+    fn test_auth_config_validate_username_missing() {
+        let auth = AuthConfig {
+            auth_method: AuthMethod::AppPassword,
+            token: None,
+            username: None,
+            password: Some("pass".to_string()),
+        };
+        assert!(auth.validate().is_err());
+    }
+
+    #[test]
+    fn test_auth_config_validate_password_missing() {
+        let auth = AuthConfig {
+            auth_method: AuthMethod::AppPassword,
+            token: None,
+            username: Some("user@example.com".to_string()),
+            password: None,
+        };
+        assert!(auth.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_builder_credentials() {
+        let config = Config::builder()
+            .credentials("user@example.com".to_string(), "pass123".to_string())
+            .local_path(PathBuf::from("/test"))
+            .build();
+
+        let auth = config.auth.as_ref().unwrap();
+        assert_eq!(auth.auth_method, AuthMethod::AppPassword);
+        assert_eq!(auth.username.as_ref().unwrap(), "user@example.com");
+        assert_eq!(auth.password.as_ref().unwrap(), "pass123");
+        assert!(auth.token.is_none());
+    }
+
+    #[test]
+    fn test_config_builder_username_password_separate() {
+        let config = Config::builder()
+            .username("user@example.com".to_string())
+            .password("pass123".to_string())
+            .build();
+
+        let auth = config.auth.as_ref().unwrap();
+        assert_eq!(auth.auth_method, AuthMethod::AppPassword);
+        assert_eq!(auth.username.as_ref().unwrap(), "user@example.com");
+        assert_eq!(auth.password.as_ref().unwrap(), "pass123");
+    }
+
+    #[test]
+    fn test_auth_method_default() {
+        let method = AuthMethod::default();
+        assert_eq!(method, AuthMethod::Token);
     }
 }
