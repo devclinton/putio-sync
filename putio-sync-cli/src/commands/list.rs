@@ -39,11 +39,11 @@ pub async fn execute_list(
         .context("Failed to load configuration. Have you run 'putio-sync login'?")?;
 
     let auth = config.auth.ok_or_else(|| {
-        anyhow!("No authentication token found. Please run 'putio-sync login' first.")
+        anyhow!("No authentication credentials found. Please run 'putio-sync login' first.")
     })?;
 
     // Create API client
-    let client = ApiClient::new(auth.token);
+    let client = ApiClient::from_auth_config(auth);
 
     // Determine folder ID to list
     let folder_id = determine_folder_id(&client, path, id).await?;

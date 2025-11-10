@@ -4,7 +4,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use putio_sync_core::api::ApiClient;
-use putio_sync_core::config::{AuthConfig, Config};
+use putio_sync_core::config::{AuthConfig, AuthMethod, Config};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
@@ -14,8 +14,10 @@ use tracing::{debug, info, warn};
 /// # Arguments
 ///
 /// * `token` - Optional OAuth token provided via CLI flag
-/// * `interactive` - Whether to prompt for token interactively
-/// * `no_verify` - Whether to skip token verification
+/// * `username` - Optional username for app-specific password auth
+/// * `password` - Optional app-specific password
+/// * `interactive` - Whether to prompt for credentials interactively
+/// * `no_verify` - Whether to skip credential verification
 /// * `config_path` - Optional custom config file path
 ///
 /// # Examples
@@ -24,37 +26,60 @@ use tracing::{debug, info, warn};
 /// # use putio_sync_cli::commands::execute_login;
 /// # async fn example() {
 /// // Login with token from CLI
-/// execute_login(Some("my_token".to_string()), false, false, None).await.unwrap();
+/// execute_login(Some("my_token".to_string()), None, None, false, false, None).await.unwrap();
+///
+/// // Login with username and password
+/// execute_login(None, Some("user@example.com".to_string()), Some("app_pass".to_string()), false, false, None).await.unwrap();
 ///
 /// // Login interactively
-/// execute_login(None, true, false, None).await.unwrap();
+/// execute_login(None, None, None, true, false, None).await.unwrap();
 /// # }
 /// ```
 pub async fn execute_login(
     token: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
     interactive: bool,
     no_verify: bool,
     config_path: Option<PathBuf>,
 ) -> Result<()> {
-    // Get the token from CLI or interactive prompt
-    let token = get_token(token, interactive)?;
-
-    // Warn about security if token was provided via CLI
-    if !interactive && !token.is_empty() {
-        warn!("Warning: Providing token via command line may expose it in shell history");
+    // Determine auth method and get credentials
+    let auth_config = if interactive {
+        get_credentials_interactive()?
+    } else if let Some(token) = token {
+        // OAuth token authentication
+        if token.trim().is_empty() {
+            return Err(anyhow!("Token cannot be empty"));
+        }
+        warn!("Warning: Providing credentials via command line may expose them in shell history");
         warn!("Consider using --interactive mode for better security");
-    }
-
-    // Mask token in logs (only show first 8 characters)
-    let masked_token = mask_token(&token);
-    debug!("Token provided: {}", masked_token);
-
-    // Verify token if requested
-    if !no_verify {
-        info!("Verifying token with Put.io API...");
-        verify_token(&token).await?;
+        AuthConfig::with_token(token)
+    } else if let (Some(username), Some(password)) = (username, password) {
+        // App-specific password authentication
+        if username.trim().is_empty() {
+            return Err(anyhow!("Username cannot be empty"));
+        }
+        if password.trim().is_empty() {
+            return Err(anyhow!("Password cannot be empty"));
+        }
+        warn!("Warning: Providing credentials via command line may expose them in shell history");
+        warn!("Consider using --interactive mode for better security");
+        AuthConfig::with_app_password(username, password)
     } else {
-        warn!("Skipping token verification (--no-verify flag set)");
+        // No credentials provided, prompt interactively
+        get_credentials_interactive()?
+    };
+
+    // Mask credentials in logs
+    let masked_creds = mask_credentials(&auth_config);
+    debug!("Credentials provided: {}", masked_creds);
+
+    // Verify credentials if requested
+    if !no_verify {
+        info!("Verifying credentials with Put.io API...");
+        verify_credentials(&auth_config).await?;
+    } else {
+        warn!("Skipping credential verification (--no-verify flag set)");
     }
 
     // Determine config file path
@@ -64,10 +89,8 @@ pub async fn execute_login(
     // Load existing config or create a new one
     let mut config = load_or_create_config(&config_file_path)?;
 
-    // Update config with new token
-    config.auth = Some(AuthConfig {
-        token: token.clone(),
-    });
+    // Update config with new credentials
+    config.auth = Some(auth_config.clone());
 
     // Save config to file (with 0600 permissions on Unix)
     info!("Saving configuration...");
@@ -79,7 +102,7 @@ pub async fn execute_login(
 
     // Get and display account info if verification was performed
     if !no_verify {
-        display_account_info(&token).await?;
+        display_account_info_from_config(&auth_config).await?;
     }
 
     println!("\n✓ Successfully logged in!");
@@ -88,25 +111,33 @@ pub async fn execute_login(
     Ok(())
 }
 
-/// Get token from CLI argument or interactive prompt
-fn get_token(token: Option<String>, interactive: bool) -> Result<String> {
-    if let Some(t) = token {
-        if t.trim().is_empty() {
-            return Err(anyhow!("Token cannot be empty"));
-        }
-        Ok(t)
-    } else if interactive {
-        prompt_for_token()
-    } else {
-        // No token provided and not interactive, prompt anyway
-        prompt_for_token()
+/// Prompt user for credentials interactively
+fn get_credentials_interactive() -> Result<AuthConfig> {
+    println!("\nSelect authentication method:");
+    println!("1. OAuth Token (recommended)");
+    println!("2. App-Specific Password");
+    print!("Enter choice (1 or 2): ");
+    io::stdout().flush()?;
+
+    let mut choice = String::new();
+    io::stdin()
+        .read_line(&mut choice)
+        .context("Failed to read choice from stdin")?;
+
+    let choice = choice.trim();
+
+    match choice {
+        "1" => prompt_for_token(),
+        "2" => prompt_for_credentials(),
+        _ => Err(anyhow!("Invalid choice. Please enter 1 or 2.")),
     }
 }
 
-/// Prompt user for token interactively
-fn prompt_for_token() -> Result<String> {
-    println!("Please enter your Put.io OAuth token:");
+/// Prompt user for OAuth token interactively
+fn prompt_for_token() -> Result<AuthConfig> {
+    println!("\nPlease enter your Put.io OAuth token:");
     println!("(You can get your token from: https://app.put.io/settings/account)");
+    println!("(Or use 'putio-sync get-token' command for help)");
     print!("> ");
     io::stdout().flush()?;
 
@@ -121,29 +152,82 @@ fn prompt_for_token() -> Result<String> {
         return Err(anyhow!("Token cannot be empty"));
     }
 
-    Ok(token)
+    Ok(AuthConfig::with_token(token))
 }
 
-/// Mask token for logging (show only first 8 characters)
-fn mask_token(token: &str) -> String {
-    if token.len() <= 8 {
-        "*".repeat(token.len())
-    } else {
-        format!("{}...", &token[..8])
+/// Prompt user for username and password interactively
+fn prompt_for_credentials() -> Result<AuthConfig> {
+    println!("\nPlease enter your Put.io username or email:");
+    print!("> ");
+    io::stdout().flush()?;
+
+    let mut username = String::new();
+    io::stdin()
+        .read_line(&mut username)
+        .context("Failed to read username from stdin")?;
+
+    let username = username.trim().to_string();
+
+    if username.is_empty() {
+        return Err(anyhow!("Username cannot be empty"));
+    }
+
+    println!("\nPlease enter your app-specific password:");
+    println!("(Generate one at: https://app.put.io/settings/account)");
+    println!("(NOT your main Put.io password!)");
+    print!("> ");
+    io::stdout().flush()?;
+
+    let mut password = String::new();
+    io::stdin()
+        .read_line(&mut password)
+        .context("Failed to read password from stdin")?;
+
+    let password = password.trim().to_string();
+
+    if password.is_empty() {
+        return Err(anyhow!("Password cannot be empty"));
+    }
+
+    Ok(AuthConfig::with_app_password(username, password))
+}
+
+/// Mask credentials for logging
+fn mask_credentials(auth_config: &AuthConfig) -> String {
+    match auth_config.auth_method {
+        AuthMethod::Token => {
+            if let Some(token) = &auth_config.token {
+                if token.len() <= 8 {
+                    format!("Token: {}", "*".repeat(token.len()))
+                } else {
+                    format!("Token: {}...", &token[..8])
+                }
+            } else {
+                "Token: <none>".to_string()
+            }
+        }
+        AuthMethod::AppPassword => {
+            let username = auth_config
+                .username
+                .as_ref()
+                .map(|u| u.as_str())
+                .unwrap_or("<none>");
+            format!("Username: {}, Password: ********", username)
+        }
     }
 }
 
-/// Verify token against Put.io API
-async fn verify_token(token: &str) -> Result<()> {
-    let client = ApiClient::new(token.to_string());
+/// Verify credentials against Put.io API
+async fn verify_credentials(auth_config: &AuthConfig) -> Result<()> {
+    let client = ApiClient::from_auth_config(auth_config.clone());
 
     match client.verify_token().await {
         true => {
-            info!("✓ Token verified successfully");
+            info!("✓ Credentials verified successfully");
             Ok(())
         }
         false => Err(anyhow!(
-            "Token verification failed. Please check your token and try again."
+            "Credential verification failed. Please check your credentials and try again."
         )),
     }
 }
@@ -169,8 +253,8 @@ fn load_or_create_config(config_path: &PathBuf) -> Result<Config> {
 }
 
 /// Display account information
-async fn display_account_info(token: &str) -> Result<()> {
-    let client = ApiClient::new(token.to_string());
+async fn display_account_info_from_config(auth_config: &AuthConfig) -> Result<()> {
+    let client = ApiClient::from_auth_config(auth_config.clone());
 
     match client.get_account_info().await {
         Ok(info) => {
@@ -216,11 +300,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mask_token() {
-        assert_eq!(mask_token(""), "");
-        assert_eq!(mask_token("abc"), "***");
-        assert_eq!(mask_token("12345678"), "********");
-        assert_eq!(mask_token("1234567890abcdef"), "12345678...");
+    fn test_mask_credentials_token() {
+        let auth = AuthConfig::with_token("test_token_123".to_string());
+        let masked = mask_credentials(&auth);
+        assert!(masked.starts_with("Token: test_tok..."));
+    }
+
+    #[test]
+    fn test_mask_credentials_short_token() {
+        let auth = AuthConfig::with_token("abc".to_string());
+        let masked = mask_credentials(&auth);
+        assert_eq!(masked, "Token: ***");
+    }
+
+    #[test]
+    fn test_mask_credentials_app_password() {
+        let auth =
+            AuthConfig::with_app_password("user@example.com".to_string(), "password123".to_string());
+        let masked = mask_credentials(&auth);
+        assert_eq!(masked, "Username: user@example.com, Password: ********");
     }
 
     #[test]
@@ -232,25 +330,5 @@ mod tests {
         assert_eq!(format_bytes(1048576), "1.00 MB");
         assert_eq!(format_bytes(1073741824), "1.00 GB");
         assert_eq!(format_bytes(5368709120), "5.00 GB");
-    }
-
-    #[test]
-    fn test_get_token_with_value() {
-        let token = get_token(Some("test_token".to_string()), false);
-        assert!(token.is_ok());
-        assert_eq!(token.unwrap(), "test_token");
-    }
-
-    #[test]
-    fn test_get_token_empty() {
-        let token = get_token(Some("".to_string()), false);
-        assert!(token.is_err());
-        assert!(token.unwrap_err().to_string().contains("cannot be empty"));
-    }
-
-    #[test]
-    fn test_get_token_whitespace() {
-        let token = get_token(Some("   ".to_string()), false);
-        assert!(token.is_err());
     }
 }

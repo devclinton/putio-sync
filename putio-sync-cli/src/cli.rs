@@ -58,21 +58,62 @@ pub enum Commands {
             short = 't',
             long = "token",
             value_name = "TOKEN",
-            help = "Put.io OAuth token"
+            help = "Put.io OAuth token",
+            conflicts_with_all = ["username", "password"]
         )]
         token: Option<String>,
 
-        /// Prompt for token interactively
+        /// Put.io username or email
+        #[arg(
+            short = 'u',
+            long = "username",
+            value_name = "USERNAME",
+            help = "Put.io username or email (for app-specific password auth)",
+            requires = "password",
+            conflicts_with = "token"
+        )]
+        username: Option<String>,
+
+        /// App-specific password
+        #[arg(
+            short = 'p',
+            long = "password",
+            value_name = "PASSWORD",
+            help = "App-specific password (not your main password)",
+            requires = "username",
+            conflicts_with = "token"
+        )]
+        password: Option<String>,
+
+        /// Prompt for credentials interactively
         #[arg(
             long = "interactive",
-            help = "Prompt for token interactively",
-            conflicts_with = "token"
+            help = "Prompt for credentials interactively",
+            conflicts_with_all = ["token", "username", "password"]
         )]
         interactive: bool,
 
-        /// Skip token verification
-        #[arg(long = "no-verify", help = "Skip token verification before saving")]
+        /// Skip credential verification
+        #[arg(long = "no-verify", help = "Skip credential verification before saving")]
         no_verify: bool,
+    },
+
+    /// Get OAuth token from Put.io
+    #[command(about = "Helper command to obtain OAuth token from Put.io")]
+    GetToken {
+        /// Save token to config file
+        #[arg(
+            long = "save",
+            help = "Save token to config file after verification"
+        )]
+        save: bool,
+
+        /// Don't open browser automatically
+        #[arg(
+            long = "no-browser",
+            help = "Don't open browser automatically"
+        )]
+        no_browser: bool,
     },
 
     /// List files and folders from Put.io
@@ -221,11 +262,15 @@ mod tests {
         let cli = Cli::try_parse_from(["putio-sync", "login", "--token", "abc123"]).unwrap();
         if let Commands::Login {
             token,
+            username,
+            password,
             interactive,
             no_verify,
         } = cli.command
         {
             assert_eq!(token, Some("abc123".to_string()));
+            assert_eq!(username, None);
+            assert_eq!(password, None);
             assert!(!interactive);
             assert!(!no_verify);
         } else {
@@ -237,10 +282,16 @@ mod tests {
     fn test_login_interactive() {
         let cli = Cli::try_parse_from(["putio-sync", "login", "--interactive"]).unwrap();
         if let Commands::Login {
-            token, interactive, ..
+            token,
+            username,
+            password,
+            interactive,
+            ..
         } = cli.command
         {
             assert_eq!(token, None);
+            assert_eq!(username, None);
+            assert_eq!(password, None);
             assert!(interactive);
         } else {
             panic!("Expected Login command");
