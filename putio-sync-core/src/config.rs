@@ -25,19 +25,14 @@ pub struct Config {
 }
 
 /// Authentication method
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
 #[serde(rename_all = "PascalCase")]
 pub enum AuthMethod {
     /// OAuth token authentication (Bearer token)
+    #[default]
     Token,
     /// App-specific password authentication (Basic Auth)
     AppPassword,
-}
-
-impl Default for AuthMethod {
-    fn default() -> Self {
-        AuthMethod::Token
-    }
 }
 
 /// Authentication configuration

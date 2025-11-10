@@ -207,11 +207,7 @@ fn mask_credentials(auth_config: &AuthConfig) -> String {
             }
         }
         AuthMethod::AppPassword => {
-            let username = auth_config
-                .username
-                .as_ref()
-                .map(|u| u.as_str())
-                .unwrap_or("<none>");
+            let username = auth_config.username.as_deref().unwrap_or("<none>");
             format!("Username: {}, Password: ********", username)
         }
     }
