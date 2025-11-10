@@ -1,6 +1,8 @@
 //! HTTP client for Put.io API
 
+use crate::config::{AuthConfig, AuthMethod};
 use crate::error::{CoreError, CoreResult};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::{header, Client, Request, Response, StatusCode};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
@@ -19,14 +21,74 @@ const INITIAL_RETRY_DELAY_MS: u64 = 100;
 ///
 /// Provides HTTP client wrapper with authentication, retry logic,
 /// and request/response logging.
+///
+/// Supports both OAuth token authentication (Bearer token) and
+/// app-specific password authentication (HTTP Basic Auth).
 pub struct ApiClient {
     client: Client,
     pub(crate) base_url: String,
-    token: String,
+    auth_method: AuthMethod,
+    token: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
 }
 
 impl ApiClient {
-    /// Create a new API client with the given OAuth token
+    /// Create a new API client from an AuthConfig
+    ///
+    /// # Arguments
+    ///
+    /// * `auth_config` - Authentication configuration (token or credentials)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use putio_sync_core::api::ApiClient;
+    /// use putio_sync_core::config::AuthConfig;
+    ///
+    /// let auth = AuthConfig::with_token("my_oauth_token".to_string());
+    /// let client = ApiClient::from_auth_config(auth);
+    /// ```
+    pub fn from_auth_config(auth_config: AuthConfig) -> Self {
+        Self::from_auth_config_with_base_url(auth_config, DEFAULT_BASE_URL.to_string())
+    }
+
+    /// Create a new API client from an AuthConfig with a custom base URL
+    ///
+    /// # Arguments
+    ///
+    /// * `auth_config` - Authentication configuration (token or credentials)
+    /// * `base_url` - Base URL for the API (e.g., <https://api.put.io/v2>)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use putio_sync_core::api::ApiClient;
+    /// use putio_sync_core::config::AuthConfig;
+    ///
+    /// let auth = AuthConfig::with_token("my_oauth_token".to_string());
+    /// let client = ApiClient::from_auth_config_with_base_url(
+    ///     auth,
+    ///     "https://test.api.put.io/v2".to_string()
+    /// );
+    /// ```
+    pub fn from_auth_config_with_base_url(auth_config: AuthConfig, base_url: String) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("Failed to create HTTP client");
+
+        Self {
+            client,
+            base_url,
+            auth_method: auth_config.auth_method,
+            token: auth_config.token,
+            username: auth_config.username,
+            password: auth_config.password,
+        }
+    }
+
+    /// Create a new API client with OAuth token authentication
     ///
     /// # Arguments
     ///
@@ -43,9 +105,7 @@ impl ApiClient {
         Self::with_base_url(token, DEFAULT_BASE_URL.to_string())
     }
 
-    /// Create a new API client with a custom base URL
-    ///
-    /// Useful for testing or using alternative API endpoints.
+    /// Create a new API client with OAuth token and custom base URL
     ///
     /// # Arguments
     ///
@@ -71,7 +131,103 @@ impl ApiClient {
         Self {
             client,
             base_url,
-            token,
+            auth_method: AuthMethod::Token,
+            token: Some(token),
+            username: None,
+            password: None,
+        }
+    }
+
+    /// Create a new API client with app-specific password authentication
+    ///
+    /// # Arguments
+    ///
+    /// * `username` - Put.io username or email
+    /// * `password` - App-specific password
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use putio_sync_core::api::ApiClient;
+    ///
+    /// let client = ApiClient::with_credentials(
+    ///     "user@example.com".to_string(),
+    ///     "app_password".to_string()
+    /// );
+    /// ```
+    pub fn with_credentials(username: String, password: String) -> Self {
+        Self::with_credentials_and_base_url(username, password, DEFAULT_BASE_URL.to_string())
+    }
+
+    /// Create a new API client with app-specific password and custom base URL
+    ///
+    /// # Arguments
+    ///
+    /// * `username` - Put.io username or email
+    /// * `password` - App-specific password
+    /// * `base_url` - Base URL for the API (e.g., <https://api.put.io/v2>)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use putio_sync_core::api::ApiClient;
+    ///
+    /// let client = ApiClient::with_credentials_and_base_url(
+    ///     "user@example.com".to_string(),
+    ///     "app_password".to_string(),
+    ///     "https://test.api.put.io/v2".to_string()
+    /// );
+    /// ```
+    pub fn with_credentials_and_base_url(
+        username: String,
+        password: String,
+        base_url: String,
+    ) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("Failed to create HTTP client");
+
+        Self {
+            client,
+            base_url,
+            auth_method: AuthMethod::AppPassword,
+            token: None,
+            username: Some(username),
+            password: Some(password),
+        }
+    }
+
+    /// Generate the appropriate Authorization header based on auth method
+    ///
+    /// # Returns
+    ///
+    /// Authorization header value (either "Bearer <token>" or "Basic <base64>")
+    fn get_auth_header(&self) -> CoreResult<String> {
+        match self.auth_method {
+            AuthMethod::Token => {
+                let token = self.token.as_ref().ok_or_else(|| {
+                    CoreError::ConfigError("Token is required for Token authentication".to_string())
+                })?;
+                Ok(format!("Bearer {}", token))
+            }
+            AuthMethod::AppPassword => {
+                let username = self.username.as_ref().ok_or_else(|| {
+                    CoreError::ConfigError(
+                        "Username is required for AppPassword authentication".to_string(),
+                    )
+                })?;
+                let password = self.password.as_ref().ok_or_else(|| {
+                    CoreError::ConfigError(
+                        "Password is required for AppPassword authentication".to_string(),
+                    )
+                })?;
+
+                // Encode credentials as base64
+                let credentials = format!("{}:{}", username, password);
+                let encoded = STANDARD.encode(credentials.as_bytes());
+                Ok(format!("Basic {}", encoded))
+            }
         }
     }
 
@@ -88,10 +244,12 @@ impl ApiClient {
         let url = format!("{}{}", self.base_url, path);
         debug!("GET request to: {}", url);
 
+        let auth_header = self.get_auth_header()?;
+
         let request = self
             .client
             .get(&url)
-            .header(header::AUTHORIZATION, format!("Bearer {}", self.token))
+            .header(header::AUTHORIZATION, auth_header)
             .build()
             .map_err(CoreError::HttpError)?;
 
@@ -208,7 +366,10 @@ mod tests {
     async fn test_new_client() {
         let client = ApiClient::new("test_token".to_string());
         assert_eq!(client.base_url, DEFAULT_BASE_URL);
-        assert_eq!(client.token, "test_token");
+        assert_eq!(client.auth_method, AuthMethod::Token);
+        assert_eq!(client.token.as_ref().unwrap(), "test_token");
+        assert!(client.username.is_none());
+        assert!(client.password.is_none());
     }
 
     #[tokio::test]
@@ -216,7 +377,66 @@ mod tests {
         let custom_url = "https://custom.api.put.io/v2";
         let client = ApiClient::with_base_url("test_token".to_string(), custom_url.to_string());
         assert_eq!(client.base_url, custom_url);
-        assert_eq!(client.token, "test_token");
+        assert_eq!(client.auth_method, AuthMethod::Token);
+        assert_eq!(client.token.as_ref().unwrap(), "test_token");
+    }
+
+    #[tokio::test]
+    async fn test_with_credentials() {
+        let client = ApiClient::with_credentials(
+            "user@example.com".to_string(),
+            "app_password".to_string(),
+        );
+        assert_eq!(client.base_url, DEFAULT_BASE_URL);
+        assert_eq!(client.auth_method, AuthMethod::AppPassword);
+        assert_eq!(client.username.as_ref().unwrap(), "user@example.com");
+        assert_eq!(client.password.as_ref().unwrap(), "app_password");
+        assert!(client.token.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_from_auth_config_token() {
+        let auth = AuthConfig::with_token("test_token".to_string());
+        let client = ApiClient::from_auth_config(auth);
+        assert_eq!(client.base_url, DEFAULT_BASE_URL);
+        assert_eq!(client.auth_method, AuthMethod::Token);
+        assert_eq!(client.token.as_ref().unwrap(), "test_token");
+    }
+
+    #[tokio::test]
+    async fn test_from_auth_config_credentials() {
+        let auth = AuthConfig::with_app_password(
+            "user@example.com".to_string(),
+            "app_password".to_string(),
+        );
+        let client = ApiClient::from_auth_config(auth);
+        assert_eq!(client.base_url, DEFAULT_BASE_URL);
+        assert_eq!(client.auth_method, AuthMethod::AppPassword);
+        assert_eq!(client.username.as_ref().unwrap(), "user@example.com");
+        assert_eq!(client.password.as_ref().unwrap(), "app_password");
+    }
+
+    #[tokio::test]
+    async fn test_get_auth_header_token() {
+        let client = ApiClient::new("test_token".to_string());
+        let header = client.get_auth_header().unwrap();
+        assert_eq!(header, "Bearer test_token");
+    }
+
+    #[tokio::test]
+    async fn test_get_auth_header_credentials() {
+        let client =
+            ApiClient::with_credentials("user@example.com".to_string(), "password123".to_string());
+        let header = client.get_auth_header().unwrap();
+
+        // Verify Basic auth header format
+        assert!(header.starts_with("Basic "));
+
+        // Decode and verify
+        let encoded = header.strip_prefix("Basic ").unwrap();
+        let decoded = STANDARD.decode(encoded).unwrap();
+        let credentials = String::from_utf8(decoded).unwrap();
+        assert_eq!(credentials, "user@example.com:password123");
     }
 
     #[tokio::test]
@@ -340,6 +560,43 @@ mod tests {
 
         let response: CoreResult<TestResponse> = client.get("/test").await;
         assert!(response.is_err());
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_successful_request_with_basic_auth() {
+        let mut server = setup_mock_server().await;
+
+        // Encode username:password as base64
+        let credentials = "user@example.com:app_password";
+        let encoded = STANDARD.encode(credentials.as_bytes());
+        let expected_auth = format!("Basic {}", encoded);
+
+        let mock = server
+            .mock("GET", "/test")
+            .match_header("authorization", expected_auth.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status": "ok"}"#)
+            .create_async()
+            .await;
+
+        let client = ApiClient::with_credentials_and_base_url(
+            "user@example.com".to_string(),
+            "app_password".to_string(),
+            server.url(),
+        );
+
+        #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
+        struct TestResponse {
+            status: String,
+        }
+
+        let response: CoreResult<TestResponse> = client.get("/test").await;
+        assert!(response.is_ok());
+        assert_eq!(response.unwrap().status, "ok");
 
         mock.assert_async().await;
     }

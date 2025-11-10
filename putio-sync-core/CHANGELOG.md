@@ -23,7 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default values for all config options
 - Builder pattern for config creation with fluent API
 - Put.io API client with reqwest HTTP client
+- Multi-method authentication support (OAuth token and app-specific password)
 - OAuth2 token authentication via Bearer token
+- App-specific password authentication via HTTP Basic Auth
+- Flexible authentication configuration with AuthMethod enum
+- Dynamic auth header generation based on auth method
+- Base64 encoding for HTTP Basic Auth credentials
+- Multiple API client constructors (from_auth_config, with_token, with_credentials)
+- Backward compatible authentication (existing token auth continues to work)
 - Request retry with exponential backoff (up to 3 attempts)
 - Request/response logging with tracing
 - Mock server tests for API client reliability
@@ -80,9 +87,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `#![warn(missing_docs)]` lint enabled
 
 ### Testing
-- Comprehensive unit test coverage (61 tests, 80%+ coverage goal)
+- Comprehensive unit test coverage (76 tests, 80%+ coverage goal)
 - Unit tests for all config operations (save, load, validate, builder)
+- Unit tests for multi-method authentication (token and credentials)
+- Unit tests for auth header generation (Bearer and Basic)
 - Unit tests for API client with mocked HTTP server (mockito)
+- Unit tests for both authentication methods with mock server
 - Unit tests for error handling and type conversions
 - Unit tests for filtering and sorting logic
 - Unit tests for path resolution with mock API responses
