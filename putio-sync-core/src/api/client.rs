@@ -383,10 +383,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_with_credentials() {
-        let client = ApiClient::with_credentials(
-            "user@example.com".to_string(),
-            "app_password".to_string(),
-        );
+        let client =
+            ApiClient::with_credentials("user@example.com".to_string(), "app_password".to_string());
         assert_eq!(client.base_url, DEFAULT_BASE_URL);
         assert_eq!(client.auth_method, AuthMethod::AppPassword);
         assert_eq!(client.username.as_ref().unwrap(), "user@example.com");

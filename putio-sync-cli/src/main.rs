@@ -37,8 +37,15 @@ async fn main() {
             interactive,
             no_verify,
         } => {
-            commands::execute_login(token, username, password, interactive, no_verify, args.config)
-                .await
+            commands::execute_login(
+                token,
+                username,
+                password,
+                interactive,
+                no_verify,
+                args.config,
+            )
+            .await
         }
         Commands::GetToken { save, no_browser } => {
             commands::execute_get_token(save, no_browser, args.config).await
