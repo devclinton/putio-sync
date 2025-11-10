@@ -13,6 +13,8 @@ async fn test_login_no_verify() {
     // Execute login with --no-verify flag
     let result = execute_login(
         Some("test_token_123".to_string()),
+        None, // username
+        None, // password
         false,
         true, // no_verify
         Some(config_path.clone()),
@@ -28,7 +30,10 @@ async fn test_login_no_verify() {
     // Load config and verify token was saved
     let config = Config::load(&config_path).unwrap();
     assert!(config.auth.is_some());
-    assert_eq!(config.auth.unwrap().token, "test_token_123");
+    assert_eq!(
+        config.auth.unwrap().token,
+        Some("test_token_123".to_string())
+    );
 
     // Clean up
     temp_dir.close().unwrap();
@@ -40,7 +45,15 @@ async fn test_login_empty_token() {
     let config_path = temp_dir.path().join("config.toml");
 
     // Execute login with empty token
-    let result = execute_login(Some("".to_string()), false, true, Some(config_path.clone())).await;
+    let result = execute_login(
+        Some("".to_string()),
+        None,
+        None,
+        false,
+        true,
+        Some(config_path.clone()),
+    )
+    .await;
 
     // Should fail
     assert!(result.is_err(), "Login should fail with empty token");
@@ -62,6 +75,8 @@ async fn test_login_updates_existing_config() {
     // Login with new token (no verify)
     let result = execute_login(
         Some("new_token_456".to_string()),
+        None,
+        None,
         false,
         true,
         Some(config_path.clone()),
@@ -73,7 +88,10 @@ async fn test_login_updates_existing_config() {
     // Load config and verify token was updated but other settings preserved
     let config = Config::load(&config_path).unwrap();
     assert!(config.auth.is_some());
-    assert_eq!(config.auth.unwrap().token, "new_token_456");
+    assert_eq!(
+        config.auth.unwrap().token,
+        Some("new_token_456".to_string())
+    );
     assert_eq!(
         config.download.max_concurrent, 5,
         "Existing config values should be preserved"
@@ -94,6 +112,8 @@ async fn test_login_sets_secure_permissions() {
     // Execute login
     let result = execute_login(
         Some("test_token_789".to_string()),
+        None,
+        None,
         false,
         true,
         Some(config_path.clone()),
@@ -127,6 +147,8 @@ async fn test_login_creates_nested_directories() {
     // Execute login
     let result = execute_login(
         Some("test_token_nested".to_string()),
+        None,
+        None,
         false,
         true,
         Some(config_path.clone()),

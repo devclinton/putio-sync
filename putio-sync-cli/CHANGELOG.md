@@ -12,15 +12,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Command-line argument parsing with clap
 - Global options: config path, verbosity, quiet mode
 - Login command with token and interactive options
-- Login command for OAuth token management
-  - Interactive and non-interactive modes
+- Login command with multi-method authentication support
+  - OAuth token authentication (--token flag)
+  - App-specific password authentication (--username and --password flags)
+  - Interactive mode with authentication method selection
+  - Automatic method detection based on provided flags
   - Token verification against Put.io API
+  - Credentials verification for both auth methods
   - Automatic config file creation and updates
   - Secure file permissions for config file (0600)
-  - Token masking in logs
-  - Security warnings for CLI token usage
+  - Credential masking in logs (tokens and passwords)
+  - Security warnings for CLI credential usage
   - Account information display after successful login
   - Integration tests for login functionality
+- Get-Token command for easy OAuth token acquisition
+  - Step-by-step instructions for obtaining OAuth token
+  - Automatic browser opening to Put.io settings page
+  - Optional --no-browser flag to skip browser opening
+  - Token verification before saving
+  - Optional --save flag to automatically save token to config
+  - Interactive token input with verification
+  - Account information display after verification
 - List command for browsing Put.io files and folders
   - Support for listing by ID or path
   - Recursive listing option for deep folder traversal
@@ -71,7 +83,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation builds with zero warnings
 
 ### Testing
-- Comprehensive unit test coverage (27 tests, 70%+ coverage goal)
+- Comprehensive unit test coverage (31 tests, 70%+ coverage goal)
+- Unit tests for multi-method authentication (token and credentials)
+- Unit tests for credential masking logic
 - Unit tests for all output formatters (table, json, csv, tree)
 - Unit tests for CLI parsing and argument handling
 - Unit tests for logging verbosity mapping
@@ -79,3 +93,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integration tests for login command workflow
 - All tests passing with zero warnings
 - Test coverage for edge cases (empty inputs, special characters)
+
+### Dependencies
+- Added `open = "5.0"` for browser opening in get-token command
