@@ -94,7 +94,10 @@ pub enum Commands {
         interactive: bool,
 
         /// Skip credential verification
-        #[arg(long = "no-verify", help = "Skip credential verification before saving")]
+        #[arg(
+            long = "no-verify",
+            help = "Skip credential verification before saving"
+        )]
         no_verify: bool,
     },
 
@@ -102,17 +105,11 @@ pub enum Commands {
     #[command(about = "Helper command to obtain OAuth token from Put.io")]
     GetToken {
         /// Save token to config file
-        #[arg(
-            long = "save",
-            help = "Save token to config file after verification"
-        )]
+        #[arg(long = "save", help = "Save token to config file after verification")]
         save: bool,
 
         /// Don't open browser automatically
-        #[arg(
-            long = "no-browser",
-            help = "Don't open browser automatically"
-        )]
+        #[arg(long = "no-browser", help = "Don't open browser automatically")]
         no_browser: bool,
     },
 

@@ -315,8 +315,10 @@ mod tests {
 
     #[test]
     fn test_mask_credentials_app_password() {
-        let auth =
-            AuthConfig::with_app_password("user@example.com".to_string(), "password123".to_string());
+        let auth = AuthConfig::with_app_password(
+            "user@example.com".to_string(),
+            "password123".to_string(),
+        );
         let masked = mask_credentials(&auth);
         assert_eq!(masked, "Username: user@example.com, Password: ********");
     }
