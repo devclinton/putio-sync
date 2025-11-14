@@ -42,6 +42,24 @@ atty = "0.2"
 # Browser opening
 open = "5.0"
 
+# OAuth 2.0
+oauth2 = "4.4"
+
+# Environment variables
+dotenvy = "0.15"
+
+# HTTP server for OAuth callback
+axum = "0.7"
+
+# URL parsing
+url = "2.5"
+
+# HTTP client
+reqwest = { workspace = true }
+
+# URL encoding
+urlencoding = "2.1"
+
 [dev-dependencies]
 tempfile = "3.8"
 assert_cmd = "2.0"

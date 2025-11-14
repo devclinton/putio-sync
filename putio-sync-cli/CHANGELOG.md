@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2025-11-14
+
+### Fixed
+- OAuth token exchange now uses GET request instead of POST to match Put.io's non-standard implementation
+- Updated AccountInfo model to match actual Put.io API response format (nested disk object)
+- Fixed token verification and account info retrieval
+
 ### Added
+- Better error logging for OAuth token exchange failures
+- Support for urlencoding in OAuth parameters
 - Initial crate structure
 - Command-line argument parsing with clap
 - Global options: config path, verbosity, quiet mode
