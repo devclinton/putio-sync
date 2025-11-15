@@ -17,7 +17,7 @@ impl ApiClient {
     /// let client = ApiClient::new("my_token".to_string());
     /// let info = client.get_account_info().await.unwrap();
     /// println!("Username: {}", info.username);
-    /// println!("Disk used: {} bytes", info.disk_used);
+    /// println!("Disk used: {} bytes", info.disk.used);
     /// # }
     /// ```
     pub async fn get_account_info(&self) -> CoreResult<AccountInfo> {
@@ -70,9 +70,11 @@ mod tests {
                         "username": "testuser",
                         "mail": "test@example.com",
                         "account_active": true,
-                        "disk_quota": 10737418240,
-                        "disk_used": 5368709120,
-                        "disk_available": 5368709120,
+                        "disk": {
+                            "size": 10737418240,
+                            "used": 5368709120,
+                            "avail": 5368709120
+                        },
                         "can_create_sub_account": false
                     }
                 }"#,
@@ -89,7 +91,7 @@ mod tests {
         assert_eq!(info.username, "testuser");
         assert_eq!(info.mail, "test@example.com");
         assert!(info.account_active);
-        assert_eq!(info.disk_quota, 10737418240);
+        assert_eq!(info.disk.size, 10737418240);
 
         mock.assert_async().await;
     }
@@ -110,9 +112,11 @@ mod tests {
                         "username": "testuser",
                         "mail": "test@example.com",
                         "account_active": true,
-                        "disk_quota": 10737418240,
-                        "disk_used": 5368709120,
-                        "disk_available": 5368709120,
+                        "disk": {
+                            "size": 10737418240,
+                            "used": 5368709120,
+                            "avail": 5368709120
+                        },
                         "can_create_sub_account": false
                     }
                 }"#,

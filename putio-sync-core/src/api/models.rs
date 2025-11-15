@@ -141,6 +141,17 @@ pub struct TransferResponse {
     pub transfer: Transfer,
 }
 
+/// Disk usage information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiskInfo {
+    /// Total disk quota in bytes
+    pub size: i64,
+    /// Disk usage in bytes
+    pub used: i64,
+    /// Available disk space in bytes
+    pub avail: i64,
+}
+
 /// Account information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountInfo {
@@ -152,12 +163,8 @@ pub struct AccountInfo {
     pub mail: String,
     /// Account type
     pub account_active: bool,
-    /// Disk quota in bytes
-    pub disk_quota: i64,
-    /// Disk usage in bytes
-    pub disk_used: i64,
-    /// Available disk space in bytes
-    pub disk_available: i64,
+    /// Disk information
+    pub disk: DiskInfo,
     /// Whether user can create subusers
     #[serde(default)]
     pub can_create_sub_account: bool,
@@ -277,9 +284,11 @@ mod tests {
             "username": "testuser",
             "mail": "test@example.com",
             "account_active": true,
-            "disk_quota": 10737418240,
-            "disk_used": 5368709120,
-            "disk_available": 5368709120,
+            "disk": {
+                "size": 10737418240,
+                "used": 5368709120,
+                "avail": 5368709120
+            },
             "can_create_sub_account": false
         }"#;
 
@@ -288,6 +297,8 @@ mod tests {
         assert_eq!(info.username, "testuser");
         assert_eq!(info.mail, "test@example.com");
         assert!(info.account_active);
+        assert_eq!(info.disk.size, 10737418240);
+        assert_eq!(info.disk.used, 5368709120);
     }
 
     #[test]
@@ -299,9 +310,11 @@ mod tests {
                 "username": "testuser",
                 "mail": "test@example.com",
                 "account_active": true,
-                "disk_quota": 10737418240,
-                "disk_used": 5368709120,
-                "disk_available": 5368709120,
+                "disk": {
+                    "size": 10737418240,
+                    "used": 5368709120,
+                    "avail": 5368709120
+                },
                 "can_create_sub_account": false
             }
         }"#;

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2025-11-14
+
+### Fixed
+- Updated AccountInfo model to match actual Put.io API response format
+  - Changed from flat fields (disk_quota, disk_used, disk_available) to nested DiskInfo structure
+  - Matches Put.io's actual response: disk.size, disk.used, disk.avail
+- Updated all tests and documentation to use new AccountInfo structure
+
 ### Added
 - Initial crate structure
 - Structured logging using `tracing` crate

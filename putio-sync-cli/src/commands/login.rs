@@ -259,11 +259,11 @@ async fn display_account_info_from_config(auth_config: &AuthConfig) -> Result<()
             println!("  Email: {}", info.mail);
             println!(
                 "  Disk Usage: {} / {} ({:.1}% used)",
-                format_bytes(info.disk_used),
-                format_bytes(info.disk_quota),
-                (info.disk_used as f64 / info.disk_quota as f64) * 100.0
+                format_bytes(info.disk.used),
+                format_bytes(info.disk.size),
+                (info.disk.used as f64 / info.disk.size as f64) * 100.0
             );
-            println!("  Available: {}", format_bytes(info.disk_available));
+            println!("  Available: {}", format_bytes(info.disk.avail));
             Ok(())
         }
         Err(e) => {

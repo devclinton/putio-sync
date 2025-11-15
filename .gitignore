@@ -22,6 +22,7 @@ coverage/
 # Config files (may contain tokens)
 config.toml
 .putiosync/
+.env
 
 # Logs
 *.log
