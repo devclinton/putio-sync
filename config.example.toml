@@ -165,6 +165,37 @@ refresh_cycle = 60
 paths = []
 
 # ============================================================================
+# Notification Configuration
+# ============================================================================
+[notifications]
+# Enable/disable notifications
+# Default: false
+enabled = false
+
+# Notification backend to use
+# Options: "none", "webhook", "email"
+# - none: No notifications (default)
+# - webhook: Send HTTP POST requests to a webhook URL
+# - email: Send email notifications (not yet implemented)
+# Default: "none"
+backend = "none"
+
+# Webhook URL (required when backend = "webhook")
+# The webhook will receive a POST request with JSON payload containing:
+# - file_id: Put.io file ID
+# - filename: Name of the downloaded file
+# - file_size: Size in bytes
+# - local_path: Local path where file was saved
+# - duration_seconds: Download duration
+# - average_speed: Average download speed in bytes/sec
+# - completed_at: ISO 8601 timestamp
+# Example: "https://example.com/webhook/putio"
+# webhook_url = "https://your-webhook-url.com/notify"
+
+# Email address for notifications (when backend = "email", future)
+# email = "your.email@example.com"
+
+# ============================================================================
 # Database Configuration (Advanced)
 # ============================================================================
 # Database location (SQLite)

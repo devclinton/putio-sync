@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Webhook and notification support for download events
+  - Added `NotificationConfig` with support for multiple backends (webhook, email)
+  - Added `NotificationBackend` enum (none, webhook, email)
+  - Created `notification` module with `NotificationService`
+  - Implemented `DownloadCompletionEvent` for structured event data
+  - Webhook notifications send HTTP POST with JSON payload containing:
+    - file_id, filename, file_size, local_path
+    - duration_seconds, average_speed, completed_at timestamp
+  - Configurable webhook URL via `notifications.webhook_url`
+  - Email backend placeholder (not yet implemented)
+  - Comprehensive tests for notification service
+  - Updated example config with notification configuration
 - Download queue management system
   - Added `download_queue` table with support for priority-based ordering
   - Added `QueueItem` model and `QueueStatus` enum (pending, downloading, paused, completed, failed)
