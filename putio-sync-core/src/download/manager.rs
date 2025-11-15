@@ -177,6 +177,7 @@ impl DownloadManager {
             &target_path,
             Some(file.file_size),
             self.config.buffer_size_mb,
+            self.config.bandwidth_limit_bytes_per_sec,
         )
         .await
         {

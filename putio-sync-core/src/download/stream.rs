@@ -3,12 +3,54 @@
 use crate::api::ApiClient;
 use crate::error::{CoreError, CoreResult};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tracing::{debug, info, warn};
 
 /// Default buffer size for streaming downloads (16MB)
 pub const DEFAULT_BUFFER_SIZE: usize = 16 * 1024 * 1024;
+
+/// Simple rate limiter for bandwidth control
+struct RateLimiter {
+    /// Maximum bytes per second
+    bytes_per_sec: u64,
+    /// Last reset time
+    last_reset: Instant,
+    /// Bytes consumed in current window
+    bytes_consumed: u64,
+}
+
+impl RateLimiter {
+    /// Create a new rate limiter with specified bytes per second
+    fn new(bytes_per_sec: u64) -> Self {
+        Self {
+            bytes_per_sec,
+            last_reset: Instant::now(),
+            bytes_consumed: 0,
+        }
+    }
+
+    /// Wait if necessary to maintain the rate limit
+    async fn consume(&mut self, bytes: usize) {
+        let bytes = bytes as u64;
+        self.bytes_consumed += bytes;
+
+        let elapsed = self.last_reset.elapsed();
+        let expected_duration = Duration::from_secs_f64(self.bytes_consumed as f64 / self.bytes_per_sec as f64);
+
+        if expected_duration > elapsed {
+            let sleep_duration = expected_duration - elapsed;
+            tokio::time::sleep(sleep_duration).await;
+        }
+
+        // Reset counter every second
+        if elapsed >= Duration::from_secs(1) {
+            self.last_reset = Instant::now();
+            self.bytes_consumed = 0;
+        }
+    }
+}
 
 /// Result of a streaming download operation
 #[derive(Debug)]
@@ -35,6 +77,7 @@ pub struct StreamDownloadResult {
 /// * `target_path` - Final destination path
 /// * `expected_size` - Expected file size in bytes (for validation)
 /// * `buffer_size_mb` - Buffer size in megabytes
+/// * `bandwidth_limit_bytes_per_sec` - Optional bandwidth limit in bytes per second
 ///
 /// # Returns
 ///
@@ -45,6 +88,7 @@ pub async fn stream_download(
     target_path: &Path,
     expected_size: Option<u64>,
     buffer_size_mb: usize,
+    bandwidth_limit_bytes_per_sec: Option<u64>,
 ) -> CoreResult<StreamDownloadResult> {
     let buffer_size = buffer_size_mb * 1024 * 1024;
 
@@ -100,6 +144,9 @@ pub async fn stream_download(
     let mut writer = BufWriter::with_capacity(buffer_size, file);
     let mut bytes_downloaded = 0u64;
 
+    // Create rate limiter if bandwidth limit is set
+    let mut rate_limiter = bandwidth_limit_bytes_per_sec.map(RateLimiter::new);
+
     // Stream the response body
     let mut stream = response.bytes_stream();
 
@@ -107,6 +154,11 @@ pub async fn stream_download(
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| CoreError::HttpError(e))?;
+
+        // Apply rate limiting if enabled
+        if let Some(ref mut limiter) = rate_limiter {
+            limiter.consume(chunk.len()).await;
+        }
 
         writer.write_all(&chunk).await.map_err(|e| {
             CoreError::IoError(std::io::Error::new(
@@ -239,6 +291,8 @@ pub fn get_original_path(partial_path: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mockito::Server;
+    use tempfile::TempDir;
 
     #[test]
     fn test_create_temp_download_path() {
@@ -306,7 +360,7 @@ mod tests {
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/test-file.txt", server.url());
 
-        let result = stream_download(&client, &url, &target_path, Some(13), 1)
+        let result = stream_download(&client, &url, &target_path, Some(13), 1, None)
             .await
             .unwrap();
 
@@ -342,7 +396,7 @@ mod tests {
         let url = format!("{}/test-file.txt", server.url());
 
         // Expect 10 bytes but will only get 5
-        let result = stream_download(&client, &url, &target_path, Some(10), 1).await;
+        let result = stream_download(&client, &url, &target_path, Some(10), 1, None).await;
 
         assert!(result.is_err());
         assert!(!target_path.exists()); // Should clean up on failure
@@ -367,8 +421,60 @@ mod tests {
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/not-found.txt", server.url());
 
-        let result = stream_download(&client, &url, &target_path, None, 1).await;
+        let result = stream_download(&client, &url, &target_path, None, 1, None).await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter() {
+        let mut limiter = RateLimiter::new(1024); // 1KB/sec
+
+        let start = Instant::now();
+
+        // Consume 2048 bytes (2 seconds worth at 1024 bytes/sec)
+        limiter.consume(2048).await;
+        let elapsed = start.elapsed();
+
+        // Should take approximately 2 seconds
+        // Allow some tolerance for overhead
+        assert!(elapsed >= Duration::from_millis(1800));
+        assert!(elapsed < Duration::from_secs(3));
+    }
+
+    #[tokio::test]
+    async fn test_stream_download_with_bandwidth_limit() {
+        let temp_dir = TempDir::new().unwrap();
+        let target_path = temp_dir.path().join("limited-file.txt");
+
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/limited-file.txt")
+            .with_status(200)
+            .with_body("x".repeat(2048)) // 2KB file
+            .create_async()
+            .await;
+
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        let url = format!("{}/limited-file.txt", server.url());
+
+        let start = Instant::now();
+
+        // Set bandwidth limit to 1024 bytes/sec
+        let result = stream_download(&client, &url, &target_path, Some(2048), 1, Some(1024))
+            .await
+            .unwrap();
+
+        let elapsed = start.elapsed();
+
+        assert!(result.success);
+        assert_eq!(result.bytes_downloaded, 2048);
+
+        // Download should take approximately 2 seconds (2048 bytes at 1024 bytes/sec)
+        // Allow some tolerance for overhead
+        assert!(elapsed >= Duration::from_millis(1500));
+        assert!(elapsed < Duration::from_secs(4));
+
+        mock.assert_async().await;
     }
 }
