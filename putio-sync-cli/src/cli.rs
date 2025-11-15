@@ -374,6 +374,42 @@ pub enum Commands {
         )]
         yes: bool,
     },
+
+    /// Display download statistics
+    Stat {
+        /// Show breakdown by file extension
+        #[arg(
+            long = "by-extension",
+            help = "Show breakdown by file extension"
+        )]
+        by_extension: bool,
+
+        /// Show stats since date
+        #[arg(
+            long = "since",
+            value_name = "DATE",
+            help = "Show stats since date (e.g., \"2025-01-01\")"
+        )]
+        since: Option<String>,
+
+        /// Show stats until date
+        #[arg(
+            long = "until",
+            value_name = "DATE",
+            help = "Show stats until date"
+        )]
+        until: Option<String>,
+
+        /// Output format
+        #[arg(
+            short = 'o',
+            long = "output",
+            value_name = "FORMAT",
+            default_value = "table",
+            help = "Output format (table, json)"
+        )]
+        output: String,
+    },
 }
 
 impl Cli {

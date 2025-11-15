@@ -139,6 +139,21 @@ async fn main() {
             )
             .await
         }
+        Commands::Stat {
+            by_extension,
+            since,
+            until,
+            output,
+        } => {
+            commands::execute_stat(
+                by_extension,
+                since,
+                until,
+                output,
+                args.config,
+            )
+            .await
+        }
     };
 
     // Handle command execution errors
