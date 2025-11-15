@@ -35,7 +35,7 @@ pub mod prelude {
     };
     pub use crate::db::{
         models::{ChunkStatus, Download, DownloadChunk, DownloadHistory, DownloadStats, DownloadStatus, HistoryAction},
-        Database,
+        Database, DownloadRepository, ExtensionStats, HistoryRepository, StatsRepository,
     };
     pub use crate::error::{CoreError, CoreResult};
     pub use crate::filter::{parse_size, sort_files, FileFilter, FileTypeFilter, SortField};
