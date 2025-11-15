@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resume control and skip-existing functionality
 - Delete-after-download option
 - Multiple progress style options (per-file, overall, individual, rotating, none)
+- Progress bars with multiple display styles
+- Per-file and overall progress tracking
+- Speed and ETA display
+- Auto-detection of non-interactive terminals
+- Integration with core library's progress callback
 
 ## [0.1.1] - 2025-11-14
 
