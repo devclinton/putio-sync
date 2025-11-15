@@ -347,9 +347,25 @@ fn determine_config_path(config_path: Option<PathBuf>) -> Result<PathBuf> {
 
 /// Load existing config or create a new default config
 fn load_or_create_config(config_path: &PathBuf) -> Result<Config> {
+    // Ensure parent directory exists
+    if let Some(parent) = config_path.parent() {
+        if !parent.exists() {
+            debug!("Creating parent directory: {}", parent.display());
+            std::fs::create_dir_all(parent)
+                .context("Failed to create config directory")?;
+        }
+    }
+
     if config_path.exists() {
         debug!("Loading existing config from: {}", config_path.display());
-        Config::load(config_path).context("Failed to load existing config")
+        match Config::load(config_path) {
+            Ok(config) => Ok(config),
+            Err(e) => {
+                debug!("Failed to load existing config: {}, using default config", e);
+                // If config is corrupted or empty, use default
+                Ok(Config::default())
+            }
+        }
     } else {
         debug!("Creating new config (file does not exist)");
         Ok(Config::default())
