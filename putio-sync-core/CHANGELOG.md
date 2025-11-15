@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### CI/CD
+- Enhanced CI workflow with documentation checks
+- Explicit doc test execution to ensure all examples compile
+- Documentation build verification in CI
+- All features tested across Linux, macOS, and Windows
+- Fixed all failing doctests
+
 ### Documentation
 - Comprehensive user documentation in README
 - Quick Start guide with authentication and basic usage
