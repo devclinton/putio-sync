@@ -33,12 +33,15 @@ pub mod fs;
 /// Structured logging infrastructure
 pub mod logging;
 
+/// Notification system for download events
+pub mod notification;
+
 /// Re-export commonly used types
 pub mod prelude {
     pub use crate::api::ApiClient;
     pub use crate::config::{
-        AuthConfig, Config, ConfigBuilder, DownloadConfig, ProgressStyle, SortOrder, SyncConfig,
-        WatchConfig,
+        AuthConfig, Config, ConfigBuilder, DownloadConfig, NotificationBackend, NotificationConfig,
+        ProgressStyle, SortOrder, SyncConfig, WatchConfig,
     };
     pub use crate::db::{
         models::{ChunkStatus, Download, DownloadChunk, DownloadHistory, DownloadStats, DownloadStatus, HistoryAction},
@@ -47,4 +50,5 @@ pub mod prelude {
     pub use crate::error::{CoreError, CoreResult};
     pub use crate::filter::{parse_size, sort_files, FileFilter, FileTypeFilter, SortField};
     pub use crate::logging;
+    pub use crate::notification::{DownloadCompletionEvent, NotificationService};
 }

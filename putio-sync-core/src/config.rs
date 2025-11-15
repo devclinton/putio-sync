@@ -22,6 +22,9 @@ pub struct Config {
     /// Watch configuration
     #[serde(default)]
     pub watch: WatchConfig,
+    /// Notification configuration
+    #[serde(default)]
+    pub notifications: NotificationConfig,
 }
 
 /// Authentication method
@@ -197,6 +200,34 @@ pub struct WatchConfig {
     pub paths: Vec<String>,
 }
 
+/// Notification backend type
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NotificationBackend {
+    /// No notifications
+    #[default]
+    None,
+    /// Webhook notifications (HTTP POST)
+    Webhook,
+    /// Email notifications (future)
+    Email,
+}
+
+/// Notification configuration
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NotificationConfig {
+    /// Enable notifications
+    pub enabled: bool,
+    /// Notification backend to use
+    pub backend: NotificationBackend,
+    /// Webhook URL (used when backend is Webhook)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook_url: Option<String>,
+    /// Email address (used when backend is Email, future)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+}
+
 impl Default for SyncConfig {
     fn default() -> Self {
         SyncConfig {
@@ -235,6 +266,17 @@ impl Default for WatchConfig {
         WatchConfig {
             refresh_cycle: 60, // 60 seconds
             paths: vec![],
+        }
+    }
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        NotificationConfig {
+            enabled: false,
+            backend: NotificationBackend::None,
+            webhook_url: None,
+            email: None,
         }
     }
 }
@@ -344,6 +386,7 @@ impl Config {
     ///         refresh_cycle: 60,
     ///         paths: vec![],
     ///     },
+    ///     notifications: NotificationConfig::default(),
     /// };
     /// config.save(&PathBuf::from("config.toml")).unwrap();
     /// ```
@@ -654,6 +697,7 @@ impl ConfigBuilder {
             sync: self.sync,
             download: self.download,
             watch: self.watch,
+            notifications: NotificationConfig::default(),
         }
     }
 }
@@ -693,6 +737,7 @@ mod tests {
                 refresh_cycle: 60,
                 paths: vec!["/remote/movies".to_string()],
             },
+            notifications: NotificationConfig::default(),
         }
     }
 
