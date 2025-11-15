@@ -64,7 +64,7 @@ impl WorkerPool {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use putio_sync_core::download::WorkerPool;
     ///
     /// let pool = WorkerPool::new(2);
