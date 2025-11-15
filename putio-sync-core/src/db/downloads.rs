@@ -56,6 +56,24 @@ impl<'a> DownloadRepository<'a> {
         Ok(result.last_insert_rowid())
     }
 
+    /// Find a download by file ID only
+    pub async fn find_by_file_id(&self, file_id: i64) -> CoreResult<Option<Download>> {
+        let download = sqlx::query_as::<_, Download>(
+            r#"
+            SELECT * FROM downloads
+            WHERE file_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(file_id)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| CoreError::DatabaseError(format!("Failed to find download: {}", e)))?;
+
+        Ok(download)
+    }
+
     /// Find a download by file ID, filename, and size
     pub async fn find_by_file(
         &self,
@@ -192,11 +210,11 @@ impl<'a> DownloadRepository<'a> {
         Ok(chunks)
     }
 
-    /// Update chunk status
+    /// Update chunk status by chunk ID
     pub async fn update_chunk_status(
         &self,
         chunk_id: i64,
-        status: super::super::db::models::ChunkStatus,
+        status: super::models::ChunkStatus,
     ) -> CoreResult<()> {
         debug!("Updating chunk {} status to {}", chunk_id, status);
 
@@ -207,6 +225,34 @@ impl<'a> DownloadRepository<'a> {
         )
         .bind(status.to_string())
         .bind(chunk_id)
+        .execute(self.pool)
+        .await
+        .map_err(|e| CoreError::DatabaseError(format!("Failed to update chunk status: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Update chunk status by download ID and chunk number
+    pub async fn update_chunk_status_by_number(
+        &self,
+        download_id: i64,
+        chunk_number: i64,
+        status: super::models::ChunkStatus,
+    ) -> CoreResult<()> {
+        debug!(
+            "Updating chunk {} for download {} status to {}",
+            chunk_number, download_id, status
+        );
+
+        sqlx::query(
+            r#"
+            UPDATE download_chunks SET status = ?
+            WHERE download_id = ? AND chunk_index = ?
+            "#,
+        )
+        .bind(status.to_string())
+        .bind(download_id)
+        .bind(chunk_number)
         .execute(self.pool)
         .await
         .map_err(|e| CoreError::DatabaseError(format!("Failed to update chunk status: {}", e)))?;

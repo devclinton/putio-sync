@@ -49,7 +49,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Atomic file rename on completion
   - File size validation and integrity checks
   - Automatic cleanup on failure
-- Comprehensive unit tests for all modules (87 tests total, all passing)
+- Progress tracking system
+  - Per-file progress with bytes downloaded, percentage, speed, and ETA
+  - Overall progress tracking for multiple downloads
+  - Moving average speed calculation for accurate estimates
+  - Customizable progress callback interface
+  - Real-time progress updates during downloads
+- Chunked downloads for large files
+  - HTTP Range request support for partial downloads
+  - Configurable chunk size (default: 10MB)
+  - Automatic chunking for files > 50MB
+  - Server capability detection for range requests
+  - Fallback to streaming for servers without range support
+- Resumable downloads
+  - Resume detection for partial downloads
+  - Chunk completion tracking in database
+  - Automatic recovery from interrupted downloads
+  - Byte-level resume accuracy
+  - Support for resuming multi-chunk downloads
+- Remote file deletion handling
+  - 404 error detection during downloads
+  - Automatic cleanup of partial files on 404
+  - Database status updates for failed downloads
+  - Graceful handling of files deleted from Put.io
+- Download manager orchestration
+  - Unified interface for all download operations
+  - Automatic selection of download strategy (streaming/chunked/resume)
+  - Integration with database for state persistence
+  - Support for custom progress callbacks
+  - Configurable download options (workers, buffer size, skip existing, etc.)
+  - HTTP client access for direct operations
+- Repository helper methods
+  - find_by_file_id for simpler file lookups
+  - update_chunk_status_by_number for chunk tracking
+- API client enhancements
+  - http_client() method for accessing underlying HTTP client
+- Comprehensive unit tests for all modules (158 tests total, all passing)
 
 ## [0.1.1] - 2025-11-14
 

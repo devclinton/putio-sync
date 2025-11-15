@@ -85,6 +85,21 @@ impl Database {
         &self.pool
     }
 
+    /// Get a download repository
+    pub fn downloads(&self) -> DownloadRepository {
+        DownloadRepository::new(&self.pool)
+    }
+
+    /// Get a history repository
+    pub fn history(&self) -> HistoryRepository {
+        HistoryRepository::new(&self.pool)
+    }
+
+    /// Get a stats repository
+    pub fn stats(&self) -> StatsRepository {
+        StatsRepository::new(&self.pool)
+    }
+
     /// Run database migrations
     ///
     /// This creates all necessary tables if they don't exist.

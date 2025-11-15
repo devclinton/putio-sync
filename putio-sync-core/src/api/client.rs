@@ -198,6 +198,23 @@ impl ApiClient {
         }
     }
 
+    /// Get a reference to the underlying HTTP client
+    ///
+    /// This can be used for direct HTTP operations like downloads
+    /// that need the raw client.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use putio_sync_core::api::ApiClient;
+    ///
+    /// let client = ApiClient::new("my_oauth_token".to_string());
+    /// let http_client = client.http_client();
+    /// ```
+    pub fn http_client(&self) -> &Client {
+        &self.client
+    }
+
     /// Generate the appropriate Authorization header based on auth method
     ///
     /// # Returns

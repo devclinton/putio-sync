@@ -69,7 +69,7 @@ async fn test_login_updates_existing_config() {
 
     // Create initial config
     let mut initial_config = Config::default();
-    initial_config.download.max_concurrent = 5; // Set a custom value
+    initial_config.download.max_concurrent = Some(5); // Set a custom value
     initial_config.save(&config_path).unwrap();
 
     // Login with new token (no verify)
@@ -93,7 +93,7 @@ async fn test_login_updates_existing_config() {
         Some("new_token_456".to_string())
     );
     assert_eq!(
-        config.download.max_concurrent, 5,
+        config.download.max_concurrent, Some(5),
         "Existing config values should be preserved"
     );
 
