@@ -294,6 +294,7 @@ mod tests {
         let mut server = Server::new_async().await;
         let mock = server
             .mock("GET", "/test-file.txt")
+            .match_header("authorization", "Bearer test_token")
             .with_status(200)
             .with_body("Hello, World!")
             .create_async()
@@ -302,7 +303,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let target_path = temp_dir.path().join("downloaded.txt");
 
-        let client = Client::new();
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/test-file.txt", server.url());
 
         let result = stream_download(&client, &url, &target_path, Some(13), 1)
@@ -328,6 +329,7 @@ mod tests {
         let mut server = Server::new_async().await;
         let _mock = server
             .mock("GET", "/test-file.txt")
+            .match_header("authorization", "Bearer test_token")
             .with_status(200)
             .with_body("Hello")
             .create_async()
@@ -336,7 +338,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let target_path = temp_dir.path().join("downloaded.txt");
 
-        let client = Client::new();
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/test-file.txt", server.url());
 
         // Expect 10 bytes but will only get 5
@@ -354,6 +356,7 @@ mod tests {
         let mut server = Server::new_async().await;
         let _mock = server
             .mock("GET", "/not-found.txt")
+            .match_header("authorization", "Bearer test_token")
             .with_status(404)
             .create_async()
             .await;
@@ -361,7 +364,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let target_path = temp_dir.path().join("downloaded.txt");
 
-        let client = Client::new();
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/not-found.txt", server.url());
 
         let result = stream_download(&client, &url, &target_path, None, 1).await;

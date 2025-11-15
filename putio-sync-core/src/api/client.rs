@@ -305,6 +305,38 @@ impl ApiClient {
         self.execute_with_retry(request).await
     }
 
+    /// Execute a POST request with retry logic
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - API path (e.g., "/files/delete")
+    /// * `body` - Request body to serialize as JSON
+    ///
+    /// # Returns
+    ///
+    /// Response body deserialized as type T
+    pub(crate) async fn post<T: DeserializeOwned, B: serde::Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> CoreResult<T> {
+        let url = format!("{}{}", self.base_url, path);
+        debug!("POST request to: {}", url);
+
+        let auth_header = self.get_auth_header()?;
+
+        let request = self
+            .client
+            .post(&url)
+            .header(header::AUTHORIZATION, auth_header)
+            .header(header::CONTENT_TYPE, "application/json")
+            .json(body)
+            .build()
+            .map_err(CoreError::HttpError)?;
+
+        self.execute_with_retry(request).await
+    }
+
     /// Execute a request with exponential backoff retry logic
     ///
     /// Retries on network errors and 5xx server errors.
