@@ -7,6 +7,7 @@ pub mod get_token;
 pub mod history;
 pub mod list;
 pub mod login;
+pub mod queue;
 pub mod stat;
 
 pub use create::execute_create;

@@ -61,6 +61,22 @@ INSERT OR IGNORE INTO download_stats (id, total_downloads, total_bytes, total_ti
 VALUES (1, 0, 0, 0)
 "#;
 
+/// SQL to create the download_queue table
+pub const CREATE_DOWNLOAD_QUEUE_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS download_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER NOT NULL,
+    filename TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    download_url TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'downloading', 'paused', 'completed', 'failed')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(file_id)
+)
+"#;
+
 /// SQL to create performance indexes
 /// These indexes optimize common query patterns
 pub const CREATE_INDEXES: &str = r#"

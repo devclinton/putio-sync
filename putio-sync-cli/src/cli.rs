@@ -520,6 +520,134 @@ pub enum Commands {
         )]
         interval: u64,
     },
+
+    /// Manage download queue
+    #[command(about = "Manage download queue", subcommand)]
+    Queue(QueueCommands),
+}
+
+/// Queue management subcommands
+#[derive(Subcommand, Debug)]
+pub enum QueueCommands {
+    /// List queue items
+    #[command(about = "List queue items")]
+    List {
+        /// Filter by status
+        #[arg(
+            long = "status",
+            value_name = "STATUS",
+            help = "Filter by status (pending, downloading, paused, completed, failed)"
+        )]
+        status: Option<String>,
+
+        /// Output format
+        #[arg(
+            short = 'o',
+            long = "output",
+            value_name = "FORMAT",
+            default_value = "table",
+            help = "Output format (table, json)"
+        )]
+        output: String,
+    },
+
+    /// Add items to queue
+    #[command(about = "Add files to download queue")]
+    Add {
+        /// File IDs to add to queue
+        #[arg(value_name = "FILES", help = "File IDs to add to queue")]
+        files: Vec<i64>,
+
+        /// Priority (higher = downloaded first)
+        #[arg(
+            short = 'p',
+            long = "priority",
+            value_name = "N",
+            default_value = "0",
+            help = "Priority (higher = downloaded first)"
+        )]
+        priority: i64,
+
+        /// Add all files matching filter
+        #[arg(
+            short = 'a',
+            long = "all",
+            help = "Add all files matching filter",
+            conflicts_with = "files"
+        )]
+        all: bool,
+
+        /// Filter files with glob pattern
+        #[arg(
+            short = 'f',
+            long = "filter",
+            value_name = "PATTERN",
+            help = "Filter files with glob pattern (e.g., \"*.mkv\")"
+        )]
+        filter: Option<String>,
+    },
+
+    /// Pause queue items
+    #[command(about = "Pause queue items")]
+    Pause {
+        /// File IDs to pause
+        #[arg(value_name = "FILES", help = "File IDs to pause (omit to pause all)")]
+        files: Vec<i64>,
+    },
+
+    /// Resume queue items
+    #[command(about = "Resume queue items")]
+    Resume {
+        /// File IDs to resume
+        #[arg(value_name = "FILES", help = "File IDs to resume (omit to resume all)")]
+        files: Vec<i64>,
+    },
+
+    /// Remove items from queue
+    #[command(about = "Remove items from queue")]
+    Remove {
+        /// File IDs to remove
+        #[arg(value_name = "FILES", help = "File IDs to remove")]
+        files: Vec<i64>,
+    },
+
+    /// Clear completed items
+    #[command(about = "Clear completed items from queue")]
+    Clear {
+        /// Skip confirmation prompt
+        #[arg(
+            short = 'y',
+            long = "yes",
+            help = "Skip confirmation prompt"
+        )]
+        yes: bool,
+    },
+
+    /// Update item priority
+    #[command(about = "Update queue item priority")]
+    Priority {
+        /// File ID to update
+        #[arg(value_name = "FILE", help = "File ID to update")]
+        file_id: i64,
+
+        /// New priority
+        #[arg(value_name = "PRIORITY", help = "New priority (higher = downloaded first)")]
+        priority: i64,
+    },
+
+    /// Show queue statistics
+    #[command(about = "Show queue statistics")]
+    Stats {
+        /// Output format
+        #[arg(
+            short = 'o',
+            long = "output",
+            value_name = "FORMAT",
+            default_value = "table",
+            help = "Output format (table, json)"
+        )]
+        output: String,
+    },
 }
 
 impl Cli {

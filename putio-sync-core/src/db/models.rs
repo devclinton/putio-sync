@@ -3,6 +3,80 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
+/// Queue item status
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QueueStatus {
+    /// Item is pending download
+    Pending,
+    /// Item is currently being downloaded
+    Downloading,
+    /// Item download is paused
+    Paused,
+    /// Item download completed
+    Completed,
+    /// Item download failed
+    Failed,
+}
+
+impl std::fmt::Display for QueueStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            QueueStatus::Pending => write!(f, "pending"),
+            QueueStatus::Downloading => write!(f, "downloading"),
+            QueueStatus::Paused => write!(f, "paused"),
+            QueueStatus::Completed => write!(f, "completed"),
+            QueueStatus::Failed => write!(f, "failed"),
+        }
+    }
+}
+
+impl std::str::FromStr for QueueStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(QueueStatus::Pending),
+            "downloading" => Ok(QueueStatus::Downloading),
+            "paused" => Ok(QueueStatus::Paused),
+            "completed" => Ok(QueueStatus::Completed),
+            "failed" => Ok(QueueStatus::Failed),
+            _ => Err(format!("Invalid queue status: {}", s)),
+        }
+    }
+}
+
+/// Queue item in the database
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct QueueItem {
+    /// Primary key
+    pub id: i64,
+    /// Put.io file ID
+    pub file_id: i64,
+    /// Original filename
+    pub filename: String,
+    /// File size in bytes
+    pub file_size: i64,
+    /// Download URL
+    pub download_url: String,
+    /// Priority (higher = downloaded first)
+    pub priority: i64,
+    /// Queue status
+    pub status: String,
+    /// Timestamp when item was added
+    pub created_at: String,
+    /// Timestamp when item was last updated
+    pub updated_at: String,
+}
+
+impl QueueItem {
+    /// Get the queue status as enum
+    pub fn status_enum(&self) -> Result<QueueStatus, String> {
+        self.status.parse()
+    }
+}
+
+
 /// Download status
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

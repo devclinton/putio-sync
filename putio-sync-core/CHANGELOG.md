@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Download queue management system
+  - Added `download_queue` table with support for priority-based ordering
+  - Added `QueueItem` model and `QueueStatus` enum (pending, downloading, paused, completed, failed)
+  - Added `QueueRepository` with comprehensive queue operations
+  - Added `queue()` method to access queue from database
+  - Queue operations: add, list, pause, resume, remove, clear, update priority
+  - Queue statistics tracking (total, pending, downloading, paused, completed, failed)
+  - Bulk operations: pause_all() and resume_all()
+  - Support for reordering queue items via priority updates
+  - Upsert logic for queue items (updates priority if item already exists)
+- CLI commands for queue management
+  - `queue list` - List all queue items with optional status filter
+  - `queue add` - Add files to queue with priority support
+  - `queue pause` - Pause all or specific queue items
+  - `queue resume` - Resume all or specific paused items
+  - `queue remove` - Remove specific items from queue
+  - `queue clear` - Clear all completed items
+  - `queue priority` - Update priority of queue items
+  - `queue stats` - Show queue statistics
+  - Support for JSON and table output formats
+  - Integration with file filtering for batch queue operations
 - Smart retry logic for failed downloads
   - Added `max_retries` configuration option (default: 3)
   - Added `retry_initial_delay_secs` configuration option (default: 1 second)
