@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automatic target directory creation
 - Database initialization for download tracking
 - Integration with DownloadManager from core library
+- Daemon mode for continuous background syncing
+- Periodic file listing with configurable interval
+- Filter-based automatic downloads in daemon mode
+- Cycle-based logging for daemon operations
+- Responsive shutdown in daemon mode (checks every 5 seconds)
+- Error recovery with automatic retry in daemon mode
 
 ## [0.1.1] - 2025-11-14
 

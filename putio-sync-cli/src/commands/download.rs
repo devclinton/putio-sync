@@ -305,15 +305,226 @@ async fn run_single_download(
 
 /// Run in daemon mode
 async fn run_daemon_mode(
-    _client: ApiClient,
-    _download_config: DownloadConfig,
-    _filter: Option<String>,
-    _all: bool,
-    _files: Vec<i64>,
-    _interval: u64,
+    client: ApiClient,
+    download_config: DownloadConfig,
+    filter: Option<String>,
+    all: bool,
+    files: Vec<i64>,
+    interval: u64,
 ) -> Result<()> {
-    // TODO: Implement in section 3.4
-    info!("Daemon mode will be implemented in section 3.4");
+    info!("Starting daemon mode with interval: {} seconds", interval);
+
+    // Create target directory if it doesn't exist
+    if !download_config.target_directory.exists() {
+        info!(
+            "Creating target directory: {}",
+            download_config.target_directory.display()
+        );
+        std::fs::create_dir_all(&download_config.target_directory).with_context(|| {
+            format!(
+                "Failed to create target directory: {}",
+                download_config.target_directory.display()
+            )
+        })?;
+    }
+
+    // Initialize database
+    let db_path = download_config.target_directory.join(".putiosync.db");
+    let database = Arc::new(
+        Database::new(&db_path)
+            .await
+            .context("Failed to initialize database")?,
+    );
+
+    // Set up Ctrl+C handler
+    let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let shutdown_clone = shutdown.clone();
+    ctrlc::set_handler(move || {
+        info!("Received interrupt signal, shutting down daemon gracefully...");
+        shutdown_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+    })
+    .context("Failed to set Ctrl+C handler")?;
+
+    let client_arc = Arc::new(client);
+    let mut cycle_count = 0;
+
+    loop {
+        cycle_count += 1;
+        info!("Daemon cycle #{} starting...", cycle_count);
+
+        // Check for shutdown signal
+        if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+            info!("Daemon shutting down gracefully...");
+            break;
+        }
+
+        // Get list of files from Put.io
+        let file_entries = if all {
+            match client_arc.list_files(0).await {
+                Ok(response) => response.files,
+                Err(e) => {
+                    error!("Failed to fetch file list: {}", e);
+                    warn!("Waiting {} seconds before retry...", interval);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
+                    continue;
+                }
+            }
+        } else if !files.is_empty() {
+            let mut entries = Vec::new();
+            for file_id in &files {
+                match client_arc.get_file(*file_id).await {
+                    Ok(file_response) => entries.push(file_response.file),
+                    Err(e) => {
+                        warn!("Failed to get file {}: {}", file_id, e);
+                    }
+                }
+            }
+            entries
+        } else {
+            warn!("No files specified and --all not set, nothing to download");
+            break;
+        };
+
+        // Apply filters
+        let mut filtered_files = match apply_filters(file_entries, filter.clone()) {
+            Ok(files) => files,
+            Err(e) => {
+                error!("Failed to apply filters: {}", e);
+                warn!("Waiting {} seconds before retry...", interval);
+                tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
+                continue;
+            }
+        };
+
+        // Apply sorting
+        filtered_files = match apply_sorting(filtered_files, &download_config) {
+            Ok(files) => files,
+            Err(e) => {
+                error!("Failed to apply sorting: {}", e);
+                warn!("Waiting {} seconds before retry...", interval);
+                tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
+                continue;
+            }
+        };
+
+        // Filter out folders and already downloaded files
+        let download_files: Vec<DownloadFile> = filtered_files
+            .iter()
+            .filter(|f| !f.is_folder)
+            .map(|f| DownloadFile {
+                file_id: f.id,
+                filename: f.name.clone(),
+                file_size: f.size.max(0) as u64,
+                download_url: format!("https://api.put.io/v2/files/{}/download", f.id),
+            })
+            .collect();
+
+        if download_files.is_empty() {
+            info!("No new files to download in this cycle");
+        } else {
+            info!("Found {} files to download", download_files.len());
+
+            // Calculate total size
+            let total_size: u64 = download_files.iter().map(|f| f.file_size).sum();
+
+            info!(
+                "Total download size: {} ({} bytes)",
+                format_size(total_size),
+                total_size
+            );
+
+            // Create progress display
+            let progress_display = Arc::new(ProgressDisplay::new(
+                download_config.progress_style.clone(),
+                download_files.len() as u64,
+                total_size,
+            ));
+
+            // Create download manager
+            let manager = DownloadManager::new(
+                client_arc.clone(),
+                database.clone(),
+                download_config.clone(),
+            );
+
+            let mut successful = 0;
+            let mut failed = 0;
+            let cycle_start = Instant::now();
+
+            // Download files
+            for download_file in download_files {
+                // Check for shutdown signal
+                if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                    warn!("Daemon interrupted by user");
+                    progress_display.finish();
+                    return Ok(());
+                }
+
+                let callback = progress_display.clone().create_callback();
+
+                match manager
+                    .download_file(download_file.clone(), Some(callback))
+                    .await
+                {
+                    Ok(result) => {
+                        if result.success {
+                            successful += 1;
+                        } else {
+                            failed += 1;
+                            error!(
+                                "Download failed for file {}: {}",
+                                download_file.file_id,
+                                result.error.unwrap_or_else(|| "Unknown error".to_string())
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        error!("Download failed for file {}: {}", download_file.file_id, e);
+                    }
+                }
+            }
+
+            // Finish progress display
+            progress_display.finish();
+
+            // Log cycle summary
+            let cycle_elapsed = cycle_start.elapsed();
+            info!(
+                "Cycle #{} completed: {} successful, {} failed in {:.2}s",
+                cycle_count,
+                successful,
+                failed,
+                cycle_elapsed.as_secs_f64()
+            );
+        }
+
+        // Wait for next cycle
+        info!("Waiting {} seconds until next cycle...", interval);
+
+        // Sleep in smaller intervals to allow for responsive shutdown
+        let sleep_interval = std::cmp::min(interval, 5); // Check every 5 seconds max
+        let iterations = interval / sleep_interval;
+        let remainder = interval % sleep_interval;
+
+        for _ in 0..iterations {
+            if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                info!("Daemon shutting down gracefully...");
+                return Ok(());
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(sleep_interval)).await;
+        }
+
+        if remainder > 0 {
+            if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                info!("Daemon shutting down gracefully...");
+                return Ok(());
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(remainder)).await;
+        }
+    }
+
+    info!("Daemon mode exited");
     Ok(())
 }
 
