@@ -5,6 +5,7 @@
 
 mod account;
 mod client;
+mod delete;
 mod files;
 mod models;
 mod path;

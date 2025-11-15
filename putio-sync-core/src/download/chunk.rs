@@ -394,12 +394,13 @@ mod tests {
         let mut server = Server::new_async().await;
         let mock = server
             .mock("HEAD", "/test-file.txt")
+            .match_header("authorization", "Bearer test_token")
             .with_status(200)
             .with_header("Accept-Ranges", "bytes")
             .create_async()
             .await;
 
-        let client = Client::new();
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/test-file.txt", server.url());
 
         let supports = supports_range_requests(&client, &url).await;
@@ -415,11 +416,12 @@ mod tests {
         let mut server = Server::new_async().await;
         let _mock = server
             .mock("HEAD", "/test-file.txt")
+            .match_header("authorization", "Bearer test_token")
             .with_status(200)
             .create_async()
             .await;
 
-        let client = Client::new();
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/test-file.txt", server.url());
 
         let supports = supports_range_requests(&client, &url).await;
@@ -434,6 +436,7 @@ mod tests {
         let mut server = Server::new_async().await;
         let mock = server
             .mock("GET", "/test-file.txt")
+            .match_header("authorization", "Bearer test_token")
             .match_header("Range", "bytes=0-9")
             .with_status(206)
             .with_body("0123456789")
@@ -446,7 +449,7 @@ mod tests {
         // Pre-create the file
         tokio::fs::write(&file_path, vec![0u8; 20]).await.unwrap();
 
-        let client = Client::new();
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/test-file.txt", server.url());
 
         let chunk = Chunk {
