@@ -24,6 +24,9 @@ pub mod error;
 /// File filtering and sorting logic
 pub mod filter;
 
+/// Filesystem utilities
+pub mod fs;
+
 /// Structured logging infrastructure
 pub mod logging;
 
