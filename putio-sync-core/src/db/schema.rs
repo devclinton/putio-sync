@@ -60,6 +60,34 @@ INSERT OR IGNORE INTO download_stats (id, total_downloads, total_bytes, total_ti
 VALUES (1, 0, 0, 0)
 "#;
 
+/// SQL to create performance indexes
+/// These indexes optimize common query patterns
+pub const CREATE_INDEXES: &str = r#"
+-- Index for finding downloads by file_id
+CREATE INDEX IF NOT EXISTS idx_downloads_file_id ON downloads(file_id);
+
+-- Index for finding downloads by status
+CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);
+
+-- Index for download_chunks queries by download_id
+CREATE INDEX IF NOT EXISTS idx_chunks_download_id ON download_chunks(download_id);
+
+-- Index for finding pending chunks
+CREATE INDEX IF NOT EXISTS idx_chunks_status ON download_chunks(status);
+
+-- Index for history queries by timestamp (for date range filtering)
+CREATE INDEX IF NOT EXISTS idx_history_timestamp ON download_history(timestamp);
+
+-- Index for history queries by action type
+CREATE INDEX IF NOT EXISTS idx_history_action ON download_history(action);
+
+-- Index for stats by extension queries
+CREATE INDEX IF NOT EXISTS idx_history_extension ON download_history(extension);
+
+-- Composite index for common history query pattern (action + timestamp)
+CREATE INDEX IF NOT EXISTS idx_history_action_timestamp ON download_history(action, timestamp);
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,6 +99,7 @@ mod tests {
         assert!(!CREATE_DOWNLOAD_HISTORY_TABLE.is_empty());
         assert!(!CREATE_DOWNLOAD_STATS_TABLE.is_empty());
         assert!(!INIT_DOWNLOAD_STATS.is_empty());
+        assert!(!CREATE_INDEXES.is_empty());
     }
 
     #[test]
@@ -79,5 +108,18 @@ mod tests {
         assert!(CREATE_DOWNLOAD_CHUNKS_TABLE.contains("CREATE TABLE"));
         assert!(CREATE_DOWNLOAD_HISTORY_TABLE.contains("CREATE TABLE"));
         assert!(CREATE_DOWNLOAD_STATS_TABLE.contains("CREATE TABLE"));
+    }
+
+    #[test]
+    fn test_indexes_contain_create_index() {
+        assert!(CREATE_INDEXES.contains("CREATE INDEX"));
+        assert!(CREATE_INDEXES.contains("idx_downloads_file_id"));
+        assert!(CREATE_INDEXES.contains("idx_downloads_status"));
+        assert!(CREATE_INDEXES.contains("idx_chunks_download_id"));
+        assert!(CREATE_INDEXES.contains("idx_chunks_status"));
+        assert!(CREATE_INDEXES.contains("idx_history_timestamp"));
+        assert!(CREATE_INDEXES.contains("idx_history_action"));
+        assert!(CREATE_INDEXES.contains("idx_history_extension"));
+        assert!(CREATE_INDEXES.contains("idx_history_action_timestamp"));
     }
 }

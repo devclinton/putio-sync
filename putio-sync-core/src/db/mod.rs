@@ -136,6 +136,12 @@ impl Database {
             .await
             .map_err(|e| CoreError::DatabaseError(format!("Failed to initialize stats: {}", e)))?;
 
+        // Create performance indexes
+        sqlx::query(schema::CREATE_INDEXES)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| CoreError::DatabaseError(format!("Failed to create indexes: {}", e)))?;
+
         info!("Database migrations completed");
 
         Ok(())
