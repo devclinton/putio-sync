@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- Comprehensive user documentation in README
+- Quick Start guide with authentication and basic usage
+- Detailed command documentation with examples for all commands
+- Configuration guide with example snippets
+- Advanced features documentation (chunked downloads, filtering, daemon mode)
+- Troubleshooting tips in error messages
+
 ### Performance
 - Database query optimization with strategic indexes
   - idx_downloads_file_id for file lookups
