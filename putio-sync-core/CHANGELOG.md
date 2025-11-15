@@ -36,7 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Preserves Unicode characters
   - Reproducible transformations
   - Path and filename sanitization functions
-- Comprehensive unit tests for all modules (70 tests total, all passing)
+- Concurrent download worker pool
+  - Configurable worker count
+  - Job queue with async task distribution
+  - Semaphore-based concurrency control
+  - Graceful shutdown handling
+  - Error handling and result reporting
+- Comprehensive unit tests for all modules (78 tests total, all passing)
 
 ## [0.1.1] - 2025-11-14
 

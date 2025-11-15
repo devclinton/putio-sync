@@ -18,6 +18,9 @@ pub mod config;
 /// Database for local state management
 pub mod db;
 
+/// Download management
+pub mod download;
+
 /// Error types and result aliases
 pub mod error;
 
