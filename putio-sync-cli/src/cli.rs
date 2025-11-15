@@ -317,6 +317,63 @@ pub enum Commands {
         )]
         interval: u64,
     },
+
+    /// Delete files from Put.io
+    Delete {
+        /// Specific file IDs to delete
+        #[arg(value_name = "FILES", help = "Specific file IDs to delete")]
+        files: Vec<i64>,
+
+        /// Delete all files
+        #[arg(
+            short = 'a',
+            long = "all",
+            help = "Delete all files (requires confirmation)",
+            conflicts_with = "files"
+        )]
+        all: bool,
+
+        /// Filter files with glob pattern
+        #[arg(
+            short = 'f',
+            long = "filter",
+            value_name = "PATTERN",
+            help = "Filter files with glob pattern (e.g., \"*.txt\")"
+        )]
+        filter: Option<String>,
+
+        /// Delete folders recursively
+        #[arg(
+            short = 'r',
+            long = "recursive",
+            help = "Delete folders and their contents recursively"
+        )]
+        recursive: bool,
+
+        /// Delete files before date
+        #[arg(
+            long = "before",
+            value_name = "DATE",
+            help = "Delete files created before date (e.g., \"2026-01\")"
+        )]
+        before: Option<String>,
+
+        /// Dry run (show what would be deleted)
+        #[arg(
+            long = "dry-run",
+            help = "Show what would be deleted without actually deleting"
+        )]
+        dry_run: bool,
+
+        /// Skip confirmation prompt
+        #[arg(
+            short = 'y',
+            long = "yes",
+            help = "Skip confirmation prompt",
+            conflicts_with = "dry_run"
+        )]
+        yes: bool,
+    },
 }
 
 impl Cli {
