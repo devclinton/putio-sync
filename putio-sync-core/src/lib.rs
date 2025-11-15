@@ -15,6 +15,9 @@ pub mod api;
 /// Configuration management
 pub mod config;
 
+/// Database for local state management
+pub mod db;
+
 /// Error types and result aliases
 pub mod error;
 
@@ -29,6 +32,10 @@ pub mod prelude {
     pub use crate::api::ApiClient;
     pub use crate::config::{
         AuthConfig, Config, ConfigBuilder, DownloadConfig, SyncConfig, WatchConfig,
+    };
+    pub use crate::db::{
+        models::{ChunkStatus, Download, DownloadChunk, DownloadHistory, DownloadStats, DownloadStatus, HistoryAction},
+        Database,
     };
     pub use crate::error::{CoreError, CoreResult};
     pub use crate::filter::{parse_size, sort_files, FileFilter, FileTypeFilter, SortField};
