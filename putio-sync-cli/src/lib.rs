@@ -5,3 +5,4 @@
 pub mod commands;
 pub mod output;
 pub mod ui;
+pub mod watch;

@@ -1,5 +1,6 @@
 //! Create command implementation
 
+use crate::watch::TorrentWatcher;
 use anyhow::{Context, Result};
 use putio_sync_core::api::ApiClient;
 use putio_sync_core::config::Config;
@@ -206,16 +207,20 @@ async fn process_watch_directories(
 
 /// Watch directories in daemon mode
 async fn watch_daemon(
-    _client: &ApiClient,
-    _watch_dirs: &[PathBuf],
-    _parent_id: Option<i64>,
+    client: &ApiClient,
+    watch_dirs: &[PathBuf],
+    parent_id: Option<i64>,
     interval: u64,
 ) -> Result<()> {
     info!("Starting daemon mode with {}s interval", interval);
 
-    // TODO: Implement filesystem watching with notify crate
-    // For now, use polling approach
-    anyhow::bail!("Daemon mode not yet implemented. Will be added in Phase 7.4 (Watch Mode Implementation).");
+    // Create torrent watcher
+    let watcher = TorrentWatcher::new(watch_dirs.to_vec(), parent_id, interval);
+
+    // Run daemon (blocks until Ctrl+C)
+    watcher.run_daemon(client).await?;
+
+    Ok(())
 }
 
 /// Find all .torrent files in a directory (non-recursive)

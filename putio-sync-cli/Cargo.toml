@@ -72,6 +72,9 @@ chrono = "0.4"
 # Glob patterns
 glob = "0.3"
 
+# Filesystem watching
+notify = "6.1"
+
 [dev-dependencies]
 tempfile = "3.8"
 assert_cmd = "2.0"
