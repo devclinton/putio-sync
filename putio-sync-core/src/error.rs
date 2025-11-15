@@ -55,6 +55,64 @@ pub enum CoreError {
 /// Convenience type alias for Results that return `CoreError`
 pub type CoreResult<T> = Result<T, CoreError>;
 
+impl CoreError {
+    /// Create an AuthError with a helpful suggestion
+    pub fn auth_error_with_suggestion(msg: &str) -> Self {
+        CoreError::AuthError(format!(
+            "{}
+
+Troubleshooting:
+- Verify your OAuth token is valid at https://app.put.io/settings/account
+- Or try logging in again with: putio-sync login
+- Check that your token hasn't expired or been revoked",
+            msg
+        ))
+    }
+
+    /// Create a ConfigError for missing config file with helpful suggestion
+    pub fn config_not_found(path: &std::path::Path) -> Self {
+        CoreError::ConfigError(format!(
+            "Configuration file not found: {}
+
+To create a config file:
+1. Run 'putio-sync login' to authenticate
+2. Or copy the example: cp config.example.toml ~/.putiosync/config.toml
+3. Then edit the config file with your settings
+
+You can also set PUTIO_SYNC_CONFIG environment variable to specify a custom location.",
+            path.display()
+        ))
+    }
+
+    /// Create an ApiError for network issues with helpful suggestion
+    pub fn network_error(msg: &str) -> Self {
+        CoreError::ApiError(format!(
+            "{}
+
+Troubleshooting:
+- Check your internet connection
+- Verify Put.io service status at https://status.put.io
+- Try again in a few moments
+- If the problem persists, check firewall/proxy settings",
+            msg
+        ))
+    }
+
+    /// Create a DatabaseError with helpful suggestion
+    pub fn database_error_with_suggestion(msg: &str) -> Self {
+        CoreError::DatabaseError(format!(
+            "{}
+
+Troubleshooting:
+- Ensure database file is not corrupted
+- Check that ~/.putiosync directory has write permissions
+- Try removing the database file to recreate it (WARNING: this will lose history)
+- Ensure sufficient disk space is available",
+            msg
+        ))
+    }
+}
+
 // Implement conversion from serde_json::Error
 impl From<serde_json::Error> for CoreError {
     fn from(err: serde_json::Error) -> Self {
@@ -141,5 +199,46 @@ mod tests {
 
         let result = example_function();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_auth_error_with_suggestion() {
+        let err = CoreError::auth_error_with_suggestion("Invalid token");
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid token"));
+        assert!(msg.contains("Troubleshooting"));
+        assert!(msg.contains("https://app.put.io/settings/account"));
+        assert!(msg.contains("putio-sync login"));
+    }
+
+    #[test]
+    fn test_config_not_found() {
+        use std::path::Path;
+        let err = CoreError::config_not_found(Path::new("/nonexistent/config.toml"));
+        let msg = err.to_string();
+        assert!(msg.contains("/nonexistent/config.toml"));
+        assert!(msg.contains("To create a config file"));
+        assert!(msg.contains("putio-sync login"));
+        assert!(msg.contains("config.example.toml"));
+    }
+
+    #[test]
+    fn test_network_error() {
+        let err = CoreError::network_error("Connection timeout");
+        let msg = err.to_string();
+        assert!(msg.contains("Connection timeout"));
+        assert!(msg.contains("Troubleshooting"));
+        assert!(msg.contains("internet connection"));
+        assert!(msg.contains("https://status.put.io"));
+    }
+
+    #[test]
+    fn test_database_error_with_suggestion() {
+        let err = CoreError::database_error_with_suggestion("Failed to write");
+        let msg = err.to_string();
+        assert!(msg.contains("Failed to write"));
+        assert!(msg.contains("Troubleshooting"));
+        assert!(msg.contains("write permissions"));
+        assert!(msg.contains("disk space"));
     }
 }
