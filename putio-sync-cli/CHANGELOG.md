@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Download command with comprehensive options
+- Support for filtering, sorting, workers, and chunking
+- Daemon mode for continuous syncing
+- CLI argument parsing for download configuration
+- Support for chunk size and buffer size specification
+- Resume control and skip-existing functionality
+- Delete-after-download option
+- Multiple progress style options (per-file, overall, individual, rotating, none)
+
 ## [0.1.1] - 2025-11-14
 
 ### Fixed

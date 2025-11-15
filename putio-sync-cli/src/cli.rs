@@ -206,6 +206,117 @@ pub enum Commands {
         )]
         output_file: Option<PathBuf>,
     },
+
+    /// Download files from Put.io
+    #[command(about = "Download files from Put.io")]
+    Download {
+        /// Specific file IDs to download
+        #[arg(value_name = "FILES", help = "Specific file IDs to download")]
+        files: Vec<i64>,
+
+        /// Download all files
+        #[arg(
+            short = 'a',
+            long = "all",
+            help = "Download all files",
+            conflicts_with = "files"
+        )]
+        all: bool,
+
+        /// Filter files with glob pattern
+        #[arg(
+            short = 'f',
+            long = "filter",
+            value_name = "PATTERN",
+            help = "Filter files with glob pattern (e.g., \"*.mkv\")"
+        )]
+        filter: Option<String>,
+
+        /// Download directory
+        #[arg(
+            short = 'd',
+            long = "dir",
+            value_name = "PATH",
+            help = "Download directory [default: from config]"
+        )]
+        dir: Option<PathBuf>,
+
+        /// Number of concurrent workers
+        #[arg(
+            short = 'w',
+            long = "workers",
+            value_name = "N",
+            help = "Number of concurrent workers [default: from config]"
+        )]
+        workers: Option<usize>,
+
+        /// Chunk size for large files
+        #[arg(
+            long = "chunk-size",
+            value_name = "SIZE",
+            help = "Chunk size for large files (e.g., 256MB) [default: from config]"
+        )]
+        chunk_size: Option<String>,
+
+        /// Buffer size per file
+        #[arg(
+            long = "buffer-size",
+            value_name = "SIZE",
+            help = "Buffer size per file (e.g., 16MB) [default: from config]"
+        )]
+        buffer_size: Option<String>,
+
+        /// Disable resume of partial downloads
+        #[arg(long = "no-resume", help = "Disable resume of partial downloads")]
+        no_resume: bool,
+
+        /// Skip files already downloaded
+        #[arg(
+            long = "skip-existing",
+            help = "Skip files already downloaded"
+        )]
+        skip_existing: bool,
+
+        /// Delete from Put.io after download
+        #[arg(
+            long = "delete-after",
+            help = "Delete from Put.io after download"
+        )]
+        delete_after: bool,
+
+        /// Sort order
+        #[arg(
+            long = "sort",
+            value_name = "ORDER",
+            help = "Sort order (date, name, extension, size)"
+        )]
+        sort: Option<String>,
+
+        /// Reverse sort order
+        #[arg(long = "reverse", help = "Reverse sort order")]
+        reverse: bool,
+
+        /// Progress style
+        #[arg(
+            long = "progress",
+            value_name = "STYLE",
+            help = "Progress style (per-file, overall, individual, rotating, none)"
+        )]
+        progress: Option<String>,
+
+        /// Run in daemon mode (periodic sync)
+        #[arg(long = "daemon", help = "Run in daemon mode (periodic sync)")]
+        daemon: bool,
+
+        /// Daemon check interval in seconds
+        #[arg(
+            long = "interval",
+            value_name = "SECONDS",
+            default_value = "300",
+            help = "Daemon check interval in seconds"
+        )]
+        interval: u64,
+    },
 }
 
 impl Cli {
