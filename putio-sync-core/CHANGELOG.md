@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Example configuration file (config.example.toml) with comprehensive documentation
+  - Documented all authentication options (Token and AppPassword)
+  - Documented all download configuration options
+  - Documented sync and watch configuration
+  - Added common configuration examples
+  - Detailed comments explaining each option
 - Transfer (torrent) API endpoints
   - `add_transfer_url()` method for adding transfers from magnet links or torrent URLs
   - `add_transfer_file()` method for uploading .torrent files with multipart form-data
