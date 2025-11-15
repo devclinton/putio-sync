@@ -172,7 +172,7 @@ impl DownloadManager {
         let start_time = Instant::now();
 
         match stream_download(
-            self.client.http_client(),
+            &self.client,
             &file.download_url,
             &target_path,
             Some(file.file_size),
@@ -252,7 +252,7 @@ impl DownloadManager {
         let target_path = self.config.target_directory.join(&filename);
 
         // Check if server supports range requests
-        if !supports_range_requests(self.client.http_client(), &file.download_url).await {
+        if !supports_range_requests(&self.client, &file.download_url).await {
             debug!(
                 "Server doesn't support range requests, falling back to streaming for {}",
                 filename
@@ -305,7 +305,7 @@ impl DownloadManager {
 
         for chunk in chunks {
             match download_chunk(
-                self.client.http_client(),
+                &self.client,
                 &file.download_url,
                 &chunk,
                 &temp_path,
@@ -446,7 +446,7 @@ impl DownloadManager {
             }
 
             match download_chunk(
-                self.client.http_client(),
+                &self.client,
                 &file.download_url,
                 &chunk,
                 &resume_info.file_path,

@@ -1,7 +1,7 @@
 //! Streaming download functionality with buffering
 
+use crate::api::ApiClient;
 use crate::error::{CoreError, CoreResult};
-use reqwest::Client;
 use std::path::{Path, PathBuf};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
@@ -30,7 +30,7 @@ pub struct StreamDownloadResult {
 ///
 /// # Arguments
 ///
-/// * `client` - HTTP client for making requests
+/// * `client` - API client for making authenticated requests
 /// * `url` - URL to download from
 /// * `target_path` - Final destination path
 /// * `expected_size` - Expected file size in bytes (for validation)
@@ -40,7 +40,7 @@ pub struct StreamDownloadResult {
 ///
 /// A `StreamDownloadResult` containing download statistics
 pub async fn stream_download(
-    client: &Client,
+    client: &ApiClient,
     url: &str,
     target_path: &Path,
     expected_size: Option<u64>,
@@ -68,9 +68,9 @@ pub async fn stream_download(
         })?;
     }
 
-    // Make HTTP request
+    // Make authenticated HTTP request
     let response = client
-        .get(url)
+        .authenticated_request(url)?
         .send()
         .await
         .map_err(|e| CoreError::HttpError(e))?;
