@@ -125,6 +125,16 @@ reverse_sort = false
 # Default: null
 # blacklist_patterns = "*.exe,*.bat,*.msi"
 
+# Bandwidth limit in bytes per second
+# Limits download speed to prevent overwhelming the network
+# Examples:
+#   - 1048576 = 1 MB/s
+#   - 5242880 = 5 MB/s
+#   - 10485760 = 10 MB/s
+# Set to null or omit for unlimited bandwidth
+# Default: null (unlimited)
+# bandwidth_limit_bytes_per_sec = 5242880
+
 # ============================================================================
 # Watch Configuration (for torrent file monitoring)
 # ============================================================================
