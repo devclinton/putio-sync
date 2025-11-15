@@ -178,20 +178,116 @@ Run:
 
 ---
 
-### Test 9: Daemon Mode (Not Yet Implemented)
+### Test 9: Daemon Mode
 
-**Purpose**: Verify daemon mode returns helpful error
+**Purpose**: Verify daemon mode watches directories continuously
 
+**Setup**: Create a watch directory
+```bash
+mkdir ~/test-torrents
+```
+
+Run daemon:
 ```bash
 ./target/release/putio-sync create \
   --watch ~/test-torrents \
   --daemon
 ```
 
+While daemon is running, in another terminal:
+```bash
+# Copy a .torrent file to the watch directory
+cp /path/to/test.torrent ~/test-torrents/
+```
+
 **Expected Behavior**:
-- ✅ Command fails with error message
-- ✅ Error: "Daemon mode not yet implemented. Will be added in Phase 7.4 (Watch Mode Implementation)."
-- ✅ Suggests user should use without --daemon flag
+- ✅ Daemon starts and displays: "Starting torrent watcher daemon"
+- ✅ Shows which directories are being watched
+- ✅ Processes any existing .torrent files immediately
+- ✅ Detects new .torrent files as they are added
+- ✅ Uploads new files automatically
+- ✅ Displays success message for each upload
+- ✅ Does not re-upload files that were already processed
+- ✅ Continues watching until Ctrl+C is pressed
+- ✅ Gracefully shuts down on Ctrl+C
+
+**Example Output**:
+```
+Starting torrent watcher daemon
+Watching directories: ["/Users/user/test-torrents"]
+Check interval: 60s
+Watching: /Users/user/test-torrents
+Processing existing .torrent files...
+[New file added to directory]
+✓ Transfer added: test (ID: 12345)
+  File: /Users/user/test-torrents/test.torrent
+  Status: WAITING
+  Size: Unknown
+^C
+Received Ctrl+C, shutting down gracefully...
+Torrent watcher daemon stopped
+```
+
+---
+
+### Test 9a: Daemon Mode with Custom Interval
+
+**Purpose**: Verify custom interval setting
+
+```bash
+./target/release/putio-sync create \
+  --watch ~/test-torrents \
+  --daemon \
+  --interval 120
+```
+
+**Expected Behavior**:
+- ✅ Daemon starts successfully
+- ✅ Shows: "Check interval: 120s"
+- ✅ Watches directories continuously
+- ✅ Processes new files within the interval
+
+---
+
+### Test 9b: Daemon Mode Duplicate Prevention
+
+**Purpose**: Verify processed files are not re-uploaded
+
+**Setup**: Start daemon, add a file, wait for upload, then modify the file
+
+```bash
+# Start daemon
+./target/release/putio-sync create --watch ~/test-torrents --daemon
+
+# In another terminal:
+cp /path/to/test.torrent ~/test-torrents/
+# Wait for upload
+sleep 5
+# Modify the file (touch it)
+touch ~/test-torrents/test.torrent
+```
+
+**Expected Behavior**:
+- ✅ File is uploaded on first detection
+- ✅ File is NOT re-uploaded when modified/touched
+- ✅ Logs show: "File already processed: ..."
+
+---
+
+### Test 9c: Daemon Mode Graceful Shutdown
+
+**Purpose**: Verify Ctrl+C handling
+
+```bash
+./target/release/putio-sync create --watch ~/test-torrents --daemon
+# Press Ctrl+C after a few seconds
+```
+
+**Expected Behavior**:
+- ✅ Displays: "Received Ctrl+C, shutting down gracefully..."
+- ✅ Displays: "Torrent watcher daemon stopped"
+- ✅ Exits cleanly with exit code 0
+- ✅ No error messages or panics
 
 ---
 
@@ -477,7 +573,10 @@ After running any create command:
 | 6 | Process multiple watch directories | ⬜ | |
 | 7 | Watch directory with parent folder | ⬜ | |
 | 8 | Combine sources and watch | ⬜ | |
-| 9 | Daemon mode (not implemented) | ⬜ | |
+| 9 | Daemon mode | ⬜ | |
+| 9a | Daemon mode with custom interval | ⬜ | |
+| 9b | Daemon duplicate prevention | ⬜ | |
+| 9c | Daemon graceful shutdown | ⬜ | |
 | 10 | No sources or watch | ⬜ | |
 | 11 | Invalid magnet link | ⬜ | |
 | 12 | Non-existent file | ⬜ | |
@@ -493,7 +592,7 @@ After running any create command:
 | 22 | Verify in web interface | ⬜ | |
 | 23 | API authentication error | ⬜ | |
 | 24 | Network error handling | ⬜ | |
-| 25 | Interval parameter | ⬜ | |
+| 25 | Interval parameter (deprecated) | ⬜ | Covered by 9a |
 
 ## Quick Test Script
 
@@ -599,6 +698,9 @@ All tests should:
 - .torrent files must be valid and for legal content
 - Transfers may take time to fetch metadata, so size might show as "Unknown" initially
 - Watch mode scans directories but does not recursively scan subdirectories
-- Daemon mode (continuous watching) is not yet implemented (Phase 7.4)
+- Daemon mode uses filesystem watching (notify crate) for real-time file detection
+- Daemon mode runs until interrupted with Ctrl+C
+- Processed files are tracked to prevent duplicate uploads
 - The CLI uses Put.io's transfer API, so transfers are queued and downloaded by Put.io's servers
 - Transfer status can be: WAITING, DOWNLOADING, SEEDING, COMPLETED, ERROR, etc.
+- Daemon mode supports graceful shutdown on Ctrl+C
