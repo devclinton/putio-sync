@@ -26,6 +26,7 @@ pub async fn execute_download(
     workers: Option<usize>,
     chunk_size: Option<String>,
     buffer_size: Option<String>,
+    bandwidth_limit: Option<String>,
     no_resume: bool,
     skip_existing: bool,
     delete_after: bool,
@@ -74,6 +75,11 @@ pub async fn execute_download(
         let size_bytes = parse_size(&bs)
             .map_err(|e| anyhow!("Invalid buffer size '{}': {}", bs, e))?;
         download_config.buffer_size_mb = (size_bytes / 1024 / 1024) as usize;
+    }
+    if let Some(bl) = bandwidth_limit {
+        let limit_bytes_per_sec = parse_size(&bl)
+            .map_err(|e| anyhow!("Invalid bandwidth limit '{}': {}", bl, e))?;
+        download_config.bandwidth_limit_bytes_per_sec = Some(limit_bytes_per_sec as u64);
     }
     if no_resume {
         download_config.resume_enabled = false;
