@@ -173,6 +173,23 @@ async fn main() {
             )
             .await
         }
+        Commands::Create {
+            sources,
+            watch,
+            parent_id,
+            daemon,
+            interval,
+        } => {
+            commands::execute_create(
+                sources,
+                watch,
+                parent_id,
+                daemon,
+                interval,
+                args.config,
+            )
+            .await
+        }
     };
 
     // Handle command execution errors
