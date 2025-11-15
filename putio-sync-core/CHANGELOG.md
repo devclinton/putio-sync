@@ -17,7 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DownloadRepository for CRUD operations on downloads and chunks
 - HistoryRepository with query filtering and pagination
 - StatsRepository for aggregation and statistics by extension
-- Comprehensive unit tests for database operations (30 tests, all passing)
+- Extended download configuration with new options
+  - workers (concurrent download workers, default: 2)
+  - target_directory (download location)
+  - buffer_size_mb (streaming buffer, default: 16MB)
+  - skip_existing (skip already downloaded files)
+  - delete_after_download (auto-delete from Put.io)
+  - progress_style enum (PerFile, Overall, Individual, Rotating, None)
+  - sort_order enum (ByDate, ByName, ByExtension, BySize)
+  - reverse_sort (reverse sort order)
+- ProgressStyle and SortOrder enums for download configuration
+- Updated config builder with new download options
+- Backward compatibility with deprecated max_concurrent option
+- Comprehensive unit tests for all modules (56 tests total, all passing)
 
 ## [0.1.1] - 2025-11-14
 

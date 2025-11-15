@@ -115,15 +115,66 @@ pub struct SyncConfig {
     pub delete_after_download: bool,
 }
 
+/// Progress bar display style
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProgressStyle {
+    /// One bar per file + overall progress bar
+    #[default]
+    PerFile,
+    /// Overall progress only
+    Overall,
+    /// Individual file progress only
+    Individual,
+    /// Rotate between files and overall
+    Rotating,
+    /// No progress bars
+    None,
+}
+
+/// Sort order for downloads
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum SortOrder {
+    /// Sort by date (default)
+    #[default]
+    ByDate,
+    /// Sort by filename
+    ByName,
+    /// Sort by file extension
+    ByExtension,
+    /// Sort by file size
+    BySize,
+}
+
 /// Download configuration
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DownloadConfig {
-    /// Maximum number of concurrent downloads
-    pub max_concurrent: usize,
+    /// Number of concurrent download workers (default: 2)
+    pub workers: usize,
+    /// Target directory for downloads
+    pub target_directory: PathBuf,
+    /// Maximum number of concurrent downloads (alias for workers, for backwards compatibility)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_concurrent: Option<usize>,
+    /// Buffer size in MB for streaming downloads (default: 16)
+    pub buffer_size_mb: usize,
     /// Chunk size in MB for chunked downloads (None to disable)
     pub chunk_size_mb: Option<usize>,
     /// Enable resume support for interrupted downloads
     pub resume_enabled: bool,
+    /// Skip files that have already been downloaded
+    pub skip_existing: bool,
+    /// Delete files from Put.io after successful download
+    pub delete_after_download: bool,
+    /// Progress bar display style
+    #[serde(default)]
+    pub progress_style: ProgressStyle,
+    /// Sort order for downloads
+    #[serde(default)]
+    pub sort_order: SortOrder,
+    /// Reverse the sort order
+    pub reverse_sort: bool,
     /// Glob patterns to whitelist files (e.g., "*.mkv")
     pub whitelist_patterns: Option<String>,
     /// Glob patterns to blacklist files (e.g., "*.exe")
@@ -152,9 +203,17 @@ impl Default for SyncConfig {
 impl Default for DownloadConfig {
     fn default() -> Self {
         DownloadConfig {
-            max_concurrent: 3,
+            workers: 2,
+            target_directory: PathBuf::from("./putio-downloads"),
+            max_concurrent: None,
+            buffer_size_mb: 16,
             chunk_size_mb: None, // Disabled by default
             resume_enabled: true,
+            skip_existing: false,
+            delete_after_download: false,
+            progress_style: ProgressStyle::PerFile,
+            sort_order: SortOrder::ByDate,
+            reverse_sort: false,
             whitelist_patterns: None,
             blacklist_patterns: None,
         }
@@ -316,10 +375,17 @@ impl Config {
     /// assert!(config.validate().is_ok());
     /// ```
     pub fn validate(&self) -> CoreResult<()> {
-        // Validate max_concurrent is at least 1
-        if self.download.max_concurrent == 0 {
+        // Validate workers is at least 1
+        if self.download.workers == 0 {
             return Err(CoreError::ConfigError(
-                "max_concurrent must be at least 1".to_string(),
+                "workers must be at least 1".to_string(),
+            ));
+        }
+
+        // Validate buffer_size_mb is at least 1
+        if self.download.buffer_size_mb == 0 {
+            return Err(CoreError::ConfigError(
+                "buffer_size_mb must be at least 1".to_string(),
             ));
         }
 
@@ -453,9 +519,59 @@ impl ConfigBuilder {
         self
     }
 
-    /// Set the maximum number of concurrent downloads
+    /// Set the number of concurrent download workers
+    pub fn workers(mut self, workers: usize) -> Self {
+        self.download.workers = workers;
+        self
+    }
+
+    /// Set the download target directory
+    pub fn target_directory(mut self, path: PathBuf) -> Self {
+        self.download.target_directory = path;
+        self
+    }
+
+    /// Set the buffer size in MB for streaming downloads
+    pub fn buffer_size_mb(mut self, size: usize) -> Self {
+        self.download.buffer_size_mb = size;
+        self
+    }
+
+    /// Set whether to skip existing downloads
+    pub fn skip_existing(mut self, skip: bool) -> Self {
+        self.download.skip_existing = skip;
+        self
+    }
+
+    /// Set whether to delete from Put.io after download
+    pub fn delete_after_download_config(mut self, delete: bool) -> Self {
+        self.download.delete_after_download = delete;
+        self
+    }
+
+    /// Set the progress display style
+    pub fn progress_style(mut self, style: ProgressStyle) -> Self {
+        self.download.progress_style = style;
+        self
+    }
+
+    /// Set the sort order for downloads
+    pub fn sort_order(mut self, order: SortOrder) -> Self {
+        self.download.sort_order = order;
+        self
+    }
+
+    /// Set whether to reverse the sort order
+    pub fn reverse_sort(mut self, reverse: bool) -> Self {
+        self.download.reverse_sort = reverse;
+        self
+    }
+
+    /// Set the maximum number of concurrent downloads (deprecated, use workers instead)
+    #[deprecated(since = "0.2.0", note = "Use `workers` instead")]
     pub fn max_concurrent(mut self, max: usize) -> Self {
-        self.download.max_concurrent = max;
+        self.download.workers = max;
+        self.download.max_concurrent = Some(max);
         self
     }
 
@@ -520,9 +636,17 @@ mod tests {
                 delete_after_download: true,
             },
             download: DownloadConfig {
-                max_concurrent: 3,
+                workers: 3,
+                target_directory: PathBuf::from("/tmp/putio"),
+                max_concurrent: Some(3),
+                buffer_size_mb: 16,
                 chunk_size_mb: Some(256),
                 resume_enabled: true,
+                skip_existing: false,
+                delete_after_download: false,
+                progress_style: ProgressStyle::PerFile,
+                sort_order: SortOrder::ByDate,
+                reverse_sort: false,
                 whitelist_patterns: Some("*.mkv".to_string()),
                 blacklist_patterns: Some("*.exe".to_string()),
             },
@@ -561,7 +685,8 @@ mod tests {
         assert_eq!(loaded.sync.local_path, PathBuf::from("/tmp/putio"));
         assert_eq!(loaded.sync.remote_parent_id, Some(0));
         assert!(loaded.sync.delete_after_download);
-        assert_eq!(loaded.download.max_concurrent, 3);
+        assert_eq!(loaded.download.workers, 3);
+        assert_eq!(loaded.download.max_concurrent, Some(3));
         assert_eq!(loaded.download.chunk_size_mb, Some(256));
         assert!(loaded.download.resume_enabled);
         assert_eq!(
@@ -634,9 +759,16 @@ mod tests {
         assert_eq!(config.sync.local_path, PathBuf::from("./putio-downloads"));
         assert_eq!(config.sync.remote_parent_id, Some(0));
         assert!(!config.sync.delete_after_download);
-        assert_eq!(config.download.max_concurrent, 3);
+        assert_eq!(config.download.workers, 2);
+        assert_eq!(config.download.max_concurrent, None);
+        assert_eq!(config.download.buffer_size_mb, 16);
         assert_eq!(config.download.chunk_size_mb, None);
         assert!(config.download.resume_enabled);
+        assert!(!config.download.skip_existing);
+        assert!(!config.download.delete_after_download);
+        assert_eq!(config.download.progress_style, ProgressStyle::PerFile);
+        assert_eq!(config.download.sort_order, SortOrder::ByDate);
+        assert!(!config.download.reverse_sort);
         assert_eq!(config.watch.refresh_cycle, 60);
         assert_eq!(config.watch.paths.len(), 0);
     }
@@ -648,9 +780,9 @@ mod tests {
     }
 
     #[test]
-    fn test_config_validate_max_concurrent_zero() {
+    fn test_config_validate_workers_zero() {
         let mut config = Config::default();
-        config.download.max_concurrent = 0;
+        config.download.workers = 0;
         let result = config.validate();
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), CoreError::ConfigError(_)));
@@ -689,13 +821,14 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_config_builder() {
         let config = Config::builder()
             .token("test_token".to_string())
             .local_path(PathBuf::from("/test"))
             .remote_parent_id(123)
             .delete_after_download(true)
-            .max_concurrent(5)
+            .workers(5)
             .chunk_size_mb(512)
             .resume_enabled(false)
             .whitelist_patterns("*.mp4".to_string())
@@ -710,7 +843,7 @@ mod tests {
         assert_eq!(config.sync.local_path, PathBuf::from("/test"));
         assert_eq!(config.sync.remote_parent_id, Some(123));
         assert!(config.sync.delete_after_download);
-        assert_eq!(config.download.max_concurrent, 5);
+        assert_eq!(config.download.workers, 5);
         assert_eq!(config.download.chunk_size_mb, Some(512));
         assert!(!config.download.resume_enabled);
         assert_eq!(
@@ -736,9 +869,16 @@ mod tests {
     #[test]
     fn test_download_config_default() {
         let config = DownloadConfig::default();
-        assert_eq!(config.max_concurrent, 3);
+        assert_eq!(config.workers, 2);
+        assert_eq!(config.max_concurrent, None);
+        assert_eq!(config.buffer_size_mb, 16);
         assert_eq!(config.chunk_size_mb, None);
         assert!(config.resume_enabled);
+        assert!(!config.skip_existing);
+        assert!(!config.delete_after_download);
+        assert_eq!(config.progress_style, ProgressStyle::PerFile);
+        assert_eq!(config.sort_order, SortOrder::ByDate);
+        assert!(!config.reverse_sort);
         assert_eq!(config.whitelist_patterns, None);
         assert_eq!(config.blacklist_patterns, None);
     }

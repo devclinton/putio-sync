@@ -31,7 +31,8 @@ pub mod logging;
 pub mod prelude {
     pub use crate::api::ApiClient;
     pub use crate::config::{
-        AuthConfig, Config, ConfigBuilder, DownloadConfig, SyncConfig, WatchConfig,
+        AuthConfig, Config, ConfigBuilder, DownloadConfig, ProgressStyle, SortOrder, SyncConfig,
+        WatchConfig,
     };
     pub use crate::db::{
         models::{ChunkStatus, Download, DownloadChunk, DownloadHistory, DownloadStats, DownloadStatus, HistoryAction},
