@@ -524,6 +524,10 @@ pub enum Commands {
     /// Manage download queue
     #[command(about = "Manage download queue", subcommand)]
     Queue(QueueCommands),
+
+    /// Manage Put.io transfers
+    #[command(about = "Manage Put.io transfers", subcommand)]
+    Transfers(TransfersCommands),
 }
 
 /// Queue management subcommands
@@ -647,6 +651,48 @@ pub enum QueueCommands {
             help = "Output format (table, json)"
         )]
         output: String,
+    },
+}
+
+/// Transfer management subcommands
+#[derive(Subcommand, Debug)]
+pub enum TransfersCommands {
+    /// List active transfers
+    #[command(about = "List active transfers")]
+    List {
+        /// Output format
+        #[arg(
+            short = 'o',
+            long = "output",
+            value_name = "FORMAT",
+            default_value = "table",
+            help = "Output format (table, json)"
+        )]
+        output: String,
+    },
+
+    /// Cancel transfers
+    #[command(about = "Cancel one or more transfers")]
+    Cancel {
+        /// Transfer IDs to cancel
+        #[arg(value_name = "IDS", help = "Transfer IDs to cancel")]
+        transfer_ids: Vec<i64>,
+
+        /// Skip confirmation prompt
+        #[arg(
+            short = 'y',
+            long = "yes",
+            help = "Skip confirmation prompt"
+        )]
+        yes: bool,
+    },
+
+    /// Retry a failed transfer
+    #[command(about = "Retry a failed transfer")]
+    Retry {
+        /// Transfer ID to retry
+        #[arg(value_name = "ID", help = "Transfer ID to retry")]
+        transfer_id: i64,
     },
 }
 

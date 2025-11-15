@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Transfer management commands for Put.io transfers
+  - Added `cancel_transfers()` API method to cancel active transfers
+  - Added `retry_transfer()` API method to retry failed transfers
+  - Created `transfers` CLI command with subcommands:
+    - `transfers list` - List all active transfers with progress
+    - `transfers cancel` - Cancel one or more transfers
+    - `transfers retry` - Retry a failed transfer
+  - Transfer list displays: ID, status, name, size, progress %, speed, ETA
+  - Support for JSON and table output formats
+  - Confirmation prompt for cancel operations (can be skipped with --yes)
+  - Error message display for failed transfers
+  - Comprehensive tests for transfer commands (3 tests passing)
 - Webhook and notification support for download events
   - Added `NotificationConfig` with support for multiple backends (webhook, email)
   - Added `NotificationBackend` enum (none, webhook, email)

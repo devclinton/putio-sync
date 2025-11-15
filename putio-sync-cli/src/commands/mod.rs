@@ -9,6 +9,7 @@ pub mod list;
 pub mod login;
 pub mod queue;
 pub mod stat;
+pub mod transfers;
 
 pub use create::execute_create;
 pub use delete::execute_delete;

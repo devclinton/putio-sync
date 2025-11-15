@@ -8,7 +8,7 @@ mod logging;
 // Import from library
 use putio_sync_cli::commands;
 
-use cli::{Cli, Commands, QueueCommands};
+use cli::{Cli, Commands, QueueCommands, TransfersCommands};
 use tracing::{debug, error, info};
 
 #[tokio::main]
@@ -221,6 +221,17 @@ async fn main() {
             }
             QueueCommands::Stats { output } => {
                 commands::queue::execute_stats(output, args.config).await
+            }
+        },
+        Commands::Transfers(transfers_cmd) => match transfers_cmd {
+            TransfersCommands::List { output } => {
+                commands::transfers::execute_list(output, args.config).await
+            }
+            TransfersCommands::Cancel { transfer_ids, yes } => {
+                commands::transfers::execute_cancel(transfer_ids, yes, args.config).await
+            }
+            TransfersCommands::Retry { transfer_id } => {
+                commands::transfers::execute_retry(transfer_id, args.config).await
             }
         },
     };

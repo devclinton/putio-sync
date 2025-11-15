@@ -209,6 +209,74 @@ impl ApiClient {
         let response: ApiResponse<TransferResponse> = self.get(&path).await?;
         Ok(response.data)
     }
+
+    /// Cancel one or more transfers
+    ///
+    /// This stops the specified transfers and removes them from the transfer list.
+    ///
+    /// # Arguments
+    ///
+    /// * `transfer_ids` - Vector of transfer IDs to cancel
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use putio_sync_core::api::ApiClient;
+    /// # async fn example() {
+    /// let client = ApiClient::new("my_token".to_string());
+    /// client.cancel_transfers(vec![12345, 67890]).await.unwrap();
+    /// println!("Transfers cancelled");
+    /// # }
+    /// ```
+    pub async fn cancel_transfers(&self, transfer_ids: Vec<i64>) -> CoreResult<()> {
+        #[derive(serde::Serialize)]
+        struct CancelRequest {
+            transfer_ids: String,
+        }
+
+        let ids_str = transfer_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let request = CancelRequest {
+            transfer_ids: ids_str,
+        };
+
+        let _response: ApiResponse<serde_json::Value> = self.post("/transfers/cancel", &request).await?;
+        Ok(())
+    }
+
+    /// Retry a failed transfer
+    ///
+    /// This retries a transfer that has failed. The transfer must be in a failed state.
+    ///
+    /// # Arguments
+    ///
+    /// * `transfer_id` - ID of the transfer to retry
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use putio_sync_core::api::ApiClient;
+    /// # async fn example() {
+    /// let client = ApiClient::new("my_token".to_string());
+    /// client.retry_transfer(12345).await.unwrap();
+    /// println!("Transfer retried");
+    /// # }
+    /// ```
+    pub async fn retry_transfer(&self, transfer_id: i64) -> CoreResult<()> {
+        #[derive(serde::Serialize)]
+        struct RetryRequest {
+            id: i64,
+        }
+
+        let request = RetryRequest { id: transfer_id };
+
+        let _response: ApiResponse<serde_json::Value> = self.post("/transfers/retry", &request).await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
