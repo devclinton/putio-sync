@@ -280,10 +280,7 @@ impl Config {
         let path = path.as_ref();
 
         if !path.exists() {
-            return Err(CoreError::ConfigError(format!(
-                "Configuration file not found: {}",
-                path.display()
-            )));
+            return Err(CoreError::config_not_found(path));
         }
 
         let contents = fs::read_to_string(path)
