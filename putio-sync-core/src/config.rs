@@ -330,6 +330,7 @@ impl Config {
     ///         reverse_sort: false,
     ///         whitelist_patterns: None,
     ///         blacklist_patterns: None,
+    ///         bandwidth_limit_bytes_per_sec: None,
     ///     },
     ///     watch: WatchConfig {
     ///         refresh_cycle: 60,
