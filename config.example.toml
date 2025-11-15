@@ -135,6 +135,18 @@ reverse_sort = false
 # Default: null (unlimited)
 # bandwidth_limit_bytes_per_sec = 5242880
 
+# Maximum number of retry attempts for failed downloads
+# When a download fails, it will be retried with exponential backoff
+# Example: 3 retries with 1s initial delay = 1s, 2s, 4s delays
+# Default: 3
+max_retries = 3
+
+# Initial retry delay in seconds (doubles with each retry)
+# The delay between retries follows exponential backoff
+# Example: 1 second initial delay results in 1s, 2s, 4s, 8s...
+# Default: 1
+retry_initial_delay_secs = 1
+
 # ============================================================================
 # Watch Configuration (for torrent file monitoring)
 # ============================================================================
