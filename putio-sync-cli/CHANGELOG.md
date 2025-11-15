@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Delete command for removing files from Put.io
+  - Delete specific files by ID
+  - Delete all files with `--all` flag
+  - Filter files with glob patterns (`--filter`)
+  - Date-based deletion with `--before` option
+  - Recursive folder deletion with `--recursive` flag
+  - Dry-run mode to preview deletions without executing
+  - Confirmation prompts for safety (skip with `--yes`)
+  - File summary display with size information
+  - Progress feedback during deletion
+  - Comprehensive error handling and recovery
 - Download command with comprehensive options
 - Support for filtering, sorting, workers, and chunking
 - Daemon mode for continuous syncing

@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- File deletion API endpoints
+  - `delete_files()` method for single and bulk deletion
+  - `delete_folder_recursive()` for recursive folder deletion
+  - POST request support in ApiClient with authentication
+  - Proper error handling for delete operations
 - SQLite database for download state tracking
 - Download history and statistics storage
 - Chunk tracking for resumable downloads
