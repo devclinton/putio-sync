@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Stat command for displaying download statistics
+  - Display overall download statistics (count, size, time, speed)
+  - Extension-based breakdown with percentages (`--by-extension`)
+  - Date range filtering (`--since`, `--until`)
+  - Multiple output formats (table, JSON)
+  - Human-readable formatting for sizes, durations, and speeds
+  - Statistics sourced from SQLite download database
 - Delete command for removing files from Put.io
   - Delete specific files by ID
   - Delete all files with `--all` flag
