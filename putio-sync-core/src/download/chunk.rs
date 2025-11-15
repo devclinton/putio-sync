@@ -1,7 +1,7 @@
 //! Chunked download support for large files
 
+use crate::api::ApiClient;
 use crate::error::{CoreError, CoreResult};
-use reqwest::Client;
 use std::path::{Path, PathBuf};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufWriter};
@@ -78,7 +78,7 @@ pub fn calculate_chunks(file_size: u64, chunk_size: u64) -> Vec<Chunk> {
 ///
 /// Number of bytes downloaded
 pub async fn download_chunk(
-    client: &Client,
+    client: &ApiClient,
     url: &str,
     chunk: &Chunk,
     file_path: &Path,
@@ -92,10 +92,10 @@ pub async fn download_chunk(
         chunk.size()
     );
 
-    // Make HTTP request with Range header
+    // Make authenticated HTTP request with Range header
     let range_header = format!("bytes={}-{}", chunk.start, chunk.end);
     let response = client
-        .get(url)
+        .authenticated_request(url)?
         .header("Range", range_header)
         .send()
         .await
@@ -200,16 +200,22 @@ pub async fn download_chunk(
 /// # Returns
 ///
 /// `true` if the server supports range requests
-pub async fn supports_range_requests(client: &Client, url: &str) -> bool {
-    match client.head(url).send().await {
-        Ok(response) => {
-            // Check for Accept-Ranges header
-            if let Some(accept_ranges) = response.headers().get("Accept-Ranges") {
-                if let Ok(value) = accept_ranges.to_str() {
-                    return value != "none";
+pub async fn supports_range_requests(client: &ApiClient, url: &str) -> bool {
+    // Use authenticated HEAD request
+    match client.authenticated_head_request(url) {
+        Ok(request_builder) => {
+            match request_builder.send().await {
+                Ok(response) => {
+                    // Check for Accept-Ranges header
+                    if let Some(accept_ranges) = response.headers().get("Accept-Ranges") {
+                        if let Ok(value) = accept_ranges.to_str() {
+                            return value != "none";
+                        }
+                    }
+                    false
                 }
+                Err(_) => false,
             }
-            false
         }
         Err(_) => false,
     }

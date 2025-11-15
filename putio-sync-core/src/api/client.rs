@@ -215,6 +215,38 @@ impl ApiClient {
         &self.client
     }
 
+    /// Create an authenticated GET request builder for a download URL
+    ///
+    /// This adds the necessary authentication headers to the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The download URL
+    ///
+    /// # Returns
+    ///
+    /// A request builder with authentication headers set
+    pub fn authenticated_request(&self, url: &str) -> CoreResult<reqwest::RequestBuilder> {
+        let auth_header = self.get_auth_header()?;
+        Ok(self.client.get(url).header("Authorization", auth_header))
+    }
+
+    /// Create an authenticated HEAD request builder for checking file metadata
+    ///
+    /// This adds the necessary authentication headers to the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The URL to check
+    ///
+    /// # Returns
+    ///
+    /// A request builder with authentication headers set
+    pub fn authenticated_head_request(&self, url: &str) -> CoreResult<reqwest::RequestBuilder> {
+        let auth_header = self.get_auth_header()?;
+        Ok(self.client.head(url).header("Authorization", auth_header))
+    }
+
     /// Generate the appropriate Authorization header based on auth method
     ///
     /// # Returns
