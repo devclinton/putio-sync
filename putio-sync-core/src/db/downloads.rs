@@ -56,6 +56,40 @@ impl<'a> DownloadRepository<'a> {
         Ok(result.last_insert_rowid())
     }
 
+    /// Insert a new download record with retry count
+    pub async fn insert_with_retry_count(
+        &self,
+        file_id: i64,
+        filename: &str,
+        file_size: i64,
+        local_path: &str,
+        status: DownloadStatus,
+        retry_count: i64,
+    ) -> CoreResult<i64> {
+        debug!(
+            "Inserting download: file_id={}, filename={}, size={}, retries={}",
+            file_id, filename, file_size, retry_count
+        );
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO downloads (file_id, filename, file_size, local_path, status, retry_count)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(file_id)
+        .bind(filename)
+        .bind(file_size)
+        .bind(local_path)
+        .bind(status.to_string())
+        .bind(retry_count)
+        .execute(self.pool)
+        .await
+        .map_err(|e| CoreError::DatabaseError(format!("Failed to insert download: {}", e)))?;
+
+        Ok(result.last_insert_rowid())
+    }
+
     /// Find a download by file ID only
     pub async fn find_by_file_id(&self, file_id: i64) -> CoreResult<Option<Download>> {
         let download = sqlx::query_as::<_, Download>(

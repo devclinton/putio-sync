@@ -13,9 +13,10 @@ use crate::db::Database;
 use crate::error::{CoreError, CoreResult};
 use crate::fs::sanitize::sanitize_filename;
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::fs::OpenOptions;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
@@ -60,6 +61,79 @@ pub struct DownloadManager {
     progress_trackers: Arc<RwLock<HashMap<i64, ProgressTracker>>>,
     /// Overall progress
     overall_progress: Arc<RwLock<OverallProgress>>,
+}
+
+/// Result of retry operation with attempt count
+struct RetryResult<T> {
+    value: T,
+    attempts: u32,
+}
+
+/// Retry a future with exponential backoff
+///
+/// # Arguments
+///
+/// * `operation` - The async operation to retry
+/// * `max_retries` - Maximum number of retry attempts
+/// * `initial_delay` - Initial delay in seconds (doubles with each retry)
+/// * `operation_name` - Name of the operation for logging
+///
+/// # Returns
+///
+/// Returns the result along with the number of attempts made
+async fn retry_with_backoff<F, Fut, T>(
+    mut operation: F,
+    max_retries: u32,
+    initial_delay: u64,
+    operation_name: &str,
+) -> CoreResult<RetryResult<T>>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = CoreResult<T>>,
+{
+    let mut attempt = 0;
+    let mut delay = Duration::from_secs(initial_delay);
+
+    loop {
+        match operation().await {
+            Ok(result) => {
+                if attempt > 0 {
+                    info!(
+                        "{} succeeded after {} retry attempt(s)",
+                        operation_name, attempt
+                    );
+                }
+                return Ok(RetryResult {
+                    value: result,
+                    attempts: attempt,
+                });
+            }
+            Err(e) => {
+                attempt += 1;
+                if attempt > max_retries {
+                    error!(
+                        "{} failed after {} attempts: {}",
+                        operation_name, max_retries, e
+                    );
+                    return Err(e);
+                }
+
+                warn!(
+                    "{} failed (attempt {}/{}): {}. Retrying in {:.1}s...",
+                    operation_name,
+                    attempt,
+                    max_retries,
+                    e,
+                    delay.as_secs_f64()
+                );
+
+                tokio::time::sleep(delay).await;
+
+                // Exponential backoff: double the delay for next attempt
+                delay *= 2;
+            }
+        }
+    }
 }
 
 impl DownloadManager {
@@ -168,21 +242,40 @@ impl DownloadManager {
             .await
             .insert(file.file_id, ProgressTracker::new(0));
 
-        // Start download
+        // Start download with retry logic
         let start_time = Instant::now();
 
-        match stream_download(
-            &self.client,
-            &file.download_url,
-            &target_path,
-            Some(file.file_size),
-            self.config.buffer_size_mb,
-            self.config.bandwidth_limit_bytes_per_sec,
+        let client = &self.client;
+        let download_url = &file.download_url;
+        let file_size = file.file_size;
+        let buffer_size_mb = self.config.buffer_size_mb;
+        let bandwidth_limit = self.config.bandwidth_limit_bytes_per_sec;
+        let max_retries = self.config.max_retries;
+        let initial_delay = self.config.retry_initial_delay_secs;
+
+        let result = retry_with_backoff(
+            || async {
+                stream_download(
+                    client,
+                    download_url,
+                    &target_path,
+                    Some(file_size),
+                    buffer_size_mb,
+                    bandwidth_limit,
+                )
+                .await
+            },
+            max_retries,
+            initial_delay,
+            &format!("Download {}", filename),
         )
-        .await
-        {
-            Ok(result) => {
+        .await;
+
+        match result {
+            Ok(retry_result) => {
                 let duration = start_time.elapsed();
+                let download_result = retry_result.value;
+                let retry_count = retry_result.attempts;
 
                 // Update progress
                 if let Some(ref callback) = progress_callback {
@@ -191,26 +284,27 @@ impl DownloadManager {
                         filename.clone(),
                         file.file_size,
                     );
-                    progress.bytes_downloaded = result.bytes_downloaded;
+                    progress.bytes_downloaded = download_result.bytes_downloaded;
                     progress.complete = true;
                     callback.on_file_progress(&progress);
                 }
 
-                // Save to database
+                // Save to database with retry count
                 let repo = self.database.downloads();
-                repo.insert(
+                repo.insert_with_retry_count(
                     file.file_id,
                     &filename,
                     file.file_size as i64,
                     target_path.to_str().unwrap_or(""),
                     DownloadStatus::Completed,
+                    retry_count as i64,
                 )
                 .await?;
 
                 info!(
                     "Download completed: {} ({} bytes in {:.2}s)",
                     filename,
-                    result.bytes_downloaded,
+                    download_result.bytes_downloaded,
                     duration.as_secs_f64()
                 );
 
@@ -218,7 +312,7 @@ impl DownloadManager {
                     file_id: file.file_id,
                     success: true,
                     error: None,
-                    bytes_downloaded: result.bytes_downloaded,
+                    bytes_downloaded: download_result.bytes_downloaded,
                     file_path: Some(target_path),
                 })
             }
