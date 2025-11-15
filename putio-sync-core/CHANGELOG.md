@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Bandwidth limiting for downloads
+  - Added `bandwidth_limit_bytes_per_sec` configuration option
+  - Implemented RateLimiter with token bucket algorithm
+  - Integrated rate limiting into stream downloads
+  - Added `--bandwidth-limit` CLI flag for download command
+  - Supports human-readable values (e.g., "1MB", "5MB/s")
+  - Comprehensive tests for rate limiter functionality
+  - All 11 stream tests passing including bandwidth limit tests
+
 ### CI/CD
 - Enhanced CI workflow with documentation checks
 - Explicit doc test execution to ensure all examples compile
