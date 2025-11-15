@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Smart retry logic for failed downloads
+  - Added `max_retries` configuration option (default: 3)
+  - Added `retry_initial_delay_secs` configuration option (default: 1 second)
+  - Implemented exponential backoff retry mechanism
+  - Retry delays double with each attempt (1s, 2s, 4s, 8s...)
+  - Retry attempts tracked in database
+  - Retry progress logged with warnings and success messages
+  - Added retry_count column to downloads table
+  - Added insert_with_retry_count method to DownloadRepository
 - Bandwidth limiting for downloads
   - Added `bandwidth_limit_bytes_per_sec` configuration option
   - Implemented RateLimiter with token bucket algorithm
