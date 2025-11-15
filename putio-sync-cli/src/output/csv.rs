@@ -17,7 +17,7 @@ pub fn format_csv(files: &[FileEntry]) -> String {
             escape_csv(&file.name),
             file.size,
             file.file_type,
-            file.parent_id,
+            file.parent_id.unwrap_or(0),
             file.created_at.as_deref().unwrap_or("")
         ));
     }
@@ -43,7 +43,7 @@ mod tests {
             name: name.to_string(),
             size: 1024,
             file_type: "FILE".to_string(),
-            parent_id: 0,
+            parent_id: Some(0),
             content_type: None,
             created_at: Some("2025-11-06T10:00:00Z".to_string()),
             first_accessed_at: None,
@@ -53,6 +53,7 @@ mod tests {
             opensubtitles_hash: None,
             crc32: None,
             extension: None,
+            sort_by: None,
         }
     }
 

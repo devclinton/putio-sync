@@ -36,8 +36,8 @@ pub struct FileEntry {
     pub size: i64,
     /// File type ("FILE", "FOLDER", "VIDEO", "AUDIO", etc.)
     pub file_type: String,
-    /// Parent folder ID (0 for root)
-    pub parent_id: i64,
+    /// Parent folder ID (None for root parent)
+    pub parent_id: Option<i64>,
     /// Content type (MIME type)
     pub content_type: Option<String>,
     /// Creation timestamp
@@ -58,6 +58,8 @@ pub struct FileEntry {
     pub crc32: Option<String>,
     /// File extension
     pub extension: Option<String>,
+    /// Sort order for folders
+    pub sort_by: Option<String>,
 }
 
 /// Response for file listing
@@ -203,7 +205,7 @@ mod tests {
         assert_eq!(file.name, "test.mp4");
         assert_eq!(file.size, 1024000);
         assert_eq!(file.file_type, "VIDEO");
-        assert_eq!(file.parent_id, 0);
+        assert_eq!(file.parent_id, Some(0));
         assert!(!file.is_folder);
     }
 
@@ -331,7 +333,7 @@ mod tests {
             name: "test.txt".to_string(),
             size: 1024,
             file_type: "FILE".to_string(),
-            parent_id: 0,
+            parent_id: Some(0),
             content_type: Some("text/plain".to_string()),
             created_at: None,
             first_accessed_at: None,
@@ -341,6 +343,7 @@ mod tests {
             opensubtitles_hash: None,
             crc32: None,
             extension: Some("txt".to_string()),
+            sort_by: None,
         };
 
         let json = serde_json::to_string(&file).unwrap();
