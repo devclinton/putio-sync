@@ -81,6 +81,43 @@ async fn main() {
             )
             .await
         }
+        Commands::Download {
+            files,
+            all,
+            filter,
+            dir,
+            workers,
+            chunk_size,
+            buffer_size,
+            no_resume,
+            skip_existing,
+            delete_after,
+            sort,
+            reverse,
+            progress,
+            daemon,
+            interval,
+        } => {
+            commands::execute_download(
+                files,
+                all,
+                filter,
+                dir,
+                workers,
+                chunk_size,
+                buffer_size,
+                no_resume,
+                skip_existing,
+                delete_after,
+                sort,
+                reverse,
+                progress,
+                daemon,
+                interval,
+                args.config,
+            )
+            .await
+        }
     };
 
     // Handle command execution errors
