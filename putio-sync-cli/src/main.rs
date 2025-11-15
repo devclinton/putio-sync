@@ -154,6 +154,25 @@ async fn main() {
             )
             .await
         }
+        Commands::History {
+            action,
+            since,
+            until,
+            limit,
+            offset,
+            output,
+        } => {
+            commands::execute_history(
+                action,
+                since,
+                until,
+                limit,
+                offset,
+                output,
+                args.config,
+            )
+            .await
+        }
     };
 
     // Handle command execution errors
