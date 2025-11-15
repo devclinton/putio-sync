@@ -6,11 +6,13 @@
 pub mod downloads;
 pub mod history;
 pub mod models;
+pub mod queue;
 pub mod schema;
 pub mod stats;
 
 pub use downloads::DownloadRepository;
 pub use history::HistoryRepository;
+pub use queue::{QueueRepository, QueueStats};
 pub use stats::{ExtensionStats, StatsRepository};
 
 use crate::error::{CoreError, CoreResult};
@@ -100,6 +102,11 @@ impl Database {
         StatsRepository::new(&self.pool)
     }
 
+    /// Get a queue repository
+    pub fn queue(&self) -> QueueRepository {
+        QueueRepository::new(&self.pool)
+    }
+
     /// Run database migrations
     ///
     /// This creates all necessary tables if they don't exist.
@@ -135,6 +142,12 @@ impl Database {
             .execute(&self.pool)
             .await
             .map_err(|e| CoreError::DatabaseError(format!("Failed to initialize stats: {}", e)))?;
+
+        // Create download_queue table
+        sqlx::query(schema::CREATE_DOWNLOAD_QUEUE_TABLE)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| CoreError::DatabaseError(format!("Failed to create download_queue table: {}", e)))?;
 
         // Create performance indexes
         sqlx::query(schema::CREATE_INDEXES)

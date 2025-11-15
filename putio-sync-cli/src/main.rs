@@ -8,7 +8,7 @@ mod logging;
 // Import from library
 use putio_sync_cli::commands;
 
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, QueueCommands};
 use tracing::{debug, error, info};
 
 #[tokio::main]
@@ -192,6 +192,37 @@ async fn main() {
             )
             .await
         }
+        Commands::Queue(queue_cmd) => match queue_cmd {
+            QueueCommands::List { status, output } => {
+                commands::queue::execute_list(status, output, args.config).await
+            }
+            QueueCommands::Add {
+                files,
+                priority,
+                all,
+                filter,
+            } => {
+                commands::queue::execute_add(files, priority, all, filter, args.config).await
+            }
+            QueueCommands::Pause { files } => {
+                commands::queue::execute_pause(files, args.config).await
+            }
+            QueueCommands::Resume { files } => {
+                commands::queue::execute_resume(files, args.config).await
+            }
+            QueueCommands::Remove { files } => {
+                commands::queue::execute_remove(files, args.config).await
+            }
+            QueueCommands::Clear { yes } => {
+                commands::queue::execute_clear(yes, args.config).await
+            }
+            QueueCommands::Priority { file_id, priority } => {
+                commands::queue::execute_priority(file_id, priority, args.config).await
+            }
+            QueueCommands::Stats { output } => {
+                commands::queue::execute_stats(output, args.config).await
+            }
+        },
     };
 
     // Handle command execution errors
