@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Transfer (torrent) API endpoints
+  - `add_transfer_url()` method for adding transfers from magnet links or torrent URLs
+  - `add_transfer_file()` method for uploading .torrent files with multipart form-data
+  - `list_transfers()` method for listing all active transfers
+  - `get_transfer()` method for getting transfer details by ID
+  - Support for parent folder ID and callback URL parameters
+  - Multipart form upload support with reqwest
+  - Transfer model with all status fields (progress, speed, peers, etc.)
+  - 4 unit tests for transfer endpoints
 - File deletion API endpoints
   - `delete_files()` method for single and bulk deletion
   - `delete_folder_recursive()` for recursive folder deletion

@@ -9,6 +9,7 @@ mod delete;
 mod files;
 mod models;
 mod path;
+mod transfers;
 
 pub use client::{ApiClient, DEFAULT_BASE_URL};
 pub use models::*;

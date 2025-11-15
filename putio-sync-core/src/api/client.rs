@@ -25,7 +25,7 @@ const INITIAL_RETRY_DELAY_MS: u64 = 100;
 /// Supports both OAuth token authentication (Bearer token) and
 /// app-specific password authentication (HTTP Basic Auth).
 pub struct ApiClient {
-    client: Client,
+    pub(crate) client: Client,
     pub(crate) base_url: String,
     auth_method: AuthMethod,
     token: Option<String>,
@@ -252,7 +252,7 @@ impl ApiClient {
     /// # Returns
     ///
     /// Authorization header value (either "Bearer <token>" or "Basic <base64>")
-    fn get_auth_header(&self) -> CoreResult<String> {
+    pub(crate) fn get_auth_header(&self) -> CoreResult<String> {
         match self.auth_method {
             AuthMethod::Token => {
                 let token = self.token.as_ref().ok_or_else(|| {
