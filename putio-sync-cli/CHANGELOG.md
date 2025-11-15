@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Speed and ETA display
 - Auto-detection of non-interactive terminals
 - Integration with core library's progress callback
+- Download command execution with file selection logic
+- Graceful shutdown handling (Ctrl+C support)
+- Download summary display with statistics
+- Automatic target directory creation
+- Database initialization for download tracking
+- Integration with DownloadManager from core library
 
 ## [0.1.1] - 2025-11-14
 

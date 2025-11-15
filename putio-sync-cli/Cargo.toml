@@ -63,6 +63,9 @@ urlencoding = "2.1"
 # Progress bars
 indicatif = "0.17"
 
+# Signal handling
+ctrlc = "3.4"
+
 [dev-dependencies]
 tempfile = "3.8"
 assert_cmd = "2.0"
