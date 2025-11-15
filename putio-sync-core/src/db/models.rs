@@ -55,6 +55,8 @@ pub struct Download {
     pub downloaded_at: String, // SQLite datetime as string
     /// Download status (completed, in_progress, failed)
     pub status: String,
+    /// Number of retry attempts
+    pub retry_count: i64,
 }
 
 impl Download {

@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS downloads (
     local_path TEXT NOT NULL,
     downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status TEXT NOT NULL CHECK(status IN ('completed', 'in_progress', 'failed')),
+    retry_count INTEGER DEFAULT 0,
     UNIQUE(file_id, filename, file_size)
 )
 "#;
