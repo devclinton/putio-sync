@@ -410,6 +410,62 @@ pub enum Commands {
         )]
         output: String,
     },
+
+    /// View download and delete history
+    History {
+        /// Filter by action
+        #[arg(
+            long = "action",
+            value_name = "ACTION",
+            help = "Filter by action (downloaded, deleted)"
+        )]
+        action: Option<String>,
+
+        /// Show history since date
+        #[arg(
+            long = "since",
+            value_name = "DATE",
+            help = "Show history since date (e.g., \"2025-01-01\")"
+        )]
+        since: Option<String>,
+
+        /// Show history until date
+        #[arg(
+            long = "until",
+            value_name = "DATE",
+            help = "Show history until date"
+        )]
+        until: Option<String>,
+
+        /// Limit number of results
+        #[arg(
+            short = 'n',
+            long = "limit",
+            value_name = "N",
+            default_value = "50",
+            help = "Limit number of results"
+        )]
+        limit: usize,
+
+        /// Offset for pagination
+        #[arg(
+            long = "offset",
+            value_name = "N",
+            default_value = "0",
+            help = "Offset for pagination"
+        )]
+        offset: usize,
+
+        /// Output format
+        #[arg(
+            short = 'o',
+            long = "output",
+            value_name = "FORMAT",
+            default_value = "table",
+            help = "Output format (table, json, csv)"
+        )]
+        output: String,
+    },
 }
 
 impl Cli {
