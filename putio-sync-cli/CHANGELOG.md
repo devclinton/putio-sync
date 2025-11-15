@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Create command for adding torrents to Put.io
+  - Add torrents from magnet links
+  - Upload .torrent files to Put.io
+  - Support for multiple sources (files and magnet links)
+  - Watch directories for new .torrent files with `--watch` flag
+  - Parent folder ID specification with `--parent-id` flag
+  - Daemon mode placeholder for continuous watching (to be implemented)
+  - Automatic source type detection (magnet link vs .torrent file)
+  - Transfer status display with ID, name, size, and parent folder
+  - Human-readable size formatting
+  - Comprehensive error handling and validation
+  - 2 unit tests for source detection and formatting
 - History command for viewing download and delete history
   - View download and delete history from SQLite database
   - Action filtering with `--action` flag (downloaded, deleted)
