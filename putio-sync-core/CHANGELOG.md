@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+- Database query optimization with strategic indexes
+  - idx_downloads_file_id for file lookups
+  - idx_downloads_status for status filtering
+  - idx_chunks_download_id and idx_chunks_status for chunk queries
+  - idx_history_timestamp for date range queries
+  - idx_history_action for action filtering
+  - idx_history_extension for stats aggregation
+  - idx_history_action_timestamp composite index for combined queries
+- Significantly improved performance for large file lists and history datasets
+- Optimized pagination queries for better responsiveness
+
 ### Added
 - Example configuration file (config.example.toml) with comprehensive documentation
   - Documented all authentication options (Token and AppPassword)
