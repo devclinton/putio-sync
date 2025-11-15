@@ -182,6 +182,10 @@ pub struct DownloadConfig {
     /// Bandwidth limit in bytes per second (None for unlimited)
     /// Example: Some(1048576) for 1 MB/s limit
     pub bandwidth_limit_bytes_per_sec: Option<u64>,
+    /// Maximum number of retry attempts for failed downloads (default: 3)
+    pub max_retries: u32,
+    /// Initial retry delay in seconds (doubles with each retry)
+    pub retry_initial_delay_secs: u64,
 }
 
 /// Watch configuration
@@ -220,6 +224,8 @@ impl Default for DownloadConfig {
             whitelist_patterns: None,
             blacklist_patterns: None,
             bandwidth_limit_bytes_per_sec: None, // Unlimited by default
+            max_retries: 3,                      // 3 retries by default
+            retry_initial_delay_secs: 1,         // Start with 1 second delay
         }
     }
 }
@@ -331,6 +337,8 @@ impl Config {
     ///         whitelist_patterns: None,
     ///         blacklist_patterns: None,
     ///         bandwidth_limit_bytes_per_sec: None,
+    ///         max_retries: 3,
+    ///         retry_initial_delay_secs: 1,
     ///     },
     ///     watch: WatchConfig {
     ///         refresh_cycle: 60,
@@ -615,6 +623,18 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set maximum number of retry attempts
+    pub fn max_retries(mut self, retries: u32) -> Self {
+        self.download.max_retries = retries;
+        self
+    }
+
+    /// Set initial retry delay in seconds
+    pub fn retry_initial_delay_secs(mut self, delay: u64) -> Self {
+        self.download.retry_initial_delay_secs = delay;
+        self
+    }
+
     /// Set the refresh cycle in seconds
     pub fn refresh_cycle(mut self, seconds: i8) -> Self {
         self.watch.refresh_cycle = seconds;
@@ -666,6 +686,8 @@ mod tests {
                 whitelist_patterns: Some("*.mkv".to_string()),
                 blacklist_patterns: Some("*.exe".to_string()),
                 bandwidth_limit_bytes_per_sec: None,
+                max_retries: 3,
+                retry_initial_delay_secs: 1,
             },
             watch: WatchConfig {
                 refresh_cycle: 60,
@@ -899,6 +921,8 @@ mod tests {
         assert_eq!(config.whitelist_patterns, None);
         assert_eq!(config.blacklist_patterns, None);
         assert_eq!(config.bandwidth_limit_bytes_per_sec, None);
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.retry_initial_delay_secs, 1);
     }
 
     #[test]
