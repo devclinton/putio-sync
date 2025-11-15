@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- History command for viewing download and delete history
+  - View download and delete history from SQLite database
+  - Action filtering with `--action` flag (downloaded, deleted)
+  - Date range filtering with `--since` and `--until` flags
+  - Multiple date format support (YYYY-MM-DD, YYYY/MM/DD, MM/DD/YYYY, DD-MMM-YYYY)
+  - Pagination with `--limit` and `--offset` flags (default limit: 50)
+  - Three output formats: table (default), JSON, CSV
+  - Human-readable formatting for sizes, durations, and speeds
+  - Pagination information showing entry range and total count
+  - Filter display in table output
+  - CSV escaping for special characters
+  - Comprehensive error messages and guidance
+  - 8 unit tests for formatting and validation functions
 - Stat command for displaying download statistics
   - Display overall download statistics (count, size, time, speed)
   - Extension-based breakdown with percentages (`--by-extension`)
