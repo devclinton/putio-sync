@@ -179,6 +179,9 @@ pub struct DownloadConfig {
     pub whitelist_patterns: Option<String>,
     /// Glob patterns to blacklist files (e.g., "*.exe")
     pub blacklist_patterns: Option<String>,
+    /// Bandwidth limit in bytes per second (None for unlimited)
+    /// Example: Some(1048576) for 1 MB/s limit
+    pub bandwidth_limit_bytes_per_sec: Option<u64>,
 }
 
 /// Watch configuration
@@ -216,6 +219,7 @@ impl Default for DownloadConfig {
             reverse_sort: false,
             whitelist_patterns: None,
             blacklist_patterns: None,
+            bandwidth_limit_bytes_per_sec: None, // Unlimited by default
         }
     }
 }
@@ -604,6 +608,12 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set bandwidth limit in bytes per second
+    pub fn bandwidth_limit_bytes_per_sec(mut self, limit: u64) -> Self {
+        self.download.bandwidth_limit_bytes_per_sec = Some(limit);
+        self
+    }
+
     /// Set the refresh cycle in seconds
     pub fn refresh_cycle(mut self, seconds: i8) -> Self {
         self.watch.refresh_cycle = seconds;
@@ -654,6 +664,7 @@ mod tests {
                 reverse_sort: false,
                 whitelist_patterns: Some("*.mkv".to_string()),
                 blacklist_patterns: Some("*.exe".to_string()),
+                bandwidth_limit_bytes_per_sec: None,
             },
             watch: WatchConfig {
                 refresh_cycle: 60,
@@ -886,6 +897,7 @@ mod tests {
         assert!(!config.reverse_sort);
         assert_eq!(config.whitelist_patterns, None);
         assert_eq!(config.blacklist_patterns, None);
+        assert_eq!(config.bandwidth_limit_bytes_per_sec, None);
     }
 
     #[test]
