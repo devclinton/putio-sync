@@ -66,6 +66,12 @@ indicatif = "0.17"
 # Signal handling
 ctrlc = "3.4"
 
+# Date/time handling
+chrono = "0.4"
+
+# Glob patterns
+glob = "0.3"
+
 [dev-dependencies]
 tempfile = "3.8"
 assert_cmd = "2.0"

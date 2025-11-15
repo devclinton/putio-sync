@@ -118,6 +118,27 @@ async fn main() {
             )
             .await
         }
+        Commands::Delete {
+            files,
+            all,
+            filter,
+            recursive,
+            before,
+            dry_run,
+            yes,
+        } => {
+            commands::execute_delete(
+                files,
+                all,
+                filter,
+                recursive,
+                before,
+                dry_run,
+                yes,
+                args.config,
+            )
+            .await
+        }
     };
 
     // Handle command execution errors
