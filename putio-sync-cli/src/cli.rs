@@ -266,6 +266,14 @@ pub enum Commands {
         )]
         buffer_size: Option<String>,
 
+        /// Bandwidth limit in bytes per second
+        #[arg(
+            long = "bandwidth-limit",
+            value_name = "LIMIT",
+            help = "Bandwidth limit (e.g., 1MB, 5MB/s) [default: unlimited]"
+        )]
+        bandwidth_limit: Option<String>,
+
         /// Disable resume of partial downloads
         #[arg(long = "no-resume", help = "Disable resume of partial downloads")]
         no_resume: bool,
