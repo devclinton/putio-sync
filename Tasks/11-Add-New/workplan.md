@@ -525,6 +525,7 @@ Options:
 
 ### 3.5 Human Testing Phase: Download Command
 **Feature**: Manual testing of download functionality
+Create a markdown file with exact commands that can be copied by user easily, or provide a series of scripts like test-1.sh and a test-all.sh that can run all tests 
 
 **Test Cases**:
 - [ ] Test download with --all flag
