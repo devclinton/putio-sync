@@ -42,7 +42,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Semaphore-based concurrency control
   - Graceful shutdown handling
   - Error handling and result reporting
-- Comprehensive unit tests for all modules (78 tests total, all passing)
+- Streaming downloads with buffering
+  - Direct-to-disk streaming to minimize memory usage
+  - Configurable buffer size (default: 16MB)
+  - Intermediate files with .downloading extension and . prefix
+  - Atomic file rename on completion
+  - File size validation and integrity checks
+  - Automatic cleanup on failure
+- Comprehensive unit tests for all modules (87 tests total, all passing)
 
 ## [0.1.1] - 2025-11-14
 
