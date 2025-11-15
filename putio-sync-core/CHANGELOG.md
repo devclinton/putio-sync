@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Documented sync and watch configuration
   - Added common configuration examples
   - Detailed comments explaining each option
+- Helpful error message constructors with troubleshooting tips
+  - `auth_error_with_suggestion()` for authentication failures
+  - `config_not_found()` for missing configuration files
+  - `network_error()` for API/network issues
+  - `database_error_with_suggestion()` for database problems
+  - All error messages include actionable troubleshooting steps
 - Transfer (torrent) API endpoints
   - `add_transfer_url()` method for adding transfers from magnet links or torrent URLs
   - `add_transfer_file()` method for uploading .torrent files with multipart form-data
