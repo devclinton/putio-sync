@@ -3,8 +3,15 @@
 //! This module provides SQLite-based storage for tracking downloads,
 //! history, statistics, and chunk state for resumable downloads.
 
+pub mod downloads;
+pub mod history;
 pub mod models;
 pub mod schema;
+pub mod stats;
+
+pub use downloads::DownloadRepository;
+pub use history::HistoryRepository;
+pub use stats::{ExtensionStats, StatsRepository};
 
 use crate::error::{CoreError, CoreResult};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};

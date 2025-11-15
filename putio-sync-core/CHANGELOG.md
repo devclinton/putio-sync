@@ -13,7 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Chunk tracking for resumable downloads
 - Automatic database migrations
 - Database models for downloads, chunks, history, and stats
-- Comprehensive unit tests for database operations
+- Repository pattern for clean database access
+- DownloadRepository for CRUD operations on downloads and chunks
+- HistoryRepository with query filtering and pagination
+- StatsRepository for aggregation and statistics by extension
+- Comprehensive unit tests for database operations (30 tests, all passing)
 
 ## [0.1.1] - 2025-11-14
 
