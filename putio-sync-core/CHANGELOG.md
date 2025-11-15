@@ -29,7 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ProgressStyle and SortOrder enums for download configuration
 - Updated config builder with new download options
 - Backward compatibility with deprecated max_concurrent option
-- Comprehensive unit tests for all modules (56 tests total, all passing)
+- Cross-platform filename sanitization
+  - Handles invalid characters (/, \, :, *, ?, ", <, >, |)
+  - Handles Windows reserved names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
+  - Handles path length limits (255 chars for filenames, 260 for paths)
+  - Preserves Unicode characters
+  - Reproducible transformations
+  - Path and filename sanitization functions
+- Comprehensive unit tests for all modules (70 tests total, all passing)
 
 ## [0.1.1] - 2025-11-14
 
