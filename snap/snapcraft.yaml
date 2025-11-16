@@ -1,0 +1,57 @@
+name: putio-sync
+base: core22
+version: '0.1.1'
+summary: CLI tool for syncing files from Put.io to local storage
+description: |
+  putio-sync is a command-line tool for downloading and managing
+  files from Put.io cloud storage service. Features include:
+
+  * Download files and folders from Put.io with concurrent workers
+  * Resume support for interrupted downloads
+  * Daemon mode for continuous syncing
+  * Filter files by name, type, size, and date
+  * Delete files after download
+  * HTTP API server for remote control
+  * Watch mode for automatic torrent uploads
+  * Comprehensive download history and statistics
+
+grade: stable
+confinement: strict
+
+architectures:
+  - build-on: amd64
+  - build-on: arm64
+  - build-on: armhf
+
+apps:
+  putio-sync:
+    command: bin/putio-sync
+    plugs:
+      - home
+      - network
+      - network-bind
+      - removable-media
+    environment:
+      # Use snap user data directory for config
+      PUTIO_SYNC_CONFIG: $SNAP_USER_DATA/config.toml
+
+parts:
+  putio-sync:
+    plugin: rust
+    source: .
+    rust-channel: stable
+    build-packages:
+      - pkg-config
+      - libssl-dev
+    stage-packages:
+      - libssl3
+    override-build: |
+      # Build the CLI binary
+      cargo build --release --package putio-sync-cli
+
+      # Install to the snap
+      mkdir -p $CRAFT_PART_INSTALL/bin
+      cp target/release/putio-sync $CRAFT_PART_INSTALL/bin/
+
+      # Strip binary to reduce size
+      strip $CRAFT_PART_INSTALL/bin/putio-sync

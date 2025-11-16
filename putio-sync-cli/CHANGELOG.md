@@ -49,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automated .deb package creation on release
 - Multi-architecture support (amd64, arm64)
 - Automatic upload to GitHub releases
+- Snap package configuration
+- Strict confinement with necessary plugs
+- Cross-distro Linux support via Snap
 - Docker distribution and deployment support
   - Alpine Linux-based Dockerfile with multi-stage build
   - Optimized image size (24MB) with minimal dependencies
