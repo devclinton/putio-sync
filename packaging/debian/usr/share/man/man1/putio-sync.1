@@ -1,0 +1,120 @@
+.TH PUTIO-SYNC 1 "November 2025" "putio-sync 0.1.1" "User Commands"
+.SH NAME
+putio-sync \- CLI tool for syncing files from Put.io to local storage
+.SH SYNOPSIS
+.B putio-sync
+[\fIOPTIONS\fR] \fICOMMAND\fR [\fIARGS\fR...]
+.SH DESCRIPTION
+.B putio-sync
+is a command-line tool for downloading and managing files from Put.io cloud storage service.
+It provides comprehensive features for file synchronization, download management, and automation.
+.SH OPTIONS
+.TP
+.BR \-c ", " \-\-config " " \fIPATH\fR
+Path to configuration file (default: ~/.config/putio-sync/config.toml)
+.TP
+.BR \-v ", " \-\-verbose
+Increase verbosity (can be used multiple times: -v, -vv, -vvv)
+.TP
+.BR \-q ", " \-\-quiet
+Suppress output except errors
+.TP
+.BR \-h ", " \-\-help
+Print help information
+.TP
+.BR \-V ", " \-\-version
+Print version information
+.SH COMMANDS
+.TP
+.B login
+Authenticate with Put.io using OAuth token
+.TP
+.B files list
+List files and folders from Put.io
+.TP
+.B files delete
+Delete files from Put.io
+.TP
+.B download
+Download files from Put.io to local storage
+.TP
+.B transfers add
+Add torrents to Put.io
+.TP
+.B transfers list
+List active transfers
+.TP
+.B history
+View download and delete history
+.TP
+.B stat
+Display download statistics
+.TP
+.B server
+Start HTTP API server in daemon, watch, or download modes
+.SH EXAMPLES
+.TP
+Login with OAuth token:
+.B putio-sync login
+.TP
+List all files:
+.B putio-sync files list
+.TP
+Download all files to current directory:
+.B putio-sync download
+.TP
+Start daemon mode for continuous syncing:
+.B putio-sync server --daemon
+.TP
+Add torrent from magnet link:
+.B putio-sync transfers add "magnet:?xt=..."
+.TP
+View download statistics:
+.B putio-sync stat
+.SH CONFIGURATION
+Configuration is stored in TOML format at:
+.B ~/.config/putio-sync/config.toml
+
+Example configuration:
+.nf
+[auth]
+oauth_token = "YOUR_TOKEN_HERE"
+.fi
+.SH FILES
+.TP
+.I ~/.config/putio-sync/config.toml
+User configuration file
+.TP
+.I ~/.local/share/putio-sync/downloads.db
+SQLite database for download history
+.SH ENVIRONMENT
+.TP
+.B RUST_LOG
+Set logging level (error, warn, info, debug, trace)
+.TP
+.B PUTIO_SYNC_CONFIG
+Override default configuration file path
+.SH EXIT STATUS
+.TP
+.B 0
+Success
+.TP
+.B 1
+General error
+.TP
+.B 2
+Configuration error
+.SH BUGS
+Report bugs to: https://github.com/devclinton/putio-sync/issues
+.SH AUTHOR
+Clinton Collins <devclinton@users.noreply.github.com>
+.SH COPYRIGHT
+Copyright \(co 2025 Clinton Collins.
+License: MIT <https://opensource.org/licenses/MIT>
+.br
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+.SH SEE ALSO
+Full documentation: https://github.com/devclinton/putio-sync
+.br
+Put.io website: https://put.io

@@ -1,0 +1,22 @@
+Package: putio-sync
+Version: 0.1.1
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Clinton Collins <devclinton@users.noreply.github.com>
+Homepage: https://github.com/devclinton/putio-sync
+Vcs-Git: https://github.com/devclinton/putio-sync.git
+Vcs-Browser: https://github.com/devclinton/putio-sync
+Description: CLI tool for syncing files from Put.io to local storage
+ putio-sync is a command-line tool for downloading and managing
+ files from Put.io cloud storage service.
+ .
+ Features include:
+  * Download files and folders from Put.io with concurrent workers
+  * Resume support for interrupted downloads
+  * Daemon mode for continuous syncing
+  * Filter files by name, type, size, and date
+  * Delete files after download
+  * HTTP API server for remote control
+  * Watch mode for automatic torrent uploads
+  * Comprehensive download history and statistics
