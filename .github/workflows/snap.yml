@@ -1,0 +1,143 @@
+name: Build and Publish Snap
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Snap Store channel (edge, beta, candidate, stable)'
+        required: true
+        default: 'edge'
+      version:
+        description: 'Version to build (e.g., v0.1.1)'
+        required: false
+
+jobs:
+  build-snap:
+    name: Build Snap Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            CHANNEL="stable"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+            CHANNEL="${{ github.event.inputs.channel }}"
+          fi
+          # Remove 'v' prefix for snap version
+          VERSION_NO_V=${VERSION#v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_no_v=${VERSION_NO_V}" >> $GITHUB_OUTPUT
+          echo "channel=${CHANNEL}" >> $GITHUB_OUTPUT
+
+      - name: Update snap version
+        run: |
+          VERSION="${{ steps.get_version.outputs.version_no_v }}"
+          sed -i "s/^version: .*/version: '${VERSION}'/" snap/snapcraft.yaml
+          echo "Updated snap version to ${VERSION}"
+          grep "^version:" snap/snapcraft.yaml
+
+      - name: Build snap
+        uses: snapcore/action-build@v1
+        id: build
+
+      - name: Get snap filename
+        id: snap_file
+        run: |
+          SNAP_FILE=$(ls *.snap | head -n 1)
+          echo "snap_file=${SNAP_FILE}" >> $GITHUB_OUTPUT
+          echo "Built snap: ${SNAP_FILE}"
+
+      - name: Publish to Snap Store
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
+        with:
+          snap: ${{ steps.snap_file.outputs.snap_file }}
+          release: ${{ steps.get_version.outputs.channel }}
+
+      - name: Upload snap artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: snap-package
+          path: "*.snap"
+
+      - name: Create summary
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          CHANNEL="${{ steps.get_version.outputs.channel }}"
+          SNAP_FILE="${{ steps.snap_file.outputs.snap_file }}"
+
+          echo "## Snap Package Built" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **File**: ${SNAP_FILE}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Channel**: ${CHANNEL}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ github.event_name }}" = "release" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "### Published to Snap Store" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The snap has been published to the **${CHANNEL}** channel." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Installation" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+
+            if [ "${CHANNEL}" = "stable" ]; then
+              echo "sudo snap install putio-sync" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "sudo snap install putio-sync --${CHANNEL}" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+            echo "1. Monitor the Snap Store: https://snapcraft.io/putio-sync" >> $GITHUB_STEP_SUMMARY
+            echo "2. Check metrics and downloads" >> $GITHUB_STEP_SUMMARY
+            echo "3. Respond to user reviews and feedback" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Development Build" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "This is a development build. To publish, create a release or use workflow dispatch." >> $GITHUB_STEP_SUMMARY
+          fi
+
+  test-snap:
+    name: Test Snap Installation
+    needs: build-snap
+    runs-on: ubuntu-latest
+    if: github.event_name != 'release'
+    steps:
+      - name: Download snap artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: snap-package
+
+      - name: Install snap
+        run: |
+          SNAP_FILE=$(ls *.snap | head -n 1)
+          echo "Installing ${SNAP_FILE}"
+          sudo snap install --dangerous ${SNAP_FILE}
+
+      - name: Test snap
+        run: |
+          # Test basic command
+          putio-sync --version
+
+          # Verify snap info
+          snap info putio-sync
+
+          # Check connections
+          snap connections putio-sync
+
+      - name: Uninstall snap
+        if: always()
+        run: |
+          sudo snap remove putio-sync || true
