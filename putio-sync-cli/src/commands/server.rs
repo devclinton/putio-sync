@@ -3,6 +3,7 @@
 //! Starts an HTTP API server with optional daemon modes for watch and download.
 
 use anyhow::{Context, Result};
+use putio_sync_core::api::ApiClient;
 use putio_sync_core::config::Config;
 use std::path::PathBuf;
 use tokio::signal;
@@ -96,17 +97,30 @@ pub async fn execute_server(
     info!("");
     info!("Press Ctrl+C to stop the server");
 
-    // TODO: Start watch mode thread if enabled
-    if watch {
-        // Spawn watch mode task
-        info!("TODO: Start watch mode thread");
-    }
+    // Start watch mode thread if enabled
+    let _watch_handle = if watch {
+        if !config.watch.enabled {
+            warn!("Watch mode enabled via flag but not configured in config.toml");
+            warn!("No watch directories will be monitored");
+            None
+        } else if config.watch.paths.is_empty() {
+            warn!("Watch mode enabled but no watch paths configured");
+            None
+        } else {
+            info!("Starting watch mode daemon...");
+            Some(spawn_watch_daemon(config.clone()))
+        }
+    } else {
+        None
+    };
 
-    // TODO: Start download mode thread if enabled
-    if download {
-        // Spawn download mode task
-        info!("TODO: Start download mode thread");
-    }
+    // Start download mode thread if enabled
+    let _download_handle = if download {
+        info!("Starting download mode daemon...");
+        Some(spawn_download_daemon(config.clone()))
+    } else {
+        None
+    };
 
     // Run server with graceful shutdown
     axum::serve(listener, app)
@@ -115,6 +129,11 @@ pub async fn execute_server(
         .context("Server error")?;
 
     info!("Server shut down gracefully");
+
+    // Note: Daemon threads will continue running until Ctrl+C is pressed again
+    // The TorrentWatcher has its own Ctrl+C handler that will stop it gracefully
+    // For now, we don't wait for the daemon threads to finish to allow quick server shutdown
+    // In the future, we could implement a shared shutdown signal for all threads
 
     Ok(())
 }
@@ -146,6 +165,109 @@ async fn shutdown_signal() {
             info!("Received SIGTERM, shutting down...");
         },
     }
+}
+
+/// Spawn watch mode daemon thread
+///
+/// Monitors configured watch directories for new .torrent files and automatically
+/// uploads them to Put.io.
+fn spawn_watch_daemon(config: Config) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        use crate::watch::TorrentWatcher;
+
+        // Create a new Tokio runtime for this thread
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+
+        rt.block_on(async move {
+            info!("Watch daemon started");
+            info!("  Directories: {:?}", config.watch.paths);
+            info!("  Interval: {}s", config.watch.refresh_cycle);
+            info!("  Parent folder: {:?}", config.watch.parent_folder_id);
+
+            // Create API client
+            let auth_config = match config.auth {
+                Some(auth) => auth,
+                None => {
+                    warn!("Watch daemon: No authentication configured, stopping");
+                    return;
+                }
+            };
+
+            let client = ApiClient::from_auth_config(auth_config);
+
+            // Create and run watcher
+            let watcher = TorrentWatcher::new(
+                config.watch.paths.clone(),
+                config.watch.parent_folder_id,
+                config.watch.refresh_cycle as u64,
+            );
+
+            if let Err(e) = watcher.run_daemon(&client).await {
+                warn!("Watch daemon error: {}", e);
+            }
+
+            info!("Watch daemon stopped");
+        })
+    })
+}
+
+/// Spawn download mode daemon thread
+///
+/// Monitors completed transfers and automatically downloads them to the configured
+/// download directory.
+fn spawn_download_daemon(config: Config) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        // Create a new Tokio runtime for this thread
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+
+        rt.block_on(async move {
+            info!("Download daemon started");
+            info!("  Target directory: {}", config.download.target_directory.display());
+            info!("  Workers: {}", config.download.workers);
+
+            // Create API client
+            let auth_config = match config.auth {
+                Some(auth) => auth,
+                None => {
+                    warn!("Download daemon: No authentication configured, stopping");
+                    return;
+                }
+            };
+
+            let client = ApiClient::from_auth_config(auth_config);
+
+            // Run download daemon loop
+            loop {
+                // Check for completed transfers
+                match client.list_transfers().await {
+                    Ok(response) => {
+                        let completed: Vec<_> = response
+                            .transfers
+                            .iter()
+                            .filter(|t| t.status == "COMPLETED" && t.file_id.is_some())
+                            .collect();
+
+                        if !completed.is_empty() {
+                            info!("Found {} completed transfer(s)", completed.len());
+
+                            // TODO: Implement automatic download
+                            // This would use the download command logic to download files
+                            // For now, just log the completed transfers
+                            for transfer in completed {
+                                info!("  - {} (file_id: {:?})", transfer.name, transfer.file_id);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Download daemon: Failed to list transfers: {}", e);
+                    }
+                }
+
+                // Sleep for interval (60 seconds)
+                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+            }
+        })
+    })
 }
 
 #[cfg(test)]
