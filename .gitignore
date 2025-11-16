@@ -26,3 +26,24 @@ config.toml
 
 # Logs
 *.log
+
+# Downloads
+putio-downloads/*
+
+# Packaging artifacts
+*.deb
+*.snap
+*.flatpak
+*.rpm
+*.pkg.tar.zst
+*.zip
+*.tar.gz
+*.tar.xz
+packaging/debian/putio-sync_*
+packaging/flatpak/cargo-sources.json
+packaging/flatpak/.flatpak-builder/
+snap/.snapcraft/
+snap/parts/
+snap/prime/
+snap/stage/
+snap/*.snap
