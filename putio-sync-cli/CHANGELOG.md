@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Homebrew formula for macOS and Linux installation
 - Local formula testing support
+- Homebrew tap repository for easy installation
+- Tap testing workflow
 - Docker distribution and deployment support
   - Alpine Linux-based Dockerfile with multi-stage build
   - Optimized image size (24MB) with minimal dependencies

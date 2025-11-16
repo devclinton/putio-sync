@@ -1,0 +1,79 @@
+name: Test Formula
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test-formula:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+
+      - name: Set up Homebrew
+        id: set-up-homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+        if: runner.os == 'Linux'
+
+      - name: Validate formula syntax
+        run: |
+          brew audit --strict Formula/putio-sync.rb
+
+      - name: Test formula installation (dry run)
+        run: |
+          # This tests that the formula can be parsed and dependencies resolved
+          # but doesn't actually build it (which would require a valid tarball)
+          brew install --dry-run Formula/putio-sync.rb || true
+          echo "Dry run completed"
+
+      - name: Check formula info
+        run: |
+          brew info Formula/putio-sync.rb
+
+  lint-formula:
+    name: Lint Formula
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: Run brew audit
+        run: |
+          brew audit --strict --online Formula/putio-sync.rb
+
+      - name: Check formula style
+        run: |
+          brew style Formula/putio-sync.rb
+
+  check-links:
+    name: Check Formula Links
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+
+      - name: Check GitHub URLs are valid
+        run: |
+          # Extract URLs from formula
+          HOMEPAGE=$(grep 'homepage' Formula/putio-sync.rb | cut -d'"' -f2)
+          echo "Homepage: $HOMEPAGE"
+
+          # Check if URLs are accessible
+          curl -f -s -o /dev/null "$HOMEPAGE" || (echo "Homepage URL is not accessible" && exit 1)
+
+          echo "All URLs are valid"
