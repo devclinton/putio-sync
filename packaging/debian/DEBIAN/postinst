@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+
+# Post-installation script for putio-sync
+
+# Nothing specific needed for post-installation
+# Binary is already in /usr/bin from package installation
+
+# Print success message
+echo "putio-sync has been installed successfully!"
+echo "Run 'putio-sync --help' to get started."
+echo "Documentation: https://github.com/clintoncollins/putio-sync"
+
+exit 0

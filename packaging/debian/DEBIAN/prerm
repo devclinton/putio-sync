@@ -1,0 +1,15 @@
+#!/bin/bash
+set -e
+
+# Pre-removal script for putio-sync
+
+# Stop any running daemon instances
+if pgrep -x "putio-sync" > /dev/null; then
+    echo "Stopping putio-sync daemon instances..."
+    pkill -TERM "putio-sync" || true
+    sleep 2
+    # Force kill if still running
+    pkill -KILL "putio-sync" || true
+fi
+
+exit 0
