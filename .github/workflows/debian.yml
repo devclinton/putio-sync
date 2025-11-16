@@ -1,0 +1,132 @@
+name: Build Debian Packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., v0.1.1)'
+        required: true
+
+jobs:
+  build-deb:
+    name: Build .deb for ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            rust_target: x86_64-unknown-linux-gnu
+          - arch: arm64
+            rust_target: aarch64-unknown-linux-gnu
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_no_v=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev build-essential lintian
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install cross-compilation tools (ARM64 only)
+        if: matrix.arch == 'arm64'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Build .deb package
+        run: |
+          bash packaging/debian/build-deb.sh ${{ steps.get_version.outputs.version_no_v }} ${{ matrix.arch }}
+
+      - name: List built packages
+        run: |
+          ls -lh build/*.deb
+          echo "Package info:"
+          dpkg-deb --info build/*.deb
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: build/putio-sync_${{ steps.get_version.outputs.version_no_v }}_${{ matrix.arch }}.deb
+          asset_name: putio-sync_${{ steps.get_version.outputs.version_no_v }}_${{ matrix.arch }}.deb
+          asset_content_type: application/vnd.debian.binary-package
+
+      - name: Upload SHA256 checksum
+        if: github.event_name == 'release'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: build/putio-sync_${{ steps.get_version.outputs.version_no_v }}_${{ matrix.arch }}.deb.sha256
+          asset_name: putio-sync_${{ steps.get_version.outputs.version_no_v }}_${{ matrix.arch }}.deb.sha256
+          asset_content_type: text/plain
+
+      - name: Upload artifact (for manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: debian-${{ matrix.arch }}
+          path: |
+            build/*.deb
+            build/*.sha256
+
+  build-summary:
+    name: Create Build Summary
+    needs: build-deb
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Create summary
+        run: |
+          echo "## Debian Package Builds" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.build-deb.result }}" == "success" ]; then
+            echo "✅ All Debian builds completed successfully" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Built Architectures" >> $GITHUB_STEP_SUMMARY
+            echo "- amd64 (x86_64)" >> $GITHUB_STEP_SUMMARY
+            echo "- arm64 (aarch64)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Installation" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "# Download the .deb file for your architecture" >> $GITHUB_STEP_SUMMARY
+            echo "sudo dpkg -i putio-sync_*_amd64.deb" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "# Or install dependencies if needed" >> $GITHUB_STEP_SUMMARY
+            echo "sudo apt-get install -f" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Some builds failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ github.event_name }}" == "release" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Release Assets" >> $GITHUB_STEP_SUMMARY
+            echo "Packages uploaded to: ${{ github.event.release.html_url }}" >> $GITHUB_STEP_SUMMARY
+          fi
