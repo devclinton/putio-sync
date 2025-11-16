@@ -62,8 +62,12 @@ pub enum Commands {
         no_browser: bool,
     },
 
-    /// List files and folders from Put.io
-    #[command(about = "List files and folders from Put.io")]
+    /// File management commands
+    #[command(about = "Manage files on Put.io", subcommand)]
+    Files(FilesCommands),
+
+    /// List files and folders from Put.io (deprecated: use 'files list')
+    #[command(about = "List files and folders from Put.io", hide = true)]
     List {
         /// Remote folder path or ID to list
         #[arg(value_name = "PATH", help = "Remote folder path or ID [default: root]")]
@@ -275,7 +279,8 @@ pub enum Commands {
         interval: u64,
     },
 
-    /// Delete files from Put.io
+    /// Delete files from Put.io (deprecated: use 'files delete')
+    #[command(about = "Delete files from Put.io", hide = true)]
     Delete {
         /// Specific file IDs to delete
         #[arg(value_name = "FILES", help = "Specific file IDs to delete")]
@@ -477,6 +482,162 @@ pub enum Commands {
     /// Manage Put.io transfers
     #[command(about = "Manage Put.io transfers", subcommand)]
     Transfers(TransfersCommands),
+}
+
+/// File management subcommands
+#[derive(Subcommand, Debug)]
+pub enum FilesCommands {
+    /// List files and folders from Put.io
+    #[command(about = "List files and folders from Put.io")]
+    List {
+        /// Remote folder path or ID to list
+        #[arg(value_name = "PATH", help = "Remote folder path or ID [default: root]")]
+        path: Option<String>,
+
+        /// List folder by ID instead of path
+        #[arg(
+            short = 'i',
+            long = "id",
+            value_name = "ID",
+            help = "List folder by ID instead of path",
+            conflicts_with = "path"
+        )]
+        id: Option<i64>,
+
+        /// List files recursively
+        #[arg(short = 'r', long = "recursive", help = "List files recursively")]
+        recursive: bool,
+
+        /// Long format with details
+        #[arg(
+            short = 'l',
+            long = "long",
+            help = "Long format with details (size, date, etc.)"
+        )]
+        long: bool,
+
+        /// Filter files by name pattern
+        #[arg(
+            short = 'f',
+            long = "filter",
+            value_name = "PATTERN",
+            help = "Filter files by name pattern (glob)"
+        )]
+        filter: Option<String>,
+
+        /// Filter by file type
+        #[arg(
+            short = 't',
+            long = "type",
+            value_name = "TYPE",
+            help = "Filter by type (file, folder, video, audio, image, archive)"
+        )]
+        file_type: Option<String>,
+
+        /// Minimum file size filter
+        #[arg(
+            long = "min-size",
+            value_name = "SIZE",
+            help = "Filter by minimum file size (e.g., 100MB, 1GB)"
+        )]
+        min_size: Option<String>,
+
+        /// Maximum file size filter
+        #[arg(
+            long = "max-size",
+            value_name = "SIZE",
+            help = "Filter by maximum file size (e.g., 100MB, 1GB)"
+        )]
+        max_size: Option<String>,
+
+        /// Sort by field
+        #[arg(
+            long = "sort",
+            value_name = "FIELD",
+            help = "Sort by field (name, size, date)"
+        )]
+        sort: Option<String>,
+
+        /// Reverse sort order
+        #[arg(long = "reverse", help = "Reverse sort order")]
+        reverse: bool,
+
+        /// Output format
+        #[arg(
+            short = 'o',
+            long = "output",
+            value_name = "FORMAT",
+            default_value = "table",
+            help = "Output format (table, json, csv, tree)"
+        )]
+        output: String,
+
+        /// Output filename
+        #[arg(
+            long = "output-file",
+            value_name = "FILE",
+            help = "Output filename (to be used with -o). Optional"
+        )]
+        output_file: Option<PathBuf>,
+    },
+
+    /// Delete files from Put.io
+    #[command(about = "Delete files from Put.io")]
+    Delete {
+        /// Specific file IDs to delete
+        #[arg(value_name = "FILES", help = "Specific file IDs to delete")]
+        files: Vec<i64>,
+
+        /// Delete all files
+        #[arg(
+            short = 'a',
+            long = "all",
+            help = "Delete all files (requires confirmation)",
+            conflicts_with = "files"
+        )]
+        all: bool,
+
+        /// Filter files with glob pattern
+        #[arg(
+            short = 'f',
+            long = "filter",
+            value_name = "PATTERN",
+            help = "Filter files with glob pattern (e.g., \"*.txt\")"
+        )]
+        filter: Option<String>,
+
+        /// Delete folders recursively
+        #[arg(
+            short = 'r',
+            long = "recursive",
+            help = "Delete folders and their contents recursively"
+        )]
+        recursive: bool,
+
+        /// Delete files before date
+        #[arg(
+            long = "before",
+            value_name = "DATE",
+            help = "Delete files created before date (e.g., \"2026-01\")"
+        )]
+        before: Option<String>,
+
+        /// Dry run (show what would be deleted)
+        #[arg(
+            long = "dry-run",
+            help = "Show what would be deleted without actually deleting"
+        )]
+        dry_run: bool,
+
+        /// Skip confirmation prompt
+        #[arg(
+            short = 'y',
+            long = "yes",
+            help = "Skip confirmation prompt",
+            conflicts_with = "dry_run"
+        )]
+        yes: bool,
+    },
 }
 
 /// Queue management subcommands
