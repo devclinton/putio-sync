@@ -1,0 +1,32 @@
+# Created using wingetcreate 1.6.1.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+PackageIdentifier: putio.putio-sync
+PackageVersion: 0.1.1
+Platform:
+  - Windows.Desktop
+MinimumOSVersion: 10.0.0.0
+InstallerType: zip
+InstallModes:
+  - silent
+UpgradeBehavior: install
+Commands:
+  - putio-sync
+ReleaseDate: 2025-11-14
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/devclinton/putio-sync/releases/download/v0.1.1/putio-sync-v0.1.1-x86_64-pc-windows-msvc.zip
+    InstallerSha256: CHECKSUM_HERE_X64
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: putio-sync.exe
+        PortableCommandAlias: putio-sync
+  - Architecture: arm64
+    InstallerUrl: https://github.com/devclinton/putio-sync/releases/download/v0.1.1/putio-sync-v0.1.1-aarch64-pc-windows-msvc.zip
+    InstallerSha256: CHECKSUM_HERE_ARM64
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: putio-sync.exe
+        PortableCommandAlias: putio-sync
+ManifestType: installer
+ManifestVersion: 1.6.0

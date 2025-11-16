@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tap testing workflow
 - Automated Homebrew formula updates on release
 - Version bump workflow for tap repository
+- Windows Package Manager (Winget) manifest
+- Support for x64 and ARM64 Windows installations
 - Docker distribution and deployment support
   - Alpine Linux-based Dockerfile with multi-stage build
   - Optimized image size (24MB) with minimal dependencies
