@@ -77,7 +77,7 @@ All old commands still work but are hidden from help:
 
 ## Next Phase: Watch Configuration
 
-### Phase 2.1: Add Watch Config to Config File
+### Phase 2.1: Add Watch Config to Config File ✅ COMPLETED
 
 **Goal**: Configure watch directories in config.toml
 
@@ -94,15 +94,25 @@ parent_folder_id = 0
 ```
 
 **Tasks**:
-- [ ] Update WatchConfig struct in putio-sync-core/src/config.rs
-- [ ] Add enabled field (bool)
-- [ ] Add paths field (Vec<PathBuf>)
-- [ ] Add validation for watch paths
-- [ ] Update config example file
-- [ ] Update config tests
-- [ ] Test and commit
+- [x] Update WatchConfig struct in putio-sync-core/src/config.rs - COMPLETED
+- [x] Add enabled field (bool) - COMPLETED
+- [x] Add paths field (Vec<PathBuf>) - COMPLETED (changed from Vec<String>)
+- [x] Add parent_folder_id field (Option<i64>) - COMPLETED
+- [x] Add validation for watch paths - COMPLETED
+- [x] Update config example file - COMPLETED
+- [x] Update config tests - COMPLETED
+- [x] Test and commit - COMPLETED (commit: 7a6b7b0)
 
-**Commit Target**: "feat(core): add watch directory configuration"
+**Status**: Phase 2.1 COMPLETE! ✅
+
+**Changes Made**:
+- Added `enabled: bool` field to WatchConfig
+- Changed `paths: Vec<String>` to `paths: Vec<PathBuf>` for type safety
+- Added `parent_folder_id: Option<i64>` field
+- Added validation for watch paths (checks existence and directory type)
+- Updated ConfigBuilder with new methods: `watch_enabled()`, `watch_paths()`, `watch_parent_folder_id()`
+- Updated all tests and documentation examples
+- All 261 tests passing
 
 ---
 
@@ -139,6 +149,8 @@ parent_folder_id = 0
 | 5dfe713 | 1.3 | Files command structure |
 | 68f975c | - | Workplan update (1.3 done) |
 | ed91ddd | 1.4 | Transfers restructure |
+| 4f42099 | 1 | CHANGELOG documentation for Phase 1 |
+| 7a6b7b0 | 2.1 | Watch directory configuration |
 
 ---
 
@@ -152,4 +164,14 @@ All CLI commands have been successfully restructured with:
 - Full backward compatibility
 - Hidden deprecated commands
 
-**Next**: Phase 2 - Watch Configuration
+**Phase 2.1: Watch Configuration - COMPLETE ✅**
+
+Watch configuration has been enhanced:
+- Added `enabled` field for easy on/off toggle
+- Changed `paths` to Vec<PathBuf> for type safety
+- Added `parent_folder_id` for upload destination
+- Added path validation (existence and directory checks)
+- Updated ConfigBuilder with new helper methods
+- All 261 tests passing
+
+**Next**: Phase 3 - API Crate (putio-sync-api)
