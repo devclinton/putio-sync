@@ -7,6 +7,7 @@ pub mod history;
 pub mod list;
 pub mod login;
 pub mod queue;
+pub mod server;
 pub mod stat;
 pub mod transfers;
 
@@ -16,4 +17,5 @@ pub use download::execute_download;
 pub use history::execute_history;
 pub use list::execute_list;
 pub use login::execute_login;
+pub use server::execute_server;
 pub use stat::execute_stat;

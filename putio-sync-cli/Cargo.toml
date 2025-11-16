@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 # Core library
 putio-sync-core = { path = "../putio-sync-core" }
+putio-sync-api = { path = "../putio-sync-api" }
 
 # Async runtime
 tokio = { workspace = true }

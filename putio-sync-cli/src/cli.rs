@@ -482,6 +482,26 @@ pub enum Commands {
     /// Manage Put.io transfers
     #[command(about = "Manage Put.io transfers", subcommand)]
     Transfers(TransfersCommands),
+
+    /// Start HTTP API server with optional daemon modes
+    #[command(about = "Start HTTP API server")]
+    Server {
+        /// Enable watch mode for monitoring torrent directories
+        #[arg(short = 'w', long = "watch", help = "Enable watch mode for torrent files")]
+        watch: bool,
+
+        /// Enable download mode for automatic downloading
+        #[arg(short = 'd', long = "download", help = "Enable automatic download mode")]
+        download: bool,
+
+        /// Port to bind the HTTP server (default: 15432)
+        #[arg(short = 'p', long = "port", value_name = "PORT", default_value = "15432", help = "Port to bind HTTP server")]
+        port: u16,
+
+        /// Bind address for the HTTP server (default: 0.0.0.0)
+        #[arg(short = 'b', long = "bind", value_name = "ADDRESS", default_value = "0.0.0.0", help = "Address to bind HTTP server")]
+        bind: String,
+    },
 }
 
 /// File management subcommands
