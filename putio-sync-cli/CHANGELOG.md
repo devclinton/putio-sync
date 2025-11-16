@@ -62,6 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Flatpak builder tooling scripts
 - Automated Flatpak builds on release
 - Flatpak bundle uploads to GitHub releases
+- Unified release workflow for all platforms
+- Multi-architecture binary builds
+- Automated archive and checksum generation
+- Downstream packaging triggers
+- Automated release validation
+- Version consistency checks
+- Security audit integration
 - Docker distribution and deployment support
   - Alpine Linux-based Dockerfile with multi-stage build
   - Optimized image size (24MB) with minimal dependencies
