@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `putio-sync create` - Use `putio-sync transfers add` instead (still functional)
 
 ### Added
+- Homebrew formula for macOS and Linux installation
+- Local formula testing support
 - Docker distribution and deployment support
   - Alpine Linux-based Dockerfile with multi-stage build
   - Optimized image size (24MB) with minimal dependencies
