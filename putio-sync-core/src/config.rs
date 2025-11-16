@@ -194,10 +194,14 @@ pub struct DownloadConfig {
 /// Watch configuration
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WatchConfig {
+    /// Enable watch mode
+    pub enabled: bool,
+    /// Paths to watch for changes
+    pub paths: Vec<PathBuf>,
     /// How often to refresh in seconds (used when file system events aren't available)
     pub refresh_cycle: i8,
-    /// Paths to watch for changes
-    pub paths: Vec<String>,
+    /// Parent folder ID for uploaded torrents (None or 0 for root)
+    pub parent_folder_id: Option<i64>,
 }
 
 /// Notification backend type
@@ -264,8 +268,10 @@ impl Default for DownloadConfig {
 impl Default for WatchConfig {
     fn default() -> Self {
         WatchConfig {
-            refresh_cycle: 60, // 60 seconds
+            enabled: false,
             paths: vec![],
+            refresh_cycle: 60, // 60 seconds
+            parent_folder_id: Some(0), // Root folder
         }
     }
 }
@@ -383,8 +389,10 @@ impl Config {
     ///         retry_initial_delay_secs: 1,
     ///     },
     ///     watch: WatchConfig {
-    ///         refresh_cycle: 60,
+    ///         enabled: false,
     ///         paths: vec![],
+    ///         refresh_cycle: 60,
+    ///         parent_folder_id: Some(0),
     ///     },
     ///     notifications: NotificationConfig::default(),
     /// };
@@ -470,6 +478,31 @@ impl Config {
             return Err(CoreError::ConfigError(
                 "refresh_cycle must be greater than 0".to_string(),
             ));
+        }
+
+        // Validate watch paths exist if watch is enabled
+        if self.watch.enabled {
+            for path in &self.watch.paths {
+                if !path.exists() {
+                    return Err(CoreError::ConfigError(
+                        format!("Watch path does not exist: {}", path.display()),
+                    ));
+                }
+                if !path.is_dir() {
+                    return Err(CoreError::ConfigError(
+                        format!("Watch path is not a directory: {}", path.display()),
+                    ));
+                }
+            }
+        }
+
+        // Validate watch parent_folder_id is non-negative if set
+        if let Some(parent_id) = self.watch.parent_folder_id {
+            if parent_id < 0 {
+                return Err(CoreError::ConfigError(
+                    "watch parent_folder_id must be non-negative".to_string(),
+                ));
+            }
         }
 
         // Validate remote_parent_id is non-negative if set
@@ -678,15 +711,27 @@ impl ConfigBuilder {
         self
     }
 
+    /// Enable or disable watch mode
+    pub fn watch_enabled(mut self, enabled: bool) -> Self {
+        self.watch.enabled = enabled;
+        self
+    }
+
+    /// Set the paths to watch
+    pub fn watch_paths(mut self, paths: Vec<PathBuf>) -> Self {
+        self.watch.paths = paths;
+        self
+    }
+
     /// Set the refresh cycle in seconds
     pub fn refresh_cycle(mut self, seconds: i8) -> Self {
         self.watch.refresh_cycle = seconds;
         self
     }
 
-    /// Set the paths to watch
-    pub fn watch_paths(mut self, paths: Vec<String>) -> Self {
-        self.watch.paths = paths;
+    /// Set the parent folder ID for watch mode uploads
+    pub fn watch_parent_folder_id(mut self, id: i64) -> Self {
+        self.watch.parent_folder_id = Some(id);
         self
     }
 
@@ -734,8 +779,10 @@ mod tests {
                 retry_initial_delay_secs: 1,
             },
             watch: WatchConfig {
+                enabled: false,
+                paths: vec![PathBuf::from("/remote/movies")],
                 refresh_cycle: 60,
-                paths: vec!["/remote/movies".to_string()],
+                parent_folder_id: Some(0),
             },
             notifications: NotificationConfig::default(),
         }
@@ -781,8 +828,10 @@ mod tests {
             loaded.download.blacklist_patterns,
             Some("*.exe".to_string())
         );
+        assert!(!loaded.watch.enabled);
+        assert_eq!(loaded.watch.paths, vec![PathBuf::from("/remote/movies")]);
         assert_eq!(loaded.watch.refresh_cycle, 60);
-        assert_eq!(loaded.watch.paths, vec!["/remote/movies"]);
+        assert_eq!(loaded.watch.parent_folder_id, Some(0));
     }
 
     #[test]
@@ -853,8 +902,10 @@ mod tests {
         assert_eq!(config.download.progress_style, ProgressStyle::PerFile);
         assert_eq!(config.download.sort_order, SortOrder::ByDate);
         assert!(!config.download.reverse_sort);
-        assert_eq!(config.watch.refresh_cycle, 60);
+        assert!(!config.watch.enabled);
         assert_eq!(config.watch.paths.len(), 0);
+        assert_eq!(config.watch.refresh_cycle, 60);
+        assert_eq!(config.watch.parent_folder_id, Some(0));
     }
 
     #[test]
@@ -917,8 +968,10 @@ mod tests {
             .resume_enabled(false)
             .whitelist_patterns("*.mp4".to_string())
             .blacklist_patterns("*.exe".to_string())
+            .watch_enabled(true)
+            .watch_paths(vec![PathBuf::from("/path1"), PathBuf::from("/path2")])
             .refresh_cycle(30)
-            .watch_paths(vec!["/path1".to_string(), "/path2".to_string()])
+            .watch_parent_folder_id(123)
             .build();
 
         let auth = config.auth.as_ref().unwrap();
@@ -938,8 +991,10 @@ mod tests {
             config.download.blacklist_patterns,
             Some("*.exe".to_string())
         );
+        assert!(config.watch.enabled);
+        assert_eq!(config.watch.paths, vec![PathBuf::from("/path1"), PathBuf::from("/path2")]);
         assert_eq!(config.watch.refresh_cycle, 30);
-        assert_eq!(config.watch.paths, vec!["/path1", "/path2"]);
+        assert_eq!(config.watch.parent_folder_id, Some(123));
     }
 
     #[test]
@@ -973,8 +1028,10 @@ mod tests {
     #[test]
     fn test_watch_config_default() {
         let config = WatchConfig::default();
-        assert_eq!(config.refresh_cycle, 60);
+        assert!(!config.enabled);
         assert_eq!(config.paths.len(), 0);
+        assert_eq!(config.refresh_cycle, 60);
+        assert_eq!(config.parent_folder_id, Some(0));
     }
 
     #[test]
