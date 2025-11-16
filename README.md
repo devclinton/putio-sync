@@ -415,10 +415,125 @@ cargo test
 cargo run --bin putio-sync -- --help
 ```
 
+## Docker
+
+### Pull from GitHub Container Registry
+
+```bash
+docker pull ghcr.io/devclinton/putio-sync:latest
+```
+
+### Build from Source
+
+```bash
+docker build -t putio-sync .
+```
+
+### Running with Docker
+
+Create a config directory and add your configuration:
+
+```bash
+mkdir -p ~/.putiosync
+cp config.example.toml ~/.putiosync/config.toml
+# Edit ~/.putiosync/config.toml and add your OAuth token
+```
+
+Run the container:
+
+```bash
+docker run -d \
+  --name putio-sync \
+  -v ~/.putiosync:/config \
+  -v ~/Downloads/putio:/downloads \
+  -v ~/Downloads/torrents:/watches \
+  ghcr.io/devclinton/putio-sync:latest \
+  putio-sync download --all --daemon --interval 300
+```
+
+### Volume Mounts
+
+The Docker image uses the following directories:
+
+- `/config` - Configuration directory (mount your config.toml here)
+- `/downloads` - Default download directory
+- `/watches` - Directory for watching .torrent files (optional)
+
+### Environment Variables
+
+- `RUST_LOG` - Set log level (error, warn, info, debug, trace)
+
+### Example: Download Daemon
+
+Run as a daemon that checks for new files every 5 minutes:
+
+```bash
+docker run -d \
+  --name putio-sync-daemon \
+  --restart unless-stopped \
+  -v ~/.putiosync:/config \
+  -v ~/Downloads/putio:/downloads \
+  -e RUST_LOG=info \
+  ghcr.io/devclinton/putio-sync:latest \
+  putio-sync download --all --daemon --interval 300
+```
+
+### Example: Torrent Watcher
+
+Watch a directory for .torrent files and automatically upload them:
+
+```bash
+docker run -d \
+  --name putio-sync-watcher \
+  --restart unless-stopped \
+  -v ~/.putiosync:/config \
+  -v ~/Downloads/torrents:/watches \
+  -e RUST_LOG=info \
+  ghcr.io/devclinton/putio-sync:latest \
+  putio-sync create --watch /watches --daemon
+```
+
+### Docker Compose
+
+Example `docker-compose.yml`:
+
+```yaml
+version: '3.8'
+
+services:
+  putio-sync-daemon:
+    image: ghcr.io/devclinton/putio-sync:latest
+    container_name: putio-sync-daemon
+    restart: unless-stopped
+    volumes:
+      - ~/.putiosync:/config
+      - ~/Downloads/putio:/downloads
+    environment:
+      - RUST_LOG=info
+    command: putio-sync download --all --daemon --interval 300
+
+  putio-sync-watcher:
+    image: ghcr.io/devclinton/putio-sync:latest
+    container_name: putio-sync-watcher
+    restart: unless-stopped
+    volumes:
+      - ~/.putiosync:/config
+      - ~/Downloads/torrents:/watches
+    environment:
+      - RUST_LOG=info
+    command: putio-sync create --watch /watches --daemon
+```
+
+Run with:
+
+```bash
+docker-compose up -d
+```
+
 ## Distribution
 
 - Compiled binaries for macOS, Linux, and Windows
-- Docker image (coming soon)
+- Docker images via GitHub Container Registry
 
 ## Development Principles
 
