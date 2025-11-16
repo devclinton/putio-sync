@@ -2,94 +2,154 @@
 
 ## Progress Tracker
 
-### Phase 1: CLI Command Restructuring ✅ 75% COMPLETED
+### Phase 1: CLI Command Restructuring ✅ 100% COMPLETED
 - [x] 1.1 Remove Old Login Command - COMPLETED (commit: fa90119)
 - [x] 1.2 Rename get-token to login - COMPLETED (commit: fa90119)
 - [x] 1.3 Create Files Command Structure - COMPLETED (commit: 5dfe713)
-- [ ] 1.4 Restructure Transfers Command - NEXT
+- [x] 1.4 Restructure Transfers Command - COMPLETED (commit: ed91ddd)
 
-**Current**: Phase 1.4 - Move create under transfers
-
----
-
-## Completed Work
-
-### ✅ 1.1 & 1.2: Login Command Refactoring (COMPLETED)
-**Commit**: fa90119
-
-**Changes**:
-- Removed old login command
-- Renamed get-token to login
-- Token saves by default (--no-save to skip)
-
-### ✅ 1.3: Files Command Structure (COMPLETED)
-**Commit**: 5dfe713
-
-**Changes**:
-- Created FilesCommands enum with List and Delete
-- New structure: `putio-sync files list` and `putio-sync files delete`
-- Old commands hidden but still functional for backward compatibility
-- Updated main.rs routing
-
-**New Commands**:
-```bash
-putio-sync files list [OPTIONS]   # List files on Put.io
-putio-sync files delete [OPTIONS]  # Delete files from Put.io
-```
+**Status**: Phase 1 COMPLETE! 🎉
 
 ---
 
-## Next Steps
+## Phase 1 Summary - CLI Command Restructuring ✅
 
-### 📋 1.4: Restructure Transfers Command (NEXT)
+### Completed Changes
 
-**Goal**: Move create under transfers as add subcommand
+**1.1 & 1.2: Login Command Refactoring**
+- Removed old login command with username/password
+- Renamed `get-token` to `login`
+- Token saves by default (use `--no-save` to prevent)
+- Commit: fa90119
 
-**Current**:
+**1.3: Files Command Structure**  
+- Created `FilesCommands` enum
+- New: `putio-sync files list` and `putio-sync files delete`
+- Old commands hidden but functional for backward compatibility
+- Commit: 5dfe713
+
+**1.4: Transfers Command Restructuring**
+- Added `Add` variant to `TransfersCommands`
+- New: `putio-sync transfers add [SOURCES]...`
+- Old `create` command hidden but functional
+- Commit: ed91ddd
+
+### New Command Structure
+
 ```bash
-putio-sync create [SOURCES]...
+# Authentication
+putio-sync login [--no-save] [--no-browser]
+
+# File Management  
+putio-sync files list [OPTIONS]
+putio-sync files delete [OPTIONS]
+
+# Transfer Management
 putio-sync transfers list
-putio-sync transfers cancel
-putio-sync transfers retry
+putio-sync transfers add [SOURCES]...
+putio-sync transfers cancel <IDS>
+putio-sync transfers retry <ID>
+
+# Queue Management
+putio-sync queue list
+putio-sync queue add [FILES]
+putio-sync queue pause [FILES]
+putio-sync queue resume [FILES]
+putio-sync queue remove <FILES>
+putio-sync queue clear
+putio-sync queue priority <FILE> <PRIORITY>
+putio-sync queue stats
+
+# Other Commands (unchanged)
+putio-sync download [OPTIONS]
+putio-sync stat [OPTIONS]
+putio-sync history [OPTIONS]
 ```
 
-**Target**:
-```bash
-putio-sync transfers list
-putio-sync transfers add [SOURCES]...  # New location for create
-putio-sync transfers cancel
-putio-sync transfers retry
+### Backward Compatibility
+
+All old commands still work but are hidden from help:
+- `putio-sync list` → use `putio-sync files list`
+- `putio-sync delete` → use `putio-sync files delete`
+- `putio-sync create` → use `putio-sync transfers add`
+
+---
+
+## Next Phase: Watch Configuration
+
+### Phase 2.1: Add Watch Config to Config File
+
+**Goal**: Configure watch directories in config.toml
+
+**Config Schema**:
+```toml
+[watch]
+enabled = false
+paths = [
+    "/path/to/torrents",
+    "/another/watch/directory"
+]
+refresh_cycle = 60  # seconds
+parent_folder_id = 0
 ```
 
 **Tasks**:
-- [ ] Add `Add` variant to TransfersCommands
-- [ ] Copy create command logic
-- [ ] Update main.rs routing
-- [ ] Hide old create command
+- [ ] Update WatchConfig struct in putio-sync-core/src/config.rs
+- [ ] Add enabled field (bool)
+- [ ] Add paths field (Vec<PathBuf>)
+- [ ] Add validation for watch paths
+- [ ] Update config example file
+- [ ] Update config tests
 - [ ] Test and commit
+
+**Commit Target**: "feat(core): add watch directory configuration"
 
 ---
 
-## Phase 2-6: Future Work
+## Future Phases
 
-- Phase 2: Watch Configuration
-- Phase 3: API Crate (putio-sync-api)
-- Phase 4: Web Server (putio-sync-web)
-- Phase 5: Daemon Integration
-- Phase 6: Testing & Documentation
+### Phase 3: API Crate (putio-sync-api)
+- Create new crate for REST API
+- Implement endpoints for files, transfers, queue
+- Add security middleware
+
+### Phase 4: Web Server (putio-sync-web)
+- Create web server crate
+- Integrate API routes
+- Add shared application state
+
+### Phase 5: Unified Daemon Mode
+- Create daemon command
+- Support --download, --watch, --server flags
+- Thread coordination
+
+### Phase 6: Testing & Documentation
+- Integration tests
+- Update README
+- Migration guide
+
+---
+
+## Commits Log
+
+| Commit | Phase | Description |
+|--------|-------|-------------|
+| fa90119 | 1.1-1.2 | Login command refactoring |
+| 7d25277 | - | Workplan created |
+| 5dfe713 | 1.3 | Files command structure |
+| 68f975c | - | Workplan update (1.3 done) |
+| ed91ddd | 1.4 | Transfers restructure |
 
 ---
 
 ## Session Summary
 
-**Completed**:
-- Phase 1.1: Remove old login ✅
-- Phase 1.2: Rename get-token to login ✅
-- Phase 1.3: Create files command structure ✅
+**Phase 1: CLI Command Restructuring - COMPLETE ✅**
 
-**Next**: Phase 1.4 - Move create under transfers
+All CLI commands have been successfully restructured with:
+- Cleaner command hierarchy
+- Better organization (files, transfers as parent commands)
+- Full backward compatibility
+- Hidden deprecated commands
 
-**Commits**:
-- fa90119: Login command refactoring
-- 7d25277: Workplan tracking
-- 5dfe713: Files command structure
+**Next**: Phase 2 - Watch Configuration
