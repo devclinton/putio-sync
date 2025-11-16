@@ -1,0 +1,111 @@
+name: Update Homebrew Formula
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to update formula to (e.g., v0.1.1)'
+        required: true
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main repository
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_no_v=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Download release tarball and calculate SHA256
+        id: get_sha
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          URL="https://github.com/clintoncollins/putio-sync/archive/refs/tags/${VERSION}.tar.gz"
+
+          echo "Downloading ${URL}..."
+          curl -L "${URL}" -o release.tar.gz
+
+          SHA256=$(sha256sum release.tar.gz | cut -d' ' -f1)
+          echo "sha256=${SHA256}" >> $GITHUB_OUTPUT
+          echo "SHA256: ${SHA256}"
+
+          rm release.tar.gz
+
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: clintoncollins/homebrew-putio-sync
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          VERSION_NO_V="${{ steps.get_version.outputs.version_no_v }}"
+          SHA256="${{ steps.get_sha.outputs.sha256 }}"
+
+          cd homebrew-tap
+
+          # Update the formula file
+          sed -i "s|version \".*\"|version \"${VERSION_NO_V}\"|" Formula/putio-sync.rb
+          sed -i "s|/tags/v.*\.tar\.gz|/tags/${VERSION}.tar.gz|" Formula/putio-sync.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${SHA256}\"|" Formula/putio-sync.rb
+
+          echo "Updated formula:"
+          cat Formula/putio-sync.rb
+
+      - name: Commit and push changes
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+
+          cd homebrew-tap
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add Formula/putio-sync.rb
+          git commit -m "Update putio-sync to ${VERSION}
+
+Automated update by GitHub Actions
+
+Release: https://github.com/clintoncollins/putio-sync/releases/tag/${VERSION}"
+
+          git push
+
+      - name: Verify formula
+        run: |
+          cd homebrew-tap
+
+          # Install Homebrew for verification
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+          # Verify formula syntax
+          brew audit --strict Formula/putio-sync.rb || echo "Audit completed with warnings"
+
+      - name: Create update summary
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          SHA256="${{ steps.get_sha.outputs.sha256 }}"
+
+          echo "## Homebrew Formula Updated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **SHA256**: \`${SHA256}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: [homebrew-putio-sync](https://github.com/clintoncollins/homebrew-putio-sync)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Installation" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "brew tap clintoncollins/putio-sync" >> $GITHUB_STEP_SUMMARY
+          echo "brew install putio-sync" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
