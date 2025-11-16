@@ -1,0 +1,46 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Build artifacts
+target/
+**/target/
+*.o
+*.so
+*.dylib
+*.dll
+
+# Documentation
+*.md
+docs/
+Resources/
+Tasks/
+
+# CI/CD
+.github/
+Makefile
+scripts/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test files
+tests/
+
+# Config examples
+*.example.toml
+
+# Temporary files
+*.tmp
+*.log
+.DS_Store
+
+# Database files
+*.db
+*.db-shm
+*.db-wal

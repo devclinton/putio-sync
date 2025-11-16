@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Docker distribution and deployment support
+  - Alpine Linux-based Dockerfile with multi-stage build
+  - Optimized image size (24MB) with minimal dependencies
+  - Non-root user execution for security
+  - Volume mounts for /config, /downloads, and /watches directories
+  - GitHub Actions workflow for automated Docker builds
+  - Multi-platform support (linux/amd64, linux/arm64)
+  - Automatic image tagging (branch, tag, semver, sha)
+  - Docker layer caching for faster builds
+  - Docker Hub integration via GitHub Container Registry
+  - .dockerignore file for optimized build context
+  - Comprehensive Docker documentation in README
+  - Docker Compose examples for daemon and watcher modes
+  - RUST_LOG environment variable support in containers
 - Create command for adding torrents to Put.io
   - Add torrents from magnet links
   - Upload .torrent files to Put.io

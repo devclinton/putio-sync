@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Docker distribution and deployment support
+  - Alpine Linux-based Dockerfile with multi-stage build for minimal image size
+  - Multi-platform container support (linux/amd64, linux/arm64)
+  - GitHub Actions workflow for automated Docker image publishing
+  - Container security with non-root user execution
+  - Volume support for configuration, downloads, and watch directories
 - Transfer management commands for Put.io transfers
   - Added `cancel_transfers()` API method to cancel active transfers
   - Added `retry_transfer()` API method to retry failed transfers
