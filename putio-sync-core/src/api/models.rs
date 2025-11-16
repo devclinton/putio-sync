@@ -105,15 +105,22 @@ pub struct Transfer {
     /// Percentage complete (0-100)
     pub percent_done: i32,
     /// Estimated time remaining in seconds
-    pub estimated_time: i64,
-    /// Number of peers
-    pub peers: i32,
+    pub estimated_time: Option<i64>,
+    /// Number of peers connected
+    #[serde(default)]
+    pub peers_connected: Option<i32>,
+    /// Number of peers getting from us
+    #[serde(default)]
+    pub peers_getting_from_us: Option<i32>,
+    /// Number of peers sending to us
+    #[serde(default)]
+    pub peers_sending_to_us: Option<i32>,
     /// Availability percentage (0-100)
     pub availability: i32,
     /// Current ratio
     pub current_ratio: f64,
     /// Seconds spent seeding
-    pub seconds_seeding: i64,
+    pub seconds_seeding: Option<i64>,
     /// Error message if failed
     pub error_message: Option<String>,
     /// Creation timestamp
@@ -263,7 +270,9 @@ mod tests {
             "uploaded": 1000000,
             "percent_done": 50,
             "estimated_time": 300,
-            "peers": 5,
+            "peers_connected": 5,
+            "peers_getting_from_us": 2,
+            "peers_sending_to_us": 3,
             "availability": 100,
             "current_ratio": 0.4,
             "seconds_seeding": 0,
