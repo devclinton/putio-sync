@@ -55,6 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automated Snap package builds on release
 - Automatic publishing to Snap Store
 - Multi-architecture Snap support
+- Flatpak package manifest
+- FreeDesktop runtime support
+- Sandboxed installation option
+- Cargo sources generation for Flatpak offline builds
+- Flatpak builder tooling scripts
+- Automated Flatpak builds on release
+- Flatpak bundle uploads to GitHub releases
 - Docker distribution and deployment support
   - Alpine Linux-based Dockerfile with multi-stage build
   - Optimized image size (24MB) with minimal dependencies
