@@ -2,6 +2,7 @@
 members = [
     "putio-sync-core",
     "putio-sync-cli",
+    "putio-sync-api",
 ]
 resolver = "2"
 
