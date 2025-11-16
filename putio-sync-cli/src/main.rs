@@ -33,6 +33,60 @@ async fn main() {
         Commands::Login { no_save, no_browser } => {
             commands::execute_login(no_save, no_browser, args.config).await
         }
+        Commands::Files(files_cmd) => match files_cmd {
+            cli::FilesCommands::List {
+                path,
+                id,
+                recursive,
+                long,
+                filter,
+                file_type,
+                min_size,
+                max_size,
+                sort,
+                reverse,
+                output,
+                output_file,
+            } => {
+                commands::execute_list(
+                    path,
+                    id,
+                    recursive,
+                    long,
+                    filter,
+                    file_type,
+                    min_size,
+                    max_size,
+                    sort,
+                    reverse,
+                    output,
+                    output_file,
+                    args.config,
+                )
+                .await
+            }
+            cli::FilesCommands::Delete {
+                files,
+                all,
+                filter,
+                recursive,
+                before,
+                dry_run,
+                yes,
+            } => {
+                commands::execute_delete(
+                    files,
+                    all,
+                    filter,
+                    recursive,
+                    before,
+                    dry_run,
+                    yes,
+                    args.config,
+                )
+                .await
+            }
+        },
         Commands::List {
             path,
             id,
