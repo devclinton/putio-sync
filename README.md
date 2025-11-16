@@ -41,13 +41,57 @@ This project is organized as a Cargo workspace with the following crates:
   - React-based UI
   - Real-time progress updates
 
-## Quick Start
+## Installation
 
-### Installation
+### macOS
+
+**Homebrew** (recommended):
+```bash
+brew tap clintoncollins/putio-sync
+brew install putio-sync
+```
+
+### Windows
+
+**Winget** (recommended):
+```powershell
+winget install putio.putio-sync
+```
+
+Or download the latest release from [GitHub Releases](https://github.com/clintoncollins/putio-sync/releases).
+
+### Linux
+
+**Snap** (all distributions):
+```bash
+sudo snap install putio-sync
+```
+
+**Flatpak** (all distributions):
+```bash
+flatpak install flathub com.putio.PutioSync
+```
+
+**Debian/Ubuntu** (.deb):
+```bash
+# Download from releases
+wget https://github.com/clintoncollins/putio-sync/releases/latest/download/putio-sync_VERSION_amd64.deb
+sudo dpkg -i putio-sync_VERSION_amd64.deb
+```
+
+### From Source
+
+**Requirements**: Rust 1.70+
 
 ```bash
-cargo build --release
+cargo install --path putio-sync-cli
+# Or for the latest release
+cargo install putio-sync-cli
 ```
+
+See [INSTALLATION.md](INSTALLATION.md) for detailed installation instructions.
+
+## Quick Start
 
 The binary will be available at `./target/release/putio-sync`.
 

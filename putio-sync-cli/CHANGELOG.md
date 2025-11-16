@@ -158,6 +158,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Responsive shutdown in daemon mode (checks every 5 seconds)
 - Error recovery with automatic retry in daemon mode
 
+### Documentation
+- Comprehensive installation guide (INSTALLATION.md)
+  - Platform-specific installation instructions for macOS, Windows, and Linux
+  - Multiple installation methods: Homebrew, Winget, Snap, Flatpak, Debian packages, from source
+  - Detailed troubleshooting section for common installation issues
+  - System requirements and verification steps
+  - Update and uninstall procedures for all platforms
+- Package maintenance guide (MAINTAINING.md)
+  - Complete release process with pre-release checklist
+  - Package management for all platforms (Homebrew, Winget, Snap, Flatpak)
+  - GitHub secrets setup and management
+  - CI/CD troubleshooting for each platform
+  - Security procedures and dependency updates
+  - Rollback procedures for failed releases
+  - Community management guidelines and response templates
+- Updated README.md with installation methods
+  - Quick start guide for new users
+  - Installation examples for all supported platforms
+  - Docker installation and deployment examples
+
 ## [0.1.1] - 2025-11-14
 
 ### Fixed
