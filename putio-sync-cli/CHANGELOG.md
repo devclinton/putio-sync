@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Snap package configuration
 - Strict confinement with necessary plugs
 - Cross-distro Linux support via Snap
+- Automated Snap package builds on release
+- Automatic publishing to Snap Store
+- Multi-architecture Snap support
 - Docker distribution and deployment support
   - Alpine Linux-based Dockerfile with multi-stage build
   - Optimized image size (24MB) with minimal dependencies
