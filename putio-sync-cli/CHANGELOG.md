@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING**: CLI command structure reorganized for better hierarchy
+  - `putio-sync list` moved to `putio-sync files list`
+  - `putio-sync delete` moved to `putio-sync files delete`
+  - `putio-sync create` moved to `putio-sync transfers add`
+  - Old commands remain functional but hidden (backward compatible)
+- **BREAKING**: `get-token` command renamed to `login`
+  - OAuth token acquisition using standard `login` command
+  - Token now saves by default (use `--no-save` to prevent saving)
+  - Previous behavior was `--save` flag to opt-in to saving
+
+### Removed
+- **BREAKING**: Old login command with username/password authentication
+  - OAuth token authentication is now the only supported method
+  - Use `putio-sync login` to obtain and save OAuth token
+
+### Deprecated
+- `putio-sync list` - Use `putio-sync files list` instead (still functional)
+- `putio-sync delete` - Use `putio-sync files delete` instead (still functional)
+- `putio-sync create` - Use `putio-sync transfers add` instead (still functional)
+
 ### Added
 - Docker distribution and deployment support
   - Alpine Linux-based Dockerfile with multi-stage build
