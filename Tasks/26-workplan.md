@@ -335,3 +335,56 @@ Phase 4 has been successfully completed with the implementation of the HTTP API 
 
 **Next Phase**: Implement watch and download daemon threads (currently placeholders)
 
+
+## Phase 5 Update - Daemon Mode Implementation
+
+**Date**: 2025-11-16
+**Commit**: 1cdd9cd
+
+Phase 5 has been successfully completed with the implementation of watch and download daemon modes:
+
+**Implemented Features**:
+- Watch mode daemon for monitoring torrent directories
+- Download mode daemon for monitoring completed transfers
+- Thread-based architecture with independent Tokio runtimes
+- Integration with existing TorrentWatcher implementation
+- Graceful shutdown handling for all threads
+
+**Watch Mode Daemon**:
+- Monitors configured directories for new .torrent files
+- Automatically uploads detected torrents to Put.io
+- Uses filesystem watching via notify crate
+- Respects config.toml watch settings (paths, interval, parent_folder_id)
+- Separate thread with own Tokio runtime
+
+**Download Mode Daemon**:
+- Monitors completed transfers every 60 seconds
+- Logs completed transfers ready for download
+- Separate thread with own Tokio runtime
+- Infrastructure ready for automatic download (TODO)
+
+**Thread Architecture**:
+- Main thread: HTTP API server (Axum)
+- Watch thread: TorrentWatcher daemon (if --watch enabled)
+- Download thread: Transfer monitor daemon (if --download enabled)
+- Each daemon runs independently with own Tokio runtime
+- Clean separation of concerns
+
+**Files Modified**:
+- `putio-sync-cli/src/commands/server.rs` - Added daemon spawning functions
+
+**Usage Examples**:
+```bash
+putio-sync server                      # API only
+putio-sync server --watch              # API + watch mode
+putio-sync server --download           # API + download mode
+putio-sync server --watch --download   # Full automation
+```
+
+**Test Results**:
+- Project builds successfully without warnings
+- Server command accepts daemon mode flags
+- Daemon threads spawn correctly
+
+**Next Phase**: Testing & Documentation, or implement automatic download functionality
+
