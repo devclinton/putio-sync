@@ -2,13 +2,13 @@
 
 ## Progress Tracker
 
-### Phase 1: CLI Command Restructuring ✅ PARTIALLY COMPLETED
+### Phase 1: CLI Command Restructuring ✅ 75% COMPLETED
 - [x] 1.1 Remove Old Login Command - COMPLETED (commit: fa90119)
 - [x] 1.2 Rename get-token to login - COMPLETED (commit: fa90119)
-- [ ] 1.3 Create Files Command Structure (in progress)
-- [ ] 1.4 Restructure Transfers Command
+- [x] 1.3 Create Files Command Structure - COMPLETED (commit: 5dfe713)
+- [ ] 1.4 Restructure Transfers Command - NEXT
 
-**Next**: Continue with Phase 1.3 - Create Files Command Structure
+**Current**: Phase 1.4 - Move create under transfers
 
 ---
 
@@ -16,101 +16,80 @@
 
 ### ✅ 1.1 & 1.2: Login Command Refactoring (COMPLETED)
 **Commit**: fa90119
-**Date**: 2025-11-15
 
-**Changes Made**:
-- Removed old login command with username/password authentication
-- Renamed `get-token` command to `login`
-- Changed behavior: token now saves by default (use `--no-save` to prevent)
-- Updated all command references and documentation
-- Removed login integration tests
+**Changes**:
+- Removed old login command
+- Renamed get-token to login
+- Token saves by default (--no-save to skip)
 
-**Breaking Changes**:
-- Old `login` command removed
-- `get-token` renamed to `login`  
-- Token saves by default now
+### ✅ 1.3: Files Command Structure (COMPLETED)
+**Commit**: 5dfe713
 
-**Files Modified**:
-- putio-sync-cli/src/commands/get_token.rs → login.rs (renamed)
-- putio-sync-cli/src/commands/mod.rs
-- putio-sync-cli/src/cli.rs
-- putio-sync-cli/src/main.rs
-- putio-sync-cli/tests/login_integration.rs (deleted)
+**Changes**:
+- Created FilesCommands enum with List and Delete
+- New structure: `putio-sync files list` and `putio-sync files delete`
+- Old commands hidden but still functional for backward compatibility
+- Updated main.rs routing
+
+**New Commands**:
+```bash
+putio-sync files list [OPTIONS]   # List files on Put.io
+putio-sync files delete [OPTIONS]  # Delete files from Put.io
+```
 
 ---
 
-## In Progress
+## Next Steps
 
-### 🚧 1.3: Create Files Command Structure (IN PROGRESS)
+### 📋 1.4: Restructure Transfers Command (NEXT)
 
-**Goal**: Restructure commands to group file operations
-
-**Current Structure**:
-```bash
-putio-sync list
-putio-sync delete
-```
-
-**New Structure**:
-```bash
-putio-sync files list
-putio-sync files delete
-```
-
-**Tasks**:
-- [ ] Create FilesCommands enum in cli.rs
-- [ ] Move List and Delete into FilesCommands
-- [ ] Update Commands enum
-- [ ] Update main.rs routing
-- [ ] Update tests
-- [ ] Test and commit
-
----
-
-## Remaining Work
-
-### 📋 1.4: Restructure Transfers Command
+**Goal**: Move create under transfers as add subcommand
 
 **Current**:
 ```bash
 putio-sync create [SOURCES]...
 putio-sync transfers list
-putio-sync transfers cancel  
+putio-sync transfers cancel
 putio-sync transfers retry
 ```
 
 **Target**:
 ```bash
 putio-sync transfers list
-putio-sync transfers add [SOURCES]...
+putio-sync transfers add [SOURCES]...  # New location for create
 putio-sync transfers cancel
 putio-sync transfers retry
 ```
 
-### 📋 Phase 2: Watch Configuration
-- Add watch directories to config.toml
-- Support multiple watch paths
-- CLI/config merge logic
+**Tasks**:
+- [ ] Add `Add` variant to TransfersCommands
+- [ ] Copy create command logic
+- [ ] Update main.rs routing
+- [ ] Hide old create command
+- [ ] Test and commit
 
-### 📋 Phase 3: API Crate
-- Create putio-sync-api crate
-- Implement REST endpoints
-- Add security middleware
+---
 
-### 📋 Phase 4: Web Server
-- Create putio-sync-web crate
-- Integrate API routes
-- Add daemon mode support
+## Phase 2-6: Future Work
 
-### 📋 Phase 5: Testing & Documentation
-- Integration tests
-- Update README
-- Migration guide
+- Phase 2: Watch Configuration
+- Phase 3: API Crate (putio-sync-api)
+- Phase 4: Web Server (putio-sync-web)
+- Phase 5: Daemon Integration
+- Phase 6: Testing & Documentation
 
 ---
 
 ## Session Summary
 
-**Current Status**: Phase 1.3 in progress
-**Last Commit**: fa90119 (Login command refactoring)
-**Next Step**: Complete files command structure
+**Completed**:
+- Phase 1.1: Remove old login ✅
+- Phase 1.2: Rename get-token to login ✅
+- Phase 1.3: Create files command structure ✅
+
+**Next**: Phase 1.4 - Move create under transfers
+
+**Commits**:
+- fa90119: Login command refactoring
+- 7d25277: Workplan tracking
+- 5dfe713: Files command structure
