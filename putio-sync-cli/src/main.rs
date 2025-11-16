@@ -288,6 +288,12 @@ async fn main() {
                 commands::transfers::execute_retry(transfer_id, args.config).await
             }
         },
+        Commands::Server {
+            watch,
+            download,
+            port,
+            bind,
+        } => commands::execute_server(watch, download, port, bind, args.config).await,
     };
 
     // Handle command execution errors

@@ -195,12 +195,14 @@ pub struct DownloadConfig {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WatchConfig {
     /// Enable watch mode
+    #[serde(default)]
     pub enabled: bool,
     /// Paths to watch for changes
     pub paths: Vec<PathBuf>,
     /// How often to refresh in seconds (used when file system events aren't available)
     pub refresh_cycle: i8,
     /// Parent folder ID for uploaded torrents (None or 0 for root)
+    #[serde(default)]
     pub parent_folder_id: Option<i64>,
 }
 
