@@ -173,10 +173,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Security procedures and dependency updates
   - Rollback procedures for failed releases
   - Community management guidelines and response templates
+- Package testing guide (TESTING.md)
+  - Manual testing procedures for all platforms
+  - Pre-release testing checklist
+  - Post-release verification procedures
+  - Smoke testing procedures for each platform
+  - Issue reporting guidelines
 - Updated README.md with installation methods
   - Quick start guide for new users
   - Installation examples for all supported platforms
   - Docker installation and deployment examples
+
+### Testing
+- Enhanced version consistency verification
+  - Added Winget manifest version checks (all 3 manifests)
+  - Added Flatpak manifest version check
+  - Comprehensive version validation across all packaging files
+  - Integrated into pre-release check script
 
 ## [0.1.1] - 2025-11-14
 

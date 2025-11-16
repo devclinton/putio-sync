@@ -73,6 +73,36 @@ else
     warning "Version in Homebrew formula will be auto-updated"
 fi
 
+# Check Winget manifest
+if grep -q "PackageVersion: ${VERSION}" packaging/winget/manifests/putio.putio-sync.installer.yaml; then
+    success "Version ${VERSION} found in Winget installer manifest"
+else
+    error "Version ${VERSION} not found in Winget installer manifest"
+    info "  Update PackageVersion in packaging/winget/manifests/putio.putio-sync.installer.yaml"
+fi
+
+if grep -q "PackageVersion: ${VERSION}" packaging/winget/manifests/putio.putio-sync.locale.en-US.yaml; then
+    success "Version ${VERSION} found in Winget locale manifest"
+else
+    error "Version ${VERSION} not found in Winget locale manifest"
+    info "  Update PackageVersion in packaging/winget/manifests/putio.putio-sync.locale.en-US.yaml"
+fi
+
+if grep -q "PackageVersion: ${VERSION}" packaging/winget/manifests/putio.putio-sync.yaml; then
+    success "Version ${VERSION} found in Winget version manifest"
+else
+    error "Version ${VERSION} not found in Winget version manifest"
+    info "  Update PackageVersion in packaging/winget/manifests/putio.putio-sync.yaml"
+fi
+
+# Check Flatpak manifest (tag in git source)
+if grep -q "tag: v${VERSION}" com.putio.PutioSync.yaml; then
+    success "Version tag v${VERSION} found in Flatpak manifest"
+else
+    error "Version tag v${VERSION} not found in Flatpak manifest"
+    info "  Update git tag in com.putio.PutioSync.yaml"
+fi
+
 # Check 2: Changelog
 section "Changelog"
 
