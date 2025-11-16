@@ -1,0 +1,197 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v0.1.2)'
+        required: true
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_no_v=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Extract changelog
+        id: changelog
+        run: |
+          VERSION="${{ steps.get_version.outputs.version_no_v }}"
+
+          # Try to extract changelog for this version
+          if grep -q "## \[${VERSION}\]" putio-sync-cli/CHANGELOG.md; then
+            CHANGELOG=$(sed -n "/## \[${VERSION}\]/,/## \[/p" putio-sync-cli/CHANGELOG.md | sed '$d')
+          else
+            CHANGELOG="Release ${VERSION}"
+          fi
+
+          # Save to file for multiline handling
+          echo "$CHANGELOG" > /tmp/changelog.txt
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_version.outputs.version }}
+          release_name: Release ${{ steps.get_version.outputs.version }}
+          body_path: /tmp/changelog.txt
+          draft: false
+          prerelease: false
+
+  # Trigger all platform-specific builds
+  build-windows:
+    name: Build Windows Binaries
+    needs: create-release
+    uses: ./.github/workflows/release-binaries.yml
+    secrets: inherit
+
+  build-debian:
+    name: Build Debian Packages
+    needs: create-release
+    uses: ./.github/workflows/debian.yml
+    secrets: inherit
+
+  build-snap:
+    name: Build and Publish Snap
+    needs: create-release
+    uses: ./.github/workflows/snap.yml
+    secrets: inherit
+
+  build-flatpak:
+    name: Build Flatpak
+    needs: create-release
+    uses: ./.github/workflows/flatpak.yml
+    secrets: inherit
+
+  update-homebrew:
+    name: Update Homebrew Formula
+    needs: create-release
+    uses: ./.github/workflows/homebrew.yml
+    secrets: inherit
+
+  publish-winget:
+    name: Publish to Winget
+    needs: create-release
+    uses: ./.github/workflows/winget.yml
+    secrets: inherit
+
+  release-summary:
+    name: Create Release Summary
+    needs:
+      - create-release
+      - build-windows
+      - build-debian
+      - build-snap
+      - build-flatpak
+      - update-homebrew
+      - publish-winget
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Generate Summary
+        run: |
+          VERSION="${{ needs.create-release.outputs.version }}"
+
+          echo "# Release $VERSION Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## Build Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Windows
+          if [ "${{ needs.build-windows.result }}" == "success" ]; then
+            echo "✅ Windows binaries (x64, ARM64)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Windows binaries" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Debian
+          if [ "${{ needs.build-debian.result }}" == "success" ]; then
+            echo "✅ Debian packages (amd64, arm64)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Debian packages" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Snap
+          if [ "${{ needs.build-snap.result }}" == "success" ]; then
+            echo "✅ Snap package (published to Snap Store)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Snap package" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Flatpak
+          if [ "${{ needs.build-flatpak.result }}" == "success" ]; then
+            echo "✅ Flatpak bundle" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Flatpak bundle" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Homebrew
+          if [ "${{ needs.update-homebrew.result }}" == "success" ]; then
+            echo "✅ Homebrew formula updated" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Homebrew formula" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Winget
+          if [ "${{ needs.publish-winget.result }}" == "success" ]; then
+            echo "✅ Winget submission created" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Winget submission" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Installation Methods" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### macOS" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "brew tap clintoncollins/putio-sync" >> $GITHUB_STEP_SUMMARY
+          echo "brew install putio-sync" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Windows" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`powershell" >> $GITHUB_STEP_SUMMARY
+          echo "winget install putio.putio-sync" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Linux (Snap)" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "sudo snap install putio-sync" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Linux (Flatpak)" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "flatpak install flathub com.putio.PutioSync" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Linux (Debian/Ubuntu)" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "wget https://github.com/clintoncollins/putio-sync/releases/download/${VERSION}/putio-sync_${VERSION#v}_amd64.deb" >> $GITHUB_STEP_SUMMARY
+          echo "sudo dpkg -i putio-sync_${VERSION#v}_amd64.deb" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Release Assets" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View all release assets: https://github.com/clintoncollins/putio-sync/releases/tag/${VERSION}" >> $GITHUB_STEP_SUMMARY
