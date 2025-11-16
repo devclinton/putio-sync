@@ -43,7 +43,7 @@ pub async fn execute_list(
             size: t.size,
             percent_done: t.percent_done,
             down_speed: t.down_speed,
-            estimated_time: if t.estimated_time > 0 { Some(t.estimated_time) } else { None },
+            estimated_time: t.estimated_time.filter(|&time| time > 0),
             error_message: t.error_message,
         })
         .collect();
