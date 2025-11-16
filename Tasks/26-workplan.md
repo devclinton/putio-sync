@@ -119,9 +119,87 @@ parent_folder_id = 0
 ## Future Phases
 
 ### Phase 3: API Crate (putio-sync-api)
-- Create new crate for REST API
-- Implement endpoints for files, transfers, queue
-- Add security middleware
+
+**Goal**: Create a REST API crate for putio-sync that can be used by both CLI and web server
+
+**Architecture**:
+```
+putio-sync-api/
+├── src/
+│   ├── lib.rs           # Public API exports
+│   ├── routes/          # HTTP route handlers
+│   │   ├── mod.rs
+│   │   ├── files.rs     # Put.io file operations
+│   │   ├── local.rs     # Local file operations
+│   │   ├── transfers.rs # Transfer operations
+│   │   └── queue.rs     # Queue operations
+│   ├── handlers/        # Business logic
+│   │   ├── mod.rs
+│   │   ├── files.rs
+│   │   ├── local.rs
+│   │   ├── transfers.rs
+│   │   └── queue.rs
+│   ├── models/          # Request/Response models
+│   │   ├── mod.rs
+│   │   ├── files.rs
+│   │   ├── transfers.rs
+│   │   └── queue.rs
+│   ├── middleware/      # Security and auth middleware
+│   │   ├── mod.rs
+│   │   └── auth.rs
+│   └── error.rs         # API error types
+└── Cargo.toml
+```
+
+**API Endpoints**:
+
+*Put.io Files* (`/api/files`)
+- `GET /api/files` - List files (with query params for path, filter)
+- `GET /api/files/:id` - Get file by ID
+- `DELETE /api/files/:id` - Delete file
+- `DELETE /api/files/bulk` - Delete multiple files
+
+*Local Files* (`/api/local`)
+- `GET /api/local` - List local files
+- `GET /api/local/:path` - Get local file info
+- `DELETE /api/local/:path` - Delete local file
+
+*Transfers* (`/api/transfers`)
+- `GET /api/transfers` - List transfers
+- `POST /api/transfers` - Add new transfer (torrent/magnet)
+- `DELETE /api/transfers/:id` - Cancel transfer
+- `POST /api/transfers/:id/retry` - Retry transfer
+- `POST /api/transfers/:id/pause` - Pause transfer
+
+*Queue* (`/api/queue`)
+- `GET /api/queue` - List queue items
+- `POST /api/queue` - Add to queue
+- `DELETE /api/queue/:id` - Remove from queue
+- `POST /api/queue/reorder` - Reorder queue items
+- `POST /api/queue/:id/priority` - Change priority
+- `POST /api/queue/:id/blacklist` - Blacklist file
+
+**Tasks**:
+- [ ] Create putio-sync-api crate structure
+- [ ] Add to workspace
+- [ ] Define common error types
+- [ ] Create request/response models
+- [ ] Implement files handlers and routes
+- [ ] Implement local files handlers and routes
+- [ ] Implement transfers handlers and routes
+- [ ] Implement queue handlers and routes
+- [ ] Add authentication middleware
+- [ ] Add CORS middleware
+- [ ] Add logging middleware
+- [ ] Write unit tests for handlers
+- [ ] Write integration tests for routes
+- [ ] Test and commit
+
+**Dependencies**:
+- axum (web framework)
+- tower (middleware)
+- serde (serialization)
+- putio-sync-core (shared logic)
 
 ### Phase 4: Web Server (putio-sync-web)
 - Create web server crate
