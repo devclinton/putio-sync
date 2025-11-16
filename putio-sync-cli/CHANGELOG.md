@@ -46,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Installation and removal scripts
 - Automated .deb package build script
 - Support for multiple architectures (amd64, arm64)
+- Automated .deb package creation on release
+- Multi-architecture support (amd64, arm64)
+- Automatic upload to GitHub releases
 - Docker distribution and deployment support
   - Alpine Linux-based Dockerfile with multi-stage build
   - Optimized image size (24MB) with minimal dependencies
