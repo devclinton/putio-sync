@@ -1,23 +1,47 @@
 //! Login command implementation
 //!
-//! Handles authentication with Put.io API and saves credentials to config file.
+//! Implements OAuth 2.0 Authorization Code Flow for obtaining access tokens from Put.io
 
 use anyhow::{anyhow, Context, Result};
+use axum::{extract::Query, response::Html, routing::get, Router};
+use oauth2::{
+    basic::BasicClient, AuthUrl, ClientId, ClientSecret, CsrfToken, RedirectUrl, Scope, TokenUrl,
+};
 use putio_sync_core::api::ApiClient;
-use putio_sync_core::config::{AuthConfig, AuthMethod, Config};
-use std::io::{self, Write};
+use putio_sync_core::config::{AuthConfig, Config};
+use serde::Deserialize;
+use std::net::SocketAddr;
 use std::path::PathBuf;
-use tracing::{debug, info, warn};
+use std::sync::Arc;
+use tokio::sync::oneshot;
+use tracing::{debug, info};
 
-/// Execute the login command
+/// Put.io OAuth authorization endpoint
+const PUTIO_AUTH_URL: &str = "https://api.put.io/v2/oauth2/authenticate";
+
+/// Put.io OAuth token endpoint
+const PUTIO_TOKEN_URL: &str = "https://api.put.io/v2/oauth2/access_token";
+
+/// OAuth callback query parameters
+#[derive(Debug, Deserialize)]
+struct AuthCallbackParams {
+    code: String,
+    #[allow(dead_code)]
+    state: String,
+}
+
+/// Put.io token response
+#[derive(Debug, Deserialize)]
+struct PutioTokenResponse {
+    access_token: String,
+}
+
+/// Execute the login command using OAuth 2.0 flow
 ///
 /// # Arguments
 ///
-/// * `token` - Optional OAuth token provided via CLI flag
-/// * `username` - Optional username for app-specific password auth
-/// * `password` - Optional app-specific password
-/// * `interactive` - Whether to prompt for credentials interactively
-/// * `no_verify` - Whether to skip credential verification
+/// * `no_save` - Whether to skip saving the token to config file (saves by default)
+/// * `no_browser` - Whether to skip opening the browser automatically
 /// * `config_path` - Optional custom config file path
 ///
 /// # Examples
@@ -25,207 +49,291 @@ use tracing::{debug, info, warn};
 /// ```no_run
 /// # use putio_sync_cli::commands::execute_login;
 /// # async fn example() {
-/// // Login with token from CLI
-/// execute_login(Some("my_token".to_string()), None, None, false, false, None).await.unwrap();
+/// // Login and save token (default behavior)
+/// execute_login(false, false, None).await.unwrap();
 ///
-/// // Login with username and password
-/// execute_login(None, Some("user@example.com".to_string()), Some("app_pass".to_string()), false, false, None).await.unwrap();
-///
-/// // Login interactively
-/// execute_login(None, None, None, true, false, None).await.unwrap();
+/// // Login without opening browser
+/// execute_login(false, true, None).await.unwrap();
 /// # }
 /// ```
 pub async fn execute_login(
-    token: Option<String>,
-    username: Option<String>,
-    password: Option<String>,
-    interactive: bool,
-    no_verify: bool,
+    no_save: bool,
+    no_browser: bool,
     config_path: Option<PathBuf>,
 ) -> Result<()> {
-    // Determine auth method and get credentials
-    let auth_config = if interactive {
-        get_credentials_interactive()?
-    } else if let Some(token) = token {
-        // OAuth token authentication
-        if token.trim().is_empty() {
-            return Err(anyhow!("Token cannot be empty"));
-        }
-        warn!("Warning: Providing credentials via command line may expose them in shell history");
-        warn!("Consider using --interactive mode for better security");
-        AuthConfig::with_token(token)
-    } else if let (Some(username), Some(password)) = (username, password) {
-        // App-specific password authentication
-        if username.trim().is_empty() {
-            return Err(anyhow!("Username cannot be empty"));
-        }
-        if password.trim().is_empty() {
-            return Err(anyhow!("Password cannot be empty"));
-        }
-        warn!("Warning: Providing credentials via command line may expose them in shell history");
-        warn!("Consider using --interactive mode for better security");
-        AuthConfig::with_app_password(username, password)
-    } else {
-        // No credentials provided, prompt interactively
-        get_credentials_interactive()?
-    };
+    println!("\n=== Put.io OAuth Token Helper ===\n");
+    println!("This command will help you obtain an OAuth token from Put.io using OAuth 2.0.");
+    println!();
 
-    // Mask credentials in logs
-    let masked_creds = mask_credentials(&auth_config);
-    debug!("Credentials provided: {}", masked_creds);
+    // Load OAuth configuration from .env file
+    let oauth_config = load_oauth_config()?;
 
-    // Verify credentials if requested
-    if !no_verify {
-        info!("Verifying credentials with Put.io API...");
-        verify_credentials(&auth_config).await?;
+    // Create OAuth client
+    let client = create_oauth_client(&oauth_config)?;
+
+    // Generate authorization URL
+    let (auth_url, csrf_token) = client
+        .authorize_url(CsrfToken::new_random)
+        .add_scope(Scope::new("*".to_string()))
+        .url();
+
+    println!("Step 1: Starting local callback server");
+    println!("-------------------------------");
+    println!("Starting server on {}...", oauth_config.redirect_uri);
+
+    // Parse redirect URI to get port
+    let port = extract_port(&oauth_config.redirect_uri)?;
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+
+    // Create channel to receive authorization code
+    let (tx, rx) = oneshot::channel::<Result<String>>();
+
+    // Start callback server
+    let app = create_callback_app(tx, csrf_token.secret().clone());
+
+    // Bind TCP listener
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .context("Failed to bind to address")?;
+
+    let server_handle = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .context("Failed to start callback server")
+    });
+
+    println!("✓ Server started successfully!\n");
+
+    // Open browser to authorization URL
+    println!("Step 2: Authorize putio-sync");
+    println!("-------------------------------");
+    if !no_browser {
+        println!("Opening browser to Put.io authorization page...");
+        if let Err(e) = open::that(auth_url.as_str()) {
+            eprintln!("Warning: Could not open browser automatically: {}", e);
+            println!("Please manually visit this URL:");
+            println!("{}", auth_url);
+        } else {
+            println!("✓ Browser opened successfully!");
+        }
     } else {
-        warn!("Skipping credential verification (--no-verify flag set)");
+        println!("Please visit this URL to authorize putio-sync:");
+        println!("{}", auth_url);
+    }
+    println!();
+    println!("Waiting for authorization...");
+
+    // Wait for authorization code
+    let auth_code = rx
+        .await
+        .context("Failed to receive authorization code")?
+        .context("Authorization failed")?;
+
+    println!("✓ Authorization received!\n");
+
+    // Exchange authorization code for access token
+    println!("Step 3: Exchanging code for access token");
+    println!("-------------------------------");
+
+    // Put.io uses a non-standard OAuth implementation with GET instead of POST
+    // Build the token exchange URL with query parameters
+    let token_url = format!(
+        "{}?client_id={}&client_secret={}&grant_type=authorization_code&redirect_uri={}&code={}",
+        PUTIO_TOKEN_URL,
+        urlencoding::encode(&oauth_config.client_id),
+        urlencoding::encode(&oauth_config.client_secret),
+        urlencoding::encode(&oauth_config.redirect_uri),
+        urlencoding::encode(&auth_code)
+    );
+
+    debug!("Exchanging authorization code for token");
+
+    // Make GET request to exchange code for token
+    let http_client = reqwest::Client::new();
+    let response = http_client
+        .get(&token_url)
+        .send()
+        .await
+        .context("Failed to send token exchange request")?;
+
+    let status = response.status();
+    let response_text = response.text().await.context("Failed to read response body")?;
+
+    debug!("Token exchange response (status {}): {}", status, response_text);
+
+    if !status.is_success() {
+        tracing::error!("Token exchange failed with status {}: {}", status, response_text);
+        return Err(anyhow!("Failed to exchange authorization code for token: HTTP {} - {}", status, response_text));
     }
 
-    // Determine config file path
-    let config_file_path = determine_config_path(config_path)?;
-    debug!("Config path: {}", config_file_path.display());
+    let token_response: PutioTokenResponse = serde_json::from_str(&response_text)
+        .context(format!("Failed to parse token response. Response was: {}", response_text))?;
 
-    // Load existing config or create a new one
-    let mut config = load_or_create_config(&config_file_path)?;
+    let access_token = token_response.access_token;
 
-    // Update config with new credentials
-    config.auth = Some(auth_config.clone());
+    println!("✓ Access token received!\n");
 
-    // Save config to file (with 0600 permissions on Unix)
-    info!("Saving configuration...");
-    config
-        .save(&config_file_path)
-        .context("Failed to save configuration")?;
+    // Verify token works
+    println!("Step 4: Verifying token");
+    println!("-------------------------------");
 
-    info!("✓ Configuration saved to: {}", config_file_path.display());
+    let api_client = ApiClient::new(access_token.clone());
 
-    // Get and display account info if verification was performed
-    if !no_verify {
-        display_account_info_from_config(&auth_config).await?;
+    // Try to get account info to verify token and display info
+    match api_client.get_account_info().await {
+        Ok(info) => {
+            println!("✓ Token verified successfully!");
+            println!("\nAccount Information:");
+            println!("  Username: {}", info.username);
+            println!("  Email: {}", info.mail);
+        }
+        Err(e) => {
+            tracing::error!("Token verification failed: {:?}", e);
+            return Err(anyhow!("Token verification failed: {}", e));
+        }
     }
 
-    println!("\n✓ Successfully logged in!");
-    println!("You can now use putio-sync commands.");
+    println!();
+
+    // Save token by default (unless --no-save is specified)
+    if !no_save {
+        println!("Step 5: Saving token");
+        println!("-------------------------------");
+
+        let config_file_path = determine_config_path(config_path)?;
+        debug!("Config path: {}", config_file_path.display());
+
+        // Load existing config or create a new one
+        let mut config = load_or_create_config(&config_file_path)?;
+
+        // Update config with new token
+        config.auth = Some(AuthConfig::with_token(access_token));
+
+        // Save config to file (with 0600 permissions on Unix)
+        info!("Saving configuration...");
+        config
+            .save(&config_file_path)
+            .context("Failed to save configuration")?;
+
+        println!("✓ Token saved to: {}", config_file_path.display());
+        println!();
+        println!("✓ All done! You can now use putio-sync commands.");
+    } else {
+        println!("Token verified but not saved.");
+        println!("Your access token is:");
+        println!("{}", access_token);
+        println!();
+        println!("To save the token, run:");
+        println!("  putio-sync login --token {}", &access_token[..20]);
+        println!("Or re-run with --save flag:");
+        println!("  putio-sync get-token --save");
+    }
+
+    // Shutdown server
+    server_handle.abort();
 
     Ok(())
 }
 
-/// Prompt user for credentials interactively
-fn get_credentials_interactive() -> Result<AuthConfig> {
-    println!("\nSelect authentication method:");
-    println!("1. OAuth Token (recommended)");
-    println!("2. App-Specific Password");
-    print!("Enter choice (1 or 2): ");
-    io::stdout().flush()?;
-
-    let mut choice = String::new();
-    io::stdin()
-        .read_line(&mut choice)
-        .context("Failed to read choice from stdin")?;
-
-    let choice = choice.trim();
-
-    match choice {
-        "1" => prompt_for_token(),
-        "2" => prompt_for_credentials(),
-        _ => Err(anyhow!("Invalid choice. Please enter 1 or 2.")),
-    }
+/// OAuth configuration loaded from .env
+#[derive(Debug)]
+struct OAuthConfig {
+    client_id: String,
+    client_secret: String,
+    redirect_uri: String,
 }
 
-/// Prompt user for OAuth token interactively
-fn prompt_for_token() -> Result<AuthConfig> {
-    println!("\nPlease enter your Put.io OAuth token:");
-    println!("(You can get your token from: https://app.put.io/settings/account)");
-    println!("(Or use 'putio-sync get-token' command for help)");
-    print!("> ");
-    io::stdout().flush()?;
+/// Load OAuth configuration from .env file
+fn load_oauth_config() -> Result<OAuthConfig> {
+    // Load .env file from project root
+    dotenvy::dotenv().context("Failed to load .env file. Make sure .env exists in the project root with PUTIO_CLIENT_ID, PUTIO_CLIENT_SECRET, and PUTIO_REDIRECT_URI")?;
 
-    let mut token = String::new();
-    io::stdin()
-        .read_line(&mut token)
-        .context("Failed to read token from stdin")?;
+    let client_id = std::env::var("PUTIO_CLIENT_ID")
+        .context("PUTIO_CLIENT_ID not found in .env file")?;
 
-    let token = token.trim().to_string();
+    let client_secret = std::env::var("PUTIO_CLIENT_SECRET")
+        .context("PUTIO_CLIENT_SECRET not found in .env file")?;
 
-    if token.is_empty() {
-        return Err(anyhow!("Token cannot be empty"));
-    }
+    let redirect_uri = std::env::var("PUTIO_REDIRECT_URI")
+        .context("PUTIO_REDIRECT_URI not found in .env file")?;
 
-    Ok(AuthConfig::with_token(token))
+    Ok(OAuthConfig {
+        client_id,
+        client_secret,
+        redirect_uri,
+    })
 }
 
-/// Prompt user for username and password interactively
-fn prompt_for_credentials() -> Result<AuthConfig> {
-    println!("\nPlease enter your Put.io username or email:");
-    print!("> ");
-    io::stdout().flush()?;
+/// Create OAuth client
+fn create_oauth_client(config: &OAuthConfig) -> Result<BasicClient> {
+    let client = BasicClient::new(
+        ClientId::new(config.client_id.clone()),
+        Some(ClientSecret::new(config.client_secret.clone())),
+        AuthUrl::new(PUTIO_AUTH_URL.to_string())
+            .context("Invalid authorization URL")?,
+        Some(
+            TokenUrl::new(PUTIO_TOKEN_URL.to_string())
+                .context("Invalid token URL")?,
+        ),
+    )
+    .set_redirect_uri(
+        RedirectUrl::new(config.redirect_uri.clone())
+            .context("Invalid redirect URI")?,
+    );
 
-    let mut username = String::new();
-    io::stdin()
-        .read_line(&mut username)
-        .context("Failed to read username from stdin")?;
-
-    let username = username.trim().to_string();
-
-    if username.is_empty() {
-        return Err(anyhow!("Username cannot be empty"));
-    }
-
-    println!("\nPlease enter your app-specific password:");
-    println!("(Generate one at: https://app.put.io/settings/account)");
-    println!("(NOT your main Put.io password!)");
-    print!("> ");
-    io::stdout().flush()?;
-
-    let mut password = String::new();
-    io::stdin()
-        .read_line(&mut password)
-        .context("Failed to read password from stdin")?;
-
-    let password = password.trim().to_string();
-
-    if password.is_empty() {
-        return Err(anyhow!("Password cannot be empty"));
-    }
-
-    Ok(AuthConfig::with_app_password(username, password))
+    Ok(client)
 }
 
-/// Mask credentials for logging
-fn mask_credentials(auth_config: &AuthConfig) -> String {
-    match auth_config.auth_method {
-        AuthMethod::Token => {
-            if let Some(token) = &auth_config.token {
-                if token.len() <= 8 {
-                    format!("Token: {}", "*".repeat(token.len()))
-                } else {
-                    format!("Token: {}...", &token[..8])
+/// Extract port from redirect URI
+fn extract_port(redirect_uri: &str) -> Result<u16> {
+    let url = url::Url::parse(redirect_uri)
+        .context("Invalid redirect URI format")?;
+
+    url.port()
+        .ok_or_else(|| anyhow!("Redirect URI must include a port (e.g., http://localhost:29876/auth/callback)"))
+}
+
+/// Create callback HTTP app
+fn create_callback_app(
+    tx: oneshot::Sender<Result<String>>,
+    expected_state: String,
+) -> Router {
+    let tx = Arc::new(tokio::sync::Mutex::new(Some(tx)));
+    let expected_state = Arc::new(expected_state);
+
+    Router::new().route(
+        "/auth/callback",
+        get(move |Query(params): Query<AuthCallbackParams>| {
+            let tx = tx.clone();
+            let expected_state = expected_state.clone();
+
+            async move {
+                // Verify CSRF token
+                if params.state != *expected_state {
+                    let _ = tx
+                        .lock()
+                        .await
+                        .take()
+                        .map(|tx| tx.send(Err(anyhow!("CSRF token mismatch"))));
+
+                    return Html(
+                        "<html><body><h1>Error</h1><p>CSRF token mismatch. Please try again.</p></body></html>"
+                    );
                 }
-            } else {
-                "Token: <none>".to_string()
+
+                // Send authorization code
+                let _ = tx
+                    .lock()
+                    .await
+                    .take()
+                    .map(|tx| tx.send(Ok(params.code)));
+
+                Html(
+                    "<html><body><h1>Authorization Successful!</h1><p>You can close this window and return to the terminal.</p></body></html>"
+                )
             }
-        }
-        AuthMethod::AppPassword => {
-            let username = auth_config.username.as_deref().unwrap_or("<none>");
-            format!("Username: {}, Password: ********", username)
-        }
-    }
-}
-
-/// Verify credentials against Put.io API
-async fn verify_credentials(auth_config: &AuthConfig) -> Result<()> {
-    let client = ApiClient::from_auth_config(auth_config.clone());
-
-    match client.verify_token().await {
-        true => {
-            info!("✓ Credentials verified successfully");
-            Ok(())
-        }
-        false => Err(anyhow!(
-            "Credential verification failed. Please check your credentials and try again."
-        )),
-    }
+        }),
+    )
 }
 
 /// Determine the config file path to use
@@ -239,94 +347,27 @@ fn determine_config_path(config_path: Option<PathBuf>) -> Result<PathBuf> {
 
 /// Load existing config or create a new default config
 fn load_or_create_config(config_path: &PathBuf) -> Result<Config> {
+    // Ensure parent directory exists
+    if let Some(parent) = config_path.parent() {
+        if !parent.exists() {
+            debug!("Creating parent directory: {}", parent.display());
+            std::fs::create_dir_all(parent)
+                .context("Failed to create config directory")?;
+        }
+    }
+
     if config_path.exists() {
         debug!("Loading existing config from: {}", config_path.display());
-        Config::load(config_path).context("Failed to load existing config")
+        match Config::load(config_path) {
+            Ok(config) => Ok(config),
+            Err(e) => {
+                debug!("Failed to load existing config: {}, using default config", e);
+                // If config is corrupted or empty, use default
+                Ok(Config::default())
+            }
+        }
     } else {
         debug!("Creating new config (file does not exist)");
         Ok(Config::default())
-    }
-}
-
-/// Display account information
-async fn display_account_info_from_config(auth_config: &AuthConfig) -> Result<()> {
-    let client = ApiClient::from_auth_config(auth_config.clone());
-
-    match client.get_account_info().await {
-        Ok(info) => {
-            println!("\nAccount Information:");
-            println!("  Username: {}", info.username);
-            println!("  Email: {}", info.mail);
-            println!(
-                "  Disk Usage: {} / {} ({:.1}% used)",
-                format_bytes(info.disk.used),
-                format_bytes(info.disk.size),
-                (info.disk.used as f64 / info.disk.size as f64) * 100.0
-            );
-            println!("  Available: {}", format_bytes(info.disk.avail));
-            Ok(())
-        }
-        Err(e) => {
-            warn!("Could not fetch account info: {}", e);
-            Ok(())
-        }
-    }
-}
-
-/// Format bytes into human-readable size
-fn format_bytes(bytes: i64) -> String {
-    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB", "PB"];
-    let mut size = bytes as f64;
-    let mut unit_index = 0;
-
-    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit_index += 1;
-    }
-
-    if unit_index == 0 {
-        format!("{} {}", size as i64, UNITS[unit_index])
-    } else {
-        format!("{:.2} {}", size, UNITS[unit_index])
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_mask_credentials_token() {
-        let auth = AuthConfig::with_token("test_token_123".to_string());
-        let masked = mask_credentials(&auth);
-        assert!(masked.starts_with("Token: test_tok..."));
-    }
-
-    #[test]
-    fn test_mask_credentials_short_token() {
-        let auth = AuthConfig::with_token("abc".to_string());
-        let masked = mask_credentials(&auth);
-        assert_eq!(masked, "Token: ***");
-    }
-
-    #[test]
-    fn test_mask_credentials_app_password() {
-        let auth = AuthConfig::with_app_password(
-            "user@example.com".to_string(),
-            "password123".to_string(),
-        );
-        let masked = mask_credentials(&auth);
-        assert_eq!(masked, "Username: user@example.com, Password: ********");
-    }
-
-    #[test]
-    fn test_format_bytes() {
-        assert_eq!(format_bytes(0), "0 B");
-        assert_eq!(format_bytes(500), "500 B");
-        assert_eq!(format_bytes(1024), "1.00 KB");
-        assert_eq!(format_bytes(1536), "1.50 KB");
-        assert_eq!(format_bytes(1048576), "1.00 MB");
-        assert_eq!(format_bytes(1073741824), "1.00 GB");
-        assert_eq!(format_bytes(5368709120), "5.00 GB");
     }
 }

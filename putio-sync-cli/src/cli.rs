@@ -50,63 +50,12 @@ pub struct Cli {
 /// Available commands
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Authenticate with Put.io and save credentials
-    #[command(about = "Authenticate with Put.io and save credentials")]
+    /// Authenticate with Put.io using OAuth token
+    #[command(about = "Authenticate with Put.io using OAuth token")]
     Login {
-        /// Put.io OAuth token
-        #[arg(
-            short = 't',
-            long = "token",
-            value_name = "TOKEN",
-            help = "Put.io OAuth token",
-            conflicts_with_all = ["username", "password"]
-        )]
-        token: Option<String>,
-
-        /// Put.io username or email
-        #[arg(
-            short = 'u',
-            long = "username",
-            value_name = "USERNAME",
-            help = "Put.io username or email (for app-specific password auth)",
-            requires = "password",
-            conflicts_with = "token"
-        )]
-        username: Option<String>,
-
-        /// App-specific password
-        #[arg(
-            short = 'p',
-            long = "password",
-            value_name = "PASSWORD",
-            help = "App-specific password (not your main password)",
-            requires = "username",
-            conflicts_with = "token"
-        )]
-        password: Option<String>,
-
-        /// Prompt for credentials interactively
-        #[arg(
-            long = "interactive",
-            help = "Prompt for credentials interactively",
-            conflicts_with_all = ["token", "username", "password"]
-        )]
-        interactive: bool,
-
-        /// Skip credential verification
-        #[arg(
-            long = "no-verify",
-            help = "Skip credential verification before saving"
-        )]
-        no_verify: bool,
-    },
-
-    /// Get OAuth token from Put.io
-    #[command(about = "Helper command to obtain OAuth token from Put.io")]
-    GetToken {
-        /// Save token to config file
-        #[arg(long = "save", help = "Save token to config file after verification")]
-        save: bool,
+        /// Don't save token to config file
+        #[arg(long = "no-save", help = "Don't save token to config file (token is saved by default)")]
+        no_save: bool,
 
         /// Don't open browser automatically
         #[arg(long = "no-browser", help = "Don't open browser automatically")]
@@ -740,47 +689,6 @@ mod tests {
     fn test_config_flag() {
         let cli = Cli::try_parse_from(["putio-sync", "-c", "/tmp/config.toml", "list"]).unwrap();
         assert_eq!(cli.config, Some(PathBuf::from("/tmp/config.toml")));
-    }
-
-    #[test]
-    fn test_login_with_token() {
-        let cli = Cli::try_parse_from(["putio-sync", "login", "--token", "abc123"]).unwrap();
-        if let Commands::Login {
-            token,
-            username,
-            password,
-            interactive,
-            no_verify,
-        } = cli.command
-        {
-            assert_eq!(token, Some("abc123".to_string()));
-            assert_eq!(username, None);
-            assert_eq!(password, None);
-            assert!(!interactive);
-            assert!(!no_verify);
-        } else {
-            panic!("Expected Login command");
-        }
-    }
-
-    #[test]
-    fn test_login_interactive() {
-        let cli = Cli::try_parse_from(["putio-sync", "login", "--interactive"]).unwrap();
-        if let Commands::Login {
-            token,
-            username,
-            password,
-            interactive,
-            ..
-        } = cli.command
-        {
-            assert_eq!(token, None);
-            assert_eq!(username, None);
-            assert_eq!(password, None);
-            assert!(interactive);
-        } else {
-            panic!("Expected Login command");
-        }
     }
 
     #[test]
