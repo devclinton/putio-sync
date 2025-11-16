@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for x64 and ARM64 Windows installations
 - Automated Winget package submission on release
 - PR creation to winget-pkgs repository
+- Windows x64 and ARM64 binary releases
+- ZIP archives for Windows distribution
 - Docker distribution and deployment support
   - Alpine Linux-based Dockerfile with multi-stage build
   - Optimized image size (24MB) with minimal dependencies
