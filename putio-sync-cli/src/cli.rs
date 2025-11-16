@@ -429,8 +429,8 @@ pub enum Commands {
         output: String,
     },
 
-    /// Add torrents to Put.io
-    #[command(about = "Add torrents to Put.io")]
+    /// Add torrents to Put.io (deprecated: use 'transfers add')
+    #[command(about = "Add torrents to Put.io", hide = true)]
     Create {
         /// Torrent files or magnet links to add
         #[arg(
@@ -779,6 +779,52 @@ pub enum TransfersCommands {
             help = "Output format (table, json)"
         )]
         output: String,
+    },
+
+    /// Add torrents to Put.io
+    #[command(about = "Add torrents to Put.io")]
+    Add {
+        /// Torrent files or magnet links to add
+        #[arg(
+            value_name = "SOURCES",
+            help = "Torrent files (.torrent) or magnet links to add"
+        )]
+        sources: Vec<String>,
+
+        /// Watch directories for .torrent files
+        #[arg(
+            short = 'w',
+            long = "watch",
+            value_name = "PATHS",
+            help = "Watch directories for .torrent files",
+            num_args = 1..
+        )]
+        watch: Vec<PathBuf>,
+
+        /// Parent folder ID for downloads
+        #[arg(
+            long = "parent-id",
+            value_name = "ID",
+            help = "Parent folder ID for downloads [default: 0 (root)]"
+        )]
+        parent_id: Option<i64>,
+
+        /// Run in daemon mode (continuous watching)
+        #[arg(
+            short = 'd',
+            long = "daemon",
+            help = "Run in daemon mode (continuous watching)"
+        )]
+        daemon: bool,
+
+        /// Watch check interval in seconds
+        #[arg(
+            long = "interval",
+            value_name = "SECONDS",
+            default_value = "60",
+            help = "Watch check interval in seconds [default: 60]"
+        )]
+        interval: u64,
     },
 
     /// Cancel transfers

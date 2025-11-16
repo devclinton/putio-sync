@@ -264,6 +264,23 @@ async fn main() {
             TransfersCommands::List { output } => {
                 commands::transfers::execute_list(output, args.config).await
             }
+            TransfersCommands::Add {
+                sources,
+                watch,
+                parent_id,
+                daemon,
+                interval,
+            } => {
+                commands::execute_create(
+                    sources,
+                    watch,
+                    parent_id,
+                    daemon,
+                    interval,
+                    args.config,
+                )
+                .await
+            }
             TransfersCommands::Cancel { transfer_ids, yes } => {
                 commands::transfers::execute_cancel(transfer_ids, yes, args.config).await
             }
