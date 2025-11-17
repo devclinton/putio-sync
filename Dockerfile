@@ -15,6 +15,7 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY putio-sync-core ./putio-sync-core
 COPY putio-sync-cli ./putio-sync-cli
+COPY putio-sync-api ./putio-sync-api
 
 # Build release binary with static linking
 ENV RUSTFLAGS="-C target-feature=-crt-static"

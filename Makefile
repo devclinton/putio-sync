@@ -1,4 +1,7 @@
-.PHONY: help build test clean fmt lint ci install run-cli dev release check doc
+.PHONY: help build test clean fmt lint ci install run-cli dev release check doc \
+	docker-build docker-test docker-run docker-push docker-clean \
+	build-deb build-snap build-flatpak packages \
+	ci-docker workflow-ci workflow-docker
 
 # Default target - show help
 .DEFAULT_GOAL := help
@@ -15,16 +18,39 @@ endif
 help: ## Show this help message
 	@echo 'Usage: make [target]'
 	@echo ''
-	@echo 'Available targets:'
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo 'Common Development Workflow:'
+	@echo '  1. make dev          - Run in development mode'
+	@echo '  2. make test         - Run all tests'
+	@echo '  3. make ci           - Run all CI checks locally'
+	@echo '  4. make build        - Build release binary'
+	@echo '  5. make docker-build - Build Docker image'
 	@echo ''
-	@echo 'Development workflow:'
-	@echo '  1. make dev      - Run in development mode with auto-reload'
-	@echo '  2. make test     - Run all tests'
-	@echo '  3. make ci       - Run all CI checks locally'
-	@echo '  4. make build    - Build release binary'
+	@echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+	@echo 'Build & Development Targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / && !/^(docker|build-(deb|snap|flatpak)|packages|workflow|ci-docker|all-|clean-all)/ {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@echo ''
-	@echo 'Detected OS: $(DETECTED_OS)'
+	@echo 'Docker Targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^docker-[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo ''
+	@echo 'Package Build Targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^(build-(deb|snap|flatpak)|packages)[a-zA-Z_-]*:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo ''
+	@echo 'Workflow & CI Targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^(workflow|ci-docker)[a-zA-Z_-]*:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo ''
+	@echo 'Combined Targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^(all-|clean-all)[a-zA-Z_-]*:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo ''
+	@echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+	@echo 'Environment:'
+	@echo '  Detected OS: $(DETECTED_OS)'
+	@echo ''
+	@echo 'Variables (override with VAR=value):'
+	@echo '  DOCKER_IMAGE     - Docker image name (default: $(DOCKER_IMAGE))'
+	@echo '  DOCKER_TAG       - Docker image tag (default: $(DOCKER_TAG))'
+	@echo '  PACKAGE_VERSION  - Package version (default: $(PACKAGE_VERSION))'
+	@echo '  DEB_ARCH         - Debian architecture (default: $(DEB_ARCH))'
+	@echo ''
 
 build: ## Build the project in release mode
 	@echo "Building release binary..."
@@ -147,3 +173,145 @@ login: ## Run login command (use with ARGS="--token YOUR_TOKEN")
 list: ## Run list command (use with ARGS="/path/to/folder")
 	@echo "Running list command..."
 	cargo run --bin putio-sync -- list $(ARGS)
+
+# ============================================================================
+# Docker Targets
+# ============================================================================
+
+DOCKER_IMAGE ?= putio-sync
+DOCKER_TAG ?= latest
+DOCKER_REGISTRY ?= ghcr.io
+DOCKER_FULL_IMAGE ?= $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG)
+
+docker-build: ## Build Docker image
+	@echo "Building Docker image: $(DOCKER_IMAGE):$(DOCKER_TAG)"
+	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+	@echo "Image built successfully: $(DOCKER_IMAGE):$(DOCKER_TAG)"
+
+docker-build-multiarch: ## Build multi-architecture Docker image (amd64, arm64)
+	@echo "Building multi-architecture Docker image..."
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+
+docker-test: docker-build ## Test Docker image
+	@echo "Testing Docker image..."
+	docker run --rm $(DOCKER_IMAGE):$(DOCKER_TAG) putio-sync --help
+	docker run --rm $(DOCKER_IMAGE):$(DOCKER_TAG) putio-sync --version
+	@echo "Docker image test passed!"
+
+docker-run: ## Run Docker container (use with ARGS="command args")
+	@echo "Running Docker container..."
+	docker run --rm -it \
+		-v $(PWD)/config:/config \
+		-v $(PWD)/downloads:/downloads \
+		$(DOCKER_IMAGE):$(DOCKER_TAG) $(ARGS)
+
+docker-shell: ## Open shell in Docker container
+	@echo "Opening shell in Docker container..."
+	docker run --rm -it \
+		-v $(PWD)/config:/config \
+		-v $(PWD)/downloads:/downloads \
+		--entrypoint /bin/sh \
+		$(DOCKER_IMAGE):$(DOCKER_TAG)
+
+docker-push: docker-build ## Push Docker image to registry
+	@echo "Pushing Docker image to $(DOCKER_REGISTRY)..."
+	docker tag $(DOCKER_IMAGE):$(DOCKER_TAG) $(DOCKER_FULL_IMAGE)
+	docker push $(DOCKER_FULL_IMAGE)
+
+docker-clean: ## Remove Docker images
+	@echo "Removing Docker images..."
+	docker rmi $(DOCKER_IMAGE):$(DOCKER_TAG) || true
+	docker rmi $(DOCKER_FULL_IMAGE) || true
+
+# ============================================================================
+# Package Build Targets
+# ============================================================================
+
+PACKAGE_VERSION ?= 0.1.1
+DEB_ARCH ?= amd64
+
+build-deb: ## Build Debian package (use DEB_ARCH=amd64|arm64|armhf PACKAGE_VERSION=x.y.z)
+	@echo "Building Debian package (version: $(PACKAGE_VERSION), arch: $(DEB_ARCH))..."
+	@command -v dpkg-deb >/dev/null 2>&1 || { echo "dpkg-deb not installed. Install with: apt-get install dpkg-dev"; exit 1; }
+	bash packaging/debian/build-deb.sh $(PACKAGE_VERSION) $(DEB_ARCH)
+	@echo "Debian package built in build/ directory"
+
+build-deb-all: ## Build Debian packages for all architectures
+	@echo "Building Debian packages for all architectures..."
+	$(MAKE) build-deb DEB_ARCH=amd64 PACKAGE_VERSION=$(PACKAGE_VERSION)
+	$(MAKE) build-deb DEB_ARCH=arm64 PACKAGE_VERSION=$(PACKAGE_VERSION)
+	$(MAKE) build-deb DEB_ARCH=armhf PACKAGE_VERSION=$(PACKAGE_VERSION)
+	@echo "All Debian packages built!"
+
+build-snap: ## Build Snap package
+	@echo "Building Snap package..."
+	@command -v snapcraft >/dev/null 2>&1 || { echo "snapcraft not installed. Install with: snap install snapcraft --classic"; exit 1; }
+	cd snap && snapcraft --verbose
+	@echo "Snap package built!"
+
+build-snap-clean: ## Clean Snap build artifacts
+	@echo "Cleaning Snap build artifacts..."
+	cd snap && snapcraft clean
+
+build-flatpak: ## Build Flatpak package
+	@echo "Building Flatpak package..."
+	@command -v flatpak-builder >/dev/null 2>&1 || { echo "flatpak-builder not installed"; exit 1; }
+	@echo "Generating cargo sources..."
+	bash packaging/flatpak/generate-cargo-sources.sh
+	@echo "Building Flatpak..."
+	flatpak-builder --force-clean --repo=repo build-flatpak com.putio.PutioSync.yaml
+	flatpak build-bundle repo putio-sync.flatpak com.putio.PutioSync
+	@echo "Flatpak bundle built: putio-sync.flatpak"
+
+build-flatpak-clean: ## Clean Flatpak build artifacts
+	@echo "Cleaning Flatpak build artifacts..."
+	rm -rf build-flatpak repo putio-sync.flatpak cargo-sources.json
+
+packages: ## Build all packages (Debian, Snap, Flatpak)
+	@echo "Building all packages..."
+	@echo "Note: This requires all package build tools to be installed"
+	$(MAKE) build-deb || echo "Debian build failed or skipped"
+	$(MAKE) build-snap || echo "Snap build failed or skipped"
+	$(MAKE) build-flatpak || echo "Flatpak build failed or skipped"
+	@echo "Package builds completed!"
+
+# ============================================================================
+# GitHub Workflow Local Execution
+# ============================================================================
+
+workflow-ci: ## Run CI workflow locally using act (requires: brew install act)
+	@echo "Running CI workflow locally with act..."
+	@command -v act >/dev/null 2>&1 || { echo "act not installed. Install with: brew install act (macOS) or see https://github.com/nektos/act"; exit 1; }
+	act -W .github/workflows/ci.yml
+
+workflow-docker: ## Run Docker workflow locally using act
+	@echo "Running Docker workflow locally with act..."
+	@command -v act >/dev/null 2>&1 || { echo "act not installed. Install with: brew install act"; exit 1; }
+	act -W .github/workflows/docker.yml
+
+ci-docker: ## Run full CI checks in Docker container
+	@echo "Running CI in Docker container..."
+	docker run --rm -v $(PWD):/workspace -w /workspace rust:alpine sh -c "\
+		apk add --no-cache musl-dev openssl-dev pkgconfig && \
+		rustup component add rustfmt clippy && \
+		cargo fmt --all -- --check && \
+		cargo clippy --all-targets --all-features -- -D warnings && \
+		cargo test --all-features --verbose && \
+		cargo build --release --verbose"
+	@echo "CI checks passed in Docker!"
+
+# ============================================================================
+# Combined Targets
+# ============================================================================
+
+all-builds: build docker-build ## Build binary and Docker image
+	@echo "All builds completed!"
+
+all-tests: test docker-test ## Run all tests (cargo + docker)
+	@echo "All tests passed!"
+
+clean-all: clean docker-clean build-snap-clean build-flatpak-clean ## Clean all build artifacts
+	@echo "Cleaning all build artifacts..."
+	rm -rf build/
+	@echo "All artifacts cleaned!"

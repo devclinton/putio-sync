@@ -1109,9 +1109,7 @@ Options:
 
 ---
 
-## 9. Optional Enhancement Phases
-
-### 9.1 Optional: Bandwidth Limiting
+## 9. Bandwidth Limiting
 **Feature**: Limit download bandwidth
 
 **Tasks**:
@@ -1124,20 +1122,7 @@ Options:
 
 ---
 
-### 9.2 Optional: Compression Support
-**Feature**: Automatically extract compressed files after download
-
-**Tasks**:
-- [ ] Add option to auto-extract archives
-- [ ] Support .zip, .rar, .7z formats
-- [ ] Add option to delete archive after extraction
-- [ ] Test extraction functionality
-
-**Commit**: "feat: add automatic archive extraction"
-
----
-
-### 9.3 Optional: Smart Retry Logic
+## 10: Smart Retry Logic
 **Feature**: Exponential backoff for failed downloads
 
 **Tasks**:
@@ -1150,7 +1135,7 @@ Options:
 
 ---
 
-### 9.4 Optional: Download Queue Management
+## 11. Download Queue Management
 **Feature**: Save and manage download queues
 
 **Tasks**:
@@ -1163,7 +1148,7 @@ Options:
 
 ---
 
-### 9.5 Optional: Webhook/Notification Support
+## 12. Webhook/Notification Support
 **Feature**: Send notifications on download completion
 
 **Tasks**:
@@ -1173,23 +1158,9 @@ Options:
 - [ ] Test notification delivery
 
 **Commit**: "feat: add webhook notifications"
-
 ---
 
-### 9.6 Optional: Mirror Mode
-**Feature**: Keep local directory in sync with Put.io
-
-**Tasks**:
-- [ ] Implement bidirectional sync detection
-- [ ] Delete local files when deleted from Put.io
-- [ ] Add conflict resolution strategy
-- [ ] Test mirror mode
-
-**Commit**: "feat: add mirror mode for bidirectional sync"
-
----
-
-### 9.7 Optional: Transfer Management Commands
+## 13: Transfer Management Commands
 **Feature**: Commands to manage Put.io transfers
 
 **Tasks**:
@@ -1200,277 +1171,21 @@ Options:
 
 **Commit**: "feat: add transfer management commands"
 
----
+--- 
 
-## 10. Implementation Order
+## 14: Docker distribution
+**Feature**: Docker container for environments like truenas to make it easy to use
 
-### Phase 1: Database Foundation (Commits 1-2)
-1. [ ] Implement SQLite database for download tracking
-2. [ ] Add repository pattern for database access
+**Tasks**:
+- [ ] Create dockerfile based on alpine, with command defaulting to run putio-sync --config /config/config.toml and default download directory of /downloads and watches for any subdirectory of /watches
+- [ ] Create github workflow to build job
+- [ ] Add to top-level readme
 
-### Phase 2: Download Core Infrastructure (Commits 3-9)
-3. [ ] Extend config for download options
-4. [ ] Implement cross-platform filename sanitization
-5. [ ] Implement concurrent download worker pool
-6. [ ] Implement streaming downloads with buffering
-7. [ ] Implement chunked downloads for large files
-8. [ ] Implement resumable downloads
-9. [ ] Implement download progress tracking
-10. [ ] Handle remote file deletion during download
-11. [ ] Implement download manager orchestration
-
-### Phase 3: Download Command - CLI (Commits 10-13)
-12. [ ] Add download command interface
-13. [ ] Implement progress bars for downloads
-14. [ ] Implement download command logic
-15. [ ] Implement daemon mode for continuous syncing
-16. [ ] **HUMAN TESTING: Download Command**
-
-### Phase 4: Delete Command (Commits 14-16)
-17. [ ] Implement file deletion API endpoints
-18. [ ] Add delete command interface
-19. [ ] Implement delete command logic
-20. [ ] **HUMAN TESTING: Delete Command**
-
-### Phase 5: Stat Command (Commits 17-19)
-21. [ ] Implement download statistics aggregation
-22. [ ] Add stat command interface
-23. [ ] Implement stat command output formatting
-24. [ ] **HUMAN TESTING: Stat Command**
-
-### Phase 6: History Command (Commits 20-21)
-25. [ ] Add history command interface
-26. [ ] Implement history command output
-27. [ ] **HUMAN TESTING: History Command**
-
-### Phase 7: Create/Add Command (Commits 22-26)
-28. [ ] Implement transfer API endpoints
-29. [ ] Add create command interface
-30. [ ] Implement create command logic
-31. [ ] Implement watch mode for torrent files
-32. [ ] **HUMAN TESTING: Create Command**
-
-### Phase 8: Integration & Polish (Commits 27-31)
-33. [ ] Add example config with download options
-34. [ ] Improve error messages and logging
-35. [ ] Optimize database queries and file handling
-36. [ ] Update user documentation for all commands
-37. [ ] Update workflows for new features
-
-### Phase 9: Optional Enhancements (As needed)
-38. [ ] Optional features as time/requirements permit
+**Commit**: "feat: add docker-dist"
 
 ---
 
-## 11. Command Reference Summary
-
-### Download Command
-```bash
-# Download all files
-putio-sync download --all
-
-# Download specific files
-putio-sync download 12345 67890
-
-# Download with filter
-putio-sync download --all --filter "*.mkv"
-
-# Download with custom workers and directory
-putio-sync download --all --workers 4 --dir ~/Movies
-
-# Download with chunking
-putio-sync download --all --chunk-size 256MB
-
-# Daemon mode - auto-download new video files
-putio-sync download --daemon --filter "*.mkv" --interval 300
-
-# Skip already downloaded files
-putio-sync download --all --skip-existing
-
-# Delete from Put.io after download
-putio-sync download --all --delete-after
-
-# Custom progress style
-putio-sync download --all --progress overall
-
-# Sort by date (oldest first)
-putio-sync download --all --sort date --reverse
-```
-
-### Delete Command
-```bash
-# Delete specific files
-putio-sync delete 12345 67890
-
-# Delete with filter
-putio-sync delete --filter "*.txt"
-
-# Delete all files before date
-putio-sync delete --all --before "2026-01"
-
-# Delete folder recursively
-putio-sync delete 12345 --recursive
-
-# Dry run (show what would be deleted)
-putio-sync delete --all --dry-run
-
-# Delete without confirmation
-putio-sync delete 12345 --yes
-```
-
-### Stat Command
-```bash
-# Show overall statistics
-putio-sync stat
-
-# Show statistics by extension
-putio-sync stat --by-extension
-
-# Show statistics for date range
-putio-sync stat --since "2025-01-01" --until "2025-12-31"
-
-# Output as JSON
-putio-sync stat --output json
-```
-
-### History Command
-```bash
-# Show recent history
-putio-sync history
-
-# Show only downloads
-putio-sync history --action downloaded
-
-# Show only deletions
-putio-sync history --action deleted
-
-# Show history since date
-putio-sync history --since "2025-11-01"
-
-# Show with pagination
-putio-sync history --limit 100 --offset 50
-
-# Output as CSV
-putio-sync history --output csv
-```
-
-### Create Command
-```bash
-# Add magnet link
-putio-sync create "magnet:?xt=urn:btih:..."
-
-# Add torrent file
-putio-sync create ~/Downloads/file.torrent
-
-# Add multiple torrents
-putio-sync create file1.torrent file2.torrent
-
-# Watch directory for torrents
-putio-sync create --watch ~/Downloads/torrents
-
-# Watch in daemon mode
-putio-sync create --watch ~/Downloads/torrents --daemon
-
-# Add to specific folder
-putio-sync create file.torrent --parent-id 12345
-```
-
----
-
-## 12. Success Criteria
-
-### Download Command
-- [ ] Downloads files successfully with default settings
-- [ ] Worker pool parallelizes downloads correctly
-- [ ] Progress bars display accurately
-- [ ] Chunked downloads work for large files
-- [ ] Resume works after interruption
-- [ ] Skip existing files works correctly
-- [ ] Delete after download works correctly
-- [ ] Daemon mode continuously syncs
-- [ ] Filters and sorting work as expected
-- [ ] All progress styles work correctly
-- [ ] Graceful shutdown preserves partial downloads
-- [ ] Database tracking is accurate
-
-### Delete Command
-- [ ] Deletes files successfully
-- [ ] Filters work correctly
-- [ ] Date-based deletion works
-- [ ] Recursive deletion works
-- [ ] Dry-run shows correct files
-- [ ] Confirmation prompts work
-- [ ] History records deletions
-- [ ] Error handling is robust
-
-### Stat Command
-- [ ] Displays accurate statistics
-- [ ] Extension breakdown is correct
-- [ ] Date filtering works
-- [ ] All output formats work
-- [ ] Calculations are accurate
-
-### History Command
-- [ ] Displays history correctly
-- [ ] Filtering works
-- [ ] Pagination works
-- [ ] All output formats work
-- [ ] Timestamps are formatted correctly
-
-### Create Command
-- [ ] Adds magnet links successfully
-- [ ] Uploads torrent files successfully
-- [ ] Watch mode detects new files
-- [ ] Daemon mode runs continuously
-- [ ] Multi-directory watching works
-- [ ] Error handling is robust
-
-### Overall
-- [ ] All tests pass on CI
-- [ ] Code passes clippy
-- [ ] Code is formatted with rustfmt
-- [ ] Documentation is complete
-- [ ] Database migrations work
-- [ ] Performance is acceptable
-
----
-
-## 13. Testing Strategy
-
-### Unit Tests
-- [ ] Test database operations (CRUD, queries, migrations)
-- [ ] Test filename sanitization
-- [ ] Test worker pool logic
-- [ ] Test download streaming
-- [ ] Test chunking logic
-- [ ] Test resume logic
-- [ ] Test progress calculations
-- [ ] Test filtering and sorting
-- [ ] Test statistics aggregation
-- [ ] Test all formatters (table, json, csv)
-
-### Integration Tests
-- [ ] Test full download flow
-- [ ] Test download with interruption and resume
-- [ ] Test delete flow
-- [ ] Test stat queries with real database
-- [ ] Test history queries
-- [ ] Test create/add flow
-- [ ] Test watch mode
-- [ ] Test daemon modes
-
-### Manual Testing (Human)
-- [ ] Test each command with various options
-- [ ] Test error scenarios
-- [ ] Test on different platforms (Linux, macOS, Windows)
-- [ ] Test with large files
-- [ ] Test with many files
-- [ ] Test network interruptions
-- [ ] Test disk space issues
-
----
-
-## 14. Notes
+## 15. Notes
 
 - All commits should follow conventional commit format
 - Each feature should include tests before commit
