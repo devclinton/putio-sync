@@ -50,4 +50,4 @@ VOLUME ["/config", "/downloads", "/watches"]
 WORKDIR /downloads
 
 # Set default command
-CMD ["putio-sync", "--config", "/config/config.toml"]
+CMD ["putio-sync", "--config", "/config/config.toml", "daemon", "--download-interval", "60", "--watch-interval", "60"]

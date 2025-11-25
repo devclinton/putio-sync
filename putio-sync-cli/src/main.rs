@@ -288,6 +288,31 @@ async fn main() {
                 commands::transfers::execute_retry(transfer_id, args.config).await
             }
         },
+        Commands::Daemon {
+            download_interval,
+            watch_interval,
+            watch,
+            filter,
+            skip_existing,
+            delete_after,
+            parent_id,
+            watch_only,
+            download_only,
+        } => {
+            commands::execute_daemon(
+                download_interval,
+                watch_interval,
+                watch,
+                filter,
+                skip_existing,
+                delete_after,
+                parent_id,
+                watch_only,
+                download_only,
+                args.config,
+            )
+            .await
+        }
         Commands::Server {
             watch,
             download,

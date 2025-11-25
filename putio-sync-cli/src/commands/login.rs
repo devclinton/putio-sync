@@ -245,17 +245,17 @@ struct OAuthConfig {
 
 /// Load OAuth configuration from .env file
 fn load_oauth_config() -> Result<OAuthConfig> {
-    // Load .env file from project root
-    dotenvy::dotenv().context("Failed to load .env file. Make sure .env exists in the project root with PUTIO_CLIENT_ID, PUTIO_CLIENT_SECRET, and PUTIO_REDIRECT_URI")?;
+    // Try to load .env file - it's only required for the login command
+    dotenvy::dotenv().ok(); // Don't error if .env doesn't exist
 
     let client_id = std::env::var("PUTIO_CLIENT_ID")
-        .context("PUTIO_CLIENT_ID not found in .env file")?;
+        .context("PUTIO_CLIENT_ID not found. For the login command, create a .env file in the project root with PUTIO_CLIENT_ID, PUTIO_CLIENT_SECRET, and PUTIO_REDIRECT_URI environment variables.")?;
 
     let client_secret = std::env::var("PUTIO_CLIENT_SECRET")
-        .context("PUTIO_CLIENT_SECRET not found in .env file")?;
+        .context("PUTIO_CLIENT_SECRET not found. For the login command, create a .env file in the project root with PUTIO_CLIENT_ID, PUTIO_CLIENT_SECRET, and PUTIO_REDIRECT_URI environment variables.")?;
 
     let redirect_uri = std::env::var("PUTIO_REDIRECT_URI")
-        .context("PUTIO_REDIRECT_URI not found in .env file")?;
+        .context("PUTIO_REDIRECT_URI not found. For the login command, create a .env file in the project root with PUTIO_CLIENT_ID, PUTIO_CLIENT_SECRET, and PUTIO_REDIRECT_URI environment variables.")?;
 
     Ok(OAuthConfig {
         client_id,
