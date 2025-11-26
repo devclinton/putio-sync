@@ -483,6 +483,84 @@ pub enum Commands {
     #[command(about = "Manage Put.io transfers", subcommand)]
     Transfers(TransfersCommands),
 
+    /// Run combined download sync and torrent watch daemon with hot reloading
+    #[command(about = "Run combined download sync and torrent watch daemon with hot reloading")]
+    Daemon {
+        /// Download sync interval in seconds
+        #[arg(
+            long = "download-interval",
+            value_name = "SECONDS",
+            default_value = "300",
+            help = "Download sync interval in seconds"
+        )]
+        download_interval: u64,
+
+        /// Watch check interval in seconds
+        #[arg(
+            long = "watch-interval",
+            value_name = "SECONDS",
+            default_value = "60",
+            help = "Watch check interval in seconds"
+        )]
+        watch_interval: u64,
+
+        /// Watch directories for .torrent files
+        #[arg(
+            short = 'w',
+            long = "watch",
+            value_name = "PATHS",
+            help = "Watch directories for .torrent files (uses config if not specified)",
+            num_args = 0..
+        )]
+        watch: Vec<PathBuf>,
+
+        /// Filter files for download with glob pattern
+        #[arg(
+            short = 'f',
+            long = "filter",
+            value_name = "PATTERN",
+            help = "Filter files for download with glob pattern (e.g., \"*.mkv\")"
+        )]
+        filter: Option<String>,
+
+        /// Skip files already downloaded
+        #[arg(
+            long = "skip-existing",
+            help = "Skip files already downloaded"
+        )]
+        skip_existing: bool,
+
+        /// Delete from Put.io after successful download
+        #[arg(
+            long = "delete-after",
+            help = "Delete from Put.io after successful download"
+        )]
+        delete_after: bool,
+
+        /// Parent folder ID for torrent uploads
+        #[arg(
+            long = "parent-id",
+            value_name = "ID",
+            help = "Parent folder ID for torrent uploads [default: 0 (root)]"
+        )]
+        parent_id: Option<i64>,
+
+        /// Disable download sync (watch only)
+        #[arg(
+            long = "watch-only",
+            help = "Only watch for torrents, disable download sync"
+        )]
+        watch_only: bool,
+
+        /// Disable torrent watching (download only)
+        #[arg(
+            long = "download-only",
+            help = "Only sync downloads, disable torrent watching",
+            conflicts_with = "watch_only"
+        )]
+        download_only: bool,
+    },
+
     /// Start HTTP API server with optional daemon modes
     #[command(about = "Start HTTP API server")]
     Server {

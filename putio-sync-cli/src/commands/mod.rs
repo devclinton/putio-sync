@@ -1,6 +1,7 @@
 //! Command implementations for putio-sync CLI
 
 pub mod create;
+pub mod daemon;
 pub mod delete;
 pub mod download;
 pub mod history;
@@ -12,6 +13,7 @@ pub mod stat;
 pub mod transfers;
 
 pub use create::execute_create;
+pub use daemon::execute_daemon;
 pub use delete::execute_delete;
 pub use download::execute_download;
 pub use history::execute_history;
