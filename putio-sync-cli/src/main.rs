@@ -357,6 +357,8 @@ async fn main() {
             parent_id,
             watch_only,
             download_only,
+            archive_dir,
+            delete_torrents,
         } => {
             eprintln!("🔄 Entering daemon mode...");
             eprintln!("⚙️  Daemon config - download_interval: {}s, watch_interval: {}s", download_interval, watch_interval);
@@ -375,6 +377,8 @@ async fn main() {
                 parent_id,
                 watch_only,
                 download_only,
+                archive_dir,
+                delete_torrents,
                 args.config,
             )
             .await

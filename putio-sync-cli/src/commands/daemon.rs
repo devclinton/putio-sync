@@ -67,6 +67,8 @@ pub async fn execute_daemon(
     parent_id: Option<i64>,
     watch_only: bool,
     download_only: bool,
+    archive_dir: Option<PathBuf>,
+    delete_torrents: bool,
     config_path: Option<PathBuf>,
 ) -> Result<()> {
     eprintln!("🎯 execute_daemon function started");
@@ -112,6 +114,20 @@ pub async fn execute_daemon(
         return Err(anyhow!("Watch mode requires watch directories. Use --watch or configure watch.paths in config.toml"));
     }
 
+    // Validate archive/delete options
+    if archive_dir.is_some() && delete_torrents {
+        return Err(anyhow!("Cannot specify both --archive-dir and --delete-torrents. Choose one or neither."));
+    }
+
+    // Create archive directory if specified
+    if let Some(ref archive_path) = archive_dir {
+        if !archive_path.exists() {
+            info!("Creating archive directory: {}", archive_path.display());
+            std::fs::create_dir_all(archive_path)
+                .with_context(|| format!("Failed to create archive directory: {}", archive_path.display()))?;
+        }
+    }
+
     info!("=== Starting putio-sync hot-reload daemon ===");
     info!("Hot reloading: ENABLED - config changes will be applied automatically");
     
@@ -133,6 +149,24 @@ pub async fn execute_daemon(
     let watch_core = if !download_only && !watch_dirs.is_empty() {
         Some(TorrentWatchCore::new())
     } else {
+        None
+    };
+
+    // Initialize database for torrent tracking (only when archive/delete not enabled)
+    let database = if archive_dir.is_none() && !delete_torrents {
+        let db_path = config.download.target_directory.join(".putiosync-torrents.db");
+        match putio_sync_core::db::Database::new(&db_path).await {
+            Ok(db) => {
+                info!("Initialized torrent tracking database at: {}", db_path.display());
+                Some(db)
+            }
+            Err(e) => {
+                warn!("Failed to initialize torrent tracking database: {}. Will fall back to in-memory tracking only.", e);
+                None
+            }
+        }
+    } else {
+        info!("Archive or delete enabled - using file-based post-processing instead of database tracking");
         None
     };
 
@@ -248,7 +282,7 @@ pub async fn execute_daemon(
                 }
 
                 // Run watch check with a timeout to prevent blocking other operations
-                let watch_future = run_watch_check_with_hot_reload(&client, &hot_reload_state, &watch_dirs, parent_id);
+                let watch_future = run_watch_check_with_hot_reload(&client, &hot_reload_state, &watch_dirs, parent_id, archive_dir.as_ref(), delete_torrents, database.as_ref());
                 
                 match tokio::time::timeout(Duration::from_secs(60), watch_future).await {
                     Ok(Ok(())) => {
@@ -645,13 +679,16 @@ async fn run_watch_check_with_hot_reload(
     state: &HotReloadState,
     watch_dirs: &[PathBuf],
     parent_id: Option<i64>,
+    archive_dir: Option<&PathBuf>,
+    delete_torrents: bool,
+    database: Option<&putio_sync_core::db::Database>,
 ) -> Result<()> {
     let start_time = Instant::now();
     debug!("Starting torrent watch check with hot reload...");
 
     // Use the watch core if available
     if let Some(ref watch_core) = state.watch_core {
-        let stats = watch_core.scan_directories(watch_dirs, client, parent_id).await?;
+        let stats = watch_core.scan_directories(watch_dirs, client, parent_id, archive_dir, delete_torrents, database).await?;
         
         let elapsed = start_time.elapsed();
         

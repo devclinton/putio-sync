@@ -57,7 +57,7 @@ impl From<putio_sync_core::api::Transfer> for TransferResponse {
             name: transfer.name,
             status: transfer.status,
             size: transfer.size,
-            percent_done: transfer.percent_done,
+            percent_done: transfer.percent_done.unwrap_or(0),
             down_speed: Some(transfer.down_speed),
             up_speed: Some(transfer.up_speed),
             error_message: transfer.error_message,

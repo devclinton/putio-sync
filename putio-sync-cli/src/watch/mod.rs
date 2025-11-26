@@ -47,7 +47,7 @@ impl TorrentWatcher {
     /// This is a non-blocking operation that scans all watch directories once
     /// and processes any new .torrent files found.
     pub async fn scan_once(&self, client: &ApiClient) -> Result<WatchStats> {
-        self.core.scan_directories(&self.watch_dirs, client, self.parent_id).await
+        self.core.scan_directories(&self.watch_dirs, client, self.parent_id, None, false, None).await
     }
 
     /// Run the watcher in daemon mode
@@ -160,7 +160,7 @@ impl TorrentWatcher {
         match event.kind {
             EventKind::Create(_) | EventKind::Modify(_) => {
                 for path in event.paths {
-                    if self.is_torrent_file(&path) {
+                    if self.is_torrent_file(&path) || self.is_magnet_file(&path) {
                         self.process_file(&path, client).await?;
                     }
                 }
@@ -173,9 +173,9 @@ impl TorrentWatcher {
         Ok(())
     }
 
-    /// Process existing .torrent files in watch directories
+    /// Process existing .torrent and .magnet files in watch directories
     async fn process_existing_files(&self, client: &ApiClient) -> Result<()> {
-        let stats = self.core.scan_directories(&self.watch_dirs, client, self.parent_id).await?;
+        let stats = self.core.scan_directories(&self.watch_dirs, client, self.parent_id, None, false, None).await?;
         
         info!("Initial scan completed - {} files processed, {} skipped, {} failed", 
               stats.files_processed, stats.files_skipped, stats.files_failed);
@@ -183,9 +183,9 @@ impl TorrentWatcher {
         Ok(())
     }
 
-    /// Process a single .torrent file
+    /// Process a single .torrent or .magnet file
     async fn process_file(&self, path: &Path, client: &ApiClient) -> Result<()> {
-        match self.core.process_torrent_file(path, client, self.parent_id).await {
+        match self.core.process_torrent_file(path, client, self.parent_id, None).await {
             Ok(true) => Ok(()),  // Successfully processed
             Ok(false) => Ok(()), // Skipped (already processed)
             Err(e) => Err(e),    // Error occurred
@@ -196,6 +196,11 @@ impl TorrentWatcher {
     /// Check if a path is a .torrent file
     fn is_torrent_file(&self, path: &Path) -> bool {
         self.core.is_torrent_file(path)
+    }
+
+    /// Check if a path is a .magnet file
+    fn is_magnet_file(&self, path: &Path) -> bool {
+        self.core.is_magnet_file(path)
     }
 }
 

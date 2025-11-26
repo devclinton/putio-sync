@@ -507,7 +507,7 @@ mod tests {
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/test-file.txt", server.url());
 
-        let result = stream_download(&client, &url, &target_path, Some(13), 1, None)
+        let result = stream_download(&client, &url, &target_path, Some(13), 1, None, None)
             .await
             .unwrap();
 
@@ -543,7 +543,7 @@ mod tests {
         let url = format!("{}/test-file.txt", server.url());
 
         // Expect 10 bytes but will only get 5
-        let result = stream_download(&client, &url, &target_path, Some(10), 1, None).await;
+        let result = stream_download(&client, &url, &target_path, Some(10), 1, None, None).await;
 
         assert!(result.is_err());
         assert!(!target_path.exists()); // Should clean up on failure
@@ -568,7 +568,7 @@ mod tests {
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/not-found.txt", server.url());
 
-        let result = stream_download(&client, &url, &target_path, None, 1, None).await;
+        let result = stream_download(&client, &url, &target_path, None, 1, None, None).await;
 
         assert!(result.is_err());
     }
@@ -608,7 +608,7 @@ mod tests {
         let start = Instant::now();
 
         // Set bandwidth limit to 1024 bytes/sec
-        let result = stream_download(&client, &url, &target_path, Some(2048), 1, Some(1024))
+        let result = stream_download(&client, &url, &target_path, Some(2048), 1, Some(1024), None)
             .await
             .unwrap();
 

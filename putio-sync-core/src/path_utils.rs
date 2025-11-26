@@ -34,7 +34,10 @@ pub fn expand_path<P: AsRef<Path>>(path: P) -> CoreResult<PathBuf> {
     let path = path.as_ref();
     let path_str = path.to_string_lossy();
     
-    let expanded = if path_str.starts_with("~/") {
+    let expanded = if path_str == "~" {
+        // Handle standalone home directory
+        get_home_directory()?
+    } else if path_str.starts_with("~/") {
         // Handle home directory expansion
         expand_home_path(&path_str)?
     } else if path.is_absolute() {
@@ -214,7 +217,7 @@ mod tests {
         // Only test if HOME is available
         if let Ok(home) = env::var("HOME") {
             let result = expand_path("~/test").unwrap();
-            assert_eq!(result, PathBuf::from(home).join("test"));
+            assert_eq!(result, PathBuf::from(home.clone()).join("test"));
             
             let result2 = expand_path("~").unwrap();
             assert_eq!(result2, PathBuf::from(home));
