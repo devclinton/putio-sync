@@ -36,6 +36,9 @@ pub mod logging;
 /// Notification system for download events
 pub mod notification;
 
+/// Path handling utilities
+pub mod path_utils;
+
 /// Re-export commonly used types
 pub mod prelude {
     pub use crate::api::ApiClient;
@@ -51,4 +54,5 @@ pub mod prelude {
     pub use crate::filter::{parse_size, sort_files, FileFilter, FileTypeFilter, SortField};
     pub use crate::logging;
     pub use crate::notification::{DownloadCompletionEvent, NotificationService};
+    pub use crate::path_utils::{expand_path, validate_directory_path, ensure_directory_exists, normalize_path};
 }

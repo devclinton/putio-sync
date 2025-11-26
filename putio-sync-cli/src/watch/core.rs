@@ -163,20 +163,20 @@ impl TorrentWatchCore {
             return Ok(false);
         }
 
-        info!("Processing new .torrent file: {}", path.display());
+        info!("🔼 Processing new .torrent file: {}", path.display());
 
         // Upload the file
         match client.add_transfer_file(path, parent_id, None).await {
             Ok(transfer) => {
-                println!(
-                    "✓ Transfer added: {} (ID: {})",
+                info!(
+                    "✅ Torrent uploaded successfully: {} (ID: {})",
                     transfer.name, transfer.id
                 );
-                println!("  File: {}", path.display());
-                println!("  Status: {}", transfer.status);
-                println!("  Size: {}", self.format_bytes(transfer.size));
+                info!("   File: {}", path.display());
+                info!("   Status: {}", transfer.status);
+                info!("   Size: {}", self.format_bytes(transfer.size));
                 if let Some(parent) = parent_id {
-                    println!("  Parent folder: {}", parent);
+                    info!("   Parent folder ID: {}", parent);
                 }
 
                 // Mark as processed
@@ -188,7 +188,7 @@ impl TorrentWatchCore {
                 Ok(true)
             }
             Err(e) => {
-                error!("Failed to upload {}: {}", path.display(), e);
+                error!("❌ Failed to upload torrent {}: {}", path.display(), e);
                 Err(e.into())
             }
         }

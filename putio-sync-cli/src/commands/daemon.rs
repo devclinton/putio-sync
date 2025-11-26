@@ -17,6 +17,7 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
+use crate::diagnostics::{DaemonEvent, DiagnosticsCollector, DownloadStatus, WatchStatus};
 use crate::download_ops::DownloadOps;
 use crate::watch::{TorrentWatcher, TorrentWatchCore};
 
@@ -48,6 +49,7 @@ pub struct HotReloadState {
     pub watch_core: Option<TorrentWatchCore>,
     pub download_ops: Arc<RwLock<Option<DownloadOps>>>,
     pub config_change_tx: mpsc::UnboundedSender<Config>,
+    pub diagnostics: Arc<RwLock<DiagnosticsCollector>>,
 }
 
 /// Execute the daemon command with hot reloading support
@@ -67,13 +69,25 @@ pub async fn execute_daemon(
     download_only: bool,
     config_path: Option<PathBuf>,
 ) -> Result<()> {
+    eprintln!("🎯 execute_daemon function started");
+    eprintln!("📋 Daemon parameters:");
+    eprintln!("   - download_interval: {}s", download_interval);
+    eprintln!("   - watch_interval: {}s", watch_interval);
+    eprintln!("   - watch_paths: {:?}", watch_paths);
+    eprintln!("   - config_path: {:?}", config_path);
+    
     // Load configuration
+    eprintln!("📂 Determining config file path...");
     let config_file_path = config_path
         .or_else(|| Config::default_path().ok())
         .ok_or_else(|| anyhow!("Could not determine config file path"))?;
-
+    
+    eprintln!("📄 Config file path: {}", config_file_path.display());
+    eprintln!("🔄 Loading configuration...");
     let config = Config::load(&config_file_path)
         .context("Failed to load configuration. Have you run 'putio-sync login'?")?;
+    
+    eprintln!("✅ Configuration loaded successfully");
 
     let auth = config.auth.clone().ok_or_else(|| {
         anyhow!("No authentication credentials found. Please run 'putio-sync login' first.")
@@ -145,6 +159,7 @@ pub async fn execute_daemon(
         watch_core,
         download_ops: Arc::new(RwLock::new(download_ops)),
         config_change_tx,
+        diagnostics: Arc::new(RwLock::new(DiagnosticsCollector::new())),
     };
 
     // Initialize worker pool
@@ -180,6 +195,9 @@ pub async fn execute_daemon(
         None
     };
 
+    // Add periodic health reporting every 5 minutes
+    let mut health_timer = interval(Duration::from_secs(300));
+
     info!("Hot-reload daemon started successfully. Press Ctrl+C to stop.");
 
     // Main daemon loop with hot reload support
@@ -193,6 +211,12 @@ pub async fn execute_daemon(
                     future::pending::<()>().await;
                 }
             } => {
+                // Record the event for tracking
+                {
+                    let mut diagnostics = hot_reload_state.diagnostics.write().unwrap();
+                    diagnostics.record_daemon_event(DaemonEvent::DownloadCycle);
+                }
+
                 if let Err(e) = run_download_sync_with_hot_reload(&client, &hot_reload_state, filter.as_deref(), skip_existing, delete_after).await {
                     error!("Download sync failed: {}", e);
                 }
@@ -206,6 +230,12 @@ pub async fn execute_daemon(
                     future::pending::<()>().await;
                 }
             } => {
+                // Record the event for tracking
+                {
+                    let mut diagnostics = hot_reload_state.diagnostics.write().unwrap();
+                    diagnostics.record_daemon_event(DaemonEvent::WatchCycle);
+                }
+
                 if let Err(e) = run_watch_check_with_hot_reload(&client, &hot_reload_state, &watch_dirs, parent_id).await {
                     error!("Watch check failed: {}", e);
                 }
@@ -215,6 +245,12 @@ pub async fn execute_daemon(
             new_config = config_change_rx.recv() => {
                 match new_config {
                     Some(config) => {
+                        // Record the event for tracking
+                        {
+                            let mut diagnostics = hot_reload_state.diagnostics.write().unwrap();
+                            diagnostics.record_daemon_event(DaemonEvent::ConfigReload);
+                        }
+
                         if let Err(e) = handle_config_change(&hot_reload_state, config, &mut download_timer, &mut watch_timer).await {
                             error!("Failed to handle config change: {}", e);
                         }
@@ -223,6 +259,19 @@ pub async fn execute_daemon(
                         warn!("Config change channel closed");
                     }
                 }
+            }
+
+            // Handle periodic health reporting
+            _ = health_timer.tick() => {
+                let download_status = generate_current_download_status(&hot_reload_state);
+                let watch_status = generate_current_watch_status(&hot_reload_state, &watch_dirs);
+                
+                let summary = {
+                    let diagnostics = hot_reload_state.diagnostics.read().unwrap();
+                    diagnostics.generate_health_summary(&download_status, &watch_status)
+                };
+                
+                info!("📊 {}", summary);
             }
 
             // Handle shutdown signal
@@ -385,6 +434,12 @@ async fn scale_up_workers(state: &HotReloadState, new_count: usize) -> Result<()
         *worker_pool = Some(WorkerPool::new(new_count));
     }
 
+    // Record worker restart event
+    {
+        let mut diagnostics = state.diagnostics.write().unwrap();
+        diagnostics.record_daemon_event(DaemonEvent::WorkerRestart);
+    }
+
     info!("Successfully scaled up to {} workers", new_count);
     Ok(())
 }
@@ -452,6 +507,12 @@ async fn scale_down_workers(state: &HotReloadState, new_count: usize) -> Result<
     {
         let mut active = state.active_downloads.write().unwrap();
         active.clear();
+    }
+
+    // Record worker restart event
+    {
+        let mut diagnostics = state.diagnostics.write().unwrap();
+        diagnostics.record_daemon_event(DaemonEvent::WorkerRestart);
     }
 
     info!("Successfully scaled down to {} workers, {} downloads interrupted and prioritized", 
@@ -527,7 +588,7 @@ async fn run_download_sync_with_hot_reload(
                 debug!("Download sync completed in {:.1}s - no new files found", elapsed);
             } else {
                 info!(
-                    "Download sync completed in {:.1}s - found: {}, downloaded: {}, failed: {}, total: {} MB",
+                    "📊 Download sync completed in {:.1}s - found: {}, downloaded: {}, failed: {}, total: {} MB",
                     elapsed,
                     cycle_result.files_found,
                     cycle_result.files_downloaded,
@@ -581,29 +642,40 @@ async fn run_watch_check_with_hot_reload(
     Ok(())
 }
 
-/// Run a single watch check operation (legacy compatibility)
-async fn run_watch_check(_client: &ApiClient, watcher: &TorrentWatcher) -> Result<()> {
-    let start_time = Instant::now();
-    debug!("Starting legacy torrent watch check...");
 
-    // Use the new scan_once method
-    let stats = watcher.scan_once(_client).await?;
+/// Generate current download status for health reporting
+fn generate_current_download_status(state: &HotReloadState) -> DownloadStatus {
+    let mut status = DownloadStatus::default();
 
-    let elapsed = start_time.elapsed();
+    let config = state.config.read().unwrap();
+    status.workers_configured = config.download.workers;
+    drop(config);
 
-    if stats.files_found > 0 {
-        info!(
-            "Legacy torrent watch completed in {:.1}s - found: {}, processed: {}, skipped: {}, failed: {}",
-            elapsed.as_secs_f64(),
-            stats.files_found,
-            stats.files_processed,
-            stats.files_skipped,
-            stats.files_failed
-        );
-    } else {
-        debug!("Legacy torrent watch completed in {:.1}s - no new files found", elapsed.as_secs_f64());
+    status.downloads_active = state.active_downloads.read().unwrap().len();
+    status.downloads_queued = state.download_queue.read().unwrap().len();
+
+    if let Some(ref worker_pool) = *state.worker_pool.read().unwrap() {
+        status.workers_active = worker_pool.worker_count() - worker_pool.available_workers();
     }
 
-    Ok(())
+    // TODO: Add more detailed status tracking (total downloaded, speeds, etc.)
+    
+    status
+}
+
+/// Generate current watch status for health reporting
+fn generate_current_watch_status(_state: &HotReloadState, watch_dirs: &[PathBuf]) -> WatchStatus {
+    let mut status = WatchStatus::default();
+
+    for dir in watch_dirs {
+        status.directories_watched.push(dir.display().to_string());
+        if dir.exists() && dir.is_dir() {
+            status.directories_accessible += 1;
+        }
+    }
+
+    // TODO: Add tracking for files processed, uploads, etc. via watch core
+    
+    status
 }
 

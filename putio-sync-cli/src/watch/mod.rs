@@ -192,10 +192,6 @@ impl TorrentWatcher {
         }
     }
 
-    /// Find all .torrent files in a directory
-    fn find_torrent_files(&self, dir: &Path) -> Result<Vec<PathBuf>> {
-        self.core.find_torrent_files(dir)
-    }
 
     /// Check if a path is a .torrent file
     fn is_torrent_file(&self, path: &Path) -> bool {

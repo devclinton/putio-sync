@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Default buffer size for streaming downloads (16MB)
 pub const DEFAULT_BUFFER_SIZE: usize = 16 * 1024 * 1024;
@@ -78,6 +78,7 @@ pub struct StreamDownloadResult {
 /// * `expected_size` - Expected file size in bytes (for validation)
 /// * `buffer_size_mb` - Buffer size in megabytes
 /// * `bandwidth_limit_bytes_per_sec` - Optional bandwidth limit in bytes per second
+/// * `resume_from_byte` - Optional byte offset to resume from (for range requests)
 ///
 /// # Returns
 ///
@@ -89,15 +90,26 @@ pub async fn stream_download(
     expected_size: Option<u64>,
     buffer_size_mb: usize,
     bandwidth_limit_bytes_per_sec: Option<u64>,
+    resume_from_byte: Option<u64>,
 ) -> CoreResult<StreamDownloadResult> {
     let buffer_size = buffer_size_mb * 1024 * 1024;
 
-    debug!(
-        "Starting stream download: {} -> {} (buffer: {}MB)",
-        url,
-        target_path.display(),
-        buffer_size_mb
-    );
+    if let Some(resume_from) = resume_from_byte {
+        debug!(
+            "Starting stream download with resume: {} -> {} (buffer: {}MB, resume from byte: {})",
+            url,
+            target_path.display(),
+            buffer_size_mb,
+            resume_from
+        );
+    } else {
+        debug!(
+            "Starting stream download: {} -> {} (buffer: {}MB)",
+            url,
+            target_path.display(),
+            buffer_size_mb
+        );
+    }
 
     // Create temporary download path with .downloading extension and . prefix
     let temp_path = create_temp_download_path(target_path)?;
@@ -112,34 +124,129 @@ pub async fn stream_download(
         })?;
     }
 
-    // Make authenticated HTTP request
-    let response = client
-        .authenticated_request(url)?
-        .send()
-        .await
+    // Make authenticated HTTP request with extended timeout for downloads
+    debug!("Making download request to: {}", url);
+    let mut request_builder = client.authenticated_download_request(url)?;
+    
+    // Add user agent and other headers that Put.io might expect
+    request_builder = request_builder
+        .header("User-Agent", "putio-sync/0.0.1")
+        .header("Accept", "*/*");
+    
+    // Add Range header for resuming if specified
+    if let Some(resume_from) = resume_from_byte {
+        if let Some(expected) = expected_size {
+            let range_header = format!("bytes={}-{}", resume_from, expected - 1);
+            debug!("Adding Range header: {}", range_header);
+            request_builder = request_builder.header("Range", range_header);
+        } else {
+            let range_header = format!("bytes={}-", resume_from);
+            debug!("Adding Range header: {}", range_header);
+            request_builder = request_builder.header("Range", range_header);
+        }
+    }
+    
+    let request = request_builder
+        .build()
         .map_err(|e| CoreError::HttpError(e))?;
+    
+    info!("Request URL: {}", request.url());
+    info!("Request method: {}", request.method());
+    info!("Request headers: {:?}", request.headers());
+    
+    let response = reqwest::Client::new()
+        .execute(request)
+        .await
+        .map_err(|e| {
+            error!("HTTP request failed: {}", e);
+            CoreError::HttpError(e)
+        })?;
 
-    if !response.status().is_success() {
-        return Err(CoreError::ApiError(format!(
-            "HTTP error {}: {}",
-            response.status(),
-            response.status().canonical_reason().unwrap_or("Unknown")
-        )));
+    let status = response.status();
+    info!("Response status: {} {}", status.as_u16(), status.canonical_reason().unwrap_or("Unknown"));
+    info!("Response headers: {:?}", response.headers());
+    
+    // Log specific headers that might be relevant for debugging
+    if let Some(content_type) = response.headers().get("content-type") {
+        info!("Content-Type: {:?}", content_type);
+    }
+    if let Some(content_length) = response.headers().get("content-length") {
+        info!("Content-Length: {:?}", content_length);
+    }
+    if let Some(accept_ranges) = response.headers().get("accept-ranges") {
+        info!("Accept-Ranges: {:?}", accept_ranges);
+    }
+    if let Some(content_range) = response.headers().get("content-range") {
+        info!("Content-Range: {:?}", content_range);
+    }
+    
+    // Check for valid response status: 200 (OK) for full download, 206 (Partial Content) for range requests
+    let is_valid_response = status.is_success() || (resume_from_byte.is_some() && status.as_u16() == 206);
+    
+    if !is_valid_response {
+        // Try to get response body for more detailed error info
+        let error_body = response.text().await.unwrap_or_else(|_| "Unable to read error response".to_string());
+        
+        // Enhanced error logging for 400 Bad Request
+        if status.as_u16() == 400 {
+            error!("=== 400 BAD REQUEST DETAILS ===");
+            error!("Request URL: {}", url);
+            error!("Request method: GET");
+            if let Some(resume_from) = resume_from_byte {
+                error!("Resume requested from byte: {}", resume_from);
+                if let Some(expected) = expected_size {
+                    error!("Range header would be: bytes={}-{}", resume_from, expected - 1);
+                } else {
+                    error!("Range header would be: bytes={}-", resume_from);
+                }
+            } else {
+                error!("No range request (full download)");
+            }
+            error!("Response status: {} {}", status.as_u16(), status.canonical_reason().unwrap_or("Unknown"));
+            error!("Error response body: {}", error_body);
+            error!("=== END 400 BAD REQUEST DETAILS ===");
+        }
+        
+        let error_msg = format!(
+            "HTTP error {}: {} - Response: {}",
+            status,
+            status.canonical_reason().unwrap_or("Unknown"),
+            error_body
+        );
+        warn!("Download failed for URL {}: {}", url, error_msg);
+        return Err(CoreError::ApiError(error_msg));
     }
 
     // Open file for writing with buffering
-    let file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&temp_path)
-        .await
-        .map_err(|e| {
-            CoreError::IoError(std::io::Error::new(
-                e.kind(),
-                format!("Failed to create download file: {}", e),
-            ))
-        })?;
+    let file = if resume_from_byte.is_some() {
+        // For resume, open in append mode
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(true)
+            .open(&temp_path)
+            .await
+            .map_err(|e| {
+                CoreError::IoError(std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to open download file for resume: {}", e),
+                ))
+            })?
+    } else {
+        // For new downloads, truncate the file
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&temp_path)
+            .await
+            .map_err(|e| {
+                CoreError::IoError(std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to create download file: {}", e),
+                ))
+            })?
+    };
 
     let mut writer = BufWriter::with_capacity(buffer_size, file);
     let mut bytes_downloaded = 0u64;
@@ -194,16 +301,24 @@ pub async fn stream_download(
 
     // Validate file size if expected size was provided
     if let Some(expected) = expected_size {
-        if bytes_downloaded != expected {
+        let total_bytes_written = if let Some(resume_from) = resume_from_byte {
+            // For resumed downloads, add the existing bytes to what we just downloaded
+            resume_from + bytes_downloaded
+        } else {
+            // For new downloads, just use what we downloaded
+            bytes_downloaded
+        };
+        
+        if total_bytes_written != expected {
             warn!(
-                "Downloaded size ({}) doesn't match expected size ({})",
-                bytes_downloaded, expected
+                "Total file size ({}) doesn't match expected size ({})",
+                total_bytes_written, expected
             );
             // Clean up incomplete file
             let _ = tokio::fs::remove_file(&temp_path).await;
             return Err(CoreError::ApiError(format!(
-                "Size mismatch: downloaded {} bytes, expected {} bytes",
-                bytes_downloaded, expected
+                "Size mismatch: total file size {} bytes, expected {} bytes",
+                total_bytes_written, expected
             )));
         }
     }
