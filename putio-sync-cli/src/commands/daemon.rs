@@ -203,7 +203,7 @@ pub async fn execute_daemon(
     // Main daemon loop with hot reload support
     loop {
         tokio::select! {
-            // Handle download sync
+            // Handle download sync (non-blocking with timeout)
             _ = async {
                 if let Some(ref mut timer) = download_timer {
                     timer.tick().await;
@@ -217,12 +217,23 @@ pub async fn execute_daemon(
                     diagnostics.record_daemon_event(DaemonEvent::DownloadCycle);
                 }
 
-                if let Err(e) = run_download_sync_with_hot_reload(&client, &hot_reload_state, filter.as_deref(), skip_existing, delete_after).await {
-                    error!("Download sync failed: {}", e);
+                // Run download sync with a timeout to prevent blocking other operations
+                let sync_future = run_download_sync_with_hot_reload(&client, &hot_reload_state, filter.as_deref(), skip_existing, delete_after);
+                
+                match tokio::time::timeout(Duration::from_secs(300), sync_future).await {
+                    Ok(Ok(())) => {
+                        debug!("✅ Download sync completed successfully");
+                    }
+                    Ok(Err(e)) => {
+                        error!("Download sync failed: {}", e);
+                    }
+                    Err(_) => {
+                        warn!("Download sync timed out after 5 minutes, continuing with other operations");
+                    }
                 }
             }
 
-            // Handle torrent watch
+            // Handle torrent watch (non-blocking with timeout)
             _ = async {
                 if let Some(ref mut timer) = watch_timer {
                     timer.tick().await;
@@ -236,12 +247,23 @@ pub async fn execute_daemon(
                     diagnostics.record_daemon_event(DaemonEvent::WatchCycle);
                 }
 
-                if let Err(e) = run_watch_check_with_hot_reload(&client, &hot_reload_state, &watch_dirs, parent_id).await {
-                    error!("Watch check failed: {}", e);
+                // Run watch check with a timeout to prevent blocking other operations
+                let watch_future = run_watch_check_with_hot_reload(&client, &hot_reload_state, &watch_dirs, parent_id);
+                
+                match tokio::time::timeout(Duration::from_secs(60), watch_future).await {
+                    Ok(Ok(())) => {
+                        debug!("✅ Watch check completed successfully");
+                    }
+                    Ok(Err(e)) => {
+                        error!("Watch check failed: {}", e);
+                    }
+                    Err(_) => {
+                        warn!("Watch check timed out after 1 minute, continuing with other operations");
+                    }
                 }
             }
 
-            // Handle config changes
+            // Handle config changes (non-blocking with timeout)
             new_config = config_change_rx.recv() => {
                 match new_config {
                     Some(config) => {
@@ -251,8 +273,19 @@ pub async fn execute_daemon(
                             diagnostics.record_daemon_event(DaemonEvent::ConfigReload);
                         }
 
-                        if let Err(e) = handle_config_change(&hot_reload_state, config, &mut download_timer, &mut watch_timer).await {
-                            error!("Failed to handle config change: {}", e);
+                        // Handle config change with a timeout to prevent blocking other operations
+                        let config_future = handle_config_change(&hot_reload_state, config, &mut download_timer, &mut watch_timer);
+                        
+                        match tokio::time::timeout(Duration::from_secs(30), config_future).await {
+                            Ok(Ok(())) => {
+                                debug!("✅ Config change completed successfully");
+                            }
+                            Ok(Err(e)) => {
+                                error!("Failed to handle config change: {}", e);
+                            }
+                            Err(_) => {
+                                warn!("Config change handling timed out after 30 seconds, continuing with other operations");
+                            }
                         }
                     }
                     None => {
@@ -261,7 +294,7 @@ pub async fn execute_daemon(
                 }
             }
 
-            // Handle periodic health reporting
+            // Handle periodic health reporting (fast, non-blocking operation)
             _ = health_timer.tick() => {
                 let download_status = generate_current_download_status(&hot_reload_state);
                 let watch_status = generate_current_watch_status(&hot_reload_state, &watch_dirs);

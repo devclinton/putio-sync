@@ -9,7 +9,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tracing::{debug, error, info, warn};
 
 /// Default buffer size for streaming downloads (128MB)
-pub const DEFAULT_BUFFER_SIZE: usize = 32 * 1024 * 1024;
+pub const DEFAULT_BUFFER_SIZE: usize = 64 * 1024 * 1024;
 
 /// Simple rate limiter for bandwidth control
 struct RateLimiter {
@@ -254,27 +254,59 @@ pub async fn stream_download(
     // Create rate limiter if bandwidth limit is set
     let mut rate_limiter = bandwidth_limit_bytes_per_sec.map(RateLimiter::new);
 
-    // Stream the response body
+    // Stream the response body with stall detection
     let mut stream = response.bytes_stream();
+    let stall_timeout = Duration::from_secs(60); // 60 seconds timeout for stalled downloads
 
     use futures_util::StreamExt;
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| CoreError::HttpError(e))?;
+    loop {
+        match tokio::time::timeout(stall_timeout, stream.next()).await {
+            Ok(Some(Ok(chunk))) => {
 
-        // Apply rate limiting if enabled
-        if let Some(ref mut limiter) = rate_limiter {
-            limiter.consume(chunk.len()).await;
+                // Apply rate limiting if enabled
+                if let Some(ref mut limiter) = rate_limiter {
+                    limiter.consume(chunk.len()).await;
+                }
+
+                writer.write_all(&chunk).await.map_err(|e| {
+                    CoreError::IoError(std::io::Error::new(
+                        e.kind(),
+                        format!("Failed to write to download file: {}", e),
+                    ))
+                })?;
+
+                bytes_downloaded += chunk.len() as u64;
+                
+                // Log progress every 10MB to show activity
+                if bytes_downloaded % (10 * 1024 * 1024) == 0 {
+                    debug!("Downloaded {} bytes so far...", bytes_downloaded);
+                }
+            }
+            Ok(Some(Err(e))) => {
+                return Err(CoreError::HttpError(e));
+            }
+            Ok(None) => {
+                // Stream ended normally
+                debug!("Download stream ended normally");
+                break;
+            }
+            Err(_) => {
+                // Timeout occurred - download has stalled
+                error!("Download stalled - no data received for {} seconds. Downloaded {} bytes so far.", 
+                       stall_timeout.as_secs(), bytes_downloaded);
+                
+                // Flush and close the partial file
+                let _ = writer.flush().await;
+                let _ = writer.shutdown().await;
+                
+                return Err(CoreError::ApiError(format!(
+                    "Download stalled - no data received for {} seconds (downloaded {} bytes)",
+                    stall_timeout.as_secs(),
+                    bytes_downloaded
+                )));
+            }
         }
-
-        writer.write_all(&chunk).await.map_err(|e| {
-            CoreError::IoError(std::io::Error::new(
-                e.kind(),
-                format!("Failed to write to download file: {}", e),
-            ))
-        })?;
-
-        bytes_downloaded += chunk.len() as u64;
     }
 
     // Flush any remaining buffered data
