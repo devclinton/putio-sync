@@ -95,13 +95,17 @@ pub struct Transfer {
     /// Transfer status
     pub status: String,
     /// Download speed in bytes/second
-    pub down_speed: i64,
+    #[serde(default)]
+    pub down_speed: Option<i64>,
     /// Upload speed in bytes/second
-    pub up_speed: i64,
+    #[serde(default)]
+    pub up_speed: Option<i64>,
     /// Number of bytes downloaded
-    pub downloaded: i64,
+    #[serde(default)]
+    pub downloaded: Option<i64>,
     /// Number of bytes uploaded
-    pub uploaded: i64,
+    #[serde(default)]
+    pub uploaded: Option<i64>,
     /// Percentage complete (0-100)
     #[serde(default)]
     pub percent_done: Option<i32>,
@@ -120,7 +124,8 @@ pub struct Transfer {
     #[serde(default)]
     pub availability: Option<i32>,
     /// Current ratio
-    pub current_ratio: f64,
+    #[serde(default)]
+    pub current_ratio: Option<f64>,
     /// Seconds spent seeding
     pub seconds_seeding: Option<i64>,
     /// Error message if failed

@@ -150,9 +150,9 @@ pub async fn stream_download(
         .build()
         .map_err(|e| CoreError::HttpError(e))?;
     
-    info!("Request URL: {}", request.url());
-    info!("Request method: {}", request.method());
-    info!("Request headers: {:?}", request.headers());
+    debug!("Request URL: {}", request.url());
+    debug!("Request method: {}", request.method());
+    debug!("Request headers: {:?}", request.headers());
     
     let response = reqwest::Client::new()
         .execute(request)
@@ -163,21 +163,21 @@ pub async fn stream_download(
         })?;
 
     let status = response.status();
-    info!("Response status: {} {}", status.as_u16(), status.canonical_reason().unwrap_or("Unknown"));
-    info!("Response headers: {:?}", response.headers());
+    debug!("Response status: {} {}", status.as_u16(), status.canonical_reason().unwrap_or("Unknown"));
+    debug!("Response headers: {:?}", response.headers());
     
     // Log specific headers that might be relevant for debugging
     if let Some(content_type) = response.headers().get("content-type") {
-        info!("Content-Type: {:?}", content_type);
+        debug!("Content-Type: {:?}", content_type);
     }
     if let Some(content_length) = response.headers().get("content-length") {
-        info!("Content-Length: {:?}", content_length);
+        debug!("Content-Length: {:?}", content_length);
     }
     if let Some(accept_ranges) = response.headers().get("accept-ranges") {
-        info!("Accept-Ranges: {:?}", accept_ranges);
+        debug!("Accept-Ranges: {:?}", accept_ranges);
     }
     if let Some(content_range) = response.headers().get("content-range") {
-        info!("Content-Range: {:?}", content_range);
+        debug!("Content-Range: {:?}", content_range);
     }
     
     // Check for valid response status: 200 (OK) for full download, 206 (Partial Content) for range requests
