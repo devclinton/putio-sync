@@ -66,11 +66,14 @@ impl ApiClient {
 
     /// Add a new transfer from a .torrent file
     ///
+    /// This method uploads a .torrent file to Put.io using the files upload API.
+    /// Put.io will automatically interpret the uploaded .torrent file as a transfer.
+    ///
     /// # Arguments
     ///
     /// * `file_path` - Path to the .torrent file
     /// * `parent_id` - Optional parent folder ID (None uses user's default folder)
-    /// * `callback_url` - Optional callback URL for completion notification
+    /// * `callback_url` - Optional callback URL for completion notification (currently ignored)
     ///
     /// # Examples
     ///
@@ -92,79 +95,21 @@ impl ApiClient {
         parent_id: Option<i64>,
         callback_url: Option<String>,
     ) -> CoreResult<Transfer> {
-        use reqwest::multipart::{Form, Part};
-        use tokio::fs::File as TokioFile;
-        use tokio::io::AsyncReadExt;
-
-        // Read the torrent file
-        let mut file = TokioFile::open(file_path)
-            .await
-            .map_err(|e| crate::error::CoreError::IoError(e))?;
-
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)
-            .await
-            .map_err(|e| crate::error::CoreError::IoError(e))?;
-
-        // Get the filename
-        let filename = file_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("file.torrent")
-            .to_string();
-
-        // Create multipart form
-        let file_part = Part::bytes(buffer)
-            .file_name(filename)
-            .mime_str("application/x-bittorrent")
-            .map_err(|e| {
-                crate::error::CoreError::InternalError(format!(
-                    "Failed to set MIME type: {}",
-                    e
-                ))
-            })?;
-
-        let mut form = Form::new().part("file", file_part);
-
-        if let Some(pid) = parent_id {
-            form = form.text("save_parent_id", pid.to_string());
+        // Note: callback_url is currently ignored as the files upload API doesn't support it
+        if callback_url.is_some() {
+            tracing::warn!("callback_url parameter is not supported by the files upload API and will be ignored");
         }
 
-        if let Some(callback) = callback_url {
-            form = form.text("callback_url", callback);
+        // Use the files upload API instead of transfers/add for .torrent files
+        let upload_response = self.upload_file(file_path, parent_id).await?;
+
+        // Extract the transfer information
+        match upload_response.transfer {
+            Some(transfer) => Ok(transfer),
+            None => Err(crate::error::CoreError::ApiError(
+                "File was uploaded but no transfer was created. The file might not be a valid torrent.".to_string()
+            )),
         }
-
-        // Send the request with multipart form
-        let url = format!("{}/transfers/add", self.base_url);
-        let auth_header = self.get_auth_header()?;
-
-        let response = self
-            .client
-            .post(&url)
-            .header(reqwest::header::AUTHORIZATION, auth_header)
-            .multipart(form)
-            .send()
-            .await
-            .map_err(crate::error::CoreError::HttpError)?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(crate::error::CoreError::ApiError(format!(
-                "Failed to add transfer: {} - {}",
-                status, error_text
-            )));
-        }
-
-        let api_response: ApiResponse<AddTransferResponse> = response
-            .json()
-            .await
-            .map_err(crate::error::CoreError::HttpError)?;
-
-        Ok(api_response.data.transfer)
     }
 
     /// List all transfers
