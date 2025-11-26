@@ -10,19 +10,78 @@ use putio_sync_cli::commands;
 
 use cli::{Cli, Commands, QueueCommands, TransfersCommands};
 use tracing::{debug, error, info};
+use chrono::Utc;
+
+/// Get version string with git commit info
+fn get_version_with_commit() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    
+    // Try to get git commit hash at compile time
+    match option_env!("GIT_HASH") {
+        Some(hash) => format!("v{} ({})", version, hash),
+        None => {
+            // If GIT_HASH wasn't set, try to get it from git command at compile time
+            match std::process::Command::new("git")
+                .args(&["rev-parse", "--short", "HEAD"])
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    let hash_string = String::from_utf8_lossy(&output.stdout);
+                    let hash = hash_string.trim();
+                    if !hash.is_empty() {
+                        format!("v{} ({})", version, hash)
+                    } else {
+                        format!("v{}", version)
+                    }
+                }
+                _ => format!("v{}", version),
+            }
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() {
-    let args = Cli::parse_args();
+    // Get version with commit info
+    let version = get_version_with_commit();
+    
+    // Initialize basic logging first for early debugging - these ALWAYS show
+    eprintln!("=== PUTIO-SYNC STARTUP DEBUG ===");
+    eprintln!("🚀 putio-sync {} starting up...", version);
+    eprintln!("⚙️  Built for: {}", std::env::consts::OS);
+    eprintln!("⚙️  Architecture: {}", std::env::consts::ARCH);
+    eprintln!("⚙️  Current time: {}", Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
+    
+    // Force stdout/stderr flush
+    use std::io::Write;
+    let _ = std::io::stderr().flush();
+    
+    eprintln!("🔧 Parsing command line arguments...");
+    let args = match std::panic::catch_unwind(|| Cli::parse_args()) {
+        Ok(args) => {
+            eprintln!("✅ Command line arguments parsed successfully");
+            args
+        }
+        Err(_) => {
+            eprintln!("❌ Failed to parse command line arguments");
+            std::process::exit(1);
+        }
+    };
 
+    eprintln!("🔧 Initializing logging system...");
     // Initialize logging based on verbosity flags
     logging::init(args.verbose, args.quiet);
+    eprintln!("✅ Logging initialized - verbosity: {}, quiet: {}", args.verbose, args.quiet);
 
     // Log startup information
-    info!("putio-sync v{}", env!("CARGO_PKG_VERSION"));
+    info!("putio-sync {}", version);
+    eprintln!("📋 Application version: {}", version);
 
     if let Some(config_path) = &args.config {
         debug!("Config path: {}", config_path.display());
+        eprintln!("📁 Explicit config path: {}", config_path.display());
+    } else {
+        eprintln!("📁 No explicit config path provided, will use defaults");
     }
 
     debug!("Verbosity level: {}", args.verbose);
@@ -299,6 +358,13 @@ async fn main() {
             watch_only,
             download_only,
         } => {
+            eprintln!("🔄 Entering daemon mode...");
+            eprintln!("⚙️  Daemon config - download_interval: {}s, watch_interval: {}s", download_interval, watch_interval);
+            eprintln!("⚙️  Watch paths: {:?}", watch);
+            eprintln!("⚙️  Filter: {:?}", filter);
+            eprintln!("⚙️  Skip existing: {}, Delete after: {}", skip_existing, delete_after);
+            eprintln!("⚙️  Watch only: {}, Download only: {}", watch_only, download_only);
+            
             commands::execute_daemon(
                 download_interval,
                 watch_interval,
@@ -319,11 +385,19 @@ async fn main() {
             port,
             bind,
         } => commands::execute_server(watch, download, port, bind, args.config).await,
+        Commands::Status { detailed, json } => {
+            commands::execute_status(args.config, detailed, json).await
+        }
+        Commands::Health {} => commands::execute_health(args.config).await,
+        Commands::Debug {} => commands::execute_debug(args.config).await,
     };
 
     // Handle command execution errors
+    eprintln!("🏁 Command execution completed");
     if let Err(e) = result {
+        eprintln!("❌ Error occurred: {}", e);
         error!("Error: {}", e);
         std::process::exit(1);
     }
+    eprintln!("✅ Program completed successfully");
 }

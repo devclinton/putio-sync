@@ -357,6 +357,46 @@ putio-sync history --output csv > history.csv
 
 Configuration is stored at `~/.putiosync/config.toml`. See `config.example.toml` for a complete example with all options documented.
 
+### Path Handling
+
+putio-sync supports flexible path formats for all directory configurations:
+
+- **Absolute paths**: `/home/user/Downloads` (exact path)
+- **Relative paths**: `./downloads`, `downloads` (relative to current directory)  
+- **Home directory**: `~/Downloads` (expands to user home)
+- **Current directory**: `.` (current working directory)
+
+Examples:
+```toml
+[download]
+target_directory = "~/Downloads/putio"      # Expands to /home/user/Downloads/putio
+# target_directory = "/mnt/downloads"       # Absolute path
+# target_directory = "./downloads"          # Relative to current directory
+
+[watch] 
+paths = [
+    "~/Downloads/torrents",                 # Home relative
+    "/var/watch/torrents",                  # Absolute path
+    "./torrent-watch"                       # Current directory relative
+]
+```
+
+### Chunked Downloads
+
+Chunking improves download reliability for large files by downloading in smaller pieces:
+
+- **Disabled by default**: Files are downloaded as a single stream
+- **Enable chunking**: Set `chunk_size_mb` to enable (e.g., 256 for 256MB chunks)
+- **Benefits**: Better resume support, parallel chunk downloads, less memory usage
+- **Recommended**: 128-512MB chunks for files >1GB
+
+```toml
+[download]
+chunk_size_mb = 256        # Download files in 256MB chunks
+# chunk_size_mb = null     # Disable chunking (default)
+buffer_size_mb = 16        # Stream buffer size (always used)
+```
+
 ### Basic Configuration
 
 ```toml
@@ -366,12 +406,16 @@ token = "YOUR_OAUTH_TOKEN"
 
 [download]
 workers = 2
-target_directory = "~/Downloads/putio"
+target_directory = "~/Downloads/putio"  # Supports ~, absolute, and relative paths
 buffer_size_mb = 16
+chunk_size_mb = 256                     # Optional: Enable chunking for large files  
 resume_enabled = true
 skip_existing = false
+delete_after_download = true            # Clean up Put.io after successful downloads
 progress_style = "per-file"
 sort_order = "by-date"
+max_retries = 3                         # Retry failed downloads
+bandwidth_limit_bytes_per_sec = 1048576 # Optional: 1 MB/s limit
 
 [watch]
 refresh_cycle = 60
@@ -450,6 +494,24 @@ putio-sync daemon --watch-only --watch-interval 60 --watch ~/Downloads/torrents 
 
 # With filtering for specific file types
 putio-sync daemon --filter "*.mkv,*.mp4,*.avi" --skip-existing --delete-after
+```
+
+**Improved Daemon Logging**: The daemon now provides clear, structured logs:
+```bash
+# Download activity
+🔽 Starting download: Movie.mkv (1.2 GB)
+✅ Download completed: Movie.mkv (1.2 GB downloaded)
+
+# Torrent activity  
+🔼 Processing new .torrent file: Movie.torrent
+✅ Torrent uploaded successfully: Movie (ID: 1234567)
+
+# Periodic health summaries
+📊 Download sync completed in 2.1s - found: 3, downloaded: 2, failed: 0, total: 2.1 GB
+📊 Daemon Health - Uptime: 2h15m, Downloads: 1/2 active, 3 queued, Watch: 2 dirs, 47 processed
+
+# File cleanup after download
+🗑️  Successfully deleted Movie.mkv from Put.io (delete_after_download enabled)
 ```
 
 #### 🔥 Hot Reloading Features
@@ -790,8 +852,55 @@ docker pull ghcr.io/devclinton/putio-sync:latest
 
 ### Build from Source
 
+#### Basic Build
 ```bash
 docker build -t putio-sync .
+```
+
+#### Advanced Build with Caching
+
+For faster builds, especially during development, use the enhanced build targets with BuildKit caching:
+
+```bash
+# Optimized inline cache (recommended - works everywhere)
+make docker-build-fast
+
+# Basic BuildKit with inline cache  
+make docker-build
+
+# Local filesystem cache (fastest but requires buildx setup)
+make docker-build-local-cache
+
+# Registry-based cache (best for CI/CD and team collaboration)
+make docker-build-cache
+```
+
+#### Build Performance Features
+
+The enhanced Docker build includes several optimizations:
+
+- **🚀 Dependency Caching**: Dependencies are built in a separate layer that only rebuilds when `Cargo.toml`/`Cargo.lock` change
+- **🔄 BuildKit Mount Cache**: Uses `--mount=type=cache` for Cargo registry and build artifacts
+- **📦 Multi-Stage Optimization**: Separates dependency compilation from source compilation
+- **⚡ Cache Strategies**: Multiple caching options for different use cases
+
+**Cache Performance Comparison:**
+- **No cache**: 5-10 minutes (full rebuild)
+- **Basic cache**: 2-4 minutes (partial dependency reuse)  
+- **Local cache**: 30-90 seconds (full dependency reuse)
+- **Registry cache**: 1-3 minutes (shared across machines)
+
+#### Cache Management
+
+```bash
+# View cache information
+make docker-cache-info
+
+# Clean local cache
+make docker-clean-cache
+
+# Remove old images
+make docker-clean
 ```
 
 ### Running with Docker

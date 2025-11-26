@@ -231,6 +231,32 @@ impl ApiClient {
         Ok(self.client.get(url).header("Authorization", auth_header))
     }
 
+    /// Create an authenticated request builder for downloads with extended timeout
+    ///
+    /// This creates a request with a much longer timeout suitable for file downloads.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The URL to download from
+    ///
+    /// # Returns
+    ///
+    /// A request builder with authentication headers and extended timeout
+    pub fn authenticated_download_request(&self, url: &str) -> CoreResult<reqwest::RequestBuilder> {
+        let auth_header = self.get_auth_header()?;
+        debug!("Creating authenticated download request for URL: {}", url);
+        debug!("Auth method: {:?}", self.auth_method);
+        // Note: Not logging auth header value for security
+        
+        // Create a client with extended timeout for downloads (10 minutes)
+        let download_client = Client::builder()
+            .timeout(Duration::from_secs(600))  // 10 minutes
+            .build()
+            .map_err(|e| CoreError::HttpError(e))?;
+            
+        Ok(download_client.get(url).header("Authorization", auth_header))
+    }
+
     /// Create an authenticated HEAD request builder for checking file metadata
     ///
     /// This adds the necessary authentication headers to the request.

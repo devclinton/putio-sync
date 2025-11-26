@@ -58,18 +58,27 @@ pub async fn execute_download(
 
     // Create download configuration from config + CLI overrides
     let mut download_config = config.download;
+    
+    info!("Config loaded - target_directory: {}", download_config.target_directory.display());
 
     // Apply CLI overrides to download config
     if let Some(d) = dir {
-        download_config.target_directory = d;
+        info!("CLI override - original dir argument: {:?}", d);
+        download_config.target_directory = putio_sync_core::path_utils::expand_path(d)
+            .context("Failed to expand target directory path")?;
+        info!("CLI override - expanded target_directory: {}", download_config.target_directory.display());
+    } else {
+        info!("No CLI override for target directory");
     }
     if let Some(w) = workers {
         download_config.workers = w;
     }
     if let Some(cs) = chunk_size {
-        let size_bytes = parse_size(&cs)
+        warn!("Chunk size specified but chunked downloads not supported - using streaming with range request resume instead");
+        let _size_bytes = parse_size(&cs)
             .map_err(|e| anyhow!("Invalid chunk size '{}': {}", cs, e))?;
-        download_config.chunk_size_mb = Some((size_bytes / 1024 / 1024) as usize);
+        // Don't set chunk_size_mb since chunked downloads are not supported
+        download_config.chunk_size_mb = None;
     }
     if let Some(bs) = buffer_size {
         let size_bytes = parse_size(&bs)
@@ -226,8 +235,9 @@ async fn run_single_download(
         .map(|f| DownloadFile {
             file_id: f.id,
             filename: f.name.clone(),
+            relative_path: "".to_string(), // Non-daemon downloads don't preserve directory structure by default
             file_size: f.size.max(0) as u64,
-            download_url: format!("https://api.put.io/v2/files/{}/download", f.id),
+            download_url: client_arc.get_download_url(f.id),
         })
         .collect();
 
@@ -334,9 +344,9 @@ async fn run_daemon_mode(
         })?;
     }
 
-    // Initialize database
+    // Initialize database (not used in new implementation)
     let db_path = download_config.target_directory.join(".putiosync.db");
-    let database = Arc::new(
+    let _database = Arc::new(
         Database::new(&db_path)
             .await
             .context("Failed to initialize database")?,
@@ -364,145 +374,49 @@ async fn run_daemon_mode(
             break;
         }
 
-        // Get list of files from Put.io
-        let file_entries = if all {
-            match client_arc.list_files(0).await {
-                Ok(response) => response.files,
-                Err(e) => {
-                    error!("Failed to fetch file list: {}", e);
-                    warn!("Waiting {} seconds before retry...", interval);
-                    tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
-                    continue;
-                }
-            }
-        } else if !files.is_empty() {
-            let mut entries = Vec::new();
-            for file_id in &files {
-                match client_arc.get_file(*file_id).await {
-                    Ok(file_response) => entries.push(file_response.file),
-                    Err(e) => {
-                        warn!("Failed to get file {}: {}", file_id, e);
-                    }
-                }
-            }
-            entries
-        } else {
-            warn!("No files specified and --all not set, nothing to download");
-            break;
-        };
-
-        // Apply filters
-        let mut filtered_files = match apply_filters(file_entries, filter.clone()) {
-            Ok(files) => files,
+        // Use DownloadOps for recursive downloads
+        let sync_parent_id = if all { 0 } else { 0 }; // Use root for now, this could be configurable
+        let download_ops = match crate::download_ops::DownloadOps::new(
+            client_arc.clone(),
+            download_config.clone(),
+            sync_parent_id,
+        )
+        .await
+        {
+            Ok(ops) => ops,
             Err(e) => {
-                error!("Failed to apply filters: {}", e);
+                error!("Failed to create download operations: {}", e);
                 warn!("Waiting {} seconds before retry...", interval);
                 tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
                 continue;
             }
         };
 
-        // Apply sorting
-        filtered_files = match apply_sorting(filtered_files, &download_config) {
-            Ok(files) => files,
+        // Run sync cycle with recursive downloads
+        match download_ops
+            .run_sync_cycle(filter.as_deref(), all, &files, true) // true = show progress
+            .await
+        {
+            Ok(result) => {
+                if result.is_empty() {
+                    info!("No new files to download in this cycle");
+                } else {
+                    info!(
+                        "Cycle #{} completed: {} files found, {} downloaded, {} failed in {:.2}s",
+                        cycle_count,
+                        result.files_found,
+                        result.files_downloaded,
+                        result.files_failed,
+                        result.duration_secs
+                    );
+                }
+            }
             Err(e) => {
-                error!("Failed to apply sorting: {}", e);
+                error!("Download cycle failed: {}", e);
                 warn!("Waiting {} seconds before retry...", interval);
                 tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
                 continue;
             }
-        };
-
-        // Filter out folders and already downloaded files
-        let download_files: Vec<DownloadFile> = filtered_files
-            .iter()
-            .filter(|f| !f.is_folder)
-            .map(|f| DownloadFile {
-                file_id: f.id,
-                filename: f.name.clone(),
-                file_size: f.size.max(0) as u64,
-                download_url: format!("https://api.put.io/v2/files/{}/download", f.id),
-            })
-            .collect();
-
-        if download_files.is_empty() {
-            info!("No new files to download in this cycle");
-        } else {
-            info!("Found {} files to download", download_files.len());
-
-            // Calculate total size
-            let total_size: u64 = download_files.iter().map(|f| f.file_size).sum();
-
-            info!(
-                "Total download size: {} ({} bytes)",
-                format_size(total_size),
-                total_size
-            );
-
-            // Create progress display
-            let progress_display = Arc::new(ProgressDisplay::new(
-                download_config.progress_style.clone(),
-                download_files.len() as u64,
-                total_size,
-            ));
-
-            // Create download manager
-            let manager = DownloadManager::new(
-                client_arc.clone(),
-                database.clone(),
-                download_config.clone(),
-            );
-
-            let mut successful = 0;
-            let mut failed = 0;
-            let cycle_start = Instant::now();
-
-            // Download files
-            for download_file in download_files {
-                // Check for shutdown signal
-                if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-                    warn!("Daemon interrupted by user");
-                    progress_display.finish();
-                    return Ok(());
-                }
-
-                let callback = progress_display.clone().create_callback();
-
-                match manager
-                    .download_file(download_file.clone(), Some(callback))
-                    .await
-                {
-                    Ok(result) => {
-                        if result.success {
-                            successful += 1;
-                        } else {
-                            failed += 1;
-                            error!(
-                                "Download failed for file {}: {}",
-                                download_file.file_id,
-                                result.error.unwrap_or_else(|| "Unknown error".to_string())
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        failed += 1;
-                        error!("Download failed for file {}: {}", download_file.file_id, e);
-                    }
-                }
-            }
-
-            // Finish progress display
-            progress_display.finish();
-
-            // Log cycle summary
-            let cycle_elapsed = cycle_start.elapsed();
-            info!(
-                "Cycle #{} completed: {} successful, {} failed in {:.2}s",
-                cycle_count,
-                successful,
-                failed,
-                cycle_elapsed.as_secs_f64()
-            );
         }
 
         // Wait for next cycle

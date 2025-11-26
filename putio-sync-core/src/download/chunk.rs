@@ -7,11 +7,11 @@ use tokio::fs::OpenOptions;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufWriter};
 use tracing::{debug, warn};
 
-/// Default chunk size for large files (10MB)
-pub const DEFAULT_CHUNK_SIZE: u64 = 10 * 1024 * 1024;
+/// Default chunk size for large files (512MB)
+pub const DEFAULT_CHUNK_SIZE: u64 = 512 * 1024 * 1024;
 
-/// Minimum file size to trigger chunked download (50MB)
-pub const MIN_CHUNK_FILE_SIZE: u64 = 50 * 1024 * 1024;
+/// Minimum file size to trigger chunked download (512MB)
+pub const MIN_CHUNK_FILE_SIZE: u64 = 512 * 1024 * 1024;
 
 /// Represents a chunk of a file to download
 #[derive(Debug, Clone)]
@@ -94,21 +94,41 @@ pub async fn download_chunk(
 
     // Make authenticated HTTP request with Range header
     let range_header = format!("bytes={}-{}", chunk.start, chunk.end);
-    let response = client
-        .authenticated_request(url)?
-        .header("Range", range_header)
-        .send()
+    debug!("Making chunk download request to: {} with range: {}", url, range_header);
+    
+    let request_builder = client.authenticated_download_request(url)?;
+    let request = request_builder
+        .header("Range", range_header.clone())
+        .header("User-Agent", "putio-sync/0.0.1")
+        .header("Accept", "*/*")
+        .build()
+        .map_err(|e| CoreError::HttpError(e))?;
+    
+    debug!("Chunk request headers: {:?}", request.headers());
+    
+    let response = reqwest::Client::new()
+        .execute(request)
         .await
         .map_err(|e| CoreError::HttpError(e))?;
 
     // Check for 206 Partial Content response
     let status = response.status();
+    debug!("Chunk response status: {}", status);
+    debug!("Chunk response headers: {:?}", response.headers());
+    
     if !status.is_success() && status.as_u16() != 206 {
-        return Err(CoreError::ApiError(format!(
-            "HTTP error {}: {}",
+        // Try to get response body for more detailed error info
+        let error_body = response.text().await.unwrap_or_else(|_| "Unable to read error response".to_string());
+        let error_msg = format!(
+            "HTTP error {} for chunk {}: {} - Range: {} - Response: {}",
             status,
-            status.canonical_reason().unwrap_or("Unknown")
-        )));
+            chunk.number,
+            status.canonical_reason().unwrap_or("Unknown"),
+            range_header,
+            error_body
+        );
+        warn!("Chunk download failed for URL {}: {}", url, error_msg);
+        return Err(CoreError::ApiError(error_msg));
     }
 
     // Open file for writing at the chunk offset

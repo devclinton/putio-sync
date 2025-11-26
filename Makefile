@@ -30,7 +30,9 @@ help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / && !/^(docker|build-(deb|snap|flatpak)|packages|workflow|ci-docker|all-|clean-all)/ {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@echo ''
 	@echo 'Docker Targets:'
-	@awk 'BEGIN {FS = ":.*?## "} /^docker-[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "} /^docker-[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-25s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo '  Recommended for development: make docker-build-fast'
+	@echo '  Recommended for CI/CD: make docker-build-cache'
 	@echo ''
 	@echo 'Package Build Targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^(build-(deb|snap|flatpak)|packages)[a-zA-Z_-]*:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -183,14 +185,40 @@ DOCKER_TAG ?= latest
 DOCKER_REGISTRY ?= ghcr.io
 DOCKER_FULL_IMAGE ?= $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG)
 
-docker-build: ## Build Docker image
-	@echo "Building Docker image: $(DOCKER_IMAGE):$(DOCKER_TAG)"
-	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+docker-build: ## Build Docker image with BuildKit caching (Alpine + musl)
+	@echo "Building Docker image with BuildKit caching: $(DOCKER_IMAGE):$(DOCKER_TAG)"
+	env DOCKER_BUILDKIT=1 docker build \
+		--cache-from=$(DOCKER_IMAGE):cache \
+		--build-arg BUILDKIT_INLINE_CACHE=1 \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 	@echo "Image built successfully: $(DOCKER_IMAGE):$(DOCKER_TAG)"
 
+docker-build-cache: ## Build Docker image with external cache support (registry-based)
+	@echo "Building Docker image with registry cache: $(DOCKER_IMAGE):$(DOCKER_TAG)"
+	env DOCKER_BUILDKIT=1 docker buildx build \
+		--cache-from=type=registry,ref=$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):cache \
+		--cache-to=type=registry,ref=$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):cache,mode=max \
+		--load \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+	@echo "Image built successfully with registry cache: $(DOCKER_IMAGE):$(DOCKER_TAG)"
+
+docker-build-local-cache: ## Build Docker image with local cache (requires buildx with docker-container driver)
+	@echo "Setting up buildx builder for local caching..."
+	@docker buildx inspect cache-builder >/dev/null 2>&1 || \
+		docker buildx create --name cache-builder --driver docker-container --use
+	@echo "Building Docker image with local BuildKit cache: $(DOCKER_IMAGE):$(DOCKER_TAG)"
+	env DOCKER_BUILDKIT=1 docker buildx build \
+		--cache-from=type=local,src=/tmp/docker-cache \
+		--cache-to=type=local,dest=/tmp/docker-cache,mode=max \
+		--load \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+	@echo "Image built successfully with local cache: $(DOCKER_IMAGE):$(DOCKER_TAG)"
+
 docker-build-multiarch: ## Build multi-architecture Docker image (amd64, arm64)
-	@echo "Building multi-architecture Docker image..."
+	@echo "Building multi-architecture Docker image with caching..."
 	docker buildx build --platform linux/amd64,linux/arm64 \
+		--cache-from=type=registry,ref=$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):cache \
+		--cache-to=type=registry,ref=$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):cache,mode=max \
 		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 
 docker-test: docker-build ## Test Docker image
@@ -223,6 +251,37 @@ docker-clean: ## Remove Docker images
 	@echo "Removing Docker images..."
 	docker rmi $(DOCKER_IMAGE):$(DOCKER_TAG) || true
 	docker rmi $(DOCKER_FULL_IMAGE) || true
+
+docker-clean-cache: ## Clean local Docker BuildKit cache
+	@echo "Cleaning local Docker BuildKit cache..."
+	rm -rf /tmp/docker-cache
+	docker builder prune -f
+
+docker-build-fast: ## Build Docker image with optimized inline cache (no external deps)
+	@echo "Building Docker image with optimized inline cache: $(DOCKER_IMAGE):$(DOCKER_TAG)"
+	@echo "Attempting to pull existing image for cache..."
+	@docker pull $(DOCKER_IMAGE):$(DOCKER_TAG) 2>/dev/null || echo "No existing image found"
+	env DOCKER_BUILDKIT=1 docker build \
+		--cache-from=$(DOCKER_IMAGE):$(DOCKER_TAG) \
+		--build-arg BUILDKIT_INLINE_CACHE=1 \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+	@echo "Image built successfully with inline cache: $(DOCKER_IMAGE):$(DOCKER_TAG)"
+
+docker-cache-info: ## Show Docker cache information
+	@echo "Docker BuildKit cache information:"
+	@echo "Local cache: /tmp/docker-cache"
+	@if [ -d /tmp/docker-cache ]; then \
+		echo "Local cache size: $$(du -sh /tmp/docker-cache 2>/dev/null || echo 'N/A')"; \
+	else \
+		echo "Local cache: Not present"; \
+	fi
+	@echo "Registry cache: $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):cache"
+	@echo ""
+	@echo "Available cache strategies (in order of ease of use):"
+	@echo "  make docker-build-fast         - Optimized inline cache (works everywhere)"
+	@echo "  make docker-build              - Basic BuildKit with inline cache"
+	@echo "  make docker-build-local-cache  - Local filesystem cache (requires buildx setup)"
+	@echo "  make docker-build-cache        - Registry-based cache (best for CI/CD)"
 
 # ============================================================================
 # Package Build Targets

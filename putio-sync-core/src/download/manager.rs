@@ -1,14 +1,11 @@
 //! Download manager for orchestrating downloads
 
-use super::chunk::{
-    calculate_chunks, download_chunk, supports_range_requests, ResumeInfo,
-    DEFAULT_CHUNK_SIZE, MIN_CHUNK_FILE_SIZE,
-};
+use super::chunk::ResumeInfo;
 use super::progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
-use super::stream::{get_original_path, is_partial_download, stream_download};
+use super::stream::{is_partial_download, stream_download};
 use crate::api::ApiClient;
 use crate::config::DownloadConfig;
-use crate::db::models::{ChunkStatus, DownloadStatus};
+use crate::db::models::DownloadStatus;
 use crate::db::Database;
 use crate::error::{CoreError, CoreResult};
 use crate::fs::sanitize::sanitize_filename;
@@ -17,7 +14,6 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::fs::OpenOptions;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -28,6 +24,8 @@ pub struct DownloadFile {
     pub file_id: i64,
     /// Original filename
     pub filename: String,
+    /// Relative path from root (for maintaining directory structure)
+    pub relative_path: String,
     /// File size in bytes
     pub file_size: u64,
     /// Download URL
@@ -175,14 +173,31 @@ impl DownloadManager {
         let filename = sanitize_filename(&file.filename);
 
         info!("Starting download: {} (ID: {})", filename, file_id);
+        info!("Download config target_directory: {}", self.config.target_directory.display());
+        info!("File relative_path: '{}'", file.relative_path);
 
         // Notify callback that file download is starting
         if let Some(ref callback) = progress_callback {
             callback.on_file_start(file_id, &filename, file.file_size);
         }
 
-        // Check if file already exists and skip if configured
-        let target_path = self.config.target_directory.join(&filename);
+        // Construct full path preserving directory structure
+        let target_path = if file.relative_path.is_empty() {
+            self.config.target_directory.join(&filename)
+        } else {
+            self.config.target_directory.join(&file.relative_path).join(&filename)
+        };
+        info!("Constructed target_path: {}", target_path.display());
+        
+        // Ensure parent directory exists
+        if let Some(parent) = target_path.parent() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    CoreError::IoError(e)
+                })?;
+            }
+        }
+        
         if self.config.skip_existing && target_path.exists() {
             info!("Skipping existing file: {}", filename);
             return Ok(DownloadOperationResult {
@@ -197,15 +212,14 @@ impl DownloadManager {
         // Check for resume capability
         let resume_info = self.check_resume(&file, &target_path).await?;
 
-        // Download the file
-        let result = if resume_info.is_some() {
-            self.download_with_resume(file, resume_info.unwrap(), progress_callback.clone())
-                .await
-        } else if file.file_size >= MIN_CHUNK_FILE_SIZE {
-            // Use chunked download for large files
-            self.download_chunked(file, progress_callback.clone()).await
+        // Download the file using streaming with range requests for resuming if available
+        let result = if let Some(ref resume) = resume_info {
+            // Try to resume using range requests
+            info!("Attempting to resume download from byte {} of {}", resume.bytes_downloaded, resume.total_bytes);
+            self.download_streaming_with_resume(file, progress_callback.clone(), resume.bytes_downloaded).await
         } else {
-            // Use streaming download for small files
+            // Start new download
+            info!("Starting new streaming download");
             self.download_streaming(file, progress_callback.clone()).await
         };
 
@@ -227,6 +241,126 @@ impl DownloadManager {
         }
     }
 
+    /// Download using streaming with resume support
+    async fn download_streaming_with_resume(
+        &self,
+        file: DownloadFile,
+        progress_callback: Option<Arc<dyn ProgressCallback>>,
+        resume_from_byte: u64,
+    ) -> CoreResult<DownloadOperationResult> {
+        let filename = sanitize_filename(&file.filename);
+        let target_path = if file.relative_path.is_empty() {
+            self.config.target_directory.join(&filename)
+        } else {
+            self.config.target_directory.join(&file.relative_path).join(&filename)
+        };
+
+        // Create progress tracker
+        self.progress_trackers
+            .write()
+            .await
+            .insert(file.file_id, ProgressTracker::new(resume_from_byte));
+
+        // Start download with retry logic
+        let start_time = Instant::now();
+
+        let client = &self.client;
+        let download_url = &file.download_url;
+        let file_size = file.file_size;
+        let buffer_size_mb = self.config.buffer_size_mb;
+        let bandwidth_limit = self.config.bandwidth_limit_bytes_per_sec;
+        let max_retries = self.config.max_retries;
+        let initial_delay = self.config.retry_initial_delay_secs;
+
+        let result = retry_with_backoff(
+            || async {
+                stream_download(
+                    client,
+                    download_url,
+                    &target_path,
+                    Some(file_size),
+                    buffer_size_mb,
+                    bandwidth_limit,
+                    Some(resume_from_byte), // Resume from the specified byte
+                )
+                .await
+            },
+            max_retries,
+            initial_delay,
+            &format!("Resume download {}", filename),
+        )
+        .await;
+
+        match result {
+            Ok(retry_result) => {
+                let duration = start_time.elapsed();
+                let download_result = retry_result.value;
+                let retry_count = retry_result.attempts;
+
+                // Calculate total bytes (existing + newly downloaded)
+                let total_bytes_downloaded = resume_from_byte + download_result.bytes_downloaded;
+
+                // Update progress
+                if let Some(ref callback) = progress_callback {
+                    let mut progress = DownloadProgress::new(
+                        file.file_id,
+                        filename.clone(),
+                        file.file_size,
+                    );
+                    progress.bytes_downloaded = total_bytes_downloaded;
+                    progress.complete = true;
+                    callback.on_file_progress(&progress);
+                }
+
+                // Save to database with retry count
+                let repo = self.database.downloads();
+                repo.insert_with_retry_count(
+                    file.file_id,
+                    &filename,
+                    file.file_size as i64,
+                    target_path.to_str().unwrap_or(""),
+                    DownloadStatus::Completed,
+                    retry_count as i64,
+                )
+                .await?;
+
+                info!(
+                    "Resume download completed: {} (total {} bytes in {:.2}s)",
+                    filename,
+                    total_bytes_downloaded,
+                    duration.as_secs_f64()
+                );
+
+                Ok(DownloadOperationResult {
+                    file_id: file.file_id,
+                    success: true,
+                    error: None,
+                    bytes_downloaded: total_bytes_downloaded,
+                    file_path: Some(target_path),
+                })
+            }
+            Err(e) => {
+                // Check if it's a 404 error
+                if let CoreError::ApiError(ref msg) = e {
+                    if msg.contains("404") {
+                        warn!("File no longer available (404): {}", filename);
+                        // Clean up any partial download
+                        let temp_path = self.create_temp_path(&target_path)?;
+                        self.cleanup_partial(&temp_path).await;
+                    }
+                }
+
+                Ok(DownloadOperationResult {
+                    file_id: file.file_id,
+                    success: false,
+                    error: Some(e.to_string()),
+                    bytes_downloaded: resume_from_byte, // Return at least the existing bytes
+                    file_path: None,
+                })
+            }
+        }
+    }
+
     /// Download using streaming (for small files)
     async fn download_streaming(
         &self,
@@ -234,7 +368,11 @@ impl DownloadManager {
         progress_callback: Option<Arc<dyn ProgressCallback>>,
     ) -> CoreResult<DownloadOperationResult> {
         let filename = sanitize_filename(&file.filename);
-        let target_path = self.config.target_directory.join(&filename);
+        let target_path = if file.relative_path.is_empty() {
+            self.config.target_directory.join(&filename)
+        } else {
+            self.config.target_directory.join(&file.relative_path).join(&filename)
+        };
 
         // Create progress tracker
         self.progress_trackers
@@ -262,6 +400,7 @@ impl DownloadManager {
                     Some(file_size),
                     buffer_size_mb,
                     bandwidth_limit,
+                    None, // No resume for new downloads
                 )
                 .await
             },
@@ -337,297 +476,9 @@ impl DownloadManager {
         }
     }
 
-    /// Download using chunks (for large files)
-    async fn download_chunked(
-        &self,
-        file: DownloadFile,
-        progress_callback: Option<Arc<dyn ProgressCallback>>,
-    ) -> CoreResult<DownloadOperationResult> {
-        let filename = sanitize_filename(&file.filename);
-        let target_path = self.config.target_directory.join(&filename);
 
-        // Check if server supports range requests
-        if !supports_range_requests(&self.client, &file.download_url).await {
-            debug!(
-                "Server doesn't support range requests, falling back to streaming for {}",
-                filename
-            );
-            return self.download_streaming(file, progress_callback).await;
-        }
 
-        debug!(
-            "Using chunked download for {} ({} bytes)",
-            filename, file.file_size
-        );
-
-        // Calculate chunks
-        let chunks = calculate_chunks(file.file_size, DEFAULT_CHUNK_SIZE);
-        let total_chunks = chunks.len();
-
-        info!(
-            "Downloading {} in {} chunks",
-            filename,
-            total_chunks
-        );
-
-        // Create temp file path
-        let temp_path = self.create_temp_path(&target_path)?;
-
-        // Pre-allocate file
-        self.preallocate_file(&temp_path, file.file_size).await?;
-
-        // Save download to database
-        let repo = self.database.downloads();
-        let download_id = repo
-            .insert(
-                file.file_id,
-                &filename,
-                file.file_size as i64,
-                target_path.to_str().unwrap_or(""),
-                DownloadStatus::InProgress,
-            )
-            .await?;
-
-        // Save chunks to database
-        for chunk in &chunks {
-            repo.insert_chunk(download_id, chunk.number as i64, chunk.start as i64, chunk.end as i64)
-                .await?;
-        }
-
-        // Download chunks
-        let mut bytes_downloaded = 0u64;
-        let start_time = Instant::now();
-
-        for chunk in chunks {
-            match download_chunk(
-                &self.client,
-                &file.download_url,
-                &chunk,
-                &temp_path,
-                self.config.buffer_size_mb * 1024 * 1024,
-            )
-            .await
-            {
-                Ok(bytes) => {
-                    bytes_downloaded += bytes;
-
-                    // Update chunk status in database
-                    repo.update_chunk_status_by_number(
-                        download_id,
-                        chunk.number as i64,
-                        ChunkStatus::Completed,
-                    )
-                    .await?;
-
-                    // Update progress
-                    if let Some(ref callback) = progress_callback {
-                        let mut progress = DownloadProgress::new(
-                            file.file_id,
-                            filename.clone(),
-                            file.file_size,
-                        );
-                        progress.bytes_downloaded = bytes_downloaded;
-
-                        // Calculate speed/ETA
-                        let mut trackers = self.progress_trackers.write().await;
-                        let tracker = trackers
-                            .entry(file.file_id)
-                            .or_insert_with(|| ProgressTracker::new(0));
-                        let (speed, eta) = tracker.update(bytes_downloaded, file.file_size);
-                        progress.speed_bps = speed;
-                        progress.eta_seconds = eta;
-
-                        callback.on_file_progress(&progress);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to download chunk {}: {}", chunk.number, e);
-
-                    // Check if it's a 404 error
-                    if let CoreError::ApiError(ref msg) = e {
-                        if msg.contains("404") {
-                            warn!("File no longer available (404): {}", filename);
-                            // Clean up partial download
-                            self.cleanup_partial(&temp_path).await;
-                            repo.update_status(download_id, DownloadStatus::Failed)
-                                .await?;
-
-                            return Ok(DownloadOperationResult {
-                                file_id: file.file_id,
-                                success: false,
-                                error: Some("File no longer available (404)".to_string()),
-                                bytes_downloaded: 0,
-                                file_path: None,
-                            });
-                        }
-                    }
-
-                    // Mark download as failed but keep partial file for resume
-                    repo.update_status(download_id, DownloadStatus::Failed)
-                        .await?;
-
-                    return Ok(DownloadOperationResult {
-                        file_id: file.file_id,
-                        success: false,
-                        error: Some(e.to_string()),
-                        bytes_downloaded,
-                        file_path: None,
-                    });
-                }
-            }
-        }
-
-        // Rename temp file to final name
-        tokio::fs::rename(&temp_path, &target_path)
-            .await
-            .map_err(|e| {
-                CoreError::IoError(std::io::Error::new(
-                    e.kind(),
-                    format!("Failed to rename downloaded file: {}", e),
-                ))
-            })?;
-
-        // Update database
-        repo.update_status(download_id, DownloadStatus::Completed)
-            .await?;
-
-        let duration = start_time.elapsed();
-        info!(
-            "Chunked download completed: {} ({} bytes in {:.2}s)",
-            filename,
-            bytes_downloaded,
-            duration.as_secs_f64()
-        );
-
-        Ok(DownloadOperationResult {
-            file_id: file.file_id,
-            success: true,
-            error: None,
-            bytes_downloaded,
-            file_path: Some(target_path),
-        })
-    }
-
-    /// Download with resume support
-    async fn download_with_resume(
-        &self,
-        file: DownloadFile,
-        resume_info: ResumeInfo,
-        progress_callback: Option<Arc<dyn ProgressCallback>>,
-    ) -> CoreResult<DownloadOperationResult> {
-        info!(
-            "Resuming download: {} ({:.1}% complete)",
-            file.filename,
-            resume_info.percentage()
-        );
-
-        // Get remaining chunks
-        let all_chunks = calculate_chunks(file.file_size, DEFAULT_CHUNK_SIZE);
-        let mut bytes_downloaded = resume_info.bytes_downloaded;
-
-        // Get download from database
-        let repo = self.database.downloads();
-        let download = repo
-            .find_by_file_id(file.file_id)
-            .await?
-            .ok_or_else(|| CoreError::InternalError("Download not found in database".to_string()))?;
-
-        // Download remaining chunks
-        let start_time = Instant::now();
-
-        for chunk in all_chunks {
-            if resume_info.completed_chunks.contains(&chunk.number) {
-                continue; // Skip already completed chunks
-            }
-
-            match download_chunk(
-                &self.client,
-                &file.download_url,
-                &chunk,
-                &resume_info.file_path,
-                self.config.buffer_size_mb * 1024 * 1024,
-            )
-            .await
-            {
-                Ok(bytes) => {
-                    bytes_downloaded += bytes;
-
-                    // Update chunk in database
-                    repo.update_chunk_status_by_number(download.id, chunk.number as i64, ChunkStatus::Completed)
-                        .await?;
-
-                    // Update progress
-                    if let Some(ref callback) = progress_callback {
-                        let mut progress = DownloadProgress::new(
-                            file.file_id,
-                            file.filename.clone(),
-                            file.file_size,
-                        );
-                        progress.bytes_downloaded = bytes_downloaded;
-
-                        // Calculate speed/ETA
-                        let mut trackers = self.progress_trackers.write().await;
-                        let tracker = trackers
-                            .entry(file.file_id)
-                            .or_insert_with(|| ProgressTracker::new(resume_info.bytes_downloaded));
-                        let (speed, eta) = tracker.update(bytes_downloaded, file.file_size);
-                        progress.speed_bps = speed;
-                        progress.eta_seconds = eta;
-
-                        callback.on_file_progress(&progress);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to download chunk {}: {}", chunk.number, e);
-                    repo.update_status(download.id, DownloadStatus::Failed)
-                        .await?;
-
-                    return Ok(DownloadOperationResult {
-                        file_id: file.file_id,
-                        success: false,
-                        error: Some(e.to_string()),
-                        bytes_downloaded,
-                        file_path: None,
-                    });
-                }
-            }
-        }
-
-        // Get original path and rename
-        let target_path = get_original_path(&resume_info.file_path)
-            .ok_or_else(|| CoreError::InternalError("Invalid partial file path".to_string()))?;
-
-        tokio::fs::rename(&resume_info.file_path, &target_path)
-            .await
-            .map_err(|e| {
-                CoreError::IoError(std::io::Error::new(
-                    e.kind(),
-                    format!("Failed to rename resumed file: {}", e),
-                ))
-            })?;
-
-        // Update database
-        repo.update_status(download.id, DownloadStatus::Completed)
-            .await?;
-
-        let duration = start_time.elapsed();
-        info!(
-            "Resume completed: {} ({} bytes in {:.2}s)",
-            file.filename,
-            bytes_downloaded - resume_info.bytes_downloaded,
-            duration.as_secs_f64()
-        );
-
-        Ok(DownloadOperationResult {
-            file_id: file.file_id,
-            success: true,
-            error: None,
-            bytes_downloaded,
-            file_path: Some(target_path),
-        })
-    }
-
-    /// Check if a download can be resumed
+    /// Check if a download can be resumed using range requests
     async fn check_resume(
         &self,
         file: &DownloadFile,
@@ -635,44 +486,41 @@ impl DownloadManager {
     ) -> CoreResult<Option<ResumeInfo>> {
         // Check for partial download file
         let temp_path = self.create_temp_path(target_path)?;
-        if !temp_path.exists() || !is_partial_download(&temp_path) {
-            return Ok(None);
+        if temp_path.exists() && is_partial_download(&temp_path) {
+            // Get the current size of the partial file
+            match tokio::fs::metadata(&temp_path).await {
+                Ok(metadata) => {
+                    let partial_size = metadata.len();
+                    if partial_size > 0 && partial_size < file.file_size {
+                        info!("Found partial download: {} bytes of {} bytes", partial_size, file.file_size);
+                        Ok(Some(ResumeInfo {
+                            file_path: temp_path,
+                            completed_chunks: Vec::new(), // Not used for streaming resume
+                            total_chunks: 0,              // Not used for streaming resume
+                            bytes_downloaded: partial_size,
+                            total_bytes: file.file_size,
+                        }))
+                    } else if partial_size >= file.file_size {
+                        // File appears to be complete, clean it up and start fresh
+                        info!("Partial file appears complete, cleaning up and starting fresh");
+                        let _ = tokio::fs::remove_file(&temp_path).await;
+                        Ok(None)
+                    } else {
+                        // Empty partial file, clean it up
+                        debug!("Empty partial file found, cleaning up");
+                        let _ = tokio::fs::remove_file(&temp_path).await;
+                        Ok(None)
+                    }
+                }
+                Err(_) => {
+                    // Can't read metadata, clean up and start fresh
+                    let _ = tokio::fs::remove_file(&temp_path).await;
+                    Ok(None)
+                }
+            }
+        } else {
+            Ok(None)
         }
-
-        // Check database for download record
-        let repo = self.database.downloads();
-        let download = match repo.find_by_file_id(file.file_id).await? {
-            Some(d) => d,
-            None => return Ok(None),
-        };
-
-        // Get completed chunks
-        let chunks = repo.get_chunks(download.id).await?;
-        let completed_chunks: Vec<u64> = chunks
-            .iter()
-            .filter(|c| c.status == "completed")
-            .map(|c| c.chunk_index as u64)
-            .collect();
-
-        let total_chunks = calculate_chunks(file.file_size, DEFAULT_CHUNK_SIZE).len() as u64;
-        let bytes_downloaded = completed_chunks
-            .iter()
-            .map(|&num| {
-                chunks
-                    .iter()
-                    .find(|c| c.chunk_index as u64 == num)
-                    .map(|c| (c.end_byte - c.start_byte + 1) as u64)
-                    .unwrap_or(0)
-            })
-            .sum();
-
-        Ok(Some(ResumeInfo {
-            file_path: temp_path,
-            completed_chunks,
-            total_chunks,
-            bytes_downloaded,
-            total_bytes: file.file_size,
-        }))
     }
 
     /// Create temporary download path
@@ -695,30 +543,6 @@ impl DownloadManager {
         Ok(temp_path)
     }
 
-    /// Pre-allocate a file to the given size
-    async fn preallocate_file(&self, path: &Path, size: u64) -> CoreResult<()> {
-        let file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(path)
-            .await
-            .map_err(|e| {
-                CoreError::IoError(std::io::Error::new(
-                    e.kind(),
-                    format!("Failed to create file: {}", e),
-                ))
-            })?;
-
-        file.set_len(size).await.map_err(|e| {
-            CoreError::IoError(std::io::Error::new(
-                e.kind(),
-                format!("Failed to pre-allocate file: {}", e),
-            ))
-        })?;
-
-        Ok(())
-    }
 
     /// Clean up a partial download
     async fn cleanup_partial(&self, path: &Path) {

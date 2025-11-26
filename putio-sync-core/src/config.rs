@@ -4,6 +4,7 @@
 //! in TOML format.
 
 use crate::error::{CoreError, CoreResult};
+use crate::path_utils::expand_path;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -162,7 +163,7 @@ pub struct DownloadConfig {
     pub max_concurrent: Option<usize>,
     /// Buffer size in MB for streaming downloads (default: 16)
     pub buffer_size_mb: usize,
-    /// Chunk size in MB for chunked downloads (None to disable)
+    /// Chunk size in MB for chunked downloads (None to disable - Put.io doesn't support range requests)
     pub chunk_size_mb: Option<usize>,
     /// Enable resume support for interrupted downloads
     pub resume_enabled: bool,
@@ -251,7 +252,7 @@ impl Default for DownloadConfig {
             target_directory: PathBuf::from("./putio-downloads"),
             max_concurrent: None,
             buffer_size_mb: 16,
-            chunk_size_mb: None, // Disabled by default
+            chunk_size_mb: None, // Disabled - Put.io doesn't support range requests
             resume_enabled: true,
             skip_existing: false,
             delete_after_download: false,
@@ -338,15 +339,37 @@ impl Config {
     /// ```
     pub fn load<P: AsRef<Path>>(path: P) -> CoreResult<Self> {
         let path = path.as_ref();
+        eprintln!("🔍 Config::load - checking path: {}", path.display());
 
         if !path.exists() {
+            eprintln!("❌ Config file does not exist: {}", path.display());
             return Err(CoreError::config_not_found(path));
         }
+        eprintln!("✅ Config file exists");
 
+        eprintln!("📖 Reading config file contents...");
         let contents = fs::read_to_string(path)
-            .map_err(|e| CoreError::ConfigError(format!("Failed to read config file: {}", e)))?;
-
-        let config: Config = toml::from_str(&contents)?;
+            .map_err(|e| {
+                eprintln!("❌ Failed to read config file: {}", e);
+                CoreError::ConfigError(format!("Failed to read config file: {}", e))
+            })?;
+        
+        eprintln!("📝 Config file size: {} bytes", contents.len());
+        eprintln!("🔧 Parsing TOML configuration...");
+        let mut config: Config = toml::from_str(&contents).map_err(|e| {
+            eprintln!("❌ Failed to parse TOML: {}", e);
+            e
+        })?;
+        
+        eprintln!("✅ TOML parsing successful");
+        eprintln!("📁 Expanding paths in configuration...");
+        // Automatically expand paths during loading
+        config.expand_paths().map_err(|e| {
+            eprintln!("❌ Path expansion failed: {}", e);
+            e
+        })?;
+        
+        eprintln!("✅ Configuration loaded and processed successfully");
         Ok(config)
     }
 
@@ -445,6 +468,31 @@ impl Config {
     /// let config = Config::default();
     /// assert!(config.validate().is_ok());
     /// ```
+    pub fn expand_paths(&mut self) -> CoreResult<()> {
+        // Expand download target directory
+        self.download.target_directory = expand_path(&self.download.target_directory)?;
+        
+        // Expand sync local path  
+        self.sync.local_path = expand_path(&self.sync.local_path)?;
+        
+        // Expand watch paths
+        let mut expanded_watch_paths = Vec::new();
+        for path in &self.watch.paths {
+            expanded_watch_paths.push(expand_path(path)?);
+        }
+        self.watch.paths = expanded_watch_paths;
+        
+        Ok(())
+    }
+
+    /// Validate the configuration
+    ///
+    /// This validates the logical consistency of the configuration
+    /// and directory paths
+    ///
+    /// # Example
+    ///
+    /// ```no_run
     pub fn validate(&self) -> CoreResult<()> {
         // Validate workers is at least 1
         if self.download.workers == 0 {

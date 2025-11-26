@@ -3,12 +3,15 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+/// Version string (will include git hash if available)
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// putio-sync - Synchronize files with Put.io
 #[derive(Parser, Debug)]
 #[command(
     name = "putio-sync",
     author = "Clinton Collins",
-    version,
+    version = VERSION,
     about = "Synchronize files with Put.io",
     long_about = "A command-line tool for synchronizing files with Put.io cloud storage.\n\
                   Supports file listing, downloading, and management."
@@ -580,6 +583,26 @@ pub enum Commands {
         #[arg(short = 'b', long = "bind", value_name = "ADDRESS", default_value = "0.0.0.0", help = "Address to bind HTTP server")]
         bind: String,
     },
+
+    /// Show system status and health information
+    #[command(about = "Show system status and health information")]
+    Status {
+        /// Show detailed diagnostics
+        #[arg(short = 'd', long = "detailed", help = "Show detailed diagnostics report")]
+        detailed: bool,
+
+        /// Output in JSON format
+        #[arg(short = 'j', long = "json", help = "Output in JSON format")]
+        json: bool,
+    },
+
+    /// Quick health check (exit code 0 = healthy, 1 = issues)
+    #[command(about = "Quick health check - exits with status code")]
+    Health {},
+
+    /// Comprehensive debug information dump
+    #[command(about = "Show comprehensive debug information for troubleshooting")]
+    Debug {},
 }
 
 /// File management subcommands

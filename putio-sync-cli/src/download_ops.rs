@@ -12,6 +12,13 @@ use tracing::{debug, error, info, warn};
 
 use crate::ui::ProgressDisplay;
 
+/// FileEntry with additional path information for recursive downloads
+#[derive(Debug, Clone)]
+struct FileEntryWithPath {
+    pub entry: FileEntry,
+    pub relative_path: String,
+}
+
 /// Result of a download cycle
 #[derive(Debug, Clone)]
 pub struct DownloadCycleResult {
@@ -53,6 +60,7 @@ impl DownloadOps {
         config: DownloadConfig,
         sync_parent_id: i64,
     ) -> Result<Self> {
+        info!("DownloadOps::new - config.target_directory: {}", config.target_directory.display());
         // Create target directory if it doesn't exist
         if !config.target_directory.exists() {
             info!(
@@ -96,20 +104,27 @@ impl DownloadOps {
 
         debug!("Starting download sync cycle...");
 
-        // Get list of files to download
-        let file_entries = if all {
-            // Get all files from root folder
-            let response = self.client
-                .list_files(0)
-                .await
-                .context("Failed to fetch file list from Put.io")?;
-            response.files
+        // Get list of files to download (recursive)
+        let file_entries_with_path = if all {
+            // Get all files from root folder recursively
+            self.get_files_recursive(0, "".to_string()).await
+                .context("Failed to fetch file list from Put.io")?
         } else if !specific_files.is_empty() {
-            // Get specific files by ID
+            // Get specific files by ID (non-recursive for specific files)
             let mut entries = Vec::new();
             for &file_id in specific_files {
                 match self.client.get_file(file_id).await {
-                    Ok(file_response) => entries.push(file_response.file),
+                    Ok(file_response) => {
+                        // Skip folders when explicitly specified by ID
+                        if file_response.file.is_folder {
+                            warn!("Skipping folder ID {}: {} - cannot download directories directly", file_id, file_response.file.name);
+                            continue;
+                        }
+                        entries.push(FileEntryWithPath {
+                            entry: file_response.file,
+                            relative_path: "".to_string(),
+                        });
+                    }
                     Err(e) => {
                         warn!("Failed to get file {}: {}", file_id, e);
                     }
@@ -117,29 +132,32 @@ impl DownloadOps {
             }
             entries
         } else {
-            // For daemon mode, get all files from sync.remote_parent_id
-            let response = self.client
-                .list_files(self.sync_parent_id)
-                .await
-                .context("Failed to fetch file list from Put.io")?;
-            response.files
+            // For daemon mode, get all files from sync.remote_parent_id recursively
+            self.get_files_recursive(self.sync_parent_id, "".to_string()).await
+                .context("Failed to fetch file list from Put.io")?
         };
 
-        // Apply filters
+        // Apply filters and sorting to the entries (extracting the FileEntry part)
+        let file_entries: Vec<FileEntry> = file_entries_with_path.iter().map(|f| f.entry.clone()).collect();
         let mut filtered_files = self.apply_filters(file_entries, filter)?;
-
-        // Apply sorting
         filtered_files = self.apply_sorting(filtered_files)?;
 
-        // Filter out folders
+        // Create a lookup map for relative paths
+        let path_map: std::collections::HashMap<i64, String> = file_entries_with_path
+            .iter()
+            .map(|f| (f.entry.id, f.relative_path.clone()))
+            .collect();
+
+        // Only process files (not folders), but preserve path information
         let download_files: Vec<DownloadFile> = filtered_files
             .iter()
             .filter(|f| !f.is_folder)
             .map(|f| DownloadFile {
                 file_id: f.id,
                 filename: f.name.clone(),
+                relative_path: path_map.get(&f.id).cloned().unwrap_or_default(),
                 file_size: f.size.max(0) as u64,
-                download_url: format!("https://api.put.io/v2/files/{}/download", f.id),
+                download_url: self.client.get_download_url(f.id),
             })
             .collect();
 
@@ -162,16 +180,17 @@ impl DownloadOps {
             total_size
         );
 
-        // Create progress display if needed
-        let progress_display = if show_progress {
-            Some(Arc::new(ProgressDisplay::new(
-                self.config.progress_style.clone(),
-                download_files.len() as u64,
-                total_size,
-            )))
-        } else {
-            None
-        };
+        // Create progress display - always create it for proper completion handling,
+        // but only show it if show_progress is true
+        let progress_display = Arc::new(ProgressDisplay::new(
+            if show_progress {
+                self.config.progress_style.clone()
+            } else {
+                putio_sync_core::config::ProgressStyle::None // Hide progress but still handle completion
+            },
+            download_files.len() as u64,
+            total_size,
+        ));
 
         // Create download manager
         let manager = DownloadManager::new(
@@ -182,7 +201,31 @@ impl DownloadOps {
 
         // Download files
         for download_file in download_files {
-            let callback = progress_display.as_ref().map(|pd| pd.clone().create_callback());
+            let callback = Some(progress_display.clone().create_callback());
+
+            info!("🔽 Starting download: {} ({})", download_file.filename, format_size(download_file.file_size));
+
+            // Validate that the file still exists and is actually a file (not folder) before attempting download
+            debug!("Validating file {} still exists on Put.io", download_file.file_id);
+            match self.client.get_file(download_file.file_id).await {
+                Ok(file_response) => {
+                    // Check if it's actually a folder
+                    if file_response.file.is_folder {
+                        warn!("Skipping folder (ID {}): {} - cannot download directories", download_file.file_id, file_response.file.name);
+                        error!("❌ Download failed for {}: Item is a folder, not a downloadable file", download_file.filename);
+                        result.files_failed += 1;
+                        continue;
+                    }
+                    // File exists and is actually a file, proceed with download
+                    debug!("File validation successful: {} (size: {} bytes)", file_response.file.name, file_response.file.size);
+                }
+                Err(e) => {
+                    warn!("File {} no longer exists on Put.io: {}", download_file.file_id, e);
+                    error!("❌ Download failed for file {}: File no longer exists on Put.io", download_file.filename);
+                    result.files_failed += 1;
+                    continue;
+                }
+            }
 
             match manager
                 .download_file(download_file.clone(), callback)
@@ -192,26 +235,45 @@ impl DownloadOps {
                     if download_result.success {
                         result.files_downloaded += 1;
                         result.total_bytes += download_result.bytes_downloaded;
+                        
+                        info!("✅ Download completed: {} ({} downloaded)", 
+                              download_file.filename, 
+                              format_size(download_result.bytes_downloaded));
+                        
+                        // Optional: Delete from Put.io if configured
+                        if self.config.delete_after_download {
+                            debug!("Deleting file from Put.io: {}", download_file.filename);
+                            if let Err(e) = self.client.delete_files(vec![download_file.file_id]).await {
+                                warn!("Failed to delete file {} from Put.io: {}", download_file.filename, e);
+                            } else {
+                                info!("🗑️  Successfully deleted {} from Put.io (delete_after_download enabled)", download_file.filename);
+                                
+                                // Check if we need to clean up empty directories on Put.io
+                                if !download_file.relative_path.is_empty() {
+                                    if let Err(e) = self.cleanup_empty_directories_after_deletion(&download_file).await {
+                                        warn!("Failed to cleanup empty directories: {}", e);
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         result.files_failed += 1;
                         error!(
-                            "Download failed for file {}: {}",
-                            download_file.file_id,
+                            "❌ Download failed for file {}: {}",
+                            download_file.filename,
                             download_result.error.unwrap_or_else(|| "Unknown error".to_string())
                         );
                     }
                 }
                 Err(e) => {
                     result.files_failed += 1;
-                    error!("Download failed for file {}: {}", download_file.file_id, e);
+                    error!("❌ Download failed for file {}: {}", download_file.filename, e);
                 }
             }
         }
 
         // Finish progress display
-        if let Some(ref progress) = progress_display {
-            progress.finish();
-        }
+        progress_display.finish();
 
         result.duration_secs = start_time.elapsed().as_secs_f64();
 
@@ -259,6 +321,111 @@ impl DownloadOps {
     /// Get current configuration
     pub fn config(&self) -> &DownloadConfig {
         &self.config
+    }
+
+    /// Recursively get all files from a directory, preserving path structure
+    fn get_files_recursive(&self, parent_id: i64, current_path: String) -> std::pin::Pin<std::boxed::Box<dyn std::future::Future<Output = Result<Vec<FileEntryWithPath>>> + '_>> {
+        Box::pin(async move {
+            let response = self.client
+                .list_files(parent_id)
+                .await
+                .context("Failed to fetch file list from Put.io")?;
+
+            let mut all_files = Vec::new();
+
+            for entry in response.files {
+                if entry.is_folder {
+                    // For folders, recursively get their contents
+                    let folder_path = if current_path.is_empty() {
+                        entry.name.clone()
+                    } else {
+                        format!("{}/{}", current_path, entry.name)
+                    };
+                    
+                    let mut subfolder_files = self.get_files_recursive(entry.id, folder_path.clone()).await?;
+                    all_files.append(&mut subfolder_files);
+                } else {
+                    // For files, add them with the current path
+                    all_files.push(FileEntryWithPath {
+                        entry,
+                        relative_path: current_path.clone(),
+                    });
+                }
+            }
+
+            Ok(all_files)
+        })
+    }
+
+    /// Clean up empty directories on Put.io after file deletion
+    async fn cleanup_empty_directories_after_deletion(&self, download_file: &DownloadFile) -> Result<()> {
+        if download_file.relative_path.is_empty() {
+            // File is in root directory, no cleanup needed
+            return Ok(());
+        }
+
+        // Parse the relative_path to get directory hierarchy
+        let path_components: Vec<&str> = download_file.relative_path.split('/').collect();
+        
+        // Start from the deepest directory and work our way up
+        for i in (0..path_components.len()).rev() {
+            let current_path = if i == 0 {
+                path_components[0].to_string()
+            } else {
+                path_components[0..=i].join("/")
+            };
+            
+            debug!("Checking if directory is empty: {}", current_path);
+            
+            // Get the directory ID by searching for it
+            if let Ok(dir_id) = self.find_directory_id(&current_path).await {
+                // Check if the directory is empty
+                match self.client.list_files(dir_id).await {
+                    Ok(response) => {
+                        if response.files.is_empty() {
+                            info!("🗑️  Deleting empty directory from Put.io: {}", current_path);
+                            if let Err(e) = self.client.delete_files(vec![dir_id]).await {
+                                warn!("Failed to delete empty directory '{}' from Put.io: {}", current_path, e);
+                                break; // Stop cleanup on first failure
+                            } else {
+                                debug!("Successfully deleted empty directory: {}", current_path);
+                            }
+                        } else {
+                            debug!("Directory is not empty, stopping cleanup: {}", current_path);
+                            break; // Directory not empty, stop cleanup
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to check directory contents for '{}': {}", current_path, e);
+                        break; // Stop on error
+                    }
+                }
+            } else {
+                debug!("Could not find directory ID for path: {}", current_path);
+                break; // If we can't find the directory, stop cleanup
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Find directory ID by path (simple implementation - could be optimized)
+    async fn find_directory_id(&self, path: &str) -> Result<i64> {
+        let components: Vec<&str> = path.split('/').filter(|&s| !s.is_empty()).collect();
+        let mut current_parent_id = 0i64; // Start from root
+
+        for component in components {
+            let response = self.client.list_files(current_parent_id).await?;
+            
+            // Look for a folder with the matching name
+            if let Some(folder) = response.files.iter().find(|f| f.is_folder && f.name == component) {
+                current_parent_id = folder.id;
+            } else {
+                return Err(anyhow::anyhow!("Directory not found: {}", component));
+            }
+        }
+
+        Ok(current_parent_id)
     }
 }
 
