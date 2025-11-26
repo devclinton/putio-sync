@@ -67,19 +67,23 @@ struct RetryResult<T> {
     attempts: u32,
 }
 
-/// Retry a future with exponential backoff
+
+/// Retry a future with special handling for stalled downloads
+///
+/// This function is similar to retry_with_backoff but adds special handling
+/// for stalled downloads with shorter delays to restart quickly.
 ///
 /// # Arguments
 ///
 /// * `operation` - The async operation to retry
 /// * `max_retries` - Maximum number of retry attempts
-/// * `initial_delay` - Initial delay in seconds (doubles with each retry)
+/// * `initial_delay` - Initial delay in seconds
 /// * `operation_name` - Name of the operation for logging
 ///
 /// # Returns
 ///
 /// Returns the result along with the number of attempts made
-async fn retry_with_backoff<F, Fut, T>(
+async fn retry_with_stall_detection<F, Fut, T>(
     mut operation: F,
     max_retries: u32,
     initial_delay: u64,
@@ -90,7 +94,6 @@ where
     Fut: Future<Output = CoreResult<T>>,
 {
     let mut attempt = 0;
-    let mut delay = Duration::from_secs(initial_delay);
 
     loop {
         match operation().await {
@@ -116,19 +119,37 @@ where
                     return Err(e);
                 }
 
-                warn!(
-                    "{} failed (attempt {}/{}): {}. Retrying in {:.1}s...",
-                    operation_name,
-                    attempt,
-                    max_retries,
-                    e,
-                    delay.as_secs_f64()
-                );
+                // Check if this is a stalled download error
+                let is_stall_error = e.to_string().contains("Download stalled");
+                
+                // Use shorter delay for stalled downloads, longer for other errors
+                let delay = if is_stall_error {
+                    Duration::from_secs(3) // 3 second delay for stalled downloads
+                } else {
+                    Duration::from_secs(initial_delay * (1 << (attempt - 1).min(4))) // Exponential backoff for other errors
+                };
+
+                if is_stall_error {
+                    warn!(
+                        "{} stalled (attempt {}/{}): {}. Restarting download in {}s...",
+                        operation_name,
+                        attempt,
+                        max_retries,
+                        e,
+                        delay.as_secs()
+                    );
+                } else {
+                    warn!(
+                        "{} failed (attempt {}/{}): {}. Retrying in {:.1}s...",
+                        operation_name,
+                        attempt,
+                        max_retries,
+                        e,
+                        delay.as_secs_f64()
+                    );
+                }
 
                 tokio::time::sleep(delay).await;
-
-                // Exponential backoff: double the delay for next attempt
-                delay *= 2;
             }
         }
     }
@@ -272,7 +293,7 @@ impl DownloadManager {
         let max_retries = self.config.max_retries;
         let initial_delay = self.config.retry_initial_delay_secs;
 
-        let result = retry_with_backoff(
+        let result = retry_with_stall_detection(
             || async {
                 stream_download(
                     client,
@@ -391,7 +412,7 @@ impl DownloadManager {
         let max_retries = self.config.max_retries;
         let initial_delay = self.config.retry_initial_delay_secs;
 
-        let result = retry_with_backoff(
+        let result = retry_with_stall_detection(
             || async {
                 stream_download(
                     client,
