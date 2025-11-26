@@ -1,8 +1,21 @@
 //! File and folder API endpoints
 
 use super::client::ApiClient;
-use super::models::{ApiResponse, FileResponse, FilesListResponse};
+use super::models::{ApiResponse, FileEntry, FileResponse, FilesListResponse, Transfer};
 use crate::error::CoreResult;
+use serde::Deserialize;
+use std::path::Path;
+
+/// Response from file upload API
+#[derive(Debug, Deserialize)]
+pub struct UploadResponse {
+    /// File information (if uploaded file was a regular file)
+    #[serde(rename = "file")]
+    pub file: Option<FileEntry>,
+    /// Transfer information (if uploaded file was a torrent)
+    #[serde(rename = "transfer")]
+    pub transfer: Option<Transfer>,
+}
 
 impl ApiClient {
     /// List files in a folder
@@ -70,6 +83,140 @@ impl ApiClient {
     /// ```
     pub fn get_download_url(&self, id: i64) -> String {
         format!("{}/files/{}/download", self.base_url, id)
+    }
+
+    /// Upload a file to Put.io
+    ///
+    /// This method uploads a file to Put.io. If the uploaded file is a torrent file,
+    /// Put.io will interpret it as a transfer and the Transfer field will be present
+    /// to represent the status of the transfer.
+    ///
+    /// # Arguments
+    ///
+    /// * `file_path` - Path to the file to upload
+    /// * `parent_id` - Optional parent folder ID (None uses user's default folder)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use putio_sync_core::api::ApiClient;
+    /// # use std::path::Path;
+    /// # async fn example() {
+    /// let client = ApiClient::new("my_token".to_string());
+    ///
+    /// // Upload a torrent file
+    /// let file_path = Path::new("/path/to/file.torrent");
+    /// let response = client.upload_file(file_path, None).await.unwrap();
+    /// 
+    /// if let Some(transfer) = response.transfer {
+    ///     println!("Torrent uploaded: {} (ID: {})", transfer.name, transfer.id);
+    /// }
+    /// # }
+    /// ```
+    pub async fn upload_file(
+        &self,
+        file_path: &Path,
+        parent_id: Option<i64>,
+    ) -> CoreResult<UploadResponse> {
+        use reqwest::multipart::{Form, Part};
+        use tokio::fs::File as TokioFile;
+        use tokio::io::AsyncReadExt;
+
+        // Read the file
+        let mut file = TokioFile::open(file_path)
+            .await
+            .map_err(|e| crate::error::CoreError::IoError(e))?;
+
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)
+            .await
+            .map_err(|e| crate::error::CoreError::IoError(e))?;
+
+        // Get the filename
+        let filename = file_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("file")
+            .to_string();
+
+        // Determine MIME type based on file extension
+        let mime_type = if filename.ends_with(".torrent") {
+            "application/x-bittorrent"
+        } else {
+            "application/octet-stream"
+        };
+
+        // Create multipart form
+        let file_part = Part::bytes(buffer)
+            .file_name(filename)
+            .mime_str(mime_type)
+            .map_err(|e| {
+                crate::error::CoreError::InternalError(format!(
+                    "Failed to set MIME type: {}",
+                    e
+                ))
+            })?;
+
+        let mut form = Form::new().part("file", file_part);
+
+        if let Some(pid) = parent_id {
+            form = form.text("parent_id", pid.to_string());
+        }
+
+        // Send the request with multipart form
+        // Put.io uses a separate upload domain for file uploads
+        let url = "https://upload.put.io/v2/files/upload";
+        let auth_header = self.get_auth_header()?;
+
+        let response = self
+            .client
+            .post(url)
+            .header(reqwest::header::AUTHORIZATION, auth_header)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(crate::error::CoreError::HttpError)?;
+
+        let status = response.status();
+        
+        // Get response headers for debugging
+        let headers = response.headers().clone();
+        tracing::debug!("Upload response status: {}", status);
+        tracing::debug!("Upload response headers: {:?}", headers);
+        
+        if !status.is_success() {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            tracing::error!("Upload failed with status {}: {}", status, error_text);
+            return Err(crate::error::CoreError::ApiError(format!(
+                "Failed to upload file: {} - {}",
+                status, error_text
+            )));
+        }
+
+        // Get response text first for debugging
+        let response_text = response
+            .text()
+            .await
+            .map_err(crate::error::CoreError::HttpError)?;
+        
+        tracing::debug!("Upload response body: {}", response_text);
+
+        // Try to parse the JSON response
+        let api_response: ApiResponse<UploadResponse> = serde_json::from_str(&response_text)
+            .map_err(|e| {
+                tracing::error!("Failed to parse upload response JSON: {}", e);
+                tracing::error!("Raw response: {}", response_text);
+                crate::error::CoreError::ApiError(format!(
+                    "Failed to parse upload response: {} - Raw response: {}", 
+                    e, 
+                    response_text
+                ))
+            })?;
+
+        Ok(api_response.data)
     }
 }
 

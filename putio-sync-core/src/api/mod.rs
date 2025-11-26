@@ -12,4 +12,5 @@ mod path;
 mod transfers;
 
 pub use client::{ApiClient, DEFAULT_BASE_URL};
+pub use files::UploadResponse;
 pub use models::*;

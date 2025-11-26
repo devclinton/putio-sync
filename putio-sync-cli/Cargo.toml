@@ -22,6 +22,7 @@ putio-sync-api = { path = "../putio-sync-api" }
 
 # Async runtime
 tokio = { workspace = true }
+futures = "0.3"
 
 # CLI
 clap = { workspace = true }

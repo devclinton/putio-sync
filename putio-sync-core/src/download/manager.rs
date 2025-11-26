@@ -572,6 +572,7 @@ mod tests {
             filename: "test.txt".to_string(),
             file_size: 1024,
             download_url: "https://example.com/test.txt".to_string(),
+            relative_path: "./".to_string()
         };
 
         assert_eq!(file.file_id, 123);

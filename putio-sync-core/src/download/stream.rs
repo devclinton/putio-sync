@@ -8,8 +8,8 @@ use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tracing::{debug, error, info, warn};
 
-/// Default buffer size for streaming downloads (16MB)
-pub const DEFAULT_BUFFER_SIZE: usize = 16 * 1024 * 1024;
+/// Default buffer size for streaming downloads (128MB)
+pub const DEFAULT_BUFFER_SIZE: usize = 32 * 1024 * 1024;
 
 /// Simple rate limiter for bandwidth control
 struct RateLimiter {
