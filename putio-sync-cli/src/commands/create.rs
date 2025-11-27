@@ -122,7 +122,7 @@ async fn add_magnet_link(
         transfer.name, transfer.id
     );
     println!("  Status: {}", transfer.status);
-    println!("  Size: {}", format_bytes(transfer.size));
+    println!("  Size: {}", format_bytes(transfer.size.unwrap_or(0)));
     if let Some(parent) = parent_id {
         println!("  Parent folder: {}", parent);
     }
@@ -159,7 +159,7 @@ async fn add_torrent_file(
         transfer.name, transfer.id
     );
     println!("  Status: {}", transfer.status);
-    println!("  Size: {}", format_bytes(transfer.size));
+    println!("  Size: {}", format_bytes(transfer.size.unwrap_or(0)));
     if let Some(parent) = parent_id {
         println!("  Parent folder: {}", parent);
     }
@@ -251,7 +251,7 @@ fn format_bytes(bytes: i64) -> String {
     const TB: i64 = GB * 1024;
 
     if bytes == 0 {
-        return "Unknown".to_string();
+        "Unknown".to_string()
     } else if bytes >= TB {
         format!("{:.2} TB", bytes as f64 / TB as f64)
     } else if bytes >= GB {

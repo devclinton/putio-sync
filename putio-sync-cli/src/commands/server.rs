@@ -7,7 +7,7 @@ use putio_sync_core::api::ApiClient;
 use putio_sync_core::config::Config;
 use std::path::PathBuf;
 use tokio::signal;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Execute the server command
 ///
@@ -58,6 +58,12 @@ pub async fn execute_server(
     config.validate().context("Configuration validation failed")?;
 
     info!("Configuration loaded successfully");
+    debug!("Watch config: enabled={}, paths={:?}, archive_dir={:?}, delete_after_upload={}", 
+        config.watch.enabled,
+        config.watch.paths,
+        config.watch.archive_directory,
+        config.watch.delete_after_upload
+    );
 
     // Prepare server address
     let addr = format!("{}:{}", bind, port);

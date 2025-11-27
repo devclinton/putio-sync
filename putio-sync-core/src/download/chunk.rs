@@ -102,14 +102,14 @@ pub async fn download_chunk(
         .header("User-Agent", "putio-sync/0.0.1")
         .header("Accept", "*/*")
         .build()
-        .map_err(|e| CoreError::HttpError(e))?;
+        .map_err(CoreError::HttpError)?;
     
     debug!("Chunk request headers: {:?}", request.headers());
     
     let response = reqwest::Client::new()
         .execute(request)
         .await
-        .map_err(|e| CoreError::HttpError(e))?;
+        .map_err(CoreError::HttpError)?;
 
     // Check for 206 Partial Content response
     let status = response.status();
@@ -134,6 +134,7 @@ pub async fn download_chunk(
     // Open file for writing at the chunk offset
     let file = OpenOptions::new()
         .create(true)
+        .truncate(true)
         .write(true)
         .open(file_path)
         .await
@@ -164,7 +165,7 @@ pub async fn download_chunk(
     use futures_util::StreamExt;
 
     while let Some(chunk_data) = stream.next().await {
-        let chunk_data = chunk_data.map_err(|e| CoreError::HttpError(e))?;
+        let chunk_data = chunk_data.map_err(CoreError::HttpError)?;
 
         writer.write_all(&chunk_data).await.map_err(|e| {
             CoreError::IoError(std::io::Error::new(

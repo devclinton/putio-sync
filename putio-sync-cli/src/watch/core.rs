@@ -250,7 +250,7 @@ impl TorrentWatchCore {
                 );
                 info!("   File: {}", path.display());
                 info!("   Status: {}", transfer.status);
-                info!("   Size: {}", self.format_bytes(transfer.size));
+                info!("   Size: {}", self.format_bytes(transfer.size.unwrap_or(0)));
                 if let Some(parent) = parent_id {
                     info!("   Parent folder ID: {}", parent);
                 }

@@ -94,7 +94,7 @@ pub async fn execute_history(
             filename: entry.filename.clone(),
             size: format_bytes(entry.file_size),
             speed: entry.average_speed.map(|s| format_speed(s as f64)),
-            duration: entry.duration_seconds.map(|d| format_duration(d)),
+            duration: entry.duration_seconds.map(format_duration),
         })
         .collect();
 
@@ -196,8 +196,8 @@ fn display_table(
     } else {
         println!();
         println!(
-            "{:<20} {:<12} {:<40} {:<12} {}",
-            "Timestamp", "Action", "Filename", "Size", "Speed"
+            "{:<20} {:<12} {:<40} {:<12} Speed",
+            "Timestamp", "Action", "Filename", "Size"
         );
         println!("{}", "─".repeat(95));
 

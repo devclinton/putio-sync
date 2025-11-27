@@ -101,7 +101,7 @@ impl<'a> ProcessedTorrentsRepository<'a> {
 pub async fn calculate_file_checksum<P: AsRef<Path>>(path: P) -> CoreResult<String> {
     let contents = tokio::fs::read(path.as_ref())
         .await
-        .map_err(|e| CoreError::IoError(e))?;
+        .map_err(CoreError::IoError)?;
 
     let hash = Sha256::digest(&contents);
     Ok(format!("{:x}", hash))

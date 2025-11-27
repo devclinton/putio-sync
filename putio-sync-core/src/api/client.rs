@@ -252,7 +252,7 @@ impl ApiClient {
         let download_client = Client::builder()
             .timeout(Duration::from_secs(600))  // 10 minutes
             .build()
-            .map_err(|e| CoreError::HttpError(e))?;
+            .map_err(CoreError::HttpError)?;
             
         Ok(download_client.get(url).header("Authorization", auth_header))
     }
@@ -427,8 +427,10 @@ impl ApiClient {
         let body = response.text().await.map_err(CoreError::HttpError)?;
         trace!("Response body: {}", body);
 
-        serde_json::from_str(&body)
-            .map_err(|e| CoreError::SerializationError(format!("Failed to parse response: {}", e)))
+        serde_json::from_str(&body).map_err(|e| {
+            debug!("Response body that failed to parse: {}", body);
+            CoreError::SerializationError(format!("Failed to parse response: {}", e))
+        })
     }
 
     /// Handle error API response

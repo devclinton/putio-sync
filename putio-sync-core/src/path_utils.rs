@@ -46,7 +46,7 @@ pub fn expand_path<P: AsRef<Path>>(path: P) -> CoreResult<PathBuf> {
     } else {
         // Relative path - resolve from current directory
         let current_dir = env::current_dir()
-            .map_err(|e| CoreError::IoError(e))?;
+            .map_err(CoreError::IoError)?;
         current_dir.join(path)
     };
     
@@ -167,7 +167,7 @@ pub fn ensure_directory_exists<P: AsRef<Path>>(path: P) -> CoreResult<PathBuf> {
     
     if !expanded.exists() {
         std::fs::create_dir_all(&expanded)
-            .map_err(|e| CoreError::IoError(e))?;
+            .map_err(CoreError::IoError)?;
     } else if !expanded.is_dir() {
         return Err(CoreError::InvalidInput(
             format!("Path exists but is not a directory: {}", expanded.display())
@@ -184,7 +184,7 @@ pub fn normalize_path<P: AsRef<Path>>(path: P) -> CoreResult<PathBuf> {
     // Try to canonicalize if the path exists
     if expanded.exists() {
         expanded.canonicalize()
-            .map_err(|e| CoreError::IoError(e))
+            .map_err(CoreError::IoError)
     } else {
         // Path doesn't exist, just return the expanded form
         Ok(expanded)

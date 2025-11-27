@@ -78,6 +78,7 @@ impl HealthCheck {
 
 /// Daemon operational statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct DaemonStats {
     pub uptime_seconds: u64,
     pub config_reloads: usize,
@@ -89,23 +90,10 @@ pub struct DaemonStats {
     pub worker_restarts: usize,
 }
 
-impl Default for DaemonStats {
-    fn default() -> Self {
-        Self {
-            uptime_seconds: 0,
-            config_reloads: 0,
-            last_config_reload: None,
-            download_cycles: 0,
-            watch_cycles: 0,
-            last_download_cycle: None,
-            last_watch_cycle: None,
-            worker_restarts: 0,
-        }
-    }
-}
 
 /// Download subsystem status
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct DownloadStatus {
     pub workers_configured: usize,
     pub workers_active: usize,
@@ -120,26 +108,10 @@ pub struct DownloadStatus {
     pub api_errors_recent: usize,
 }
 
-impl Default for DownloadStatus {
-    fn default() -> Self {
-        Self {
-            workers_configured: 0,
-            workers_active: 0,
-            downloads_queued: 0,
-            downloads_active: 0,
-            downloads_completed_total: 0,
-            downloads_failed_total: 0,
-            total_bytes_downloaded: 0,
-            current_download_speed_bps: 0,
-            last_successful_download: None,
-            last_api_call: None,
-            api_errors_recent: 0,
-        }
-    }
-}
 
 /// Watch subsystem status  
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct WatchStatus {
     pub directories_watched: Vec<String>,
     pub directories_accessible: usize,
@@ -151,20 +123,6 @@ pub struct WatchStatus {
     pub torrent_uploads_failed: usize,
 }
 
-impl Default for WatchStatus {
-    fn default() -> Self {
-        Self {
-            directories_watched: Vec::new(),
-            directories_accessible: 0,
-            files_processed_total: 0,
-            files_failed_total: 0,
-            last_scan_time: None,
-            last_file_processed: None,
-            torrent_uploads_total: 0,
-            torrent_uploads_failed: 0,
-        }
-    }
-}
 
 /// Complete system diagnostic snapshot
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,6 +182,12 @@ pub struct DiagnosticsCollector {
     daemon_stats: DaemonStats,
     recent_issues: Vec<DiagnosticIssue>,
     issue_counts: HashMap<String, usize>,
+}
+
+impl Default for DiagnosticsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DiagnosticsCollector {
@@ -540,7 +504,7 @@ pub enum DaemonEvent {
 pub fn format_diagnostics_report(diag: &SystemDiagnostics) -> String {
     let mut report = String::new();
     
-    report.push_str(&format!("🔍 putio-sync Diagnostics Report\n"));
+    report.push_str("🔍 putio-sync Diagnostics Report\n");
     report.push_str(&format!("Version: {}\n", diag.version));
     report.push_str(&format!("Timestamp: {}\n", format_timestamp(diag.timestamp)));
     report.push_str(&format!("Overall Health: {}\n\n", diag.overall_health));

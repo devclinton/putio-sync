@@ -22,7 +22,7 @@ fn get_version_with_commit() -> String {
         None => {
             // If GIT_HASH wasn't set, try to get it from git command at compile time
             match std::process::Command::new("git")
-                .args(&["rev-parse", "--short", "HEAD"])
+                .args(["rev-parse", "--short", "HEAD"])
                 .output()
             {
                 Ok(output) if output.status.success() => {
@@ -57,7 +57,7 @@ async fn main() {
     let _ = std::io::stderr().flush();
     
     eprintln!("🔧 Parsing command line arguments...");
-    let args = match std::panic::catch_unwind(|| Cli::parse_args()) {
+    let args = match std::panic::catch_unwind(Cli::parse_args) {
         Ok(args) => {
             eprintln!("✅ Command line arguments parsed successfully");
             args

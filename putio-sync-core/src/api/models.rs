@@ -91,7 +91,8 @@ pub struct Transfer {
     /// Transfer name
     pub name: String,
     /// File size in bytes
-    pub size: i64,
+    #[serde(default)]
+    pub size: Option<i64>,
     /// Transfer status
     pub status: String,
     /// Download speed in bytes/second
