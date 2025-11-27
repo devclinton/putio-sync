@@ -275,6 +275,23 @@ pub struct DownloadStats {
     pub last_updated: String, // SQLite datetime as string
 }
 
+/// Processed torrent record
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct ProcessedTorrent {
+    /// Primary key
+    pub id: i64,
+    /// Original file path
+    pub file_path: String,
+    /// SHA-256 checksum of file contents or magnet link
+    pub file_checksum: String,
+    /// File size in bytes (0 for magnet links)
+    pub file_size: i64,
+    /// Magnet link content (for .magnet files)
+    pub magnet_link: Option<String>,
+    /// Timestamp when torrent was processed
+    pub processed_at: String, // SQLite datetime as string
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

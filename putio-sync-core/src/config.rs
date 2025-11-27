@@ -205,6 +205,12 @@ pub struct WatchConfig {
     /// Parent folder ID for uploaded torrents (None or 0 for root)
     #[serde(default)]
     pub parent_folder_id: Option<i64>,
+    /// Archive directory for processed torrents (moves files here after upload)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_directory: Option<PathBuf>,
+    /// Delete torrent files after successful upload
+    #[serde(default)]
+    pub delete_after_upload: bool,
 }
 
 /// Notification backend type
@@ -268,6 +274,31 @@ impl Default for DownloadConfig {
     }
 }
 
+impl WatchConfig {
+    /// Validate the watch configuration
+    pub fn validate(&self) -> CoreResult<()> {
+        // Cannot have both archive and delete enabled
+        if self.archive_directory.is_some() && self.delete_after_upload {
+            return Err(CoreError::ConfigError(
+                "Cannot have both archive_directory and delete_after_upload enabled. Choose one or neither.".to_string(),
+            ));
+        }
+
+        // If archive directory is set, validate it can be created
+        if let Some(ref archive_dir) = self.archive_directory {
+            if let Some(parent) = archive_dir.parent() {
+                if !parent.exists() {
+                    return Err(CoreError::ConfigError(
+                        format!("Archive directory parent does not exist: {}", parent.display()),
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl Default for WatchConfig {
     fn default() -> Self {
         WatchConfig {
@@ -275,6 +306,8 @@ impl Default for WatchConfig {
             paths: vec![],
             refresh_cycle: 60, // 60 seconds
             parent_folder_id: Some(0), // Root folder
+            archive_directory: None,
+            delete_after_upload: false,
         }
     }
 }
@@ -418,6 +451,8 @@ impl Config {
     ///         paths: vec![],
     ///         refresh_cycle: 60,
     ///         parent_folder_id: Some(0),
+    ///         archive_directory: None,
+    ///         delete_after_upload: false,
     ///     },
     ///     notifications: NotificationConfig::default(),
     /// };
@@ -833,6 +868,8 @@ mod tests {
                 paths: vec![PathBuf::from("/remote/movies")],
                 refresh_cycle: 60,
                 parent_folder_id: Some(0),
+                archive_directory: None,
+                delete_after_upload: false,
             },
             notifications: NotificationConfig::default(),
         }

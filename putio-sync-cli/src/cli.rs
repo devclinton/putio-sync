@@ -562,6 +562,21 @@ pub enum Commands {
             conflicts_with = "watch_only"
         )]
         download_only: bool,
+        /// Archive directory for processed torrents
+        #[arg(
+            long = "archive-dir",
+            value_name = "PATH",
+            help = "Move torrent files to this directory after upload (cannot use with --delete-torrents)",
+            conflicts_with = "delete_torrents"
+        )]
+        archive_dir: Option<PathBuf>,
+        /// Delete torrent files after upload
+        #[arg(
+            long = "delete-torrents",
+            help = "Delete torrent files after successful upload (cannot use with --archive-dir)",
+            conflicts_with = "archive_dir"
+        )]
+        delete_torrents: bool,
     },
 
     /// Start HTTP API server with optional daemon modes

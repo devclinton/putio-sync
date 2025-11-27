@@ -14,7 +14,7 @@ struct TransferDisplay {
     name: String,
     status: String,
     size: i64,
-    percent_done: i32,
+    percent_done: Option<i32>,
     down_speed: i64,
     estimated_time: Option<i64>,
     error_message: Option<String>,
@@ -171,13 +171,17 @@ fn display_table(transfers: &[TransferDisplay]) -> Result<()> {
             transfer.status.clone()
         };
 
+        let percent_display = transfer.percent_done
+            .map(|p| format!("{}%", p))
+            .unwrap_or_else(|| "N/A".to_string());
+        
         println!(
-            "{:<8} {:<10} {:<50} {:>12} {:>7}% {:>12} {:>8}",
+            "{:<8} {:<10} {:<50} {:>12} {:>7} {:>12} {:>8}",
             transfer.id,
             status_display,
             name,
             format_bytes(transfer.size),
-            transfer.percent_done,
+            percent_display,
             format_speed(transfer.down_speed as f64),
             eta
         );

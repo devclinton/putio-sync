@@ -9,11 +9,13 @@ pub mod models;
 pub mod queue;
 pub mod schema;
 pub mod stats;
+pub mod torrents;
 
 pub use downloads::DownloadRepository;
 pub use history::HistoryRepository;
 pub use queue::{QueueRepository, QueueStats};
 pub use stats::{ExtensionStats, StatsRepository};
+pub use torrents::ProcessedTorrentsRepository;
 
 use crate::error::{CoreError, CoreResult};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
@@ -107,6 +109,11 @@ impl Database {
         QueueRepository::new(&self.pool)
     }
 
+    /// Get a processed torrents repository
+    pub fn processed_torrents(&self) -> ProcessedTorrentsRepository {
+        ProcessedTorrentsRepository::new(&self.pool)
+    }
+
     /// Run database migrations
     ///
     /// This creates all necessary tables if they don't exist.
@@ -148,6 +155,12 @@ impl Database {
             .execute(&self.pool)
             .await
             .map_err(|e| CoreError::DatabaseError(format!("Failed to create download_queue table: {}", e)))?;
+
+        // Create processed_torrents table
+        sqlx::query(schema::CREATE_PROCESSED_TORRENTS_TABLE)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| CoreError::DatabaseError(format!("Failed to create processed_torrents table: {}", e)))?;
 
         // Create performance indexes
         sqlx::query(schema::CREATE_INDEXES)

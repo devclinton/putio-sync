@@ -103,7 +103,8 @@ pub struct Transfer {
     /// Number of bytes uploaded
     pub uploaded: i64,
     /// Percentage complete (0-100)
-    pub percent_done: i32,
+    #[serde(default)]
+    pub percent_done: Option<i32>,
     /// Estimated time remaining in seconds
     pub estimated_time: Option<i64>,
     /// Number of peers connected
@@ -116,7 +117,8 @@ pub struct Transfer {
     #[serde(default)]
     pub peers_sending_to_us: Option<i32>,
     /// Availability percentage (0-100)
-    pub availability: i32,
+    #[serde(default)]
+    pub availability: Option<i32>,
     /// Current ratio
     pub current_ratio: f64,
     /// Seconds spent seeding
@@ -284,7 +286,7 @@ mod tests {
         let transfer: Transfer = serde_json::from_str(json).unwrap();
         assert_eq!(transfer.id, 123);
         assert_eq!(transfer.name, "Test Transfer");
-        assert_eq!(transfer.percent_done, 50);
+        assert_eq!(transfer.percent_done, Some(50));
         assert_eq!(transfer.status, "DOWNLOADING");
     }
 

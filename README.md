@@ -9,7 +9,9 @@ A high-performance Rust-based CLI tool for Put.io with support for downloads, tr
 - **Chunked Downloads**: Split large files into chunks for parallel downloading
 - **Smart Filtering**: Whitelist/blacklist patterns with glob support
 - **Transfer Management**: Add torrents from files or magnet links
-- **Watch Mode**: Automatically upload .torrent files from watched directories
+- **Watch Mode**: Automatically upload .torrent and .magnet files from watched directories with smart deduplication
+- **Post-Processing**: Archive or delete processed torrent files after upload
+- **Advanced Daemon**: Unified daemon with hot-reload configuration and intelligent worker scaling
 - **Statistics & History**: Track download stats and view history
 - **File Management**: List, download, and delete files on Put.io
 - **SQLite Database**: Local state tracking for downloads and history
@@ -32,7 +34,8 @@ This project is organized as a Cargo workspace with the following crates:
   - `download`: Download files with workers, resume, and chunking support
   - `delete`: Remove files from Put.io
   - `create`: Add torrents from files or magnet links
-  - `watch`: Monitor directories for .torrent files
+  - `watch`: Monitor directories for .torrent and .magnet files
+  - `daemon`: Unified daemon for downloads and torrent watching with hot-reload
   - `stat`: View download statistics
   - `history`: View download and delete history
 
@@ -269,7 +272,7 @@ Arguments:
   [SOURCES]...              Torrent files or magnet links to add
 
 Options:
-  -w, --watch <PATHS>...    Watch directories for .torrent files
+  -w, --watch <PATHS>...    Watch directories for .torrent and .magnet files
   --parent-id <ID>          Parent folder ID for downloads [default: 0]
   -d, --daemon              Run in daemon mode (continuous watching)
   --interval <SECONDS>      Watch check interval [default: 60]
@@ -284,10 +287,13 @@ putio-sync create "magnet:?xt=urn:btih:..."
 # Add torrent from file
 putio-sync create movie.torrent
 
-# Add multiple torrents
-putio-sync create file1.torrent file2.torrent
+# Add magnet from .magnet file
+putio-sync create movie.magnet
 
-# Watch directory for torrents
+# Add multiple torrents and magnet files
+putio-sync create file1.torrent file2.magnet file3.torrent
+
+# Watch directory for torrents and magnet files
 putio-sync create --watch ~/Downloads/torrents
 
 # Watch multiple directories in daemon mode
@@ -494,6 +500,12 @@ putio-sync daemon --watch-only --watch-interval 60 --watch ~/Downloads/torrents 
 
 # With filtering for specific file types
 putio-sync daemon --filter "*.mkv,*.mp4,*.avi" --skip-existing --delete-after
+
+# Archive torrent/magnet files after processing (move to ~/processed)
+putio-sync daemon --watch-only --watch ~/Downloads/torrents --archive-dir ~/processed
+
+# Delete torrent/magnet files after processing 
+putio-sync daemon --watch-only --watch ~/Downloads/torrents --delete-torrents
 ```
 
 **Improved Daemon Logging**: The daemon now provides clear, structured logs:
@@ -505,6 +517,16 @@ putio-sync daemon --filter "*.mkv,*.mp4,*.avi" --skip-existing --delete-after
 # Torrent activity  
 🔼 Processing new .torrent file: Movie.torrent
 ✅ Torrent uploaded successfully: Movie (ID: 1234567)
+
+# Magnet file activity
+🔼 Processing new .magnet file: Movie.magnet
+✅ Magnet link uploaded successfully: Movie (ID: 1234568)
+
+# Archive/delete activity (works for both .torrent and .magnet files)
+📦 Archiving Movie.torrent to ~/processed/Movie.torrent
+📦 Archiving Series.magnet to ~/processed/Series.magnet
+🗑️  Deleting processed file: Movie.torrent
+🗑️  Deleting processed file: Series.magnet
 
 # Periodic health summaries
 📊 Download sync completed in 2.1s - found: 3, downloaded: 2, failed: 0, total: 2.1 GB
@@ -549,6 +571,31 @@ When scaling down workers:
 3. 🔄 **Prioritize** interrupted downloads (moved to front of queue with +1000 priority)
 4. ⏭️ **Resume** interrupted downloads after current ones complete
 
+#### Smart Torrent Processing & Deduplication
+
+The daemon includes advanced torrent processing features:
+
+- **Multi-format Support**: Processes both `.torrent` files (binary) and `.magnet` files (text-based magnet links)
+- **Checksum-based Deduplication**: Prevents reprocessing identical files using SHA-256 checksums
+  - For `.torrent` files: checksums the binary content
+  - For `.magnet` files: checksums the magnet link content
+- **SQLite Database Tracking**: Maintains persistent record of processed files (when archive/delete not enabled)
+- **Post-processing Options**:
+  - **Archive**: Move files to a specified directory after successful upload
+  - **Delete**: Remove files after successful upload
+  - **Keep**: Leave files in place with database tracking (default)
+
+```bash
+# Enable database tracking (default when no archive/delete specified)
+putio-sync daemon --watch-only --watch ~/Downloads/torrents
+
+# Archive files after processing
+putio-sync daemon --watch-only --watch ~/Downloads/torrents --archive-dir ~/processed
+
+# Delete files after processing
+putio-sync daemon --watch-only --watch ~/Downloads/torrents --delete-torrents
+```
+
 ### Method 2: Multiple Terminal Sessions (Alternative)
 
 Run each daemon in separate terminal sessions:
@@ -582,6 +629,8 @@ blacklist_patterns = "*.exe,*.bat,*.msi"
 [watch]
 refresh_cycle = 60
 paths = ["~/Downloads/torrents", "~/Watch/putio", "/media/torrents"]
+# archive_directory = "~/processed"        # Move processed files here (optional)
+# delete_after_upload = true               # Delete files after upload (optional)
 
 [notifications]
 enabled = true
@@ -931,7 +980,7 @@ The Docker image uses the following directories:
 
 - `/config` - Configuration directory (mount your config.toml here)
 - `/downloads` - Default download directory
-- `/watches` - Directory for watching .torrent files (optional)
+- `/watches` - Directory for watching .torrent and .magnet files (optional)
 
 ### Environment Variables
 
@@ -954,7 +1003,7 @@ docker run -d \
 
 ### Example: Torrent Watcher
 
-Watch a directory for .torrent files and automatically upload them:
+Watch a directory for .torrent and .magnet files and automatically upload them:
 
 ```bash
 docker run -d \
@@ -1003,6 +1052,44 @@ Run with:
 ```bash
 docker-compose up -d
 ```
+
+## File Formats & Processing
+
+### Torrent Files (.torrent)
+
+Traditional BitTorrent files containing metadata and tracker information. These are uploaded directly to Put.io using the file upload API.
+
+```bash
+# Process .torrent file
+putio-sync create movie.torrent
+```
+
+### Magnet Files (.magnet) 
+
+Text files containing magnet links for BitTorrent downloads. The content should be a single magnet URI starting with `magnet:`.
+
+Example `.magnet` file content:
+```
+magnet:?xt=urn:btih:d9e4b7b8c8c8f8f8f8f8f8f8f8f8f8f8f8f8f8f8&dn=Movie-2024&tr=udp://tracker.example.com:80
+```
+
+```bash
+# Process .magnet file
+putio-sync create movie.magnet
+```
+
+### Database & Deduplication
+
+When neither archive nor delete options are specified, putio-sync maintains a SQLite database (`.putiosync-torrents.db`) to track processed files and prevent reprocessing:
+
+- **Checksum-based**: Uses SHA-256 hashes to identify duplicate content
+  - `.torrent` files: checksums binary file content
+  - `.magnet` files: checksums magnet link string content  
+- **Persistent**: Survives daemon restarts and system reboots
+- **Efficient**: Only processes truly new or changed files
+- **Cleanup**: Supports automatic cleanup of old records
+
+Database location: `<target_directory>/.putiosync-torrents.db`
 
 ## Distribution
 

@@ -123,7 +123,7 @@ impl ApiClient {
     /// let transfers = client.list_transfers().await.unwrap();
     ///
     /// for transfer in transfers.transfers {
-    ///     println!("{}: {}% complete", transfer.name, transfer.percent_done);
+    ///     println!("{}: {}% complete", transfer.name, transfer.percent_done.unwrap_or(0));
     /// }
     /// # }
     /// ```
@@ -146,7 +146,7 @@ impl ApiClient {
     /// # async fn example() {
     /// let client = ApiClient::new("my_token".to_string());
     /// let transfer = client.get_transfer(12345).await.unwrap();
-    /// println!("Transfer: {} ({}%)", transfer.transfer.name, transfer.transfer.percent_done);
+    /// println!("Transfer: {} ({}%)", transfer.transfer.name, transfer.transfer.percent_done.unwrap_or(0));
     /// # }
     /// ```
     pub async fn get_transfer(&self, id: i64) -> CoreResult<TransferResponse> {
@@ -277,7 +277,7 @@ mod tests {
         let transfers = result.unwrap();
         assert_eq!(transfers.transfers.len(), 1);
         assert_eq!(transfers.transfers[0].name, "test.torrent");
-        assert_eq!(transfers.transfers[0].percent_done, 50);
+        assert_eq!(transfers.transfers[0].percent_done, Some(50));
 
         mock.assert_async().await;
     }
@@ -328,7 +328,7 @@ mod tests {
         let transfer = result.unwrap();
         assert_eq!(transfer.transfer.id, 12345);
         assert_eq!(transfer.transfer.name, "movie.torrent");
-        assert_eq!(transfer.transfer.percent_done, 100);
+        assert_eq!(transfer.transfer.percent_done, Some(100));
         assert_eq!(transfer.transfer.status, "COMPLETED");
 
         mock.assert_async().await;

@@ -77,6 +77,19 @@ CREATE TABLE IF NOT EXISTS download_queue (
 )
 "#;
 
+/// SQL to create the processed_torrents table
+pub const CREATE_PROCESSED_TORRENTS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS processed_torrents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_path TEXT NOT NULL,
+    file_checksum TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    magnet_link TEXT,
+    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(file_checksum)
+)
+"#;
+
 /// SQL to create performance indexes
 /// These indexes optimize common query patterns
 pub const CREATE_INDEXES: &str = r#"
@@ -103,6 +116,12 @@ CREATE INDEX IF NOT EXISTS idx_history_extension ON download_history(extension);
 
 -- Composite index for common history query pattern (action + timestamp)
 CREATE INDEX IF NOT EXISTS idx_history_action_timestamp ON download_history(action, timestamp);
+
+-- Index for processed torrents by checksum (primary lookup)
+CREATE INDEX IF NOT EXISTS idx_processed_torrents_checksum ON processed_torrents(file_checksum);
+
+-- Index for processed torrents by timestamp
+CREATE INDEX IF NOT EXISTS idx_processed_torrents_timestamp ON processed_torrents(processed_at);
 "#;
 
 #[cfg(test)]
