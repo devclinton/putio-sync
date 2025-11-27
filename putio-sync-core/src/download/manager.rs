@@ -193,9 +193,9 @@ impl DownloadManager {
         let file_id = file.file_id;
         let filename = sanitize_filename(&file.filename);
 
-        info!("Starting download: {} (ID: {})", filename, file_id);
-        info!("Download config target_directory: {}", self.config.target_directory.display());
-        info!("File relative_path: '{}'", file.relative_path);
+        debug!("Starting download: {} (ID: {})", filename, file_id);
+        debug!("Download config target_directory: {}", self.config.target_directory.display());
+        debug!("File relative_path: '{}'", file.relative_path);
 
         // Notify callback that file download is starting
         if let Some(ref callback) = progress_callback {
@@ -208,7 +208,7 @@ impl DownloadManager {
         } else {
             self.config.target_directory.join(&file.relative_path).join(&filename)
         };
-        info!("Constructed target_path: {}", target_path.display());
+        debug!("Constructed target_path: {}", target_path.display());
         
         // Ensure parent directory exists
         if let Some(parent) = target_path.parent() {
@@ -240,7 +240,7 @@ impl DownloadManager {
             self.download_streaming_with_resume(file, progress_callback.clone(), resume.bytes_downloaded).await
         } else {
             // Start new download
-            info!("Starting new streaming download");
+            debug!("Starting new streaming download");
             self.download_streaming(file, progress_callback.clone()).await
         };
 

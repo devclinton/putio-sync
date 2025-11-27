@@ -10,7 +10,7 @@ use putio_sync_core::api::ApiClient;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Statistics for a watch operation
 #[derive(Debug, Clone, Default)]
@@ -307,8 +307,65 @@ impl TorrentWatchCore {
                 Ok(true)
             }
             Err(e) => {
-                error!("❌ Failed to upload {}: {}", path.display(), e);
-                Err(e.into())
+                // Check if this is a "TRANSFER_ALREADY_ADDED" error
+                let error_str = format!("{}", e);
+                if error_str.contains("TRANSFER_ALREADY_ADDED") {
+                    warn!("⚠️  Transfer already exists for {}, treating as success for archive/delete", path.display());
+                    
+                    // Mark as processed
+                    {
+                        let mut processed = self.processed_files.lock().unwrap();
+                        processed.insert(path.to_path_buf());
+                    }
+
+                    // Record in database if available (same logic as success case)
+                    if let Some(db) = database {
+                        use putio_sync_core::db::torrents::{calculate_file_checksum, calculate_string_checksum};
+                        
+                        let (checksum, magnet_link) = if self.is_magnet_file(path) {
+                            // For magnet files, record the magnet link and use content checksum
+                            match tokio::fs::read_to_string(path).await {
+                                Ok(content) => {
+                                    let magnet = content.trim().to_string();
+                                    let checksum = calculate_string_checksum(&magnet);
+                                    (checksum, Some(magnet))
+                                }
+                                Err(e) => {
+                                    debug!("Failed to re-read magnet file for database recording: {}", e);
+                                    return Ok(true); // Still consider it processed
+                                }
+                            }
+                        } else {
+                            // For torrent files, calculate file checksum and no magnet link
+                            match calculate_file_checksum(path).await {
+                                Ok(checksum) => (checksum, None),
+                                Err(e) => {
+                                    debug!("Failed to calculate checksum for database recording: {}", e);
+                                    return Ok(true); // Still consider it processed
+                                }
+                            }
+                        };
+                        
+                        let repo = db.processed_torrents();
+                        let file_size = path.metadata().map(|m| m.len()).unwrap_or(0) as i64;
+                        
+                        if let Err(e) = repo.record_processed(
+                            path.to_str().unwrap_or("unknown"),
+                            &checksum,
+                            file_size,
+                            magnet_link.as_deref(),
+                        ).await {
+                            debug!("Failed to record processed {} in database: {}", file_type, e);
+                        } else {
+                            debug!("Recorded {} in database: checksum {}", file_type, checksum);
+                        }
+                    }
+
+                    Ok(true) // Treat as success for archive/delete
+                } else {
+                    error!("❌ Failed to upload {}: {}", path.display(), e);
+                    Err(e.into())
+                }
             }
         }
     }
