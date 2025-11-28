@@ -1,0 +1,62 @@
+# Example putio-sync configuration file
+
+[download]
+# Target directory for downloads
+target_directory = "./downloads"
+
+# Number of concurrent download workers
+workers = 4
+
+# Buffer size per download stream in MB  
+buffer_size_mb = 64
+
+# Enable resume of interrupted downloads
+resume_enabled = true
+
+# Skip files that already exist locally
+skip_existing = false
+
+# Delete files from Put.io after successful download
+delete_after_download = false
+
+# Delete empty folders after downloading all files from them (default: true)
+delete_empty_folders = true
+
+# Progress display style: "per-file", "overall", "individual", "rotating", "none"
+progress_style = "per-file"
+
+# Sort order for file processing: "by-date", "by-name", "by-extension", "by-size"  
+sort_order = "by-date"
+
+# Reverse sort order
+reverse_sort = false
+
+# File filtering patterns (glob syntax)
+whitelist_patterns = "*.{mkv,mp4,avi,mov}"  # Only download video files
+# blacklist_patterns = "*.{exe,zip}"        # Exclude executables and archives
+
+# Bandwidth limit in bytes per second (optional)
+# bandwidth_limit_bytes_per_sec = 10485760  # 10 MB/s limit
+
+# Maximum retry attempts for failed downloads
+max_retries = 3
+
+# Initial retry delay in seconds (doubles with each retry)
+retry_initial_delay_secs = 2
+
+[watch]
+# Enable torrent file watching
+enabled = true
+
+# Directories to watch for .torrent and .magnet files
+paths = ["./watch", "./torrents"]
+
+# Check interval in seconds
+refresh_cycle = 30
+
+# Parent folder ID on Put.io for uploads (0 = root)
+parent_folder_id = 0
+
+# Post-processing options (choose one)
+delete_after_upload = true
+# archive_directory = "./processed"

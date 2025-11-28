@@ -30,6 +30,7 @@ pub async fn execute_download(
     no_resume: bool,
     skip_existing: bool,
     delete_after: bool,
+    delete_empty_folders: Option<bool>,
     sort: Option<String>,
     reverse: bool,
     progress: Option<String>,
@@ -99,6 +100,9 @@ pub async fn execute_download(
     if delete_after {
         download_config.delete_after_download = true;
     }
+    if let Some(def) = delete_empty_folders {
+        download_config.delete_empty_folders = def;
+    }
     if let Some(s) = sort {
         download_config.sort_order = parse_sort_order(&s)?;
     }
@@ -120,6 +124,7 @@ pub async fn execute_download(
     debug!("  Resume enabled: {}", download_config.resume_enabled);
     debug!("  Skip existing: {}", download_config.skip_existing);
     debug!("  Delete after: {}", download_config.delete_after_download);
+    debug!("  Delete empty folders: {}", download_config.delete_empty_folders);
     debug!("  Sort order: {:?}", download_config.sort_order);
     debug!("  Reverse sort: {}", download_config.reverse_sort);
     debug!("  Progress style: {:?}", download_config.progress_style);

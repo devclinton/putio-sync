@@ -37,7 +37,7 @@ pub struct DownloadCycleResult {
 struct EmptyDirectoryTracker {
     /// Directory path -> (directory_id, first_seen_time, scan_count)
     empty_directories: HashMap<String, (i64, Instant, u32)>,
-    /// Number of scans before deletion (default: 3)
+    /// Number of scans before deletion (default: 5)
     scan_threshold: u32,
 }
 
@@ -45,7 +45,7 @@ impl EmptyDirectoryTracker {
     fn new() -> Self {
         Self {
             empty_directories: HashMap::new(),
-            scan_threshold: 3,
+            scan_threshold: 5,
         }
     }
 
@@ -56,11 +56,11 @@ impl EmptyDirectoryTracker {
         match self.empty_directories.get_mut(&path) {
             Some((_, _first_seen, count)) => {
                 *count += 1;
-                debug!("Empty directory '{}' seen {} times", path, count);
+                info!("Empty directory '{}' seen {} times (threshold: {})", path, count, self.scan_threshold);
                 *count >= self.scan_threshold
             }
             None => {
-                debug!("First time seeing empty directory: {}", path);
+                info!("First time seeing empty directory: {} (will delete after {} more scans)", path, self.scan_threshold - 1);
                 self.empty_directories.insert(path, (directory_id, current_time, 1));
                 false
             }
@@ -86,7 +86,25 @@ impl EmptyDirectoryTracker {
     /// Clean up old entries to prevent memory growth
     fn cleanup_old_entries(&mut self) {
         let cutoff_time = Instant::now() - Duration::from_secs(3600); // 1 hour
+        let before_count = self.empty_directories.len();
         self.empty_directories.retain(|_, (_, first_seen, _)| *first_seen > cutoff_time);
+        let after_count = self.empty_directories.len();
+        if before_count != after_count {
+            debug!("Cleaned up {} old empty directory entries (kept {})", before_count - after_count, after_count);
+        }
+    }
+
+    /// Get current tracking status for debugging
+    fn get_tracking_status(&self) -> String {
+        if self.empty_directories.is_empty() {
+            "No directories being tracked".to_string()
+        } else {
+            let mut status = Vec::new();
+            for (path, (_, _, count)) in &self.empty_directories {
+                status.push(format!("{}: {}/{} scans", path, count, self.scan_threshold));
+            }
+            format!("Tracking {} directories: [{}]", self.empty_directories.len(), status.join(", "))
+        }
     }
 }
 
@@ -366,24 +384,31 @@ impl DownloadOps {
             }
         }
         
-        // Cleanup empty directories after all downloads complete
-        if !files_needing_cleanup.is_empty() {
-            debug!("Cleaning up {} potentially empty directories", files_needing_cleanup.len());
+        // Cleanup empty directories after all downloads complete (if enabled)
+        if self.config.delete_empty_folders && !files_needing_cleanup.is_empty() {
+            info!("Cleaning up {} potentially empty directories after file deletions", files_needing_cleanup.len());
             for download_file in files_needing_cleanup {
                 if let Err(e) = self.cleanup_empty_directories_after_deletion(&download_file).await {
                     warn!("Failed to cleanup empty directories for {}: {}", download_file.filename, e);
                 }
             }
+            info!("Immediate empty directory cleanup completed");
         }
 
-        // Scan for empty directories and track them
-        if let Err(e) = self.scan_and_track_empty_directories().await {
-            warn!("Failed to scan for empty directories: {}", e);
-        }
+        // Scan for empty directories and track them (if cleanup is enabled)
+        if self.config.delete_empty_folders {
+            info!("Starting empty directory scan (delete_empty_folders is enabled)");
+            if let Err(e) = self.scan_and_track_empty_directories().await {
+                warn!("Failed to scan for empty directories: {}", e);
+            }
 
-        // Delete directories that have been empty for the threshold number of scans
-        if let Err(e) = self.cleanup_persistently_empty_directories().await {
-            warn!("Failed to cleanup persistently empty directories: {}", e);
+            // Delete directories that have been empty for the threshold number of scans
+            if let Err(e) = self.cleanup_persistently_empty_directories().await {
+                warn!("Failed to cleanup persistently empty directories: {}", e);
+            }
+            info!("Empty directory scan completed");
+        } else {
+            debug!("Empty directory cleanup is disabled (delete_empty_folders = false)");
         }
 
         // Finish progress display
@@ -547,36 +572,52 @@ impl DownloadOps {
 
     /// Scan all directories and track which ones are empty
     async fn scan_and_track_empty_directories(&self) -> Result<()> {
-        debug!("Scanning for empty directories to track");
+        info!("Scanning directories for empty folders to track");
         
         // Get all directories recursively from the sync parent
         let directories = self.get_all_directories_recursive(self.sync_parent_id, "".to_string()).await?;
+        info!("Found {} total directories to scan", directories.len());
         
         let mut tracker = self.empty_directory_tracker.lock().await;
         
         // Clean up old entries first
         tracker.cleanup_old_entries();
         
+        let mut empty_count = 0;
+        let mut non_empty_count = 0;
+        let mut ready_for_deletion = 0;
+        
         for (path, dir_id) in directories {
             // Check if directory is empty
             match self.client.list_files(dir_id).await {
                 Ok(response) => {
                     if response.files.is_empty() {
+                        empty_count += 1;
                         // Directory is empty, track it
                         let should_delete = tracker.mark_empty(path.clone(), dir_id);
                         if should_delete {
-                            debug!("Directory '{}' has been empty for {} scans and is ready for deletion", path, tracker.scan_threshold);
+                            ready_for_deletion += 1;
+                            info!("Directory '{}' has been empty for {} scans and is ready for deletion", path, tracker.scan_threshold);
+                        } else {
+                            debug!("Empty directory '{}' added to tracking (will delete after {} more scans)", path, tracker.scan_threshold - 1);
                         }
                     } else {
+                        non_empty_count += 1;
                         // Directory is not empty, remove from tracking
                         tracker.mark_not_empty(&path);
                     }
                 }
                 Err(e) => {
-                    debug!("Failed to check directory '{}': {}", path, e);
+                    warn!("Failed to check directory '{}': {}", path, e);
                 }
             }
         }
+        
+        info!("Directory scan results: {} empty, {} non-empty, {} ready for deletion", 
+              empty_count, non_empty_count, ready_for_deletion);
+        
+        let tracking_status = tracker.get_tracking_status();
+        info!("Current tracking status: {}", tracking_status);
         
         Ok(())
     }
@@ -589,10 +630,11 @@ impl DownloadOps {
         };
 
         if directories_to_delete.is_empty() {
+            debug!("No directories ready for deletion");
             return Ok(());
         }
 
-        info!("Deleting {} persistently empty directories", directories_to_delete.len());
+        info!("Attempting to delete {} persistently empty directories", directories_to_delete.len());
 
         for (path, dir_id) in directories_to_delete {
             // Double-check that the directory is still empty before deletion

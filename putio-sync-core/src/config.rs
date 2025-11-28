@@ -9,6 +9,11 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Default value for delete_empty_folders
+fn default_delete_empty_folders() -> bool {
+    true
+}
+
 /// Main configuration structure
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Config {
@@ -190,6 +195,9 @@ pub struct DownloadConfig {
     pub max_retries: u32,
     /// Initial retry delay in seconds (doubles with each retry)
     pub retry_initial_delay_secs: u64,
+    /// Delete empty folders after downloading all files from them (default: true)
+    #[serde(default = "default_delete_empty_folders")]
+    pub delete_empty_folders: bool,
 }
 
 /// Watch configuration
@@ -270,6 +278,7 @@ impl Default for DownloadConfig {
             bandwidth_limit_bytes_per_sec: None, // Unlimited by default
             max_retries: 3,                      // 3 retries by default
             retry_initial_delay_secs: 1,         // Start with 1 second delay
+            delete_empty_folders: true,          // Delete empty folders by default
         }
     }
 }
@@ -445,6 +454,7 @@ impl Config {
     ///         bandwidth_limit_bytes_per_sec: None,
     ///         max_retries: 3,
     ///         retry_initial_delay_secs: 1,
+    ///         delete_empty_folders: true,
     ///     },
     ///     watch: WatchConfig {
     ///         enabled: false,
@@ -862,6 +872,7 @@ mod tests {
                 bandwidth_limit_bytes_per_sec: None,
                 max_retries: 3,
                 retry_initial_delay_secs: 1,
+                delete_empty_folders: true,
             },
             watch: WatchConfig {
                 enabled: false,
