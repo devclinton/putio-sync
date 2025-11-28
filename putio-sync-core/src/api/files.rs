@@ -125,12 +125,12 @@ impl ApiClient {
         // Read the file
         let mut file = TokioFile::open(file_path)
             .await
-            .map_err(|e| crate::error::CoreError::IoError(e))?;
+            .map_err(crate::error::CoreError::IoError)?;
 
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)
             .await
-            .map_err(|e| crate::error::CoreError::IoError(e))?;
+            .map_err(crate::error::CoreError::IoError)?;
 
         // Get the filename
         let filename = file_path

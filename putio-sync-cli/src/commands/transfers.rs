@@ -13,7 +13,7 @@ struct TransferDisplay {
     id: i64,
     name: String,
     status: String,
-    size: i64,
+    size: Option<i64>,
     percent_done: Option<i32>,
     down_speed: Option<i64>,
     estimated_time: Option<i64>,
@@ -180,7 +180,7 @@ fn display_table(transfers: &[TransferDisplay]) -> Result<()> {
             transfer.id,
             status_display,
             name,
-            format_bytes(transfer.size),
+            format_bytes(transfer.size.unwrap_or(0)),
             percent_display,
             format_speed(transfer.down_speed.unwrap_or(0) as f64),
             eta

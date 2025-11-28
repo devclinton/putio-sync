@@ -90,6 +90,12 @@ impl EmptyDirectoryTracker {
     }
 }
 
+impl Default for DownloadCycleResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DownloadCycleResult {
     pub fn new() -> Self {
         Self {
@@ -310,7 +316,7 @@ impl DownloadOps {
                 match manager.download_file(download_file.clone(), callback).await {
                     Ok(download_result) => {
                         if download_result.success {
-                            info!("✅ Download completed: {} ({} downloaded)", 
+                            info!("✅ Download completed: {} ({})", 
                                   download_file.filename, 
                                   format_size(download_result.bytes_downloaded));
                             
@@ -670,3 +676,4 @@ fn format_size(bytes: u64) -> String {
         format!("{:.2} {}", size, UNITS[unit_idx])
     }
 }
+

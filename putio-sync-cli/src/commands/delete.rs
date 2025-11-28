@@ -74,7 +74,7 @@ pub async fn execute_delete(
 
     // Display files to be deleted
     println!("\nFiles to be deleted:");
-    println!("{:<12} {:<50} {:<15} {}", "ID", "Name", "Size", "Type");
+    println!("{:<12} {:<50} {:<15} Type", "ID", "Name", "Size");
     println!("{}", "-".repeat(90));
     for file in &files_to_delete {
         let file_type = if file.is_folder { "Folder" } else { "File" };

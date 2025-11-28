@@ -148,7 +148,7 @@ pub async fn stream_download(
     
     let request = request_builder
         .build()
-        .map_err(|e| CoreError::HttpError(e))?;
+        .map_err(CoreError::HttpError)?;
     
     debug!("Request URL: {}", request.url());
     debug!("Request method: {}", request.method());

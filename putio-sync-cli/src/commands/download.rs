@@ -375,7 +375,7 @@ async fn run_daemon_mode(
         }
 
         // Use DownloadOps for recursive downloads
-        let sync_parent_id = if all { 0 } else { 0 }; // Use root for now, this could be configurable
+        let sync_parent_id = 0; // Use root for now, this could be configurable
         let download_ops = match crate::download_ops::DownloadOps::new(
             client_arc.clone(),
             download_config.clone(),

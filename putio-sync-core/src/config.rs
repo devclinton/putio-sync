@@ -307,7 +307,7 @@ impl Default for WatchConfig {
             refresh_cycle: 60, // 60 seconds
             parent_folder_id: Some(0), // Root folder
             archive_directory: None,
-            delete_after_upload: false,
+            delete_after_upload: true,
         }
     }
 }
