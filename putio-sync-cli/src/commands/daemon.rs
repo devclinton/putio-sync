@@ -64,6 +64,7 @@ pub async fn execute_daemon(
     filter: Option<String>,
     skip_existing: bool,
     delete_after: bool,
+    delete_empty_folders: Option<bool>,
     parent_id: Option<i64>,
     watch_only: bool,
     download_only: bool,
@@ -174,7 +175,19 @@ pub async fn execute_daemon(
     let download_ops = if !watch_only {
         let sync_parent_id = config.sync.remote_parent_id.unwrap_or(0);
         
-        match DownloadOps::new(client.clone(), config.download.clone(), sync_parent_id).await {
+        // Apply CLI overrides to download config
+        let mut download_config = config.download.clone();
+        if skip_existing {
+            download_config.skip_existing = true;
+        }
+        if delete_after {
+            download_config.delete_after_download = true;
+        }
+        if let Some(def) = delete_empty_folders {
+            download_config.delete_empty_folders = def;
+        }
+        
+        match DownloadOps::new(client.clone(), download_config, sync_parent_id).await {
             Ok(ops) => Some(ops),
             Err(e) => {
                 error!("Failed to initialize download operations: {}", e);

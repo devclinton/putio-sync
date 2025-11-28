@@ -248,6 +248,13 @@ pub enum Commands {
         )]
         delete_after: bool,
 
+        /// Delete empty folders after downloading files from them
+        #[arg(
+            long = "delete-empty-folders",
+            help = "Delete empty folders after downloading all files from them (default: true)"
+        )]
+        delete_empty_folders: Option<bool>,
+
         /// Sort order
         #[arg(
             long = "sort",
@@ -539,6 +546,13 @@ pub enum Commands {
             help = "Delete from Put.io after successful download"
         )]
         delete_after: bool,
+
+        /// Delete empty folders after downloading files from them
+        #[arg(
+            long = "delete-empty-folders",
+            help = "Delete empty folders after downloading all files from them (default: true)"
+        )]
+        delete_empty_folders: Option<bool>,
 
         /// Parent folder ID for torrent uploads
         #[arg(

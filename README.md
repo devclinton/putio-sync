@@ -7,6 +7,8 @@ A high-performance Rust-based CLI tool for Put.io with support for downloads, tr
 - **Fast Downloads**: Concurrent downloads with configurable workers
 - **Resumable Downloads**: Automatic resume for interrupted downloads
 - **Chunked Downloads**: Split large files into chunks for parallel downloading
+- **Smart Progress Logging**: Size-based progress intervals with single-threshold logging (every 50% for 500MB+, 33% for 1GB+, 20% for 5GB+, 10% for 10GB+, 7% for 15GB+, 5% for 20GB+, 1% for 50GB+)
+- **Empty Directory Cleanup**: Enhanced detection and tracking with 5-scan threshold for automatic deletion of empty folders
 - **Smart Filtering**: Whitelist/blacklist patterns with glob support
 - **Transfer Management**: Add torrents from files or magnet links
 - **Watch Mode**: Automatically upload .torrent and .magnet files from watched directories with smart deduplication

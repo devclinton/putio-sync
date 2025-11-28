@@ -11,6 +11,91 @@ use tracing::{debug, error, info, warn};
 /// Default buffer size for streaming downloads (128MB)
 pub const DEFAULT_BUFFER_SIZE: usize = 64 * 1024 * 1024;
 
+/// Size thresholds for progress logging in bytes
+const SIZE_500MB: u64 = 500 * 1024 * 1024;
+const SIZE_1GB: u64 = 1024 * 1024 * 1024;
+const SIZE_5GB: u64 = 5 * 1024 * 1024 * 1024;
+const SIZE_10GB: u64 = 10 * 1024 * 1024 * 1024;
+const SIZE_15GB: u64 = 15 * 1024 * 1024 * 1024;
+const SIZE_20GB: u64 = 20 * 1024 * 1024 * 1024;
+const SIZE_50GB: u64 = 50 * 1024 * 1024 * 1024;
+
+/// Helper struct to track size-based progress logging
+#[derive(Debug)]
+struct ProgressLogger {
+    progress_interval: f64,
+    last_logged_percentage: f64,
+    filename: String,
+}
+
+impl ProgressLogger {
+    /// Create a new progress logger based on file size
+    fn new(file_size: u64, filename: String) -> Self {
+        let progress_interval = match file_size {
+            0..SIZE_500MB => 0.0, // No progress logging for files under 500MB
+            SIZE_500MB..SIZE_1GB => 50.0, // Log at 50% for files 500MB-1GB
+            SIZE_1GB..SIZE_5GB => 33.333333, // Log every 33% for files 1GB-5GB
+            SIZE_5GB..SIZE_10GB => 20.0, // Log every 20% for files 5GB-10GB
+            SIZE_10GB..SIZE_15GB => 10.0, // Log every 10% for files 10GB-15GB
+            SIZE_15GB..SIZE_20GB => 7.142857, // Log every ~7% for files 15GB-20GB
+            SIZE_20GB..SIZE_50GB => 5.0, // Log every 5% for files 20GB-50GB
+            SIZE_50GB.. => 1.0, // Log every 1% for files over 50GB
+        };
+
+        Self {
+            progress_interval,
+            last_logged_percentage: 0.0,
+            filename,
+        }
+    }
+
+    /// Check if progress should be logged and log if appropriate
+    /// Returns true if progress was logged
+    fn maybe_log_progress(&mut self, bytes_downloaded: u64, total_bytes: u64) -> bool {
+        if self.progress_interval == 0.0 {
+            return false; // No progress logging for small files
+        }
+
+        let current_percentage = (bytes_downloaded as f64 / total_bytes as f64) * 100.0;
+        
+        // Calculate which threshold we should be at
+        let current_threshold = (current_percentage / self.progress_interval).floor() * self.progress_interval;
+        
+        // Only log if we've crossed a new threshold and haven't logged it yet
+        if current_threshold > self.last_logged_percentage && current_percentage >= current_threshold {
+            info!(
+                "📥 Download progress: {} - {:.1}% complete ({} / {})",
+                self.filename,
+                current_threshold,
+                format_bytes(bytes_downloaded),
+                format_bytes(total_bytes)
+            );
+            self.last_logged_percentage = current_threshold;
+            return true;
+        }
+        
+        false
+    }
+}
+
+/// Format bytes as human-readable string
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit_idx = 0;
+
+    while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_idx += 1;
+    }
+
+    if unit_idx == 0 {
+        format!("{} {}", bytes, UNITS[unit_idx])
+    } else {
+        format!("{:.2} {}", size, UNITS[unit_idx])
+    }
+}
+
 /// Simple rate limiter for bandwidth control
 struct RateLimiter {
     /// Maximum bytes per second
@@ -75,6 +160,7 @@ pub struct StreamDownloadResult {
 /// * `client` - API client for making authenticated requests
 /// * `url` - URL to download from
 /// * `target_path` - Final destination path
+/// * `filename` - Filename for progress logging
 /// * `expected_size` - Expected file size in bytes (for validation)
 /// * `buffer_size_mb` - Buffer size in megabytes
 /// * `bandwidth_limit_bytes_per_sec` - Optional bandwidth limit in bytes per second
@@ -87,6 +173,7 @@ pub async fn stream_download(
     client: &ApiClient,
     url: &str,
     target_path: &Path,
+    filename: &str,
     expected_size: Option<u64>,
     buffer_size_mb: usize,
     bandwidth_limit_bytes_per_sec: Option<u64>,
@@ -254,6 +341,13 @@ pub async fn stream_download(
     // Create rate limiter if bandwidth limit is set
     let mut rate_limiter = bandwidth_limit_bytes_per_sec.map(RateLimiter::new);
 
+    // Create progress logger based on file size
+    let mut progress_logger = if let Some(size) = expected_size {
+        Some(ProgressLogger::new(size, filename.to_string()))
+    } else {
+        None
+    };
+
     // Stream the response body with stall detection
     let mut stream = response.bytes_stream();
     let stall_timeout = Duration::from_secs(60); // 60 seconds timeout for stalled downloads
@@ -278,8 +372,18 @@ pub async fn stream_download(
 
                 bytes_downloaded += chunk.len() as u64;
                 
-                // Log progress every 10MB to show activity
-                if bytes_downloaded % (10 * 1024 * 1024) == 0 {
+                // Use size-based progress logging for large files, fallback to 10MB intervals for smaller files
+                if let Some(ref mut logger) = progress_logger {
+                    if let Some(size) = expected_size {
+                        let total_downloaded = if let Some(resume_from) = resume_from_byte {
+                            resume_from + bytes_downloaded
+                        } else {
+                            bytes_downloaded
+                        };
+                        logger.maybe_log_progress(total_downloaded, size);
+                    }
+                } else if bytes_downloaded % (10 * 1024 * 1024) == 0 {
+                    // Fallback debug logging for files without expected_size
                     debug!("Downloaded {} bytes so far...", bytes_downloaded);
                 }
             }
@@ -507,7 +611,7 @@ mod tests {
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/test-file.txt", server.url());
 
-        let result = stream_download(&client, &url, &target_path, Some(13), 1, None, None)
+        let result = stream_download(&client, &url, &target_path, "test.txt", Some(13), 1, None, None)
             .await
             .unwrap();
 
@@ -543,7 +647,7 @@ mod tests {
         let url = format!("{}/test-file.txt", server.url());
 
         // Expect 10 bytes but will only get 5
-        let result = stream_download(&client, &url, &target_path, Some(10), 1, None, None).await;
+        let result = stream_download(&client, &url, &target_path, "test.txt", Some(10), 1, None, None).await;
 
         assert!(result.is_err());
         assert!(!target_path.exists()); // Should clean up on failure
@@ -568,7 +672,7 @@ mod tests {
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/not-found.txt", server.url());
 
-        let result = stream_download(&client, &url, &target_path, None, 1, None, None).await;
+        let result = stream_download(&client, &url, &target_path, "test.txt", None, 1, None, None).await;
 
         assert!(result.is_err());
     }
@@ -608,7 +712,7 @@ mod tests {
         let start = Instant::now();
 
         // Set bandwidth limit to 1024 bytes/sec
-        let result = stream_download(&client, &url, &target_path, Some(2048), 1, Some(1024), None)
+        let result = stream_download(&client, &url, &target_path, "test.txt", Some(2048), 1, Some(1024), None)
             .await
             .unwrap();
 
