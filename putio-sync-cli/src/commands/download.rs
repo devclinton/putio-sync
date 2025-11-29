@@ -158,13 +158,22 @@ async fn run_single_download(
         })?;
     }
 
-    // Initialize database
+    // Initialize database - use fallback if it fails
     let db_path = download_config.target_directory.join(".putiosync.db");
-    let database = Arc::new(
-        Database::new(&db_path)
-            .await
-            .context("Failed to initialize database")?,
-    );
+    let _database = match Database::new(&db_path).await {
+        Ok(db) => {
+            info!("Database initialized successfully at: {}", db_path.display());
+            Some(Arc::new(db))
+        }
+        Err(e) => {
+            warn!(
+                "Failed to initialize database at {}: {}. Downloads will continue without database tracking.",
+                db_path.display(),
+                e
+            );
+            None
+        }
+    };
 
     // Use DownloadOps for unified sync behavior (same as daemon mode)
     info!("Fetching file list from Put.io...");
@@ -237,13 +246,22 @@ async fn run_daemon_mode(
         })?;
     }
 
-    // Initialize database (not used in new implementation)
+    // Initialize database (not used in new implementation) - use fallback if it fails
     let db_path = download_config.target_directory.join(".putiosync.db");
-    let _database = Arc::new(
-        Database::new(&db_path)
-            .await
-            .context("Failed to initialize database")?,
-    );
+    let _database = match Database::new(&db_path).await {
+        Ok(db) => {
+            info!("Database initialized successfully at: {}", db_path.display());
+            Some(Arc::new(db))
+        }
+        Err(e) => {
+            warn!(
+                "Failed to initialize database at {}: {}. Daemon will continue without database tracking.",
+                db_path.display(),
+                e
+            );
+            None
+        }
+    };
 
     // Set up Ctrl+C handler
     let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));

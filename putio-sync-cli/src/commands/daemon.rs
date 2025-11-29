@@ -162,7 +162,7 @@ pub async fn execute_daemon(
                 Some(db)
             }
             Err(e) => {
-                warn!("Failed to initialize torrent tracking database: {}. Will fall back to in-memory tracking only.", e);
+                warn!("Failed to initialize torrent tracking database: {}. Will continue without database tracking.", e);
                 None
             }
         }

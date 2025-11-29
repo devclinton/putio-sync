@@ -51,8 +51,8 @@ pub struct DownloadOperationResult {
 pub struct DownloadManager {
     /// Put.io API client
     client: Arc<ApiClient>,
-    /// Database
-    database: Arc<Database>,
+    /// Database (optional for fallback mode)
+    database: Option<Arc<Database>>,
     /// Download configuration
     config: DownloadConfig,
     /// Progress trackers for active downloads
@@ -168,7 +168,27 @@ impl DownloadManager {
 
         Self {
             client,
-            database,
+            database: Some(database),
+            config,
+            progress_trackers: Arc::new(RwLock::new(HashMap::new())),
+            overall_progress,
+        }
+    }
+    
+    /// Create a new download manager without database (fallback mode)
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - Put.io API client
+    /// * `config` - Download configuration
+    pub fn new_without_database(client: Arc<ApiClient>, config: DownloadConfig) -> Self {
+        let overall_progress = Arc::new(RwLock::new(OverallProgress::new(0, 0)));
+        
+        warn!("Download manager initialized without database - download tracking disabled");
+
+        Self {
+            client,
+            database: None,
             config,
             progress_trackers: Arc::new(RwLock::new(HashMap::new())),
             overall_progress,
@@ -334,17 +354,23 @@ impl DownloadManager {
                     callback.on_file_progress(&progress);
                 }
 
-                // Save to database with retry count
-                let repo = self.database.downloads();
-                repo.insert_with_retry_count(
-                    file.file_id,
-                    &filename,
-                    file.file_size as i64,
-                    target_path.to_str().unwrap_or(""),
-                    DownloadStatus::Completed,
-                    retry_count as i64,
-                )
-                .await?;
+                // Save to database with retry count (if database available)
+                if let Some(database) = &self.database {
+                    let repo = database.downloads();
+                    if let Err(e) = repo.insert_with_retry_count(
+                        file.file_id,
+                        &filename,
+                        file.file_size as i64,
+                        target_path.to_str().unwrap_or(""),
+                        DownloadStatus::Completed,
+                        retry_count as i64,
+                    )
+                    .await {
+                        warn!("Database error (non-fatal): Failed to record download completion for {}: {}. Download succeeded.", filename, e);
+                    }
+                } else {
+                    debug!("Database not available - skipping download record for {}", filename);
+                }
 
                 info!(
                     "Resume download completed: {} (total {} bytes in {:.2}s)",
@@ -451,17 +477,23 @@ impl DownloadManager {
                     callback.on_file_progress(&progress);
                 }
 
-                // Save to database with retry count
-                let repo = self.database.downloads();
-                repo.insert_with_retry_count(
-                    file.file_id,
-                    &filename,
-                    file.file_size as i64,
-                    target_path.to_str().unwrap_or(""),
-                    DownloadStatus::Completed,
-                    retry_count as i64,
-                )
-                .await?;
+                // Save to database with retry count (if database available)
+                if let Some(database) = &self.database {
+                    let repo = database.downloads();
+                    if let Err(e) = repo.insert_with_retry_count(
+                        file.file_id,
+                        &filename,
+                        file.file_size as i64,
+                        target_path.to_str().unwrap_or(""),
+                        DownloadStatus::Completed,
+                        retry_count as i64,
+                    )
+                    .await {
+                        warn!("Database error (non-fatal): Failed to record download completion for {}: {}. Download succeeded.", filename, e);
+                    }
+                } else {
+                    debug!("Database not available - skipping download record for {}", filename);
+                }
 
                 info!(
                     "Download completed: {} ({} bytes in {:.2}s)",

@@ -133,7 +133,7 @@ impl DownloadCycleResult {
 /// Shared download operations that can be used by both download command and daemon
 pub struct DownloadOps {
     client: Arc<ApiClient>,
-    database: Arc<Database>,
+    database: Option<Arc<Database>>,
     config: DownloadConfig,
     sync_parent_id: i64,
     empty_directory_tracker: Arc<tokio::sync::Mutex<EmptyDirectoryTracker>>,
@@ -161,13 +161,22 @@ impl DownloadOps {
             })?;
         }
 
-        // Initialize database
+        // Initialize database - use fallback if it fails
         let db_path = config.target_directory.join(".putiosync.db");
-        let database = Arc::new(
-            Database::new(&db_path)
-                .await
-                .context("Failed to initialize database")?,
-        );
+        let database = match Database::new(&db_path).await {
+            Ok(db) => {
+                info!("Database initialized successfully at: {}", db_path.display());
+                Some(Arc::new(db))
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to initialize database at {}: {}. Downloads will continue without database tracking.",
+                    db_path.display(),
+                    e
+                );
+                None
+            }
+        };
 
         Ok(Self {
             client,
@@ -352,12 +361,24 @@ impl DownloadOps {
             total_size,
         ));
 
-        // Create download manager
-        let manager = Arc::new(DownloadManager::new(
-            self.client.clone(),
-            self.database.clone(),
-            self.config.clone(),
-        ));
+        // Create download manager - handle missing database gracefully
+        let manager = match &self.database {
+            Some(db) => {
+                Arc::new(DownloadManager::new(
+                    self.client.clone(),
+                    db.clone(),
+                    self.config.clone(),
+                ))
+            }
+            None => {
+                // Create a memory-only download manager without database
+                warn!("Creating download manager without database - no download tracking will be available");
+                Arc::new(DownloadManager::new_without_database(
+                    self.client.clone(),
+                    self.config.clone(),
+                ))
+            }
+        };
 
         // Download files in parallel using worker pool
         
