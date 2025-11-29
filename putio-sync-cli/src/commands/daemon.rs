@@ -177,6 +177,8 @@ pub async fn execute_daemon(
         
         // Apply CLI overrides to download config
         let mut download_config = config.download.clone();
+        info!("📋 Initial download config - delete_empty_folders: {}", download_config.delete_empty_folders);
+        
         if skip_existing {
             download_config.skip_existing = true;
         }
@@ -184,8 +186,12 @@ pub async fn execute_daemon(
             download_config.delete_after_download = true;
         }
         if let Some(def) = delete_empty_folders {
+            info!("⚙️  CLI override: setting delete_empty_folders to {}", def);
             download_config.delete_empty_folders = def;
         }
+        
+        info!("✅ Final download config - delete_empty_folders: {}, delete_after_download: {}", 
+              download_config.delete_empty_folders, download_config.delete_after_download);
         
         match DownloadOps::new(client.clone(), download_config, sync_parent_id).await {
             Ok(ops) => Some(ops),
@@ -649,6 +655,14 @@ async fn run_download_sync_with_hot_reload(
     let result = {
         let mut ops_guard = state.download_ops.write().unwrap();
         if let Some(ref mut ops) = *ops_guard {
+            // Debug: Show the configuration being used in the sync cycle
+            let config = ops.config();
+            info!("🔄 Starting daemon sync cycle with config:");
+            info!("   - delete_empty_folders: {}", config.delete_empty_folders);
+            info!("   - delete_after_download: {}", config.delete_after_download);
+            info!("   - workers: {}", config.workers);
+            info!("   - target_directory: {}", config.target_directory.display());
+            
             // Use daemon-specific parameters - get all files from configured parent
             let all = true; // For daemon mode, scan all files
             let specific_files = &[]; // No specific files in daemon mode

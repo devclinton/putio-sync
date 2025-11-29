@@ -189,7 +189,9 @@ impl DownloadOps {
         let start_time = Instant::now();
         let mut result = DownloadCycleResult::new();
 
-        debug!("Starting download sync cycle...");
+        info!("🔄 Starting download sync cycle - delete_empty_folders: {}, sync_parent_id: {}", 
+              self.config.delete_empty_folders, self.sync_parent_id);
+        debug!("Sync cycle parameters: all={}, filter={:?}, specific_files={:?}", all, filter, specific_files);
 
         // Get list of files to download (recursive)
         let file_entries_with_path = if all {
@@ -225,9 +227,53 @@ impl DownloadOps {
         };
 
         // Apply filters and sorting to the entries (extracting the FileEntry part)
-        let file_entries: Vec<FileEntry> = file_entries_with_path.iter().map(|f| f.entry.clone()).collect();
+        debug!("🔍 Converting {} FileEntryWithPath entries to FileEntry:", file_entries_with_path.len());
+        let file_entries: Vec<FileEntry> = file_entries_with_path
+            .iter()
+            .map(|f| {
+                debug!("📋 Converting: '{}' (ID: {}, is_folder: {}, file_type: '{}')", 
+                       f.entry.name, f.entry.id, f.entry.is_folder, f.entry.file_type);
+                f.entry.clone()
+            })
+            .collect();
+        
+        debug!("🔍 After conversion, checking {} FileEntry entries:", file_entries.len());
+        for (i, entry) in file_entries.iter().enumerate() {
+            debug!("📋 Entry {}: '{}' (ID: {}, is_folder: {}, file_type: '{}')", 
+                   i + 1, entry.name, entry.id, entry.is_folder, entry.file_type);
+        }
+        
         let mut filtered_files = self.apply_filters(file_entries, filter)?;
+        
+        debug!("🔍 After apply_filters, checking {} entries:", filtered_files.len());
+        for (i, entry) in filtered_files.iter().enumerate() {
+            debug!("📋 Filtered entry {}: '{}' (ID: {}, is_folder: {}, file_type: '{}')", 
+                   i + 1, entry.name, entry.id, entry.is_folder, entry.file_type);
+        }
+        
         filtered_files = self.apply_sorting(filtered_files)?;
+        
+        debug!("🔍 After apply_sorting, checking {} entries:", filtered_files.len());
+        for (i, entry) in filtered_files.iter().enumerate() {
+            debug!("📋 Sorted entry {}: '{}' (ID: {}, is_folder: {}, file_type: '{}')", 
+                   i + 1, entry.name, entry.id, entry.is_folder, entry.file_type);
+        }
+        
+        // Safety check: ensure all entries with file_type "FOLDER" have is_folder = true
+        debug!("🔧 Applying safety check for folder flag consistency...");
+        for entry in &mut filtered_files {
+            if entry.file_type == "FOLDER" && !entry.is_folder {
+                warn!("🛠️  Fixed inconsistent folder flag for '{}' (ID: {}): file_type='FOLDER' but is_folder=false", 
+                      entry.name, entry.id);
+                entry.is_folder = true;
+            }
+        }
+        
+        debug!("🔍 After safety check, verifying {} entries:", filtered_files.len());
+        for (i, entry) in filtered_files.iter().enumerate() {
+            debug!("📋 Final entry {}: '{}' (ID: {}, is_folder: {}, file_type: '{}')", 
+                   i + 1, entry.name, entry.id, entry.is_folder, entry.file_type);
+        }
 
         // Create a lookup map for relative paths
         let path_map: std::collections::HashMap<i64, String> = file_entries_with_path
@@ -236,9 +282,20 @@ impl DownloadOps {
             .collect();
 
         // Only process files (not folders), but preserve path information
+        debug!("🔍 Filtering {} entries for download:", filtered_files.len());
+        for (i, f) in filtered_files.iter().enumerate() {
+            debug!("  Entry {}: '{}' (ID: {}, is_folder: {}, file_type: '{}')", 
+                   i + 1, f.name, f.id, f.is_folder, f.file_type);
+        }
+        
         let download_files: Vec<DownloadFile> = filtered_files
             .iter()
-            .filter(|f| !f.is_folder)
+            .filter(|f| {
+                let is_file = !f.is_folder;
+                debug!("📋 Entry '{}' (ID: {}): is_folder={}, file_type='{}' → include_in_downloads={}", 
+                       f.name, f.id, f.is_folder, f.file_type, is_file);
+                is_file
+            })
             .map(|f| DownloadFile {
                 file_id: f.id,
                 filename: f.name.clone(),
@@ -249,6 +306,22 @@ impl DownloadOps {
             .collect();
 
         result.files_found = download_files.len();
+
+        // Always run empty directory cleanup if enabled, regardless of whether there are files to download
+        if self.config.delete_empty_folders {
+            info!("Starting empty directory scan (delete_empty_folders is enabled)");
+            if let Err(e) = self.scan_and_track_empty_directories().await {
+                warn!("Failed to scan for empty directories: {}", e);
+            }
+
+            // Delete directories that have been empty for the threshold number of scans
+            if let Err(e) = self.cleanup_persistently_empty_directories().await {
+                warn!("Failed to cleanup persistently empty directories: {}", e);
+            }
+            info!("Empty directory scan completed");
+        } else {
+            debug!("Empty directory cleanup is disabled (delete_empty_folders = false)");
+        }
 
         if download_files.is_empty() {
             debug!("No files to download in this cycle");
@@ -395,34 +468,30 @@ impl DownloadOps {
             info!("Immediate empty directory cleanup completed");
         }
 
-        // Scan for empty directories and track them (if cleanup is enabled)
-        if self.config.delete_empty_folders {
-            info!("Starting empty directory scan (delete_empty_folders is enabled)");
-            if let Err(e) = self.scan_and_track_empty_directories().await {
-                warn!("Failed to scan for empty directories: {}", e);
-            }
-
-            // Delete directories that have been empty for the threshold number of scans
-            if let Err(e) = self.cleanup_persistently_empty_directories().await {
-                warn!("Failed to cleanup persistently empty directories: {}", e);
-            }
-            info!("Empty directory scan completed");
-        } else {
-            debug!("Empty directory cleanup is disabled (delete_empty_folders = false)");
-        }
+        // Note: Empty directory scanning and cleanup now happens earlier in the cycle 
+        // (before downloads) to ensure it runs even when there are no files to download
 
         // Finish progress display
         progress_display.finish();
 
         result.duration_secs = start_time.elapsed().as_secs_f64();
 
-        debug!(
-            "Download sync cycle completed - found: {}, downloaded: {}, failed: {}, duration: {:.1}s",
+        // Generate a comprehensive summary
+        info!(
+            "📊 Download sync cycle completed - found: {}, downloaded: {}, failed: {}, duration: {:.1}s",
             result.files_found,
             result.files_downloaded,
             result.files_failed,
             result.duration_secs
         );
+        
+        if self.config.delete_empty_folders {
+            let tracker_status = {
+                let tracker = self.empty_directory_tracker.lock().await;
+                tracker.get_tracking_status()
+            };
+            info!("🗂️  Empty directory tracking summary: {}", tracker_status);
+        }
 
         Ok(result)
     }
@@ -501,13 +570,17 @@ impl DownloadOps {
 
     /// Clean up empty directories on Put.io after file deletion
     async fn cleanup_empty_directories_after_deletion(&self, download_file: &DownloadFile) -> Result<()> {
+        info!("🧹 Starting immediate empty directory cleanup for file: {} (relative_path: '{}')", 
+              download_file.filename, download_file.relative_path);
+              
         if download_file.relative_path.is_empty() {
-            // File is in root directory, no cleanup needed
+            debug!("File '{}' is in root directory, no cleanup needed", download_file.filename);
             return Ok(());
         }
 
         // Parse the relative_path to get directory hierarchy
         let path_components: Vec<&str> = download_file.relative_path.split('/').collect();
+        info!("Directory hierarchy for cleanup: {:?}", path_components);
         
         // Start from the deepest directory and work our way up
         for i in (0..path_components.len()).rev() {
@@ -517,34 +590,43 @@ impl DownloadOps {
                 path_components[0..=i].join("/")
             };
             
-            debug!("Checking if directory is empty: {}", current_path);
+            info!("🔍 Checking if directory '{}' is empty for immediate cleanup", current_path);
             
             // Get the directory ID by searching for it
-            if let Ok(dir_id) = self.find_directory_id(&current_path).await {
-                // Check if the directory is empty
-                match self.client.list_files(dir_id).await {
-                    Ok(response) => {
-                        if response.files.is_empty() {
-                            info!("🗑️  Deleting empty directory from Put.io: {}", current_path);
-                            if let Err(e) = self.client.delete_files(vec![dir_id]).await {
-                                warn!("Failed to delete empty directory '{}' from Put.io: {}", current_path, e);
-                                break; // Stop cleanup on first failure
+            match self.find_directory_id(&current_path).await {
+                Ok(dir_id) => {
+                    debug!("Found directory '{}' with ID: {}", current_path, dir_id);
+                    // Check if the directory is empty
+                    match self.client.list_files(dir_id).await {
+                        Ok(response) => {
+                            debug!("Directory '{}' contains {} items", current_path, response.files.len());
+                            if response.files.is_empty() {
+                                info!("🗑️  Deleting empty directory from Put.io: '{}'", current_path);
+                                if let Err(e) = self.client.delete_files(vec![dir_id]).await {
+                                    error!("❌ Failed to delete empty directory '{}' from Put.io: {}", current_path, e);
+                                    break; // Stop cleanup on first failure
+                                } else {
+                                    info!("✅ Successfully deleted empty directory: '{}'", current_path);
+                                }
                             } else {
-                                debug!("Successfully deleted empty directory: {}", current_path);
+                                info!("📂 Directory '{}' is not empty ({} items), stopping cleanup", current_path, response.files.len());
+                                // Log what's in the directory
+                                for (i, item) in response.files.iter().take(3).enumerate() {
+                                    debug!("  Item {}: '{}' (type: {})", i + 1, item.name, item.file_type);
+                                }
+                                break; // Directory not empty, stop cleanup
                             }
-                        } else {
-                            debug!("Directory is not empty, stopping cleanup: {}", current_path);
-                            break; // Directory not empty, stop cleanup
+                        }
+                        Err(e) => {
+                            warn!("❌ Failed to check directory contents for '{}': {}", current_path, e);
+                            break; // Stop on error
                         }
                     }
-                    Err(e) => {
-                        warn!("Failed to check directory contents for '{}': {}", current_path, e);
-                        break; // Stop on error
-                    }
                 }
-            } else {
-                debug!("Could not find directory ID for path: {}", current_path);
-                break; // If we can't find the directory, stop cleanup
+                Err(_) => {
+                    debug!("Could not find directory ID for path: '{}' (may have already been deleted)", current_path);
+                    break; // If we can't find the directory, stop cleanup
+                }
             }
         }
         
@@ -581,7 +663,12 @@ impl DownloadOps {
         let mut tracker = self.empty_directory_tracker.lock().await;
         
         // Clean up old entries first
+        let before_cleanup_count = tracker.empty_directories.len();
         tracker.cleanup_old_entries();
+        let after_cleanup_count = tracker.empty_directories.len();
+        if before_cleanup_count != after_cleanup_count {
+            info!("Cleaned up {} stale directory tracking entries", before_cleanup_count - after_cleanup_count);
+        }
         
         let mut empty_count = 0;
         let mut non_empty_count = 0;
@@ -589,26 +676,44 @@ impl DownloadOps {
         
         for (path, dir_id) in directories {
             // Check if directory is empty
+            debug!("🔍 Checking if directory '{}' (ID: {}) is empty", path, dir_id);
             match self.client.list_files(dir_id).await {
                 Ok(response) => {
+                    debug!("Directory '{}' contains {} items", path, response.files.len());
+                    
+                    if !response.files.is_empty() {
+                        // Log details about what's in the directory
+                        for (i, item) in response.files.iter().take(5).enumerate() {
+                            debug!("  Item {}: '{}' (type: {}, is_folder: {})", i + 1, item.name, item.file_type, item.is_folder);
+                        }
+                        if response.files.len() > 5 {
+                            debug!("  ... and {} more items", response.files.len() - 5);
+                        }
+                    }
+                    
                     if response.files.is_empty() {
                         empty_count += 1;
+                        info!("🗂️  Empty directory detected: '{}' (ID: {})", path, dir_id);
                         // Directory is empty, track it
                         let should_delete = tracker.mark_empty(path.clone(), dir_id);
                         if should_delete {
                             ready_for_deletion += 1;
-                            info!("Directory '{}' has been empty for {} scans and is ready for deletion", path, tracker.scan_threshold);
+                            info!("🗑️  Directory '{}' has been empty for {} scans and is ready for deletion", path, tracker.scan_threshold);
                         } else {
-                            debug!("Empty directory '{}' added to tracking (will delete after {} more scans)", path, tracker.scan_threshold - 1);
+                            let current_count = tracker.empty_directories.get(&path).map(|(_, _, count)| *count).unwrap_or(0);
+                            info!("📋 Empty directory '{}' added to tracking ({}/{} scans)", path, current_count, tracker.scan_threshold);
                         }
                     } else {
                         non_empty_count += 1;
                         // Directory is not empty, remove from tracking
+                        if tracker.empty_directories.contains_key(&path) {
+                            info!("📂 Directory '{}' is no longer empty, removing from tracking", path);
+                        }
                         tracker.mark_not_empty(&path);
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to check directory '{}': {}", path, e);
+                    warn!("❌ Failed to check directory '{}': {}", path, e);
                 }
             }
         }
@@ -638,27 +743,42 @@ impl DownloadOps {
 
         for (path, dir_id) in directories_to_delete {
             // Double-check that the directory is still empty before deletion
+            info!("🔍 Verifying directory '{}' (ID: {}) is still empty before deletion", path, dir_id);
             match self.client.list_files(dir_id).await {
                 Ok(response) => {
+                    debug!("Pre-deletion check: directory '{}' contains {} items", path, response.files.len());
+                    
                     if response.files.is_empty() {
-                        info!("🗑️  Deleting persistently empty directory: {}", path);
-                        if let Err(e) = self.client.delete_files(vec![dir_id]).await {
-                            warn!("Failed to delete empty directory '{}': {}", path, e);
-                        } else {
-                            // Remove from tracking after successful deletion
-                            let mut tracker = self.empty_directory_tracker.lock().await;
-                            tracker.mark_not_empty(&path);
-                            info!("Successfully deleted persistently empty directory: {}", path);
+                        info!("✅ Confirmed empty - deleting persistently empty directory: '{}'", path);
+                        match self.client.delete_files(vec![dir_id]).await {
+                            Ok(_) => {
+                                // Remove from tracking after successful deletion
+                                let mut tracker = self.empty_directory_tracker.lock().await;
+                                tracker.mark_not_empty(&path);
+                                info!("🗑️  ✅ Successfully deleted empty directory: '{}'", path);
+                            }
+                            Err(e) => {
+                                error!("❌ Failed to delete empty directory '{}': {}", path, e);
+                                debug!("Delete error details: {:#}", e);
+                            }
                         }
                     } else {
-                        debug!("Directory '{}' is no longer empty, skipping deletion", path);
+                        info!("📂 Directory '{}' is no longer empty (has {} items), skipping deletion", path, response.files.len());
+                        // Log what's in the directory
+                        for (i, item) in response.files.iter().take(3).enumerate() {
+                            debug!("  Item {}: '{}' (type: {})", i + 1, item.name, item.file_type);
+                        }
+                        if response.files.len() > 3 {
+                            debug!("  ... and {} more items", response.files.len() - 3);
+                        }
                         // Remove from tracking since it's no longer empty
                         let mut tracker = self.empty_directory_tracker.lock().await;
                         tracker.mark_not_empty(&path);
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to verify directory '{}' before deletion: {}", path, e);
+                    error!("❌ Failed to verify directory '{}' before deletion: {}", path, e);
+                    debug!("Verification error details: {:#}", e);
                 }
             }
         }
@@ -671,31 +791,75 @@ impl DownloadOps {
         Box::pin(async move {
             let mut directories = Vec::new();
             
-            let response = self.client.list_files(parent_id).await?;
+            debug!("🔍 Starting recursive scan of directory ID {} (path: '{}')", parent_id, current_path);
             
-            for entry in response.files {
-                if entry.is_folder {
-                    let dir_path = if current_path.is_empty() {
-                        entry.name.clone()
-                    } else {
-                        format!("{}/{}", current_path, entry.name)
-                    };
+            match self.client.list_files(parent_id).await {
+                Ok(response) => {
+                    info!("📋 Directory ID {} contains {} items", parent_id, response.files.len());
                     
-                    // Add this directory to the list
-                    directories.push((dir_path.clone(), entry.id));
+                    let mut folder_count = 0;
+                    let mut file_count = 0;
                     
-                    // Recursively scan subdirectories
-                    match self.get_all_directories_recursive(entry.id, dir_path).await {
-                        Ok(mut sub_dirs) => {
-                            directories.append(&mut sub_dirs);
+                    // Log each item for detailed debugging
+                    for (i, entry) in response.files.iter().enumerate() {
+                        debug!("📋 Item {}: '{}' (ID: {}, type: '{}', is_folder: {})", 
+                               i + 1, entry.name, entry.id, entry.file_type, entry.is_folder);
+                    }
+                    
+                    for entry in response.files {
+                        // Make sure is_folder is set correctly based on file_type
+                        let mut entry = entry;
+                        let original_is_folder = entry.is_folder;
+                        if entry.file_type == "FOLDER" {
+                            entry.is_folder = true;
+                            if !original_is_folder {
+                                debug!("🔧 Corrected is_folder flag for '{}' from false to true", entry.name);
+                            }
                         }
-                        Err(e) => {
-                            debug!("Failed to scan subdirectory '{}': {}", entry.name, e);
+                        
+                        if entry.is_folder || entry.file_type == "FOLDER" {
+                            folder_count += 1;
+                            let dir_path = if current_path.is_empty() {
+                                entry.name.clone()
+                            } else {
+                                format!("{}/{}", current_path, entry.name)
+                            };
+                            
+                            info!("📂 Adding directory to list: '{}' (ID: {})", dir_path, entry.id);
+                            
+                            // Add this directory to the list
+                            directories.push((dir_path.clone(), entry.id));
+                            
+                            // Recursively scan subdirectories
+                            debug!("🔄 Recursively scanning subdirectory '{}' (ID: {})", entry.name, entry.id);
+                            match self.get_all_directories_recursive(entry.id, dir_path).await {
+                                Ok(mut sub_dirs) => {
+                                    info!("✅ Subdirectory scan of '{}' returned {} directories", entry.name, sub_dirs.len());
+                                    for (sub_path, sub_id) in &sub_dirs {
+                                        debug!("  Subdirectory: '{}' (ID: {})", sub_path, sub_id);
+                                    }
+                                    directories.append(&mut sub_dirs);
+                                }
+                                Err(e) => {
+                                    error!("❌ Failed to scan subdirectory '{}': {}", entry.name, e);
+                                }
+                            }
+                        } else {
+                            file_count += 1;
+                            debug!("📄 File detected: '{}' (ID: {}, type: {})", entry.name, entry.id, entry.file_type);
                         }
                     }
+                    
+                    info!("✅ Directory ID {} scan complete: {} folders, {} files, {} total directories found in this branch", 
+                           parent_id, folder_count, file_count, directories.len());
+                }
+                Err(e) => {
+                    error!("❌ Failed to list files for directory ID {}: {}", parent_id, e);
+                    return Err(e.into());
                 }
             }
             
+            debug!("🔍 Returning {} directories from scan of ID {} ('{}')", directories.len(), parent_id, current_path);
             Ok(directories)
         })
     }

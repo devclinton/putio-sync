@@ -4,17 +4,14 @@
 //! chunking, resume, and daemon mode.
 
 use anyhow::{anyhow, Context, Result};
-use putio_sync_core::api::{ApiClient, FileEntry};
+use putio_sync_core::api::ApiClient;
 use putio_sync_core::config::{Config, DownloadConfig, ProgressStyle, SortOrder};
 use putio_sync_core::db::Database;
-use putio_sync_core::download::{DownloadFile, DownloadManager};
-use putio_sync_core::filter::{parse_size, sort_files, FileFilter, SortField};
+use putio_sync_core::filter::parse_size;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
-
-use crate::ui::ProgressDisplay;
 
 /// Execute the download command
 #[allow(clippy::too_many_arguments)]
@@ -169,156 +166,47 @@ async fn run_single_download(
             .context("Failed to initialize database")?,
     );
 
-    // Get list of files to download
+    // Use DownloadOps for unified sync behavior (same as daemon mode)
     info!("Fetching file list from Put.io...");
-    let file_entries = if all {
-        // Get all files from root folder
-        let response = client
-            .list_files(0)
-            .await
-            .context("Failed to fetch file list from Put.io")?;
-        response.files
-    } else {
-        // Get specific files by ID
-        let mut entries = Vec::new();
-        for file_id in files {
-            match client.get_file(file_id).await {
-                Ok(file_response) => entries.push(file_response.file),
-                Err(e) => {
-                    warn!("Failed to get file {}: {}", file_id, e);
-                }
-            }
-        }
-        entries
-    };
-
-    // Apply filters
-    let mut filtered_files = apply_filters(file_entries, filter)?;
-
-    // Apply sorting
-    filtered_files = apply_sorting(filtered_files, &download_config)?;
-
-    if filtered_files.is_empty() {
-        info!("No files to download after applying filters");
-        return Ok(());
-    }
-
-    info!("Found {} files to download", filtered_files.len());
-
-    // Calculate total size
-    let total_size: u64 = filtered_files
-        .iter()
-        .filter(|f| !f.is_folder)
-        .map(|f| f.size.max(0) as u64)
-        .sum();
-
-    info!(
-        "Total download size: {} ({} bytes)",
-        format_size(total_size),
-        total_size
-    );
-
-    // Create progress display
-    let progress_display = Arc::new(ProgressDisplay::new(
-        download_config.progress_style.clone(),
-        filtered_files.len() as u64,
-        total_size,
-    ));
-
-    // Create download manager
+    let sync_parent_id = 0; // Use root for --all, could be configurable
+    
     let client_arc = Arc::new(client);
-    let manager = DownloadManager::new(
+    let download_ops = crate::download_ops::DownloadOps::new(
         client_arc.clone(),
-        database.clone(),
         download_config.clone(),
-    );
+        sync_parent_id,
+    )
+    .await
+    .context("Failed to create download operations")?;
 
-    // Convert file entries to download files
-    let download_files: Vec<DownloadFile> = filtered_files
-        .iter()
-        .filter(|f| !f.is_folder)
-        .map(|f| DownloadFile {
-            file_id: f.id,
-            filename: f.name.clone(),
-            relative_path: "".to_string(), // Non-daemon downloads don't preserve directory structure by default
-            file_size: f.size.max(0) as u64,
-            download_url: client_arc.get_download_url(f.id),
-        })
-        .collect();
+    // Convert file IDs to slice for DownloadOps
+    let specific_files: Vec<i64> = if all { Vec::new() } else { files };
 
-    // Set up Ctrl+C handler
-    let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let shutdown_clone = shutdown.clone();
-    ctrlc::set_handler(move || {
-        info!("Received interrupt signal, shutting down gracefully...");
-        shutdown_clone.store(true, std::sync::atomic::Ordering::SeqCst);
-    })
-    .context("Failed to set Ctrl+C handler")?;
+    // Run unified sync cycle (same logic as daemon mode)
+    let result = download_ops
+        .run_sync_cycle(filter.as_deref(), all, &specific_files, true) // true = show progress
+        .await
+        .context("Failed to run download sync cycle")?;
 
-    // Download files
-    info!("Starting download of {} files...", download_files.len());
-
-    let mut successful = 0;
-    let mut failed = 0;
-    let mut total_bytes = 0u64;
-
-    for download_file in download_files {
-        // Check for shutdown signal
-        if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-            warn!("Download interrupted by user");
-            break;
-        }
-
-        let callback = progress_display.clone().create_callback();
-
-        match manager
-            .download_file(download_file.clone(), Some(callback))
-            .await
-        {
-            Ok(result) => {
-                if result.success {
-                    successful += 1;
-                    total_bytes += result.bytes_downloaded;
-                } else {
-                    failed += 1;
-                    error!(
-                        "Download failed for file {}: {}",
-                        download_file.file_id,
-                        result.error.unwrap_or_else(|| "Unknown error".to_string())
-                    );
-                }
-            }
-            Err(e) => {
-                failed += 1;
-                error!("Download failed for file {}: {}", download_file.file_id, e);
-            }
-        }
+    // Display summary (matching daemon output format)
+    println!("\n📊 Download Summary");
+    println!("═══════════════════════════════════════════════");
+    println!("Files downloaded:  {}", result.files_downloaded);
+    if result.files_failed > 0 {
+        println!("Files failed:      {}", result.files_failed);
     }
-
-    // Finish progress display
-    progress_display.finish();
-
-    // Display summary
-    let elapsed = start_time.elapsed();
-    let avg_speed = if elapsed.as_secs() > 0 {
-        total_bytes as f64 / elapsed.as_secs_f64()
+    println!("Total size:        {} ({} bytes)", format_size(result.total_bytes), result.total_bytes);
+    println!("Time elapsed:      {:.2}s", result.duration_secs);
+    let avg_speed = if result.duration_secs > 0.0 {
+        result.total_bytes as f64 / result.duration_secs
     } else {
         0.0
     };
-
-    println!("\n📊 Download Summary");
-    println!("═══════════════════════════════════════════════");
-    println!("Files downloaded:  {}", successful);
-    if failed > 0 {
-        println!("Files failed:      {}", failed);
-    }
-    println!("Total size:        {} ({} bytes)", format_size(total_bytes), total_bytes);
-    println!("Time elapsed:      {:.2}s", elapsed.as_secs_f64());
     println!("Average speed:     {}/s", format_size(avg_speed as u64));
     println!("═══════════════════════════════════════════════");
 
-    if failed > 0 {
-        return Err(anyhow!("{} files failed to download", failed));
+    if result.files_failed > 0 {
+        return Err(anyhow!("{} files failed to download", result.files_failed));
     }
 
     Ok(())
@@ -482,30 +370,8 @@ fn parse_progress_style(s: &str) -> Result<ProgressStyle> {
     }
 }
 
-/// Apply filters to file list
-fn apply_filters(files: Vec<FileEntry>, filter: Option<String>) -> Result<Vec<FileEntry>> {
-    let mut filtered = files;
-
-    // Apply glob pattern filter if specified
-    if let Some(pattern) = filter {
-        let file_filter = FileFilter::new().with_name_pattern(pattern);
-        filtered.retain(|f| file_filter.matches(f));
-    }
-
-    Ok(filtered)
-}
-
-/// Apply sorting to file list
-fn apply_sorting(files: Vec<FileEntry>, config: &DownloadConfig) -> Result<Vec<FileEntry>> {
-    let sort_field = match config.sort_order {
-        SortOrder::ByDate => SortField::Date,
-        SortOrder::ByName => SortField::Name,
-        SortOrder::ByExtension => SortField::Name, // Use Name as fallback for extension
-        SortOrder::BySize => SortField::Size,
-    };
-
-    Ok(sort_files(files, sort_field, config.reverse_sort))
-}
+// Note: apply_filters and apply_sorting functions removed as they're now handled 
+// by DownloadOps::run_sync_cycle for unified behavior between daemon and direct download modes
 
 /// Format size in bytes to human-readable format
 fn format_size(bytes: u64) -> String {
