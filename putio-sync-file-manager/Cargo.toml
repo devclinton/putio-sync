@@ -1,0 +1,40 @@
+[package]
+name = "putio-sync-file-manager"
+version = "0.2.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "File watching and torrent management for putio-sync"
+
+[dependencies]
+# Internal dependencies
+putio-sync-client = { path = "../putio-sync-client" }
+putio-sync-db = { path = "../putio-sync-db" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# File watching
+notify = "6.1"
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Hashing
+sha2 = "0.10"
+
+# Signal handling
+ctrlc = "3.4"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3.8"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
