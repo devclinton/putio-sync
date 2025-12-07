@@ -3,8 +3,8 @@
 //! Starts an HTTP API server with optional daemon modes for watch and download.
 
 use anyhow::{Context, Result};
-use putio_sync_core::api::ApiClient;
-use putio_sync_core::config::Config;
+use putio_sync_client::PutioApiClient;
+use putio_sync_core::config::{AuthMethod, Config};
 use std::path::PathBuf;
 use tokio::signal;
 use tracing::{debug, info, warn};
@@ -179,7 +179,7 @@ async fn shutdown_signal() {
 /// uploads them to Put.io.
 fn spawn_watch_daemon(config: Config) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        use crate::watch::TorrentWatcher;
+        use putio_sync_file_manager::TorrentWatcher;
 
         // Create a new Tokio runtime for this thread
         let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
@@ -199,7 +199,35 @@ fn spawn_watch_daemon(config: Config) -> std::thread::JoinHandle<()> {
                 }
             };
 
-            let client = ApiClient::from_auth_config(auth_config);
+            let client = match auth_config.auth_method {
+                AuthMethod::Token => {
+                    let token = match auth_config.token {
+                        Some(t) => t,
+                        None => {
+                            warn!("Token not configured, stopping");
+                            return;
+                        }
+                    };
+                    PutioApiClient::new(token)
+                }
+                AuthMethod::AppPassword => {
+                    let username = match auth_config.username {
+                        Some(u) => u,
+                        None => {
+                            warn!("Username not configured, stopping");
+                            return;
+                        }
+                    };
+                    let password = match auth_config.password {
+                        Some(p) => p,
+                        None => {
+                            warn!("Password not configured, stopping");
+                            return;
+                        }
+                    };
+                    PutioApiClient::with_credentials(username, password)
+                }
+            };
 
             // Create and run watcher
             let watcher = TorrentWatcher::new(
@@ -240,7 +268,35 @@ fn spawn_download_daemon(config: Config) -> std::thread::JoinHandle<()> {
                 }
             };
 
-            let client = ApiClient::from_auth_config(auth_config);
+            let client = match auth_config.auth_method {
+                AuthMethod::Token => {
+                    let token = match auth_config.token {
+                        Some(t) => t,
+                        None => {
+                            warn!("Token not configured, stopping");
+                            return;
+                        }
+                    };
+                    PutioApiClient::new(token)
+                }
+                AuthMethod::AppPassword => {
+                    let username = match auth_config.username {
+                        Some(u) => u,
+                        None => {
+                            warn!("Username not configured, stopping");
+                            return;
+                        }
+                    };
+                    let password = match auth_config.password {
+                        Some(p) => p,
+                        None => {
+                            warn!("Password not configured, stopping");
+                            return;
+                        }
+                    };
+                    PutioApiClient::with_credentials(username, password)
+                }
+            };
 
             // Run download daemon loop
             loop {

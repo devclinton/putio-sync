@@ -16,9 +16,16 @@ name = "putio-sync"
 path = "src/main.rs"
 
 [dependencies]
-# Core library
+# Core library (for Config and utilities)
 putio-sync-core = { path = "../putio-sync-core" }
 putio-sync-api = { path = "../putio-sync-api" }
+
+# Specialized crates
+putio-sync-client = { path = "../putio-sync-client" }
+putio-sync-db = { path = "../putio-sync-db" }
+putio-sync-download = { path = "../putio-sync-download" }
+putio-sync-file-manager = { path = "../putio-sync-file-manager" }
+putio-sync-daemon = { path = "../putio-sync-daemon" }
 
 # Async runtime
 tokio = { workspace = true }
