@@ -1,8 +1,8 @@
 //! Transfers command implementation
 
 use anyhow::{Context, Result};
-use putio_sync_core::api::ApiClient;
-use putio_sync_core::config::Config;
+use putio_sync_client::PutioApiClient;
+use putio_sync_core::config::{AuthMethod, Config};
 use serde::Serialize;
 use std::path::PathBuf;
 use tracing::info;
@@ -131,10 +131,26 @@ fn load_config(config_path: Option<PathBuf>) -> Result<Config> {
 }
 
 /// Create API client from configuration
-fn create_api_client(config: &Config) -> Result<ApiClient> {
+fn create_api_client(config: &Config) -> Result<PutioApiClient> {
     let auth_config = config.auth.clone()
         .ok_or_else(|| anyhow::anyhow!("No authentication configured. Run 'putio-sync login' first."))?;
-    Ok(ApiClient::from_auth_config(auth_config))
+
+    let client = match auth_config.auth_method {
+        AuthMethod::Token => {
+            let token = auth_config.token
+                .ok_or_else(|| anyhow::anyhow!("Token not configured"))?;
+            PutioApiClient::new(token)
+        }
+        AuthMethod::AppPassword => {
+            let username = auth_config.username
+                .ok_or_else(|| anyhow::anyhow!("Username not configured"))?;
+            let password = auth_config.password
+                .ok_or_else(|| anyhow::anyhow!("Password not configured"))?;
+            PutioApiClient::with_credentials(username, password)
+        }
+    };
+
+    Ok(client)
 }
 
 /// Display transfers in table format
