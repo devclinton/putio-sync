@@ -2,6 +2,7 @@
 members = [
     "putio-sync-client",
     "putio-sync-db",
+    "putio-sync-download",
     "putio-sync-core",
     "putio-sync-cli",
     "putio-sync-api",
