@@ -8,6 +8,9 @@ repository.workspace = true
 description = "Core library for putio-sync - domain logic and API client"
 
 [dependencies]
+# Internal dependencies
+putio-sync-client = { path = "../putio-sync-client" }
+
 # Async runtime
 tokio = { workspace = true }
 

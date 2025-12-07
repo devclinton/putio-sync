@@ -10,7 +10,7 @@ pub use json::format_json;
 pub use table::format_table;
 pub use tree::format_tree;
 
-use putio_sync_core::api::FileEntry;
+use putio_sync_client::FileEntry;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
