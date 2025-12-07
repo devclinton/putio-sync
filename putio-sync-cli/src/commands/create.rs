@@ -1,9 +1,9 @@
 //! Create command implementation
 
-use crate::watch::TorrentWatcher;
 use anyhow::{Context, Result};
-use putio_sync_core::api::ApiClient;
-use putio_sync_core::config::Config;
+use putio_sync_client::PutioApiClient;
+use putio_sync_core::config::{AuthMethod, Config};
+use putio_sync_file_manager::TorrentWatcher;
 use std::path::PathBuf;
 use tracing::{debug, info};
 
@@ -33,7 +33,20 @@ pub async fn execute_create(
         anyhow::anyhow!("No authentication configured. Please run 'putio-sync login' first.")
     })?;
 
-    let client = ApiClient::from_auth_config(auth_config);
+    let client = match auth_config.auth_method {
+        AuthMethod::Token => {
+            let token = auth_config.token
+                .ok_or_else(|| anyhow::anyhow!("Token not configured"))?;
+            PutioApiClient::new(token)
+        }
+        AuthMethod::AppPassword => {
+            let username = auth_config.username
+                .ok_or_else(|| anyhow::anyhow!("Username not configured"))?;
+            let password = auth_config.password
+                .ok_or_else(|| anyhow::anyhow!("Password not configured"))?;
+            PutioApiClient::with_credentials(username, password)
+        }
+    };
 
     // Process source files/links if provided
     if !sources.is_empty() {
@@ -67,7 +80,7 @@ fn load_config(config_path: Option<PathBuf>) -> Result<Config> {
 
 /// Add sources (torrent files or magnet links) to Put.io
 async fn add_sources(
-    client: &ApiClient,
+    client: &PutioApiClient,
     sources: &[String],
     parent_id: Option<i64>,
 ) -> Result<()> {
@@ -105,7 +118,7 @@ fn is_torrent_file(s: &str) -> bool {
 
 /// Add a magnet link to Put.io
 async fn add_magnet_link(
-    client: &ApiClient,
+    client: &PutioApiClient,
     magnet: &str,
     parent_id: Option<i64>,
 ) -> Result<()> {
@@ -132,7 +145,7 @@ async fn add_magnet_link(
 
 /// Add a .torrent file to Put.io
 async fn add_torrent_file(
-    client: &ApiClient,
+    client: &PutioApiClient,
     file_path: &str,
     parent_id: Option<i64>,
 ) -> Result<()> {
@@ -169,7 +182,7 @@ async fn add_torrent_file(
 
 /// Process watch directories once
 async fn process_watch_directories(
-    client: &ApiClient,
+    client: &PutioApiClient,
     watch_dirs: &[PathBuf],
     parent_id: Option<i64>,
 ) -> Result<()> {
@@ -207,7 +220,7 @@ async fn process_watch_directories(
 
 /// Watch directories in daemon mode
 async fn watch_daemon(
-    client: &ApiClient,
+    client: &PutioApiClient,
     watch_dirs: &[PathBuf],
     parent_id: Option<i64>,
     interval: u64,
