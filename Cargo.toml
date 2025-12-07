@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "putio-sync-client",
     "putio-sync-core",
     "putio-sync-cli",
     "putio-sync-api",
