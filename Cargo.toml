@@ -4,6 +4,7 @@ members = [
     "putio-sync-db",
     "putio-sync-download",
     "putio-sync-file-manager",
+    "putio-sync-daemon",
     "putio-sync-core",
     "putio-sync-cli",
     "putio-sync-api",
