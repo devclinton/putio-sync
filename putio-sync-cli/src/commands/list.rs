@@ -4,8 +4,8 @@
 //! and multiple output formats.
 
 use anyhow::{anyhow, Context, Result};
-use putio_sync_core::api::{ApiClient, FileEntry};
-use putio_sync_core::config::Config;
+use putio_sync_client::{FileEntry, PutioApiClient};
+use putio_sync_core::config::{AuthMethod, Config};
 use putio_sync_core::filter::{parse_size, sort_files, FileFilter, FileTypeFilter, SortField};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -43,7 +43,20 @@ pub async fn execute_list(
     })?;
 
     // Create API client
-    let client = ApiClient::from_auth_config(auth);
+    let client = match auth.auth_method {
+        AuthMethod::Token => {
+            let token = auth.token
+                .ok_or_else(|| anyhow!("Token not configured"))?;
+            PutioApiClient::new(token)
+        }
+        AuthMethod::AppPassword => {
+            let username = auth.username
+                .ok_or_else(|| anyhow!("Username not configured"))?;
+            let password = auth.password
+                .ok_or_else(|| anyhow!("Password not configured"))?;
+            PutioApiClient::with_credentials(username, password)
+        }
+    };
 
     // Determine folder ID to list
     let folder_id = determine_folder_id(&client, path, id).await?;
@@ -85,7 +98,7 @@ pub async fn execute_list(
 
 /// Determine the folder ID to list
 async fn determine_folder_id(
-    client: &ApiClient,
+    client: &PutioApiClient,
     path: Option<String>,
     id: Option<i64>,
 ) -> Result<i64> {
@@ -110,7 +123,7 @@ async fn determine_folder_id(
 }
 
 /// List files recursively
-async fn list_recursive(client: &ApiClient, folder_id: i64) -> Result<Vec<FileEntry>> {
+async fn list_recursive(client: &PutioApiClient, folder_id: i64) -> Result<Vec<FileEntry>> {
     let mut all_files = Vec::new();
     let mut folders_to_process = vec![folder_id];
 

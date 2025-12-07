@@ -7,7 +7,7 @@ use axum::{extract::Query, response::Html, routing::get, Router};
 use oauth2::{
     basic::BasicClient, AuthUrl, ClientId, ClientSecret, CsrfToken, RedirectUrl, Scope, TokenUrl,
 };
-use putio_sync_core::api::ApiClient;
+use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthConfig, Config};
 use serde::Deserialize;
 use std::net::SocketAddr;
@@ -177,7 +177,7 @@ pub async fn execute_login(
     println!("Step 4: Verifying token");
     println!("-------------------------------");
 
-    let api_client = ApiClient::new(access_token.clone());
+    let api_client = PutioApiClient::new(access_token.clone());
 
     // Try to get account info to verify token and display info
     match api_client.get_account_info().await {

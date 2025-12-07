@@ -1,8 +1,8 @@
 //! Status and diagnostics command implementation
 
 use anyhow::Result;
-use putio_sync_core::api::ApiClient;
-use putio_sync_core::config::Config;
+use putio_sync_client::PutioApiClient;
+use putio_sync_core::config::{AuthMethod, Config};
 use std::path::PathBuf;
 use tracing::{debug, info};
 
@@ -155,7 +155,24 @@ async fn generate_download_status(config: &Option<Config>) -> Result<DownloadSta
                     .as_secs(),
             );
 
-            let client = ApiClient::from_auth_config(auth.clone());
+            let client = match auth.auth_method {
+                AuthMethod::Token => {
+                    if let Some(ref token) = auth.token {
+                        PutioApiClient::new(token.clone())
+                    } else {
+                        debug!("API test skipped: token not configured");
+                        return Ok(status);
+                    }
+                }
+                AuthMethod::AppPassword => {
+                    if let (Some(ref username), Some(ref password)) = (&auth.username, &auth.password) {
+                        PutioApiClient::with_credentials(username.clone(), password.clone())
+                    } else {
+                        debug!("API test skipped: credentials not configured");
+                        return Ok(status);
+                    }
+                }
+            };
             match client.get_account_info().await {
                 Ok(_) => {
                     debug!("API connectivity test successful");
@@ -311,7 +328,28 @@ pub async fn execute_debug(config_path: Option<PathBuf>) -> Result<()> {
     if let Some(ref path) = config_file_path {
         if let Ok(config) = Config::load(path) {
             if let Some(auth) = config.auth {
-                let client = ApiClient::from_auth_config(auth);
+                let client = match auth.auth_method {
+                    AuthMethod::Token => {
+                        match auth.token {
+                            Some(token) => PutioApiClient::new(token),
+                            None => {
+                                println!("  ⚠️  No token configured");
+                                return Ok(());
+                            }
+                        }
+                    }
+                    AuthMethod::AppPassword => {
+                        match (auth.username, auth.password) {
+                            (Some(username), Some(password)) => {
+                                PutioApiClient::with_credentials(username, password)
+                            }
+                            _ => {
+                                println!("  ⚠️  Credentials not fully configured");
+                                return Ok(());
+                            }
+                        }
+                    }
+                };
                 match client.get_account_info().await {
                     Ok(account) => {
                         println!("  ✅ API connection successful");
