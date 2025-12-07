@@ -59,6 +59,20 @@ impl From<putio_sync_core::api::FileEntry> for FileResponse {
     }
 }
 
+impl From<putio_sync_client::FileEntry> for FileResponse {
+    fn from(entry: putio_sync_client::FileEntry) -> Self {
+        Self {
+            id: entry.id,
+            name: entry.name,
+            size: entry.size,
+            file_type: entry.file_type,
+            content_type: entry.content_type,
+            created_at: entry.created_at,
+            parent_id: entry.parent_id,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

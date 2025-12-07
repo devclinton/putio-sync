@@ -66,6 +66,22 @@ impl From<putio_sync_core::api::Transfer> for TransferResponse {
     }
 }
 
+impl From<putio_sync_client::Transfer> for TransferResponse {
+    fn from(transfer: putio_sync_client::Transfer) -> Self {
+        Self {
+            id: transfer.id,
+            name: transfer.name,
+            status: transfer.status,
+            size: transfer.size.unwrap_or(0),
+            percent_done: transfer.percent_done.unwrap_or(0),
+            down_speed: transfer.down_speed,
+            up_speed: transfer.up_speed,
+            error_message: transfer.error_message,
+            created_at: Some(transfer.created_at),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
