@@ -8,8 +8,13 @@ repository.workspace = true
 description = "REST API for putio-sync"
 
 [dependencies]
-# Core library
+# Core library (for Config and utilities)
 putio-sync-core = { path = "../putio-sync-core" }
+
+# Specialized crates
+putio-sync-client = { path = "../putio-sync-client" }
+putio-sync-db = { path = "../putio-sync-db" }
+putio-sync-download = { path = "../putio-sync-download" }
 
 # Web framework
 axum = "0.7"

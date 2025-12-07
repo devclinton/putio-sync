@@ -3,8 +3,8 @@
 use crate::error::{ApiError, ApiResult};
 use crate::models::files::{DeleteFilesRequest, FileResponse, ListFilesRequest};
 use crate::models::{ListResponse, SuccessResponse};
-use putio_sync_core::api::ApiClient;
-use putio_sync_core::config::Config;
+use putio_sync_client::PutioApiClient;
+use putio_sync_core::config::{AuthMethod, Config};
 
 /// List files from Put.io
 ///
@@ -26,8 +26,21 @@ pub async fn list_files(
         .as_ref()
         .ok_or_else(|| ApiError::Unauthorized("No authentication configured".to_string()))?;
 
-    // Create API client
-    let client = ApiClient::from_auth_config(auth.clone());
+    // Create API client based on auth method
+    let client = match auth.auth_method {
+        AuthMethod::Token => {
+            let token = auth.token.as_ref()
+                .ok_or_else(|| ApiError::Unauthorized("Token not configured".to_string()))?;
+            PutioApiClient::new(token.clone())
+        }
+        AuthMethod::AppPassword => {
+            let username = auth.username.as_ref()
+                .ok_or_else(|| ApiError::Unauthorized("Username not configured".to_string()))?;
+            let password = auth.password.as_ref()
+                .ok_or_else(|| ApiError::Unauthorized("Password not configured".to_string()))?;
+            PutioApiClient::with_credentials(username.clone(), password.clone())
+        }
+    };
 
     // Determine which parent ID to use
     let parent_id = if let Some(path) = &request.path {
@@ -67,11 +80,24 @@ pub async fn get_file(config: &Config, file_id: i64) -> ApiResult<FileResponse> 
         .as_ref()
         .ok_or_else(|| ApiError::Unauthorized("No authentication configured".to_string()))?;
 
-    // Create API client
-    let client = ApiClient::from_auth_config(auth.clone());
+    // Create API client based on auth method
+    let client = match auth.auth_method {
+        AuthMethod::Token => {
+            let token = auth.token.as_ref()
+                .ok_or_else(|| ApiError::Unauthorized("Token not configured".to_string()))?;
+            PutioApiClient::new(token.clone())
+        }
+        AuthMethod::AppPassword => {
+            let username = auth.username.as_ref()
+                .ok_or_else(|| ApiError::Unauthorized("Username not configured".to_string()))?;
+            let password = auth.password.as_ref()
+                .ok_or_else(|| ApiError::Unauthorized("Password not configured".to_string()))?;
+            PutioApiClient::with_credentials(username.clone(), password.clone())
+        }
+    };
 
     // Get file
-    let file_response = client.get_file(file_id).await?;
+    let file_response = client.get_file_details(file_id).await?;
 
     Ok(FileResponse::from(file_response.file))
 }
@@ -96,8 +122,21 @@ pub async fn delete_files(
         .as_ref()
         .ok_or_else(|| ApiError::Unauthorized("No authentication configured".to_string()))?;
 
-    // Create API client
-    let client = ApiClient::from_auth_config(auth.clone());
+    // Create API client based on auth method
+    let client = match auth.auth_method {
+        AuthMethod::Token => {
+            let token = auth.token.as_ref()
+                .ok_or_else(|| ApiError::Unauthorized("Token not configured".to_string()))?;
+            PutioApiClient::new(token.clone())
+        }
+        AuthMethod::AppPassword => {
+            let username = auth.username.as_ref()
+                .ok_or_else(|| ApiError::Unauthorized("Username not configured".to_string()))?;
+            let password = auth.password.as_ref()
+                .ok_or_else(|| ApiError::Unauthorized("Password not configured".to_string()))?;
+            PutioApiClient::with_credentials(username.clone(), password.clone())
+        }
+    };
 
     // Delete files
     client.delete_files(request.file_ids.clone()).await?;

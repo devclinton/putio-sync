@@ -13,6 +13,8 @@ use std::fmt;
 pub enum ApiError {
     /// Core library error
     Core(putio_sync_core::error::CoreError),
+    /// Client error
+    Client(putio_sync_client::error::ClientError),
     /// Not found error
     NotFound(String),
     /// Bad request error
@@ -37,6 +39,7 @@ impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ApiError::Core(e) => write!(f, "Core error: {}", e),
+            ApiError::Client(e) => write!(f, "Client error: {}", e),
             ApiError::NotFound(msg) => write!(f, "Not found: {}", msg),
             ApiError::BadRequest(msg) => write!(f, "Bad request: {}", msg),
             ApiError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
@@ -53,10 +56,17 @@ impl From<putio_sync_core::error::CoreError> for ApiError {
     }
 }
 
+impl From<putio_sync_client::error::ClientError> for ApiError {
+    fn from(err: putio_sync_client::error::ClientError) -> Self {
+        ApiError::Client(err)
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, error_message) = match &self {
             ApiError::Core(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+            ApiError::Client(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),

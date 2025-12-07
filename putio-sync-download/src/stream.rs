@@ -5,7 +5,7 @@ use crate::files::create_temp_path;
 use crate::rate_limiter::RateLimiter;
 use putio_sync_client::PutioApiClient;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tracing::{debug, error, info, warn};
