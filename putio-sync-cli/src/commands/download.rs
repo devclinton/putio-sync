@@ -1,13 +1,14 @@
 //! Download command implementation
 //!
 //! Handles downloading files from Put.io with support for workers, progress tracking,
-//! chunking, resume, and daemon mode.
+//! resume, and daemon mode.
 
 use anyhow::{anyhow, Context, Result};
-use putio_sync_core::api::ApiClient;
-use putio_sync_core::config::{Config, DownloadConfig, ProgressStyle, SortOrder};
-use putio_sync_core::db::Database;
-use putio_sync_core::filter::parse_size;
+use putio_sync_client::{FileEntry, PutioApiClient};
+use putio_sync_core::config::{AuthMethod, Config, ProgressStyle, SortOrder};
+use putio_sync_core::filter::{parse_size, sort_files, FileFilter, SortField};
+use putio_sync_db::Database;
+use putio_sync_download::{DownloadConfig, DownloadFile, DownloadManager};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -54,93 +55,148 @@ pub async fn execute_download(
         anyhow!("No authentication credentials found. Please run 'putio-sync login' first.")
     })?;
 
-    // Create download configuration from config + CLI overrides
-    let mut download_config = config.download;
-    
-    info!("Config loaded - target_directory: {}", download_config.target_directory.display());
+    // Get old config for reference
+    let old_config = config.download;
 
-    // Apply CLI overrides to download config
+    // Build new DownloadConfig with fields that map directly
+    let mut target_directory = old_config.target_directory.clone();
     if let Some(d) = dir {
         info!("CLI override - original dir argument: {:?}", d);
-        download_config.target_directory = putio_sync_core::path_utils::expand_path(d)
+        target_directory = putio_sync_core::path_utils::expand_path(d)
             .context("Failed to expand target directory path")?;
-        info!("CLI override - expanded target_directory: {}", download_config.target_directory.display());
-    } else {
-        info!("No CLI override for target directory");
+        info!("CLI override - expanded target_directory: {}", target_directory.display());
     }
-    if let Some(w) = workers {
-        download_config.workers = w;
-    }
-    if let Some(cs) = chunk_size {
-        warn!("Chunk size specified but chunked downloads not supported - using streaming with range request resume instead");
-        let _size_bytes = parse_size(&cs)
-            .map_err(|e| anyhow!("Invalid chunk size '{}': {}", cs, e))?;
-        // Don't set chunk_size_mb since chunked downloads are not supported
-        download_config.chunk_size_mb = None;
-    }
+
+    let mut buffer_size_mb = old_config.buffer_size_mb;
     if let Some(bs) = buffer_size {
         let size_bytes = parse_size(&bs)
             .map_err(|e| anyhow!("Invalid buffer size '{}': {}", bs, e))?;
-        download_config.buffer_size_mb = (size_bytes / 1024 / 1024) as usize;
+        buffer_size_mb = (size_bytes / 1024 / 1024) as usize;
     }
+
+    let mut bandwidth_limit_bytes_per_sec = old_config.bandwidth_limit_bytes_per_sec;
     if let Some(bl) = bandwidth_limit {
         let limit_bytes_per_sec = parse_size(&bl)
             .map_err(|e| anyhow!("Invalid bandwidth limit '{}': {}", bl, e))?;
-        download_config.bandwidth_limit_bytes_per_sec = Some(limit_bytes_per_sec as u64);
+        bandwidth_limit_bytes_per_sec = Some(limit_bytes_per_sec as u64);
     }
-    if no_resume {
-        download_config.resume_enabled = false;
+
+    let skip_existing_flag = if skip_existing {
+        true
+    } else {
+        old_config.skip_existing
+    };
+
+    // Handle chunk size warning
+    if chunk_size.is_some() {
+        warn!("Chunk size specified but chunked downloads not supported - using streaming with range request resume instead");
     }
-    if skip_existing {
-        download_config.skip_existing = true;
-    }
-    if delete_after {
-        download_config.delete_after_download = true;
-    }
-    if let Some(def) = delete_empty_folders {
-        download_config.delete_empty_folders = def;
-    }
-    if let Some(s) = sort {
-        download_config.sort_order = parse_sort_order(&s)?;
-    }
-    if reverse {
-        download_config.reverse_sort = true;
-    }
-    if let Some(p) = progress {
-        download_config.progress_style = parse_progress_style(&p)?;
-    }
+
+    // Create new download config
+    let download_config = DownloadConfig {
+        target_directory: target_directory.clone(),
+        skip_existing: skip_existing_flag,
+        buffer_size_mb,
+        bandwidth_limit_bytes_per_sec,
+        max_retries: old_config.max_retries,
+        retry_initial_delay_secs: old_config.retry_initial_delay_secs,
+    };
+
+    // Store settings that need to be handled separately
+    let workers_count = workers.unwrap_or(old_config.workers);
+    let delete_after_download = delete_after || old_config.delete_after_download;
+    let delete_empty_folders_flag = delete_empty_folders.unwrap_or(old_config.delete_empty_folders);
+    let sort_order = if let Some(s) = sort {
+        parse_sort_order(&s)?
+    } else {
+        old_config.sort_order
+    };
+    let reverse_sort = reverse || old_config.reverse_sort;
+    let progress_style = if let Some(p) = progress {
+        parse_progress_style(&p)?
+    } else {
+        old_config.progress_style
+    };
+    let resume_enabled = !no_resume && old_config.resume_enabled;
 
     // Create API client
-    let client = ApiClient::from_auth_config(auth);
+    let client = match auth.auth_method {
+        AuthMethod::Token => {
+            let token = auth.token
+                .ok_or_else(|| anyhow!("Token not configured"))?;
+            PutioApiClient::new(token)
+        }
+        AuthMethod::AppPassword => {
+            let username = auth.username
+                .ok_or_else(|| anyhow!("Username not configured"))?;
+            let password = auth.password
+                .ok_or_else(|| anyhow!("Password not configured"))?;
+            PutioApiClient::with_credentials(username, password)
+        }
+    };
 
     info!("Download configuration:");
-    debug!("  Workers: {}", download_config.workers);
+    debug!("  Workers: {}", workers_count);
     debug!("  Target directory: {:?}", download_config.target_directory);
-    debug!("  Chunk size: {:?} MB", download_config.chunk_size_mb);
     debug!("  Buffer size: {} MB", download_config.buffer_size_mb);
-    debug!("  Resume enabled: {}", download_config.resume_enabled);
+    debug!("  Resume enabled: {}", resume_enabled);
     debug!("  Skip existing: {}", download_config.skip_existing);
-    debug!("  Delete after: {}", download_config.delete_after_download);
-    debug!("  Delete empty folders: {}", download_config.delete_empty_folders);
-    debug!("  Sort order: {:?}", download_config.sort_order);
-    debug!("  Reverse sort: {}", download_config.reverse_sort);
-    debug!("  Progress style: {:?}", download_config.progress_style);
+    debug!("  Delete after: {}", delete_after_download);
+    debug!("  Delete empty folders: {}", delete_empty_folders_flag);
+    debug!("  Sort order: {:?}", sort_order);
+    debug!("  Reverse sort: {}", reverse_sort);
+    debug!("  Progress style: {:?}", progress_style);
+
+    let client_arc = Arc::new(client);
 
     if daemon {
         info!("Starting daemon mode with interval: {} seconds", interval);
-        run_daemon_mode(client, download_config, filter, all, files, interval).await
+        run_daemon_mode(
+            client_arc,
+            download_config,
+            filter,
+            all,
+            files,
+            interval,
+            workers_count,
+            delete_after_download,
+            delete_empty_folders_flag,
+            sort_order,
+            reverse_sort,
+            progress_style,
+        )
+        .await
     } else {
-        run_single_download(client, download_config, filter, all, files).await
+        run_single_download(
+            client_arc,
+            download_config,
+            filter,
+            all,
+            files,
+            workers_count,
+            delete_after_download,
+            delete_empty_folders_flag,
+            sort_order,
+            reverse_sort,
+            progress_style,
+        )
+        .await
     }
 }
 
 /// Run a single download operation
 async fn run_single_download(
-    client: ApiClient,
+    client: Arc<PutioApiClient>,
     download_config: DownloadConfig,
     filter: Option<String>,
     all: bool,
-    files: Vec<i64>,
+    file_ids: Vec<i64>,
+    _workers_count: usize,
+    delete_after_download: bool,
+    delete_empty_folders: bool,
+    sort_order: SortOrder,
+    reverse_sort: bool,
+    _progress_style: ProgressStyle,
 ) -> Result<()> {
     let start_time = Instant::now();
 
@@ -160,7 +216,7 @@ async fn run_single_download(
 
     // Initialize database - use fallback if it fails
     let db_path = download_config.target_directory.join(".putiosync.db");
-    let _database = match Database::new(&db_path).await {
+    let database = match Database::new(&db_path).await {
         Ok(db) => {
             info!("Database initialized successfully at: {}", db_path.display());
             Some(Arc::new(db))
@@ -175,47 +231,143 @@ async fn run_single_download(
         }
     };
 
-    // Use DownloadOps for unified sync behavior (same as daemon mode)
+    // Fetch file list from Put.io
     info!("Fetching file list from Put.io...");
-    let sync_parent_id = 0; // Use root for --all, could be configurable
-    
-    let client_arc = Arc::new(client);
-    let download_ops = crate::download_ops::DownloadOps::new(
-        client_arc.clone(),
-        download_config.clone(),
-        sync_parent_id,
-    )
-    .await
-    .context("Failed to create download operations")?;
+    let mut files_to_download: Vec<FileEntry> = if all {
+        // Get all files recursively
+        list_all_files(&*client, 0).await?
+    } else if !file_ids.is_empty() {
+        // Get specific files
+        let mut files = Vec::new();
+        for file_id in file_ids {
+            let response = client.get_file_details(file_id).await
+                .with_context(|| format!("Failed to get file {}", file_id))?;
+            files.push(response.file);
+        }
+        files
+    } else {
+        return Err(anyhow!("No files to download"));
+    };
 
-    // Convert file IDs to slice for DownloadOps
-    let specific_files: Vec<i64> = if all { Vec::new() } else { files };
+    // Apply filter if specified
+    if let Some(filter_pattern) = filter {
+        let file_filter = FileFilter::new().with_name_pattern(filter_pattern);
+        files_to_download = file_filter.filter(files_to_download);
+    }
 
-    // Run unified sync cycle (same logic as daemon mode)
-    let result = download_ops
-        .run_sync_cycle(filter.as_deref(), all, &specific_files, true) // true = show progress
-        .await
-        .context("Failed to run download sync cycle")?;
+    // Filter out folders - only download files
+    files_to_download.retain(|f| f.file_type != "FOLDER");
 
-    // Display summary (matching daemon output format)
+    if files_to_download.is_empty() {
+        info!("No files to download after filtering");
+        return Ok(());
+    }
+
+    // Apply sorting
+    let sort_field = match sort_order {
+        SortOrder::ByDate => SortField::Date,
+        SortOrder::ByName => SortField::Name,
+        SortOrder::ByExtension => SortField::Extension,
+        SortOrder::BySize => SortField::Size,
+    };
+    files_to_download = sort_files(files_to_download, sort_field, reverse_sort);
+
+    info!("Found {} files to download", files_to_download.len());
+
+    // Create DownloadManager
+    let download_manager = if let Some(db) = database.clone() {
+        DownloadManager::new(client.clone(), db, download_config.clone())
+    } else {
+        DownloadManager::new_without_database(client.clone(), download_config.clone())
+    };
+
+    // Track statistics
+    let mut total_bytes = 0u64;
+    let mut files_downloaded = 0usize;
+    let mut files_failed = 0usize;
+
+    // Download each file
+    for (idx, file) in files_to_download.iter().enumerate() {
+        info!(
+            "Downloading file {}/{}: {} ({} bytes)",
+            idx + 1,
+            files_to_download.len(),
+            file.name,
+            file.size
+        );
+
+        let download_url = client.get_download_url(file.id);
+        let download_file = DownloadFile {
+            file_id: file.id,
+            filename: file.name.clone(),
+            relative_path: file.name.clone(), // For single downloads, use filename as path
+            file_size: file.size as u64,
+            download_url,
+        };
+
+        match download_manager.download_file(download_file, None).await {
+            Ok(result) => {
+                if result.success {
+                    info!("✓ Downloaded: {}", file.name);
+                    total_bytes += result.bytes_downloaded;
+                    files_downloaded += 1;
+
+                    // Delete from Put.io if requested
+                    if delete_after_download {
+                        match client.delete_files(vec![file.id]).await {
+                            Ok(_) => info!("Deleted from Put.io: {}", file.name),
+                            Err(e) => warn!("Failed to delete {} from Put.io: {}", file.name, e),
+                        }
+                    }
+                } else {
+                    error!(
+                        "✗ Failed to download {}: {}",
+                        file.name,
+                        result.error.unwrap_or_else(|| "Unknown error".to_string())
+                    );
+                    files_failed += 1;
+                }
+            }
+            Err(e) => {
+                error!("✗ Failed to download {}: {}", file.name, e);
+                files_failed += 1;
+            }
+        }
+    }
+
+    // Clean up empty folders if requested
+    if delete_empty_folders {
+        if let Err(e) = cleanup_empty_directories(&download_config.target_directory) {
+            warn!("Failed to cleanup empty directories: {}", e);
+        }
+    }
+
+    let duration = start_time.elapsed();
+    let duration_secs = duration.as_secs_f64();
+
+    // Display summary
     println!("\n📊 Download Summary");
     println!("═══════════════════════════════════════════════");
-    println!("Files downloaded:  {}", result.files_downloaded);
-    if result.files_failed > 0 {
-        println!("Files failed:      {}", result.files_failed);
+    println!("Files downloaded:  {}", files_downloaded);
+    if files_failed > 0 {
+        println!("Files failed:      {}", files_failed);
     }
-    println!("Total size:        {} ({} bytes)", format_size(result.total_bytes), result.total_bytes);
-    println!("Time elapsed:      {:.2}s", result.duration_secs);
-    let avg_speed = if result.duration_secs > 0.0 {
-        result.total_bytes as f64 / result.duration_secs
+    println!(
+        "Total size:        {} ({} bytes)",
+        format_size(total_bytes),
+        total_bytes
+    );
+    println!("Time elapsed:      {:.2}s", duration_secs);
+    let avg_speed = if duration_secs > 0.0 {
+        total_bytes as f64 / duration_secs
     } else {
         0.0
     };
     println!("Average speed:     {}/s", format_size(avg_speed as u64));
     println!("═══════════════════════════════════════════════");
 
-    if result.files_failed > 0 {
-        return Err(anyhow!("{} files failed to download", result.files_failed));
+    if files_failed > 0 {
+        return Err(anyhow!("{} files failed to download", files_failed));
     }
 
     Ok(())
@@ -223,45 +375,20 @@ async fn run_single_download(
 
 /// Run in daemon mode
 async fn run_daemon_mode(
-    client: ApiClient,
+    client: Arc<PutioApiClient>,
     download_config: DownloadConfig,
     filter: Option<String>,
     all: bool,
     files: Vec<i64>,
     interval: u64,
+    workers_count: usize,
+    delete_after_download: bool,
+    delete_empty_folders: bool,
+    sort_order: SortOrder,
+    reverse_sort: bool,
+    progress_style: ProgressStyle,
 ) -> Result<()> {
     info!("Starting daemon mode with interval: {} seconds", interval);
-
-    // Create target directory if it doesn't exist
-    if !download_config.target_directory.exists() {
-        info!(
-            "Creating target directory: {}",
-            download_config.target_directory.display()
-        );
-        std::fs::create_dir_all(&download_config.target_directory).with_context(|| {
-            format!(
-                "Failed to create target directory: {}",
-                download_config.target_directory.display()
-            )
-        })?;
-    }
-
-    // Initialize database (not used in new implementation) - use fallback if it fails
-    let db_path = download_config.target_directory.join(".putiosync.db");
-    let _database = match Database::new(&db_path).await {
-        Ok(db) => {
-            info!("Database initialized successfully at: {}", db_path.display());
-            Some(Arc::new(db))
-        }
-        Err(e) => {
-            warn!(
-                "Failed to initialize database at {}: {}. Daemon will continue without database tracking.",
-                db_path.display(),
-                e
-            );
-            None
-        }
-    };
 
     // Set up Ctrl+C handler
     let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -272,7 +399,6 @@ async fn run_daemon_mode(
     })
     .context("Failed to set Ctrl+C handler")?;
 
-    let client_arc = Arc::new(client);
     let mut cycle_count = 0;
 
     loop {
@@ -285,48 +411,27 @@ async fn run_daemon_mode(
             break;
         }
 
-        // Use DownloadOps for recursive downloads
-        let sync_parent_id = 0; // Use root for now, this could be configurable
-        let download_ops = match crate::download_ops::DownloadOps::new(
-            client_arc.clone(),
+        // Run single download cycle
+        match run_single_download(
+            client.clone(),
             download_config.clone(),
-            sync_parent_id,
+            filter.clone(),
+            all,
+            files.clone(),
+            workers_count,
+            delete_after_download,
+            delete_empty_folders,
+            sort_order.clone(),
+            reverse_sort,
+            progress_style.clone(),
         )
         .await
         {
-            Ok(ops) => ops,
-            Err(e) => {
-                error!("Failed to create download operations: {}", e);
-                warn!("Waiting {} seconds before retry...", interval);
-                tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
-                continue;
-            }
-        };
-
-        // Run sync cycle with recursive downloads
-        match download_ops
-            .run_sync_cycle(filter.as_deref(), all, &files, true) // true = show progress
-            .await
-        {
-            Ok(result) => {
-                if result.is_empty() {
-                    info!("No new files to download in this cycle");
-                } else {
-                    info!(
-                        "Cycle #{} completed: {} files found, {} downloaded, {} failed in {:.2}s",
-                        cycle_count,
-                        result.files_found,
-                        result.files_downloaded,
-                        result.files_failed,
-                        result.duration_secs
-                    );
-                }
+            Ok(_) => {
+                info!("Cycle #{} completed successfully", cycle_count);
             }
             Err(e) => {
-                error!("Download cycle failed: {}", e);
-                warn!("Waiting {} seconds before retry...", interval);
-                tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
-                continue;
+                error!("Cycle #{} failed: {}", cycle_count, e);
             }
         }
 
@@ -390,6 +495,67 @@ fn parse_progress_style(s: &str) -> Result<ProgressStyle> {
 
 // Note: apply_filters and apply_sorting functions removed as they're now handled 
 // by DownloadOps::run_sync_cycle for unified behavior between daemon and direct download modes
+
+/// List all files recursively from Put.io
+async fn list_all_files(client: &PutioApiClient, parent_id: i64) -> Result<Vec<FileEntry>> {
+    let mut all_files = Vec::new();
+    let mut folders_to_process = vec![parent_id];
+
+    while let Some(current_folder) = folders_to_process.pop() {
+        debug!("Fetching files from folder: {}", current_folder);
+
+        let response = client
+            .list_files(current_folder)
+            .await
+            .with_context(|| format!("Failed to list folder {}", current_folder))?;
+
+        for file in response.files {
+            if file.file_type == "FOLDER" {
+                folders_to_process.push(file.id);
+            }
+            all_files.push(file);
+        }
+    }
+
+    Ok(all_files)
+}
+
+/// Cleanup empty directories recursively
+fn cleanup_empty_directories(base_path: &PathBuf) -> Result<()> {
+    use std::fs;
+
+    fn is_empty_dir(path: &PathBuf) -> bool {
+        if let Ok(entries) = fs::read_dir(path) {
+            entries.count() == 0
+        } else {
+            false
+        }
+    }
+
+    fn remove_empty_dirs_recursive(path: &PathBuf) -> Result<()> {
+        if path.is_dir() {
+            // Process subdirectories first
+            if let Ok(entries) = fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let entry_path = entry.path();
+                    if entry_path.is_dir() {
+                        remove_empty_dirs_recursive(&entry_path)?;
+                    }
+                }
+            }
+
+            // Now check if this directory is empty and remove it
+            if is_empty_dir(path) {
+                info!("Removing empty directory: {}", path.display());
+                fs::remove_dir(path)
+                    .with_context(|| format!("Failed to remove empty directory: {}", path.display()))?;
+            }
+        }
+        Ok(())
+    }
+
+    remove_empty_dirs_recursive(base_path)
+}
 
 /// Format size in bytes to human-readable format
 fn format_size(bytes: u64) -> String {

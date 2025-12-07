@@ -3,7 +3,7 @@
 //! This module provides client-side filtering and sorting capabilities
 //! for file listings from the Put.io API.
 
-use crate::api::FileEntry;
+use putio_sync_client::FileEntry;
 use glob::Pattern;
 use std::cmp::Ordering;
 use std::str::FromStr;
@@ -17,6 +17,8 @@ pub enum SortField {
     Size,
     /// Sort by creation date
     Date,
+    /// Sort by file extension
+    Extension,
 }
 
 impl FromStr for SortField {
@@ -27,6 +29,7 @@ impl FromStr for SortField {
             "name" => Ok(Self::Name),
             "size" => Ok(Self::Size),
             "date" | "created" => Ok(Self::Date),
+            "extension" | "ext" => Ok(Self::Extension),
             _ => Err(format!("Invalid sort field: {}", s)),
         }
     }
@@ -214,6 +217,22 @@ pub fn sort_files(mut files: Vec<FileEntry>, field: SortField, reverse: bool) ->
                     (Some(_), None) => Ordering::Greater,
                     (None, Some(_)) => Ordering::Less,
                     (None, None) => Ordering::Equal,
+                }
+            }
+            SortField::Extension => {
+                // Sort by extension, then by name
+                match (&a.extension, &b.extension) {
+                    (Some(a_ext), Some(b_ext)) => {
+                        let ext_cmp = a_ext.to_lowercase().cmp(&b_ext.to_lowercase());
+                        if ext_cmp == Ordering::Equal {
+                            a.name.to_lowercase().cmp(&b.name.to_lowercase())
+                        } else {
+                            ext_cmp
+                        }
+                    }
+                    (Some(_), None) => Ordering::Greater,
+                    (None, Some(_)) => Ordering::Less,
+                    (None, None) => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
                 }
             }
         };

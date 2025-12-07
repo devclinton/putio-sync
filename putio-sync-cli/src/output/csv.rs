@@ -1,6 +1,6 @@
 //! CSV output formatter
 
-use putio_sync_core::api::FileEntry;
+use putio_sync_client::FileEntry;
 
 /// Format files as CSV
 pub fn format_csv(files: &[FileEntry]) -> String {

@@ -1,6 +1,6 @@
 //! JSON output formatter
 
-use putio_sync_core::api::FileEntry;
+use putio_sync_client::FileEntry;
 use serde_json;
 
 /// Format files as JSON

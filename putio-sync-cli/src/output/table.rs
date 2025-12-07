@@ -1,7 +1,7 @@
 //! Table output formatter
 
 use super::{format_bytes, format_timestamp};
-use putio_sync_core::api::FileEntry;
+use putio_sync_client::FileEntry;
 
 /// Format files as a table
 pub fn format_table(files: &[FileEntry]) -> String {

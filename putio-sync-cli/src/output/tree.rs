@@ -1,7 +1,7 @@
 //! Tree output formatter
 
 use super::format_bytes;
-use putio_sync_core::api::FileEntry;
+use putio_sync_client::FileEntry;
 
 /// Format files as a tree
 pub fn format_tree(files: &[FileEntry]) -> String {
