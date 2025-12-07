@@ -1,0 +1,39 @@
+[package]
+name = "putio-sync-client"
+version = "0.2.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure API client for Put.io - HTTP communication and API operations"
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+
+# HTTP client
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.22"
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Utilities
+futures-util = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+mockito = "1.2"
+tempfile = "3.8"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
