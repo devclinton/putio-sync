@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Core library for putio-sync - domain logic and API client"
+description = "Core shared utilities for putio-sync - configuration, filtering, and common utilities"
 
 [dependencies]
 # Internal dependencies

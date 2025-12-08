@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use putio_sync_core::config::Config;
-use putio_sync_core::db::{Database, StatsRepository};
+use putio_sync_db::{Database, StatsRepository};
 use serde::Serialize;
 use std::path::PathBuf;
 use tracing::{debug, info};
