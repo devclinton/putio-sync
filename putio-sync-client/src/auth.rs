@@ -99,8 +99,10 @@ mod tests {
 
     #[test]
     fn test_auth_config_with_app_password() {
-        let auth =
-            AuthConfig::with_app_password("user@example.com".to_string(), "password123".to_string());
+        let auth = AuthConfig::with_app_password(
+            "user@example.com".to_string(),
+            "password123".to_string(),
+        );
         assert_eq!(auth.auth_method, AuthMethod::AppPassword);
         assert_eq!(auth.username.as_ref().unwrap(), "user@example.com");
         assert_eq!(auth.password.as_ref().unwrap(), "password123");

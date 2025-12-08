@@ -86,7 +86,10 @@ impl ConfigWatcher {
             )));
         }
 
-        info!("Starting config file watcher for: {}", config_path.display());
+        info!(
+            "Starting config file watcher for: {}",
+            config_path.display()
+        );
 
         let (tx, rx) = channel();
         let mut watcher = self.create_watcher(tx)?;
@@ -100,7 +103,7 @@ impl ConfigWatcher {
 
         watcher
             .watch(&watch_dir, RecursiveMode::NonRecursive)
-            .map_err(|e| DaemonError::WatchError(e))?;
+            .map_err(DaemonError::WatchError)?;
 
         self.status = WatcherStatus::Running;
         debug!("Config watcher started, watching: {}", watch_dir.display());
@@ -116,8 +119,7 @@ impl ConfigWatcher {
         &self,
         tx: Sender<notify::Result<Event>>,
     ) -> DaemonResult<notify::RecommendedWatcher> {
-        let watcher =
-            notify::recommended_watcher(tx).map_err(|e| DaemonError::WatchError(e))?;
+        let watcher = notify::recommended_watcher(tx).map_err(DaemonError::WatchError)?;
         Ok(watcher)
     }
 
@@ -143,10 +145,7 @@ impl ConfigWatcher {
                 Err(e) => {
                     error!("Channel receive error: {}", e);
                     self.status = WatcherStatus::Error;
-                    return Err(DaemonError::InternalError(format!(
-                        "Channel error: {}",
-                        e
-                    )));
+                    return Err(DaemonError::InternalError(format!("Channel error: {}", e)));
                 }
             }
         }

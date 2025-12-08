@@ -76,7 +76,6 @@ impl QueueItem {
     }
 }
 
-
 /// Download status
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -246,9 +245,18 @@ mod tests {
 
     #[test]
     fn test_download_status_from_str() {
-        assert_eq!("completed".parse::<DownloadStatus>().unwrap(), DownloadStatus::Completed);
-        assert_eq!("in_progress".parse::<DownloadStatus>().unwrap(), DownloadStatus::InProgress);
-        assert_eq!("failed".parse::<DownloadStatus>().unwrap(), DownloadStatus::Failed);
+        assert_eq!(
+            "completed".parse::<DownloadStatus>().unwrap(),
+            DownloadStatus::Completed
+        );
+        assert_eq!(
+            "in_progress".parse::<DownloadStatus>().unwrap(),
+            DownloadStatus::InProgress
+        );
+        assert_eq!(
+            "failed".parse::<DownloadStatus>().unwrap(),
+            DownloadStatus::Failed
+        );
         assert!("invalid".parse::<DownloadStatus>().is_err());
     }
 
@@ -260,8 +268,14 @@ mod tests {
 
     #[test]
     fn test_history_action_from_str() {
-        assert_eq!("downloaded".parse::<HistoryAction>().unwrap(), HistoryAction::Downloaded);
-        assert_eq!("deleted".parse::<HistoryAction>().unwrap(), HistoryAction::Deleted);
+        assert_eq!(
+            "downloaded".parse::<HistoryAction>().unwrap(),
+            HistoryAction::Downloaded
+        );
+        assert_eq!(
+            "deleted".parse::<HistoryAction>().unwrap(),
+            HistoryAction::Deleted
+        );
         assert!("invalid".parse::<HistoryAction>().is_err());
     }
 }

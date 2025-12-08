@@ -1,7 +1,7 @@
 //! Statistics repository for managing download statistics
 
-use super::models::DownloadStats;
 use super::error::{DbError, DbResult};
+use super::models::DownloadStats;
 use sqlx::SqlitePool;
 use tracing::debug;
 
@@ -48,7 +48,10 @@ impl<'a> StatsRepository<'a> {
     /// * `bytes` - Number of bytes downloaded
     /// * `duration_seconds` - Duration of download in seconds
     pub async fn update_download(&self, bytes: i64, duration_seconds: i64) -> DbResult<()> {
-        debug!("Updating download stats: bytes={}, duration={}s", bytes, duration_seconds);
+        debug!(
+            "Updating download stats: bytes={}, duration={}s",
+            bytes, duration_seconds
+        );
 
         sqlx::query(
             r#"
@@ -183,7 +186,7 @@ impl<'a> StatsRepository<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{history::HistoryRepository, models::HistoryAction, Database};
+    use crate::{history::HistoryRepository, models::HistoryAction, Database};
     use tempfile::TempDir;
 
     async fn setup_test_db() -> (TempDir, Database) {
@@ -241,19 +244,47 @@ mod tests {
 
         // Insert some history entries with different extensions
         history_repo
-            .insert(1, "file1.mkv", 1024 * 1024 * 100, HistoryAction::Downloaded, Some(10), Some(100))
+            .insert(
+                1,
+                "file1.mkv",
+                1024 * 1024 * 100,
+                HistoryAction::Downloaded,
+                Some(10),
+                Some(100),
+            )
             .await
             .unwrap();
         history_repo
-            .insert(2, "file2.mkv", 1024 * 1024 * 200, HistoryAction::Downloaded, Some(20), Some(100))
+            .insert(
+                2,
+                "file2.mkv",
+                1024 * 1024 * 200,
+                HistoryAction::Downloaded,
+                Some(20),
+                Some(100),
+            )
             .await
             .unwrap();
         history_repo
-            .insert(3, "file3.mp4", 1024 * 1024 * 50, HistoryAction::Downloaded, Some(5), Some(100))
+            .insert(
+                3,
+                "file3.mp4",
+                1024 * 1024 * 50,
+                HistoryAction::Downloaded,
+                Some(5),
+                Some(100),
+            )
             .await
             .unwrap();
         history_repo
-            .insert(4, "file4.pdf", 1024 * 10, HistoryAction::Downloaded, Some(1), Some(100))
+            .insert(
+                4,
+                "file4.pdf",
+                1024 * 10,
+                HistoryAction::Downloaded,
+                Some(1),
+                Some(100),
+            )
             .await
             .unwrap();
 
@@ -285,11 +316,25 @@ mod tests {
         let stats_repo = StatsRepository::new(db.pool());
 
         history_repo
-            .insert(1, "file1.mkv", 1024, HistoryAction::Downloaded, Some(10), Some(100))
+            .insert(
+                1,
+                "file1.mkv",
+                1024,
+                HistoryAction::Downloaded,
+                Some(10),
+                Some(100),
+            )
             .await
             .unwrap();
         history_repo
-            .insert(2, "file2.mkv", 2048, HistoryAction::Downloaded, Some(20), Some(100))
+            .insert(
+                2,
+                "file2.mkv",
+                2048,
+                HistoryAction::Downloaded,
+                Some(20),
+                Some(100),
+            )
             .await
             .unwrap();
         history_repo

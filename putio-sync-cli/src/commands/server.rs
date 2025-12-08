@@ -55,10 +55,13 @@ pub async fn execute_server(
     };
 
     // Validate config
-    config.validate().context("Configuration validation failed")?;
+    config
+        .validate()
+        .context("Configuration validation failed")?;
 
     info!("Configuration loaded successfully");
-    debug!("Watch config: enabled={}, paths={:?}, archive_dir={:?}, delete_after_upload={}", 
+    debug!(
+        "Watch config: enabled={}, paths={:?}, archive_dir={:?}, delete_after_upload={}",
         config.watch.enabled,
         config.watch.paths,
         config.watch.archive_directory,
@@ -256,7 +259,10 @@ fn spawn_download_daemon(config: Config) -> std::thread::JoinHandle<()> {
 
         rt.block_on(async move {
             info!("Download daemon started");
-            info!("  Target directory: {}", config.download.target_directory.display());
+            info!(
+                "  Target directory: {}",
+                config.download.target_directory.display()
+            );
             info!("  Workers: {}", config.download.workers);
 
             // Create API client

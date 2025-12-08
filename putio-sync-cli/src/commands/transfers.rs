@@ -21,20 +21,20 @@ struct TransferDisplay {
 }
 
 /// Execute transfers list subcommand
-pub async fn execute_list(
-    output_format: String,
-    config_path: Option<PathBuf>,
-) -> Result<()> {
+pub async fn execute_list(output_format: String, config_path: Option<PathBuf>) -> Result<()> {
     info!("Starting transfers list command");
 
     let config = load_config(config_path)?;
     let client = create_api_client(&config)?;
 
     // Get transfers from API
-    let response = client.list_transfers().await
+    let response = client
+        .list_transfers()
+        .await
         .context("Failed to list transfers from Put.io")?;
 
-    let transfers: Vec<TransferDisplay> = response.transfers
+    let transfers: Vec<TransferDisplay> = response
+        .transfers
         .into_iter()
         .map(|t| TransferDisplay {
             id: t.id,
@@ -51,7 +51,7 @@ pub async fn execute_list(
     // Display based on output format
     match output_format.as_str() {
         "json" => display_json(&transfers)?,
-        "table" | _ => display_table(&transfers)?,
+        _ => display_table(&transfers)?,
     }
 
     Ok(())
@@ -92,7 +92,9 @@ pub async fn execute_cancel(
     }
 
     // Cancel transfers
-    client.cancel_transfers(transfer_ids.clone()).await
+    client
+        .cancel_transfers(transfer_ids.clone())
+        .await
         .context("Failed to cancel transfers")?;
 
     println!("Successfully cancelled {} transfer(s)", transfer_ids.len());
@@ -101,17 +103,16 @@ pub async fn execute_cancel(
 }
 
 /// Execute transfers retry subcommand
-pub async fn execute_retry(
-    transfer_id: i64,
-    config_path: Option<PathBuf>,
-) -> Result<()> {
+pub async fn execute_retry(transfer_id: i64, config_path: Option<PathBuf>) -> Result<()> {
     info!("Starting transfers retry command");
 
     let config = load_config(config_path)?;
     let client = create_api_client(&config)?;
 
     // Retry transfer
-    client.retry_transfer(transfer_id).await
+    client
+        .retry_transfer(transfer_id)
+        .await
         .context("Failed to retry transfer")?;
 
     println!("Successfully retried transfer {}", transfer_id);
@@ -132,19 +133,23 @@ fn load_config(config_path: Option<PathBuf>) -> Result<Config> {
 
 /// Create API client from configuration
 fn create_api_client(config: &Config) -> Result<PutioApiClient> {
-    let auth_config = config.auth.clone()
-        .ok_or_else(|| anyhow::anyhow!("No authentication configured. Run 'putio-sync login' first."))?;
+    let auth_config = config.auth.clone().ok_or_else(|| {
+        anyhow::anyhow!("No authentication configured. Run 'putio-sync login' first.")
+    })?;
 
     let client = match auth_config.auth_method {
         AuthMethod::Token => {
-            let token = auth_config.token
+            let token = auth_config
+                .token
                 .ok_or_else(|| anyhow::anyhow!("Token not configured"))?;
             PutioApiClient::new(token)
         }
         AuthMethod::AppPassword => {
-            let username = auth_config.username
+            let username = auth_config
+                .username
                 .ok_or_else(|| anyhow::anyhow!("Username not configured"))?;
-            let password = auth_config.password
+            let password = auth_config
+                .password
                 .ok_or_else(|| anyhow::anyhow!("Password not configured"))?;
             PutioApiClient::with_credentials(username, password)
         }
@@ -187,10 +192,11 @@ fn display_table(transfers: &[TransferDisplay]) -> Result<()> {
             transfer.status.clone()
         };
 
-        let percent_display = transfer.percent_done
+        let percent_display = transfer
+            .percent_done
             .map(|p| format!("{}%", p))
             .unwrap_or_else(|| "N/A".to_string());
-        
+
         println!(
             "{:<8} {:<10} {:<50} {:>12} {:>7} {:>12} {:>8}",
             transfer.id,
@@ -211,8 +217,7 @@ fn display_table(transfers: &[TransferDisplay]) -> Result<()> {
 
 /// Display transfers in JSON format
 fn display_json<T: Serialize>(data: &T) -> Result<()> {
-    let json = serde_json::to_string_pretty(data)
-        .context("Failed to serialize to JSON")?;
+    let json = serde_json::to_string_pretty(data).context("Failed to serialize to JSON")?;
     println!("{}", json);
     Ok(())
 }

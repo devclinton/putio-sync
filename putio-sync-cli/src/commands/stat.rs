@@ -111,7 +111,7 @@ pub async fn execute_stat(
     // Display based on output format
     match output_format.as_str() {
         "json" => display_json(&stats)?,
-        "table" | _ => display_table(&stats, since.as_deref(), until.as_deref())?,
+        _ => display_table(&stats, since.as_deref(), until.as_deref())?,
     }
 
     Ok(())
@@ -135,10 +135,10 @@ fn validate_and_format_date(date_str: Option<&str>) -> Result<Option<String>> {
         use chrono::NaiveDate;
 
         let formats = vec![
-            "%Y-%m-%d",     // 2025-01-15
-            "%Y/%m/%d",     // 2025/01/15
-            "%m/%d/%Y",     // 01/15/2025
-            "%d-%b-%Y",     // 15-Jan-2025
+            "%Y-%m-%d", // 2025-01-15
+            "%Y/%m/%d", // 2025/01/15
+            "%m/%d/%Y", // 01/15/2025
+            "%d-%b-%Y", // 15-Jan-2025
         ];
 
         for format in &formats {
@@ -147,7 +147,10 @@ fn validate_and_format_date(date_str: Option<&str>) -> Result<Option<String>> {
             }
         }
 
-        anyhow::bail!("Invalid date format: '{}'. Expected format: YYYY-MM-DD", date);
+        anyhow::bail!(
+            "Invalid date format: '{}'. Expected format: YYYY-MM-DD",
+            date
+        );
     }
 
     Ok(None)
@@ -174,17 +177,32 @@ fn display_table(stats: &Stats, since: Option<&str>, until: Option<&str>) -> Res
         println!("{}", "─".repeat(65));
     }
 
-    println!("Total Downloads:      {:>12}", format_count(stats.total_downloads));
-    println!("Total Size:           {:>12}", format_bytes(stats.total_bytes));
-    println!("Total Time:           {:>12}", format_duration(stats.total_seconds));
-    println!("Average Speed:        {:>12}", format_speed(stats.average_speed));
+    println!(
+        "Total Downloads:      {:>12}",
+        format_count(stats.total_downloads)
+    );
+    println!(
+        "Total Size:           {:>12}",
+        format_bytes(stats.total_bytes)
+    );
+    println!(
+        "Total Time:           {:>12}",
+        format_duration(stats.total_seconds)
+    );
+    println!(
+        "Average Speed:        {:>12}",
+        format_speed(stats.average_speed)
+    );
 
     // Show extension breakdown if available
     if let Some(ref ext_stats) = stats.by_extension {
         if !ext_stats.is_empty() {
             println!("\nBy Extension:");
             println!("{}", "─".repeat(65));
-            println!("{:<12} {:>10} {:>15} {:>12}", "Extension", "Files", "Total Size", "Percentage");
+            println!(
+                "{:<12} {:>10} {:>15} {:>12}",
+                "Extension", "Files", "Total Size", "Percentage"
+            );
             println!("{}", "─".repeat(65));
 
             for ext in ext_stats {
@@ -209,8 +227,8 @@ fn display_table(stats: &Stats, since: Option<&str>, until: Option<&str>) -> Res
 
 /// Display statistics in JSON format
 fn display_json(stats: &Stats) -> Result<()> {
-    let json = serde_json::to_string_pretty(stats)
-        .context("Failed to serialize statistics to JSON")?;
+    let json =
+        serde_json::to_string_pretty(stats).context("Failed to serialize statistics to JSON")?;
     println!("{}", json);
     Ok(())
 }

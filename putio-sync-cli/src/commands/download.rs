@@ -64,20 +64,23 @@ pub async fn execute_download(
         info!("CLI override - original dir argument: {:?}", d);
         target_directory = putio_sync_core::path_utils::expand_path(d)
             .context("Failed to expand target directory path")?;
-        info!("CLI override - expanded target_directory: {}", target_directory.display());
+        info!(
+            "CLI override - expanded target_directory: {}",
+            target_directory.display()
+        );
     }
 
     let mut buffer_size_mb = old_config.buffer_size_mb;
     if let Some(bs) = buffer_size {
-        let size_bytes = parse_size(&bs)
-            .map_err(|e| anyhow!("Invalid buffer size '{}': {}", bs, e))?;
+        let size_bytes =
+            parse_size(&bs).map_err(|e| anyhow!("Invalid buffer size '{}': {}", bs, e))?;
         buffer_size_mb = (size_bytes / 1024 / 1024) as usize;
     }
 
     let mut bandwidth_limit_bytes_per_sec = old_config.bandwidth_limit_bytes_per_sec;
     if let Some(bl) = bandwidth_limit {
-        let limit_bytes_per_sec = parse_size(&bl)
-            .map_err(|e| anyhow!("Invalid bandwidth limit '{}': {}", bl, e))?;
+        let limit_bytes_per_sec =
+            parse_size(&bl).map_err(|e| anyhow!("Invalid bandwidth limit '{}': {}", bl, e))?;
         bandwidth_limit_bytes_per_sec = Some(limit_bytes_per_sec as u64);
     }
 
@@ -122,14 +125,15 @@ pub async fn execute_download(
     // Create API client
     let client = match auth.auth_method {
         AuthMethod::Token => {
-            let token = auth.token
-                .ok_or_else(|| anyhow!("Token not configured"))?;
+            let token = auth.token.ok_or_else(|| anyhow!("Token not configured"))?;
             PutioApiClient::new(token)
         }
         AuthMethod::AppPassword => {
-            let username = auth.username
+            let username = auth
+                .username
                 .ok_or_else(|| anyhow!("Username not configured"))?;
-            let password = auth.password
+            let password = auth
+                .password
                 .ok_or_else(|| anyhow!("Password not configured"))?;
             PutioApiClient::with_credentials(username, password)
         }
@@ -185,6 +189,7 @@ pub async fn execute_download(
 }
 
 /// Run a single download operation
+#[allow(clippy::too_many_arguments)]
 async fn run_single_download(
     client: Arc<PutioApiClient>,
     download_config: DownloadConfig,
@@ -218,7 +223,10 @@ async fn run_single_download(
     let db_path = download_config.target_directory.join(".putiosync.db");
     let database = match Database::new(&db_path).await {
         Ok(db) => {
-            info!("Database initialized successfully at: {}", db_path.display());
+            info!(
+                "Database initialized successfully at: {}",
+                db_path.display()
+            );
             Some(Arc::new(db))
         }
         Err(e) => {
@@ -235,12 +243,14 @@ async fn run_single_download(
     info!("Fetching file list from Put.io...");
     let mut files_to_download: Vec<FileEntry> = if all {
         // Get all files recursively
-        list_all_files(&*client, 0).await?
+        list_all_files(&client, 0).await?
     } else if !file_ids.is_empty() {
         // Get specific files
         let mut files = Vec::new();
         for file_id in file_ids {
-            let response = client.get_file_details(file_id).await
+            let response = client
+                .get_file_details(file_id)
+                .await
                 .with_context(|| format!("Failed to get file {}", file_id))?;
             files.push(response.file);
         }
@@ -374,6 +384,7 @@ async fn run_single_download(
 }
 
 /// Run in daemon mode
+#[allow(clippy::too_many_arguments)]
 async fn run_daemon_mode(
     client: Arc<PutioApiClient>,
     download_config: DownloadConfig,
@@ -493,7 +504,7 @@ fn parse_progress_style(s: &str) -> Result<ProgressStyle> {
     }
 }
 
-// Note: apply_filters and apply_sorting functions removed as they're now handled 
+// Note: apply_filters and apply_sorting functions removed as they're now handled
 // by DownloadOps::run_sync_cycle for unified behavior between daemon and direct download modes
 
 /// List all files recursively from Put.io
@@ -547,8 +558,9 @@ fn cleanup_empty_directories(base_path: &PathBuf) -> Result<()> {
             // Now check if this directory is empty and remove it
             if is_empty_dir(path) {
                 info!("Removing empty directory: {}", path.display());
-                fs::remove_dir(path)
-                    .with_context(|| format!("Failed to remove empty directory: {}", path.display()))?;
+                fs::remove_dir(path).with_context(|| {
+                    format!("Failed to remove empty directory: {}", path.display())
+                })?;
             }
         }
         Ok(())

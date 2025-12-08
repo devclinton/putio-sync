@@ -157,17 +157,34 @@ pub async fn execute_login(
         .context("Failed to send token exchange request")?;
 
     let status = response.status();
-    let response_text = response.text().await.context("Failed to read response body")?;
+    let response_text = response
+        .text()
+        .await
+        .context("Failed to read response body")?;
 
-    debug!("Token exchange response (status {}): {}", status, response_text);
+    debug!(
+        "Token exchange response (status {}): {}",
+        status, response_text
+    );
 
     if !status.is_success() {
-        tracing::error!("Token exchange failed with status {}: {}", status, response_text);
-        return Err(anyhow!("Failed to exchange authorization code for token: HTTP {} - {}", status, response_text));
+        tracing::error!(
+            "Token exchange failed with status {}: {}",
+            status,
+            response_text
+        );
+        return Err(anyhow!(
+            "Failed to exchange authorization code for token: HTTP {} - {}",
+            status,
+            response_text
+        ));
     }
 
-    let token_response: PutioTokenResponse = serde_json::from_str(&response_text)
-        .context(format!("Failed to parse token response. Response was: {}", response_text))?;
+    let token_response: PutioTokenResponse =
+        serde_json::from_str(&response_text).context(format!(
+            "Failed to parse token response. Response was: {}",
+            response_text
+        ))?;
 
     let access_token = token_response.access_token;
 
@@ -269,16 +286,11 @@ fn create_oauth_client(config: &OAuthConfig) -> Result<BasicClient> {
     let client = BasicClient::new(
         ClientId::new(config.client_id.clone()),
         Some(ClientSecret::new(config.client_secret.clone())),
-        AuthUrl::new(PUTIO_AUTH_URL.to_string())
-            .context("Invalid authorization URL")?,
-        Some(
-            TokenUrl::new(PUTIO_TOKEN_URL.to_string())
-                .context("Invalid token URL")?,
-        ),
+        AuthUrl::new(PUTIO_AUTH_URL.to_string()).context("Invalid authorization URL")?,
+        Some(TokenUrl::new(PUTIO_TOKEN_URL.to_string()).context("Invalid token URL")?),
     )
     .set_redirect_uri(
-        RedirectUrl::new(config.redirect_uri.clone())
-            .context("Invalid redirect URI")?,
+        RedirectUrl::new(config.redirect_uri.clone()).context("Invalid redirect URI")?,
     );
 
     Ok(client)
@@ -286,18 +298,15 @@ fn create_oauth_client(config: &OAuthConfig) -> Result<BasicClient> {
 
 /// Extract port from redirect URI
 fn extract_port(redirect_uri: &str) -> Result<u16> {
-    let url = url::Url::parse(redirect_uri)
-        .context("Invalid redirect URI format")?;
+    let url = url::Url::parse(redirect_uri).context("Invalid redirect URI format")?;
 
-    url.port()
-        .ok_or_else(|| anyhow!("Redirect URI must include a port (e.g., http://localhost:29876/auth/callback)"))
+    url.port().ok_or_else(|| {
+        anyhow!("Redirect URI must include a port (e.g., http://localhost:29876/auth/callback)")
+    })
 }
 
 /// Create callback HTTP app
-fn create_callback_app(
-    tx: oneshot::Sender<Result<String>>,
-    expected_state: String,
-) -> Router {
+fn create_callback_app(tx: oneshot::Sender<Result<String>>, expected_state: String) -> Router {
     let tx = Arc::new(tokio::sync::Mutex::new(Some(tx)));
     let expected_state = Arc::new(expected_state);
 
@@ -351,8 +360,7 @@ fn load_or_create_config(config_path: &PathBuf) -> Result<Config> {
     if let Some(parent) = config_path.parent() {
         if !parent.exists() {
             debug!("Creating parent directory: {}", parent.display());
-            std::fs::create_dir_all(parent)
-                .context("Failed to create config directory")?;
+            std::fs::create_dir_all(parent).context("Failed to create config directory")?;
         }
     }
 
@@ -361,7 +369,10 @@ fn load_or_create_config(config_path: &PathBuf) -> Result<Config> {
         match Config::load(config_path) {
             Ok(config) => Ok(config),
             Err(e) => {
-                debug!("Failed to load existing config: {}, using default config", e);
+                debug!(
+                    "Failed to load existing config: {}, using default config",
+                    e
+                );
                 // If config is corrupted or empty, use default
                 Ok(Config::default())
             }

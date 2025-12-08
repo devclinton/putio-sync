@@ -3,8 +3,8 @@
 //! This module provides client-side filtering and sorting capabilities
 //! for file listings from the Put.io API.
 
-use putio_sync_client::FileEntry;
 use glob::Pattern;
+use putio_sync_client::FileEntry;
 use std::cmp::Ordering;
 use std::str::FromStr;
 

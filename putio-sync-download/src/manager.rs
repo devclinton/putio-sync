@@ -108,7 +108,11 @@ impl DownloadManager {
     /// * `client` - Put.io API client
     /// * `database` - Database for tracking downloads
     /// * `config` - Download configuration
-    pub fn new(client: Arc<PutioApiClient>, database: Arc<Database>, config: DownloadConfig) -> Self {
+    pub fn new(
+        client: Arc<PutioApiClient>,
+        database: Arc<Database>,
+        config: DownloadConfig,
+    ) -> Self {
         let overall_progress = Arc::new(RwLock::new(OverallProgress::new(0, 0)));
 
         Self {
@@ -119,7 +123,7 @@ impl DownloadManager {
             overall_progress,
         }
     }
-    
+
     /// Create a new download manager without database (fallback mode)
     ///
     /// # Arguments
@@ -128,7 +132,7 @@ impl DownloadManager {
     /// * `config` - Download configuration
     pub fn new_without_database(client: Arc<PutioApiClient>, config: DownloadConfig) -> Self {
         let overall_progress = Arc::new(RwLock::new(OverallProgress::new(0, 0)));
-        
+
         warn!("Download manager initialized without database - download tracking disabled");
 
         Self {
@@ -159,7 +163,10 @@ impl DownloadManager {
         let filename = sanitize_filename(&file.filename);
 
         debug!("Starting download: {} (ID: {})", filename, file_id);
-        debug!("Download config target_directory: {}", self.config.target_directory.display());
+        debug!(
+            "Download config target_directory: {}",
+            self.config.target_directory.display()
+        );
         debug!("File relative_path: '{}'", file.relative_path);
 
         // Notify callback that file download is starting
@@ -171,19 +178,20 @@ impl DownloadManager {
         let target_path = if file.relative_path.is_empty() {
             self.config.target_directory.join(&filename)
         } else {
-            self.config.target_directory.join(&file.relative_path).join(&filename)
+            self.config
+                .target_directory
+                .join(&file.relative_path)
+                .join(&filename)
         };
         debug!("Constructed target_path: {}", target_path.display());
-        
+
         // Ensure parent directory exists
         if let Some(parent) = target_path.parent() {
             if !parent.exists() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    DownloadError::IoError(e)
-                })?;
+                std::fs::create_dir_all(parent).map_err(DownloadError::IoError)?;
             }
         }
-        
+
         if self.config.skip_existing && target_path.exists() {
             info!("Skipping existing file: {}", filename);
             return Ok(DownloadOperationResult {
@@ -198,18 +206,23 @@ impl DownloadManager {
         // Check for resume capability
         // Create temporary download path
         let temp_path = create_temp_path(&target_path)?;
-        
+
         let resume_bytes = check_resume(&temp_path, file.file_size).await?;
 
         // Download the file using streaming with range requests for resuming if available
         let result = if let Some(resume_from) = resume_bytes {
             // Try to resume using range requests
-            info!("Attempting to resume download from byte {} of {}", resume_from, file.file_size);
-            self.download_streaming_with_resume(file, progress_callback.clone(), resume_from).await
+            info!(
+                "Attempting to resume download from byte {} of {}",
+                resume_from, file.file_size
+            );
+            self.download_streaming_with_resume(file, progress_callback.clone(), resume_from)
+                .await
         } else {
             // Start new download
             debug!("Starting new streaming download");
-            self.download_streaming(file, progress_callback.clone()).await
+            self.download_streaming(file, progress_callback.clone())
+                .await
         };
 
         // Handle result
@@ -241,7 +254,10 @@ impl DownloadManager {
         let target_path = if file.relative_path.is_empty() {
             self.config.target_directory.join(&filename)
         } else {
-            self.config.target_directory.join(&file.relative_path).join(&filename)
+            self.config
+                .target_directory
+                .join(&file.relative_path)
+                .join(&filename)
         };
 
         // Create progress tracker
@@ -292,11 +308,8 @@ impl DownloadManager {
 
                 // Update progress
                 if let Some(ref callback) = progress_callback {
-                    let mut progress = DownloadProgress::new(
-                        file.file_id,
-                        filename.clone(),
-                        file.file_size,
-                    );
+                    let mut progress =
+                        DownloadProgress::new(file.file_id, filename.clone(), file.file_size);
                     progress.bytes_downloaded = total_bytes_downloaded;
                     progress.complete = true;
                     callback.on_file_progress(&progress);
@@ -305,19 +318,24 @@ impl DownloadManager {
                 // Save to database with retry count (if database available)
                 if let Some(database) = &self.database {
                     let repo = database.downloads();
-                    if let Err(e) = repo.insert_with_retry_count(
-                        file.file_id,
-                        &filename,
-                        file.file_size as i64,
-                        target_path.to_str().unwrap_or(""),
-                        DownloadStatus::Completed,
-                        retry_count as i64,
-                    )
-                    .await {
+                    if let Err(e) = repo
+                        .insert_with_retry_count(
+                            file.file_id,
+                            &filename,
+                            file.file_size as i64,
+                            target_path.to_str().unwrap_or(""),
+                            DownloadStatus::Completed,
+                            retry_count as i64,
+                        )
+                        .await
+                    {
                         warn!("Database error (non-fatal): Failed to record download completion for {}: {}. Download succeeded.", filename, e);
                     }
                 } else {
-                    debug!("Database not available - skipping download record for {}", filename);
+                    debug!(
+                        "Database not available - skipping download record for {}",
+                        filename
+                    );
                 }
 
                 info!(
@@ -367,7 +385,10 @@ impl DownloadManager {
         let target_path = if file.relative_path.is_empty() {
             self.config.target_directory.join(&filename)
         } else {
-            self.config.target_directory.join(&file.relative_path).join(&filename)
+            self.config
+                .target_directory
+                .join(&file.relative_path)
+                .join(&filename)
         };
 
         // Create progress tracker
@@ -415,11 +436,8 @@ impl DownloadManager {
 
                 // Update progress
                 if let Some(ref callback) = progress_callback {
-                    let mut progress = DownloadProgress::new(
-                        file.file_id,
-                        filename.clone(),
-                        file.file_size,
-                    );
+                    let mut progress =
+                        DownloadProgress::new(file.file_id, filename.clone(), file.file_size);
                     progress.bytes_downloaded = download_result.bytes_downloaded;
                     progress.complete = true;
                     callback.on_file_progress(&progress);
@@ -428,19 +446,24 @@ impl DownloadManager {
                 // Save to database with retry count (if database available)
                 if let Some(database) = &self.database {
                     let repo = database.downloads();
-                    if let Err(e) = repo.insert_with_retry_count(
-                        file.file_id,
-                        &filename,
-                        file.file_size as i64,
-                        target_path.to_str().unwrap_or(""),
-                        DownloadStatus::Completed,
-                        retry_count as i64,
-                    )
-                    .await {
+                    if let Err(e) = repo
+                        .insert_with_retry_count(
+                            file.file_id,
+                            &filename,
+                            file.file_size as i64,
+                            target_path.to_str().unwrap_or(""),
+                            DownloadStatus::Completed,
+                            retry_count as i64,
+                        )
+                        .await
+                    {
                         warn!("Database error (non-fatal): Failed to record download completion for {}: {}. Download succeeded.", filename, e);
                     }
                 } else {
-                    debug!("Database not available - skipping download record for {}", filename);
+                    debug!(
+                        "Database not available - skipping download record for {}",
+                        filename
+                    );
                 }
 
                 info!(
@@ -496,7 +519,7 @@ mod tests {
             filename: "test.txt".to_string(),
             file_size: 1024,
             download_url: "https://example.com/test.txt".to_string(),
-            relative_path: "./".to_string()
+            relative_path: "./".to_string(),
         };
 
         assert_eq!(file.file_id, 123);

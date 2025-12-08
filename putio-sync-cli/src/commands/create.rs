@@ -35,14 +35,17 @@ pub async fn execute_create(
 
     let client = match auth_config.auth_method {
         AuthMethod::Token => {
-            let token = auth_config.token
+            let token = auth_config
+                .token
                 .ok_or_else(|| anyhow::anyhow!("Token not configured"))?;
             PutioApiClient::new(token)
         }
         AuthMethod::AppPassword => {
-            let username = auth_config.username
+            let username = auth_config
+                .username
                 .ok_or_else(|| anyhow::anyhow!("Username not configured"))?;
-            let password = auth_config.password
+            let password = auth_config
+                .password
                 .ok_or_else(|| anyhow::anyhow!("Password not configured"))?;
             PutioApiClient::with_credentials(username, password)
         }
@@ -130,10 +133,7 @@ async fn add_magnet_link(
         .await
         .context("Failed to add magnet link")?;
 
-    println!(
-        "✓ Transfer added: {} (ID: {})",
-        transfer.name, transfer.id
-    );
+    println!("✓ Transfer added: {} (ID: {})", transfer.name, transfer.id);
     println!("  Status: {}", transfer.status);
     println!("  Size: {}", format_bytes(transfer.size.unwrap_or(0)));
     if let Some(parent) = parent_id {
@@ -167,10 +167,7 @@ async fn add_torrent_file(
         .await
         .context("Failed to upload .torrent file")?;
 
-    println!(
-        "✓ Transfer added: {} (ID: {})",
-        transfer.name, transfer.id
-    );
+    println!("✓ Transfer added: {} (ID: {})", transfer.name, transfer.id);
     println!("  Status: {}", transfer.status);
     println!("  Size: {}", format_bytes(transfer.size.unwrap_or(0)));
     if let Some(parent) = parent_id {
@@ -207,7 +204,11 @@ async fn process_watch_directories(
         if torrent_files.is_empty() {
             println!("No .torrent files found in {}", dir.display());
         } else {
-            println!("Found {} .torrent file(s) in {}", torrent_files.len(), dir.display());
+            println!(
+                "Found {} .torrent file(s) in {}",
+                torrent_files.len(),
+                dir.display()
+            );
 
             for file in torrent_files {
                 add_torrent_file(client, &file.to_string_lossy(), parent_id).await?;

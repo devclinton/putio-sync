@@ -240,7 +240,10 @@ impl PutioApiClient {
     /// # Returns
     ///
     /// A request builder with authentication headers and extended timeout
-    pub fn authenticated_download_request(&self, url: &str) -> ClientResult<reqwest::RequestBuilder> {
+    pub fn authenticated_download_request(
+        &self,
+        url: &str,
+    ) -> ClientResult<reqwest::RequestBuilder> {
         let auth_header = self.get_auth_header()?;
         debug!("Creating authenticated download request for URL: {}", url);
         debug!("Auth method: {:?}", self.auth_method);
@@ -248,11 +251,13 @@ impl PutioApiClient {
 
         // Create a client with extended timeout for downloads (10 minutes)
         let download_client = Client::builder()
-            .timeout(Duration::from_secs(600))  // 10 minutes
+            .timeout(Duration::from_secs(600)) // 10 minutes
             .build()
             .map_err(ClientError::HttpError)?;
 
-        Ok(download_client.get(url).header("Authorization", auth_header))
+        Ok(download_client
+            .get(url)
+            .header("Authorization", auth_header))
     }
 
     /// Create an authenticated HEAD request builder for checking file metadata
@@ -364,7 +369,10 @@ impl PutioApiClient {
     /// Execute a request with exponential backoff retry logic
     ///
     /// Retries on network errors and 5xx server errors.
-    pub(crate) async fn execute_with_retry<T: DeserializeOwned>(&self, request: Request) -> ClientResult<T> {
+    pub(crate) async fn execute_with_retry<T: DeserializeOwned>(
+        &self,
+        request: Request,
+    ) -> ClientResult<T> {
         let mut attempts = 0;
         let mut delay_ms = INITIAL_RETRY_DELAY_MS;
 
@@ -483,7 +491,8 @@ mod tests {
     #[tokio::test]
     async fn test_with_base_url() {
         let custom_url = "https://custom.api.put.io/v2";
-        let client = PutioApiClient::with_base_url("test_token".to_string(), custom_url.to_string());
+        let client =
+            PutioApiClient::with_base_url("test_token".to_string(), custom_url.to_string());
         assert_eq!(client.base_url, custom_url);
         assert_eq!(client.auth_method, AuthMethod::Token);
         assert_eq!(client.token.as_ref().unwrap(), "test_token");
@@ -491,8 +500,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_with_credentials() {
-        let client =
-            PutioApiClient::with_credentials("user@example.com".to_string(), "app_password".to_string());
+        let client = PutioApiClient::with_credentials(
+            "user@example.com".to_string(),
+            "app_password".to_string(),
+        );
         assert_eq!(client.base_url, DEFAULT_BASE_URL);
         assert_eq!(client.auth_method, AuthMethod::AppPassword);
         assert_eq!(client.username.as_ref().unwrap(), "user@example.com");
@@ -531,8 +542,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_auth_header_credentials() {
-        let client =
-            PutioApiClient::with_credentials("user@example.com".to_string(), "password123".to_string());
+        let client = PutioApiClient::with_credentials(
+            "user@example.com".to_string(),
+            "password123".to_string(),
+        );
         let header = client.get_auth_header().unwrap();
 
         // Verify Basic auth header format

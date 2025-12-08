@@ -1,7 +1,34 @@
-//! Database module for local state management
+//! # putio-sync-db
 //!
-//! This module provides SQLite-based storage for tracking downloads,
-//! history, statistics, and queue management.
+//! SQLite database layer for putio-sync state management.
+//!
+//! This crate provides repository patterns for managing persistent state
+//! including download tracking, history, statistics, and queue management.
+//!
+//! ## Features
+//!
+//! - **Download Tracking**: Track active downloads with progress and metadata
+//! - **History Management**: Record download and delete operations
+//! - **Statistics**: Aggregate statistics by date range and file extension
+//! - **Queue Management**: Priority-based download queue
+//! - **Torrent Tracking**: Checksum-based deduplication for processed torrents
+//!
+//! ## Usage
+//!
+//! ```no_run
+//! use putio_sync_db::{Database, HistoryRepository};
+//! use std::path::Path;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let db = Database::new(Path::new("sync.db")).await?;
+//!     let history = HistoryRepository::new(db.pool());
+//!
+//!     // Query history
+//!     let entries = history.query(None, 10, 0).await?;
+//!     Ok(())
+//! }
+//! ```
 
 pub mod downloads;
 pub mod error;
@@ -13,12 +40,12 @@ pub mod stats;
 pub mod torrents;
 
 pub use downloads::DownloadRepository;
+pub use error::{DbError, DbResult};
 pub use history::HistoryRepository;
 pub use queue::{QueueRepository, QueueStats};
 pub use stats::{ExtensionStats, StatsRepository};
 pub use torrents::ProcessedTorrentsRepository;
 
-use crate::error::{DbError, DbResult};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::path::Path;
 use std::str::FromStr;
@@ -41,7 +68,7 @@ impl Database {
     /// # Examples
     ///
     /// ```no_run
-    /// use putio_sync_core::db::Database;
+    /// use putio_sync_db::Database;
     /// use std::path::PathBuf;
     ///
     /// #[tokio::main]
@@ -125,19 +152,25 @@ impl Database {
         sqlx::query(schema::CREATE_DOWNLOADS_TABLE)
             .execute(&self.pool)
             .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to create downloads table: {}", e)))?;
+            .map_err(|e| {
+                DbError::DatabaseError(format!("Failed to create downloads table: {}", e))
+            })?;
 
         // Create download_history table
         sqlx::query(schema::CREATE_DOWNLOAD_HISTORY_TABLE)
             .execute(&self.pool)
             .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to create download_history table: {}", e)))?;
+            .map_err(|e| {
+                DbError::DatabaseError(format!("Failed to create download_history table: {}", e))
+            })?;
 
         // Create download_stats table
         sqlx::query(schema::CREATE_DOWNLOAD_STATS_TABLE)
             .execute(&self.pool)
             .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to create download_stats table: {}", e)))?;
+            .map_err(|e| {
+                DbError::DatabaseError(format!("Failed to create download_stats table: {}", e))
+            })?;
 
         // Initialize stats table if empty
         sqlx::query(schema::INIT_DOWNLOAD_STATS)
@@ -149,13 +182,17 @@ impl Database {
         sqlx::query(schema::CREATE_DOWNLOAD_QUEUE_TABLE)
             .execute(&self.pool)
             .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to create download_queue table: {}", e)))?;
+            .map_err(|e| {
+                DbError::DatabaseError(format!("Failed to create download_queue table: {}", e))
+            })?;
 
         // Create processed_torrents table
         sqlx::query(schema::CREATE_PROCESSED_TORRENTS_TABLE)
             .execute(&self.pool)
             .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to create processed_torrents table: {}", e)))?;
+            .map_err(|e| {
+                DbError::DatabaseError(format!("Failed to create processed_torrents table: {}", e))
+            })?;
 
         // Create performance indexes
         sqlx::query(schema::CREATE_INDEXES)

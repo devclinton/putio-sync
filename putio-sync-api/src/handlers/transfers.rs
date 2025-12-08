@@ -25,14 +25,20 @@ pub async fn list_transfers(config: &Config) -> ApiResult<ListResponse<TransferR
     // Create API client based on auth method
     let client = match auth.auth_method {
         AuthMethod::Token => {
-            let token = auth.token.as_ref()
+            let token = auth
+                .token
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Token not configured".to_string()))?;
             PutioApiClient::new(token.clone())
         }
         AuthMethod::AppPassword => {
-            let username = auth.username.as_ref()
+            let username = auth
+                .username
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Username not configured".to_string()))?;
-            let password = auth.password.as_ref()
+            let password = auth
+                .password
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Password not configured".to_string()))?;
             PutioApiClient::with_credentials(username.clone(), password.clone())
         }
@@ -74,14 +80,20 @@ pub async fn add_transfer(
     // Create API client based on auth method
     let client = match auth.auth_method {
         AuthMethod::Token => {
-            let token = auth.token.as_ref()
+            let token = auth
+                .token
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Token not configured".to_string()))?;
             PutioApiClient::new(token.clone())
         }
         AuthMethod::AppPassword => {
-            let username = auth.username.as_ref()
+            let username = auth
+                .username
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Username not configured".to_string()))?;
-            let password = auth.password.as_ref()
+            let password = auth
+                .password
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Password not configured".to_string()))?;
             PutioApiClient::with_credentials(username.clone(), password.clone())
         }
@@ -90,7 +102,9 @@ pub async fn add_transfer(
     // Add transfer based on what's provided
     let transfer = if let Some(url) = request.url {
         // Add via URL (magnet link or torrent URL)
-        client.add_transfer_url(&url, Some(request.parent_id), None).await?
+        client
+            .add_transfer_url(&url, Some(request.parent_id), None)
+            .await?
     } else if let Some(_file_data) = request.file_data {
         // TODO: Implement file upload
         // For now, return an error
@@ -126,14 +140,20 @@ pub async fn get_transfer(config: &Config, transfer_id: i64) -> ApiResult<Transf
     // Create API client based on auth method
     let client = match auth.auth_method {
         AuthMethod::Token => {
-            let token = auth.token.as_ref()
+            let token = auth
+                .token
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Token not configured".to_string()))?;
             PutioApiClient::new(token.clone())
         }
         AuthMethod::AppPassword => {
-            let username = auth.username.as_ref()
+            let username = auth
+                .username
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Username not configured".to_string()))?;
-            let password = auth.password.as_ref()
+            let password = auth
+                .password
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Password not configured".to_string()))?;
             PutioApiClient::with_credentials(username.clone(), password.clone())
         }
@@ -142,7 +162,9 @@ pub async fn get_transfer(config: &Config, transfer_id: i64) -> ApiResult<Transf
     // Get transfer
     let transfer_response = client.get_transfer_info(transfer_id).await?;
 
-    Ok(crate::models::transfers::TransferResponse::from(transfer_response.transfer))
+    Ok(crate::models::transfers::TransferResponse::from(
+        transfer_response.transfer,
+    ))
 }
 
 /// Cancel transfers
@@ -168,21 +190,29 @@ pub async fn cancel_transfers(
     // Create API client based on auth method
     let client = match auth.auth_method {
         AuthMethod::Token => {
-            let token = auth.token.as_ref()
+            let token = auth
+                .token
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Token not configured".to_string()))?;
             PutioApiClient::new(token.clone())
         }
         AuthMethod::AppPassword => {
-            let username = auth.username.as_ref()
+            let username = auth
+                .username
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Username not configured".to_string()))?;
-            let password = auth.password.as_ref()
+            let password = auth
+                .password
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Password not configured".to_string()))?;
             PutioApiClient::with_credentials(username.clone(), password.clone())
         }
     };
 
     // Cancel transfers
-    client.cancel_transfers(request.transfer_ids.clone()).await?;
+    client
+        .cancel_transfers(request.transfer_ids.clone())
+        .await?;
 
     Ok(SuccessResponse {
         message: format!(
@@ -202,7 +232,10 @@ pub async fn cancel_transfers(
 /// # Returns
 ///
 /// Transfer information
-pub async fn retry_transfer(config: &Config, transfer_id: i64) -> ApiResult<crate::models::transfers::TransferResponse> {
+pub async fn retry_transfer(
+    config: &Config,
+    transfer_id: i64,
+) -> ApiResult<crate::models::transfers::TransferResponse> {
     // Get auth config
     let auth = config
         .auth
@@ -212,14 +245,20 @@ pub async fn retry_transfer(config: &Config, transfer_id: i64) -> ApiResult<crat
     // Create API client based on auth method
     let client = match auth.auth_method {
         AuthMethod::Token => {
-            let token = auth.token.as_ref()
+            let token = auth
+                .token
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Token not configured".to_string()))?;
             PutioApiClient::new(token.clone())
         }
         AuthMethod::AppPassword => {
-            let username = auth.username.as_ref()
+            let username = auth
+                .username
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Username not configured".to_string()))?;
-            let password = auth.password.as_ref()
+            let password = auth
+                .password
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Password not configured".to_string()))?;
             PutioApiClient::with_credentials(username.clone(), password.clone())
         }
@@ -231,7 +270,9 @@ pub async fn retry_transfer(config: &Config, transfer_id: i64) -> ApiResult<crat
     // Get the transfer after retrying
     let transfer_response = client.get_transfer_info(transfer_id).await?;
 
-    Ok(crate::models::transfers::TransferResponse::from(transfer_response.transfer))
+    Ok(crate::models::transfers::TransferResponse::from(
+        transfer_response.transfer,
+    ))
 }
 
 #[cfg(test)]

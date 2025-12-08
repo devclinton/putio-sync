@@ -262,7 +262,10 @@ fn create_file_progress_bar(filename: &str, file_size: u64) -> ProgressBar {
 
     bar.set_style(
         IndicatifStyle::default_bar()
-            .template(&format!("  {{spinner:.green}} {} [{{bar:30.cyan/blue}}] {{bytes}}/{{total_bytes}} {{msg}}", display_name))
+            .template(&format!(
+                "  {{spinner:.green}} {} [{{bar:30.cyan/blue}}] {{bytes}}/{{total_bytes}} {{msg}}",
+                display_name
+            ))
             .expect("Invalid progress bar template")
             .progress_chars("=> "),
     );

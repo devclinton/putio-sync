@@ -65,10 +65,7 @@ pub fn get_original_path(partial_path: &Path) -> Option<PathBuf> {
 /// Check if a download can be resumed
 ///
 /// Returns the number of bytes already downloaded if resume is possible
-pub async fn check_resume(
-    temp_path: &Path,
-    expected_size: u64,
-) -> DownloadResult<Option<u64>> {
+pub async fn check_resume(temp_path: &Path, expected_size: u64) -> DownloadResult<Option<u64>> {
     if temp_path.exists() && is_partial_download(temp_path) {
         // Get the current size of the partial file
         match tokio::fs::metadata(temp_path).await {
@@ -100,10 +97,14 @@ pub async fn check_resume(
 /// Clean up a partial download file
 pub async fn cleanup_partial(path: &Path) {
     use tracing::warn;
-    
+
     if path.exists() {
         if let Err(e) = tokio::fs::remove_file(path).await {
-            warn!("Failed to clean up partial download {}: {}", path.display(), e);
+            warn!(
+                "Failed to clean up partial download {}: {}",
+                path.display(),
+                e
+            );
         }
     }
 }
@@ -129,7 +130,9 @@ mod tests {
     #[test]
     fn test_is_partial_download() {
         assert!(is_partial_download(&PathBuf::from(".file.txt.downloading")));
-        assert!(is_partial_download(&PathBuf::from("/path/.file.txt.downloading")));
+        assert!(is_partial_download(&PathBuf::from(
+            "/path/.file.txt.downloading"
+        )));
         assert!(!is_partial_download(&PathBuf::from("file.txt")));
         assert!(!is_partial_download(&PathBuf::from(".file.txt")));
     }

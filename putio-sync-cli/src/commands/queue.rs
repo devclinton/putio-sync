@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthMethod, Config};
 use putio_sync_core::filter::FileFilter;
-use putio_sync_db::{Database, QueueStats};
 use putio_sync_db::models::{QueueItem, QueueStatus};
+use putio_sync_db::{Database, QueueStats};
 use serde::Serialize;
 use std::path::PathBuf;
 use tracing::{debug, info};
@@ -48,24 +48,29 @@ pub async fn execute_list(
 
     // Get queue items
     let items = if let Some(status) = status_filter {
-        let status_enum: QueueStatus = status.parse()
+        let status_enum: QueueStatus = status
+            .parse()
             .map_err(|e| anyhow::anyhow!("Invalid status '{}': {}", status, e))?;
 
         // Get all items and filter by status
-        queue_repo.get_all().await
+        queue_repo
+            .get_all()
+            .await
             .context("Failed to get queue items")?
             .into_iter()
             .filter(|item| item.status == status_enum.to_string())
             .collect()
     } else {
-        queue_repo.get_all().await
+        queue_repo
+            .get_all()
+            .await
             .context("Failed to get queue items")?
     };
 
     // Display based on output format
     match output_format.as_str() {
         "json" => display_json(&items)?,
-        "table" | _ => display_queue_table(&items)?,
+        _ => display_queue_table(&items)?,
     }
 
     Ok(())
@@ -89,7 +94,9 @@ pub async fn execute_add(
     // Determine which files to add
     let files_to_add = if all || filter.is_some() {
         // List all files and filter
-        let response = client.list_files(0).await
+        let response = client
+            .list_files(0)
+            .await
             .context("Failed to list files from Put.io")?;
 
         // Apply name filter if specified
@@ -103,7 +110,9 @@ pub async fn execute_add(
         // Get specific files
         let mut files = Vec::new();
         for file_id in file_ids {
-            let response = client.get_file_details(file_id).await
+            let response = client
+                .get_file_details(file_id)
+                .await
                 .with_context(|| format!("Failed to get file {}", file_id))?;
             files.push(response.file);
         }
@@ -128,13 +137,10 @@ pub async fn execute_add(
 
         let download_url = client.get_download_url(file.id);
 
-        queue_repo.add(
-            file.id,
-            &file.name,
-            file.size,
-            &download_url,
-            priority,
-        ).await.with_context(|| format!("Failed to add file {} to queue", file.id))?;
+        queue_repo
+            .add(file.id, &file.name, file.size, &download_url, priority)
+            .await
+            .with_context(|| format!("Failed to add file {} to queue", file.id))?;
 
         added += 1;
         println!("Added to queue: {} (priority: {})", file.name, priority);
@@ -146,10 +152,7 @@ pub async fn execute_add(
 }
 
 /// Execute queue pause subcommand
-pub async fn execute_pause(
-    file_ids: Vec<i64>,
-    config_path: Option<PathBuf>,
-) -> Result<()> {
+pub async fn execute_pause(file_ids: Vec<i64>, config_path: Option<PathBuf>) -> Result<()> {
     info!("Starting queue pause command");
 
     let config = load_config(config_path)?;
@@ -158,13 +161,17 @@ pub async fn execute_pause(
 
     let count = if file_ids.is_empty() {
         // Pause all
-        queue_repo.pause_all().await
+        queue_repo
+            .pause_all()
+            .await
             .context("Failed to pause queue")?
     } else {
         // Pause specific files
         let mut paused = 0;
         for file_id in file_ids {
-            queue_repo.update_status(file_id, QueueStatus::Paused).await
+            queue_repo
+                .update_status(file_id, QueueStatus::Paused)
+                .await
                 .with_context(|| format!("Failed to pause file {}", file_id))?;
             paused += 1;
         }
@@ -177,10 +184,7 @@ pub async fn execute_pause(
 }
 
 /// Execute queue resume subcommand
-pub async fn execute_resume(
-    file_ids: Vec<i64>,
-    config_path: Option<PathBuf>,
-) -> Result<()> {
+pub async fn execute_resume(file_ids: Vec<i64>, config_path: Option<PathBuf>) -> Result<()> {
     info!("Starting queue resume command");
 
     let config = load_config(config_path)?;
@@ -189,13 +193,17 @@ pub async fn execute_resume(
 
     let count = if file_ids.is_empty() {
         // Resume all
-        queue_repo.resume_all().await
+        queue_repo
+            .resume_all()
+            .await
             .context("Failed to resume queue")?
     } else {
         // Resume specific files
         let mut resumed = 0;
         for file_id in file_ids {
-            queue_repo.update_status(file_id, QueueStatus::Pending).await
+            queue_repo
+                .update_status(file_id, QueueStatus::Pending)
+                .await
                 .with_context(|| format!("Failed to resume file {}", file_id))?;
             resumed += 1;
         }
@@ -208,10 +216,7 @@ pub async fn execute_resume(
 }
 
 /// Execute queue remove subcommand
-pub async fn execute_remove(
-    file_ids: Vec<i64>,
-    config_path: Option<PathBuf>,
-) -> Result<()> {
+pub async fn execute_remove(file_ids: Vec<i64>, config_path: Option<PathBuf>) -> Result<()> {
     info!("Starting queue remove command");
 
     if file_ids.is_empty() {
@@ -223,7 +228,9 @@ pub async fn execute_remove(
     let queue_repo = db.queue();
 
     for file_id in &file_ids {
-        queue_repo.remove(*file_id).await
+        queue_repo
+            .remove(*file_id)
+            .await
             .with_context(|| format!("Failed to remove file {} from queue", file_id))?;
         println!("Removed file {} from queue", file_id);
     }
@@ -234,10 +241,7 @@ pub async fn execute_remove(
 }
 
 /// Execute queue clear subcommand
-pub async fn execute_clear(
-    yes: bool,
-    config_path: Option<PathBuf>,
-) -> Result<()> {
+pub async fn execute_clear(yes: bool, config_path: Option<PathBuf>) -> Result<()> {
     info!("Starting queue clear command");
 
     let config = load_config(config_path)?;
@@ -246,7 +250,8 @@ pub async fn execute_clear(
 
     // Check how many completed items exist
     let items = queue_repo.get_all().await?;
-    let completed_count = items.iter()
+    let completed_count = items
+        .iter()
         .filter(|item| item.status == QueueStatus::Completed.to_string())
         .count();
 
@@ -257,7 +262,10 @@ pub async fn execute_clear(
 
     // Confirm deletion unless --yes flag is provided
     if !yes {
-        println!("This will remove {} completed item(s) from the queue.", completed_count);
+        println!(
+            "This will remove {} completed item(s) from the queue.",
+            completed_count
+        );
         print!("Continue? [y/N] ");
         use std::io::{self, Write};
         io::stdout().flush()?;
@@ -271,7 +279,9 @@ pub async fn execute_clear(
         }
     }
 
-    let cleared = queue_repo.clear_completed().await
+    let cleared = queue_repo
+        .clear_completed()
+        .await
         .context("Failed to clear completed items")?;
 
     println!("Cleared {} completed item(s) from queue", cleared);
@@ -291,7 +301,9 @@ pub async fn execute_priority(
     let db = open_database(&config).await?;
     let queue_repo = db.queue();
 
-    queue_repo.update_priority(file_id, priority).await
+    queue_repo
+        .update_priority(file_id, priority)
+        .await
         .with_context(|| format!("Failed to update priority for file {}", file_id))?;
 
     println!("Updated priority for file {} to {}", file_id, priority);
@@ -300,17 +312,16 @@ pub async fn execute_priority(
 }
 
 /// Execute queue stats subcommand
-pub async fn execute_stats(
-    output_format: String,
-    config_path: Option<PathBuf>,
-) -> Result<()> {
+pub async fn execute_stats(output_format: String, config_path: Option<PathBuf>) -> Result<()> {
     info!("Starting queue stats command");
 
     let config = load_config(config_path)?;
     let db = open_database(&config).await?;
     let queue_repo = db.queue();
 
-    let stats = queue_repo.get_stats().await
+    let stats = queue_repo
+        .get_stats()
+        .await
         .context("Failed to get queue statistics")?;
 
     let display_stats = QueueStatsDisplay::from(stats);
@@ -322,7 +333,7 @@ pub async fn execute_stats(
                 .context("Failed to serialize statistics to JSON")?;
             println!("{}", json);
         }
-        "table" | _ => {
+        _ => {
             println!("\nQueue Statistics");
             println!("{}", "═".repeat(50));
             println!("Total Items:          {:>12}", display_stats.total);
@@ -352,19 +363,23 @@ fn load_config(config_path: Option<PathBuf>) -> Result<Config> {
 
 /// Create API client from configuration
 fn create_api_client(config: &Config) -> Result<PutioApiClient> {
-    let auth_config = config.auth.clone()
-        .ok_or_else(|| anyhow::anyhow!("No authentication configured. Run 'putio-sync login' first."))?;
+    let auth_config = config.auth.clone().ok_or_else(|| {
+        anyhow::anyhow!("No authentication configured. Run 'putio-sync login' first.")
+    })?;
 
     let client = match auth_config.auth_method {
         AuthMethod::Token => {
-            let token = auth_config.token
+            let token = auth_config
+                .token
                 .ok_or_else(|| anyhow::anyhow!("Token not configured"))?;
             PutioApiClient::new(token)
         }
         AuthMethod::AppPassword => {
-            let username = auth_config.username
+            let username = auth_config
+                .username
                 .ok_or_else(|| anyhow::anyhow!("Username not configured"))?;
-            let password = auth_config.password
+            let password = auth_config
+                .password
                 .ok_or_else(|| anyhow::anyhow!("Password not configured"))?;
             PutioApiClient::with_credentials(username, password)
         }
@@ -423,8 +438,7 @@ fn display_queue_table(items: &[QueueItem]) -> Result<()> {
 
 /// Display items in JSON format
 fn display_json<T: Serialize>(data: &T) -> Result<()> {
-    let json = serde_json::to_string_pretty(data)
-        .context("Failed to serialize to JSON")?;
+    let json = serde_json::to_string_pretty(data).context("Failed to serialize to JSON")?;
     println!("{}", json);
     Ok(())
 }

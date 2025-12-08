@@ -29,14 +29,20 @@ pub async fn list_files(
     // Create API client based on auth method
     let client = match auth.auth_method {
         AuthMethod::Token => {
-            let token = auth.token.as_ref()
+            let token = auth
+                .token
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Token not configured".to_string()))?;
             PutioApiClient::new(token.clone())
         }
         AuthMethod::AppPassword => {
-            let username = auth.username.as_ref()
+            let username = auth
+                .username
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Username not configured".to_string()))?;
-            let password = auth.password.as_ref()
+            let password = auth
+                .password
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Password not configured".to_string()))?;
             PutioApiClient::with_credentials(username.clone(), password.clone())
         }
@@ -83,14 +89,20 @@ pub async fn get_file(config: &Config, file_id: i64) -> ApiResult<FileResponse> 
     // Create API client based on auth method
     let client = match auth.auth_method {
         AuthMethod::Token => {
-            let token = auth.token.as_ref()
+            let token = auth
+                .token
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Token not configured".to_string()))?;
             PutioApiClient::new(token.clone())
         }
         AuthMethod::AppPassword => {
-            let username = auth.username.as_ref()
+            let username = auth
+                .username
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Username not configured".to_string()))?;
-            let password = auth.password.as_ref()
+            let password = auth
+                .password
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Password not configured".to_string()))?;
             PutioApiClient::with_credentials(username.clone(), password.clone())
         }
@@ -125,14 +137,20 @@ pub async fn delete_files(
     // Create API client based on auth method
     let client = match auth.auth_method {
         AuthMethod::Token => {
-            let token = auth.token.as_ref()
+            let token = auth
+                .token
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Token not configured".to_string()))?;
             PutioApiClient::new(token.clone())
         }
         AuthMethod::AppPassword => {
-            let username = auth.username.as_ref()
+            let username = auth
+                .username
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Username not configured".to_string()))?;
-            let password = auth.password.as_ref()
+            let password = auth
+                .password
+                .as_ref()
                 .ok_or_else(|| ApiError::Unauthorized("Password not configured".to_string()))?;
             PutioApiClient::with_credentials(username.clone(), password.clone())
         }

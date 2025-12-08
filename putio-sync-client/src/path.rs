@@ -117,6 +117,7 @@ impl PutioApiClient {
 
 #[cfg(test)]
 mod tests {
+    use super::super::PutioApiClient as ApiClient;
     use super::*;
     use mockito::Server;
 

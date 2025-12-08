@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use tracing::{debug, info};
 
 use crate::diagnostics::{
-    format_diagnostics_report, DiagnosticsCollector, DownloadStatus, 
-    HealthCheck, HealthStatus, WatchStatus
+    format_diagnostics_report, DiagnosticsCollector, DownloadStatus, HealthCheck, HealthStatus,
+    WatchStatus,
 };
 
 /// Execute the status command - show system health and diagnostics
@@ -20,8 +20,7 @@ pub async fn execute_status(
     info!("Generating system status report...");
 
     // Load configuration
-    let config_file_path = config_path
-        .or_else(|| Config::default_path().ok());
+    let config_file_path = config_path.or_else(|| Config::default_path().ok());
 
     let config = if let Some(ref path) = config_file_path {
         Config::load(path).ok()
@@ -50,7 +49,7 @@ pub async fn execute_status(
     } else {
         // Generate quick status summary
         let summary = collector.generate_health_summary(&download_status, &watch_status);
-        
+
         if json {
             let quick_status = serde_json::json!({
                 "status": "summary",
@@ -70,10 +69,11 @@ pub async fn execute_status(
         } else {
             println!("🔍 putio-sync Status");
             println!("{}", summary);
-            
+
             // Quick health checks
             println!("\n📊 Quick Health Checks");
-            let health_checks = generate_quick_health_checks(&config, &download_status, &watch_status).await;
+            let health_checks =
+                generate_quick_health_checks(&config, &download_status, &watch_status).await;
             for check in health_checks {
                 println!("  {} {}: {}", check.status, check.subsystem, check.message);
             }
@@ -97,8 +97,9 @@ pub async fn execute_health(config_path: Option<PathBuf>) -> Result<()> {
     let download_status = generate_download_status(&config).await?;
     let watch_status = generate_watch_status(&config).await?;
 
-    let health_checks = generate_quick_health_checks(&config, &download_status, &watch_status).await;
-    
+    let health_checks =
+        generate_quick_health_checks(&config, &download_status, &watch_status).await;
+
     let mut overall_healthy = true;
     for check in &health_checks {
         match check.status {
@@ -124,7 +125,9 @@ pub async fn execute_health(config_path: Option<PathBuf>) -> Result<()> {
         println!("\n✅ System is healthy");
         Ok(())
     } else {
-        println!("\n⚠️  System has issues - run 'putio-sync status --detailed' for more information");
+        println!(
+            "\n⚠️  System has issues - run 'putio-sync status --detailed' for more information"
+        );
         std::process::exit(1);
     }
 }
@@ -135,7 +138,7 @@ async fn generate_download_status(config: &Option<Config>) -> Result<DownloadSta
 
     if let Some(config) = config {
         status.workers_configured = config.download.workers;
-        
+
         // Check if target directory exists and is writable
         let target_dir = &config.download.target_directory;
         if target_dir.exists() && target_dir.is_dir() {
@@ -165,7 +168,9 @@ async fn generate_download_status(config: &Option<Config>) -> Result<DownloadSta
                     }
                 }
                 AuthMethod::AppPassword => {
-                    if let (Some(ref username), Some(ref password)) = (&auth.username, &auth.password) {
+                    if let (Some(ref username), Some(ref password)) =
+                        (&auth.username, &auth.password)
+                    {
                         PutioApiClient::with_credentials(username.clone(), password.clone())
                     } else {
                         debug!("API test skipped: credentials not configured");
@@ -215,34 +220,61 @@ async fn generate_quick_health_checks(
     // Configuration check
     if let Some(config) = config {
         if config.auth.is_none() {
-            checks.push(HealthCheck::warning("Config", "No authentication configured"));
+            checks.push(HealthCheck::warning(
+                "Config",
+                "No authentication configured",
+            ));
         } else if !config.download.target_directory.exists() {
-            checks.push(HealthCheck::critical("Config", "Download target directory does not exist"));
+            checks.push(HealthCheck::critical(
+                "Config",
+                "Download target directory does not exist",
+            ));
         } else {
             checks.push(HealthCheck::healthy("Config", "Configuration valid"));
         }
     } else {
-        checks.push(HealthCheck::critical("Config", "No configuration file found"));
+        checks.push(HealthCheck::critical(
+            "Config",
+            "No configuration file found",
+        ));
     }
 
     // Download system check
     if download_status.workers_configured == 0 {
-        checks.push(HealthCheck::warning("Download", "No download workers configured"));
+        checks.push(HealthCheck::warning(
+            "Download",
+            "No download workers configured",
+        ));
     } else if download_status.api_errors_recent > 0 {
-        checks.push(HealthCheck::warning("Download", "Recent API errors detected"));
+        checks.push(HealthCheck::warning(
+            "Download",
+            "Recent API errors detected",
+        ));
     } else {
         checks.push(HealthCheck::healthy("Download", "Download system ready"));
     }
 
     // Watch system check
     if watch_status.directories_watched.is_empty() {
-        checks.push(HealthCheck::healthy("Watch", "No watch directories configured"));
+        checks.push(HealthCheck::healthy(
+            "Watch",
+            "No watch directories configured",
+        ));
     } else if watch_status.directories_accessible == 0 {
-        checks.push(HealthCheck::critical("Watch", "No watch directories are accessible"));
+        checks.push(HealthCheck::critical(
+            "Watch",
+            "No watch directories are accessible",
+        ));
     } else if watch_status.directories_accessible < watch_status.directories_watched.len() {
-        checks.push(HealthCheck::warning("Watch", "Some watch directories are not accessible"));
+        checks.push(HealthCheck::warning(
+            "Watch",
+            "Some watch directories are not accessible",
+        ));
     } else {
-        checks.push(HealthCheck::healthy("Watch", "All watch directories accessible"));
+        checks.push(HealthCheck::healthy(
+            "Watch",
+            "All watch directories accessible",
+        ));
     }
 
     checks
@@ -255,11 +287,11 @@ pub async fn execute_debug(config_path: Option<PathBuf>) -> Result<()> {
     // Configuration debugging
     println!("📋 Configuration Analysis");
     let config_file_path = config_path.or_else(|| Config::default_path().ok());
-    
+
     if let Some(ref path) = config_file_path {
         println!("  Config file: {}", path.display());
         println!("  Exists: {}", path.exists());
-        
+
         if path.exists() {
             match std::fs::metadata(path) {
                 Ok(metadata) => {
@@ -277,11 +309,22 @@ pub async fn execute_debug(config_path: Option<PathBuf>) -> Result<()> {
                         println!("  Auth method: {:?}", auth.auth_method);
                     }
                     println!("  Download workers: {}", config.download.workers);
-                    println!("  Download target: {}", config.download.target_directory.display());
-                    println!("  Target exists: {}", config.download.target_directory.exists());
+                    println!(
+                        "  Download target: {}",
+                        config.download.target_directory.display()
+                    );
+                    println!(
+                        "  Target exists: {}",
+                        config.download.target_directory.exists()
+                    );
                     println!("  Watch directories: {}", config.watch.paths.len());
                     for (i, path) in config.watch.paths.iter().enumerate() {
-                        println!("    {}: {} (exists: {})", i + 1, path.display(), path.exists());
+                        println!(
+                            "    {}: {} (exists: {})",
+                            i + 1,
+                            path.display(),
+                            path.exists()
+                        );
                     }
                 }
                 Err(e) => {
@@ -295,16 +338,19 @@ pub async fn execute_debug(config_path: Option<PathBuf>) -> Result<()> {
         println!("  ❌ No config file path found");
     }
 
-    // Environment debugging  
+    // Environment debugging
     println!("\n🌍 Environment Information");
     println!("  OS: {}", std::env::consts::OS);
     println!("  Architecture: {}", std::env::consts::ARCH);
-    println!("  Working directory: {}", std::env::current_dir()?.display());
-    
+    println!(
+        "  Working directory: {}",
+        std::env::current_dir()?.display()
+    );
+
     if let Ok(home) = std::env::var("HOME") {
         println!("  Home directory: {}", home);
     }
-    
+
     // Check for common environment variables
     let env_vars = ["RUST_LOG", "PUTIO_SYNC_CONFIG", "PUTIO_TOKEN"];
     println!("  Environment variables:");
@@ -324,31 +370,27 @@ pub async fn execute_debug(config_path: Option<PathBuf>) -> Result<()> {
     // Network connectivity test
     println!("\n🌐 Network Connectivity");
     println!("  Testing Put.io API connectivity...");
-    
+
     if let Some(ref path) = config_file_path {
         if let Ok(config) = Config::load(path) {
             if let Some(auth) = config.auth {
                 let client = match auth.auth_method {
-                    AuthMethod::Token => {
-                        match auth.token {
-                            Some(token) => PutioApiClient::new(token),
-                            None => {
-                                println!("  ⚠️  No token configured");
-                                return Ok(());
-                            }
+                    AuthMethod::Token => match auth.token {
+                        Some(token) => PutioApiClient::new(token),
+                        None => {
+                            println!("  ⚠️  No token configured");
+                            return Ok(());
                         }
-                    }
-                    AuthMethod::AppPassword => {
-                        match (auth.username, auth.password) {
-                            (Some(username), Some(password)) => {
-                                PutioApiClient::with_credentials(username, password)
-                            }
-                            _ => {
-                                println!("  ⚠️  Credentials not fully configured");
-                                return Ok(());
-                            }
+                    },
+                    AuthMethod::AppPassword => match (auth.username, auth.password) {
+                        (Some(username), Some(password)) => {
+                            PutioApiClient::with_credentials(username, password)
                         }
-                    }
+                        _ => {
+                            println!("  ⚠️  Credentials not fully configured");
+                            return Ok(());
+                        }
+                    },
                 };
                 match client.get_account_info().await {
                     Ok(account) => {
@@ -373,10 +415,10 @@ pub async fn execute_debug(config_path: Option<PathBuf>) -> Result<()> {
             let target_dir = &config.download.target_directory;
             println!("  Download target: {}", target_dir.display());
             println!("    Exists: {}", target_dir.exists());
-            
+
             if target_dir.exists() {
                 println!("    Is directory: {}", target_dir.is_dir());
-                
+
                 // Test write permissions
                 let test_file = target_dir.join(".putiosync_write_test");
                 match std::fs::write(&test_file, b"test") {

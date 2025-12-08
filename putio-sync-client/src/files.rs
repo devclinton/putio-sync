@@ -52,7 +52,7 @@ impl PutioApiClient {
     /// # use putio_sync_client::ApiClient;
     /// # async fn example() {
     /// let client = ApiClient::new("my_token".to_string());
-    /// let file = client.get_file(12345).await.unwrap();
+    /// let file = client.get_file_details(12345).await.unwrap();
     /// println!("File name: {}", file.file.name);
     /// # }
     /// ```
@@ -107,7 +107,7 @@ impl PutioApiClient {
     /// // Upload a torrent file
     /// let file_path = Path::new("/path/to/file.torrent");
     /// let response = client.upload_file(file_path, None).await.unwrap();
-    /// 
+    ///
     /// if let Some(transfer) = response.transfer {
     ///     println!("Torrent uploaded: {} (ID: {})", transfer.name, transfer.id);
     /// }
@@ -151,10 +151,7 @@ impl PutioApiClient {
             .file_name(filename)
             .mime_str(mime_type)
             .map_err(|e| {
-                crate::error::ClientError::InternalError(format!(
-                    "Failed to set MIME type: {}",
-                    e
-                ))
+                crate::error::ClientError::InternalError(format!("Failed to set MIME type: {}", e))
             })?;
 
         let mut form = Form::new().part("file", file_part);
@@ -178,12 +175,12 @@ impl PutioApiClient {
             .map_err(crate::error::ClientError::HttpError)?;
 
         let status = response.status();
-        
+
         // Get response headers for debugging
         let headers = response.headers().clone();
         tracing::debug!("Upload response status: {}", status);
         tracing::debug!("Upload response headers: {:?}", headers);
-        
+
         if !status.is_success() {
             let error_text = response
                 .text()
@@ -201,7 +198,7 @@ impl PutioApiClient {
             .text()
             .await
             .map_err(crate::error::ClientError::HttpError)?;
-        
+
         tracing::debug!("Upload response body: {}", response_text);
 
         // Try to parse the JSON response
@@ -210,9 +207,8 @@ impl PutioApiClient {
                 tracing::error!("Failed to parse upload response JSON: {}", e);
                 tracing::error!("Raw response: {}", response_text);
                 crate::error::ClientError::ApiError(format!(
-                    "Failed to parse upload response: {} - Raw response: {}", 
-                    e, 
-                    response_text
+                    "Failed to parse upload response: {} - Raw response: {}",
+                    e, response_text
                 ))
             })?;
 
@@ -222,7 +218,7 @@ impl PutioApiClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::super::PutioApiClient as ApiClient;
     use mockito::Server;
 
     #[tokio::test]
@@ -303,7 +299,7 @@ mod tests {
             .await;
 
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
-        let result = client.get_file(12345).await;
+        let result = client.get_file_details(12345).await;
 
         assert!(result.is_ok());
         let file = result.unwrap();

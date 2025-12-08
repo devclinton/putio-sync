@@ -106,19 +106,33 @@ impl TorrentWatchCore {
             stats.files_found += torrent_files.len();
 
             if !torrent_files.is_empty() {
-                info!("Found {} .torrent/.magnet file(s) in {}", torrent_files.len(), dir.display());
+                info!(
+                    "Found {} .torrent/.magnet file(s) in {}",
+                    torrent_files.len(),
+                    dir.display()
+                );
             }
 
             // Process each torrent file
             for file_path in torrent_files {
-                match self.process_torrent_file(&file_path, client, parent_id, database).await {
+                match self
+                    .process_torrent_file(&file_path, client, parent_id, database)
+                    .await
+                {
                     Ok(true) => {
                         stats.files_processed += 1;
                         info!("Successfully processed: {}", file_path.display());
-                        
+
                         // Handle post-upload actions
-                        if let Err(e) = self.handle_post_upload_action(&file_path, archive_dir, delete_after_upload).await {
-                            error!("Failed to handle post-upload action for {}: {}", file_path.display(), e);
+                        if let Err(e) = self
+                            .handle_post_upload_action(&file_path, archive_dir, delete_after_upload)
+                            .await
+                        {
+                            error!(
+                                "Failed to handle post-upload action for {}: {}",
+                                file_path.display(),
+                                e
+                            );
                         }
                     }
                     Ok(false) => {
@@ -166,7 +180,10 @@ impl TorrentWatchCore {
                         if trimmed.starts_with("magnet:") {
                             calculate_string_checksum(trimmed)
                         } else {
-                            debug!("Invalid magnet file content in {}: doesn't start with 'magnet:'", path.display());
+                            debug!(
+                                "Invalid magnet file content in {}: doesn't start with 'magnet:'",
+                                path.display()
+                            );
                             return Ok(false);
                         }
                     }
@@ -186,11 +203,14 @@ impl TorrentWatchCore {
                     }
                 }
             };
-            
+
             if !checksum.is_empty() {
                 let repo = db.processed_torrents();
                 if repo.is_processed(&checksum).await.unwrap_or(false) {
-                    debug!("File already processed (checksum match): {}", path.display());
+                    debug!(
+                        "File already processed (checksum match): {}",
+                        path.display()
+                    );
                     // Also add to in-memory set for consistency
                     let mut processed = self.processed_files.lock().unwrap();
                     processed.insert(path.to_path_buf());
@@ -198,7 +218,7 @@ impl TorrentWatchCore {
                 }
             }
         }
-        
+
         // Check if already processed (in-memory fallback)
         {
             let processed = self.processed_files.lock().unwrap();
@@ -219,7 +239,11 @@ impl TorrentWatchCore {
             return Ok(false);
         }
 
-        let file_type = if self.is_magnet_file(path) { "magnet" } else { "torrent" };
+        let file_type = if self.is_magnet_file(path) {
+            "magnet"
+        } else {
+            "torrent"
+        };
         info!("🔼 Processing new .{} file: {}", file_type, path.display());
 
         // Process based on file type
@@ -231,7 +255,9 @@ impl TorrentWatchCore {
                     if magnet_link.starts_with("magnet:") {
                         client.add_transfer_url(magnet_link, parent_id, None).await
                     } else {
-                        return Err(anyhow::anyhow!("Invalid magnet file content: doesn't start with 'magnet:'"));
+                        return Err(anyhow::anyhow!(
+                            "Invalid magnet file content: doesn't start with 'magnet:'"
+                        ));
                     }
                 }
                 Err(e) => {
@@ -247,8 +273,13 @@ impl TorrentWatchCore {
             Ok(transfer) => {
                 info!(
                     "✅ {} uploaded successfully: {} (ID: {})",
-                    if self.is_magnet_file(path) { "Magnet link" } else { "Torrent" },
-                    transfer.name, transfer.id
+                    if self.is_magnet_file(path) {
+                        "Magnet link"
+                    } else {
+                        "Torrent"
+                    },
+                    transfer.name,
+                    transfer.id
                 );
                 info!("   File: {}", path.display());
                 info!("   Status: {}", transfer.status);
@@ -274,7 +305,10 @@ impl TorrentWatchCore {
                                 (checksum, Some(magnet))
                             }
                             Err(e) => {
-                                debug!("Failed to re-read magnet file for database recording: {}", e);
+                                debug!(
+                                    "Failed to re-read magnet file for database recording: {}",
+                                    e
+                                );
                                 return Ok(true); // Still consider it processed
                             }
                         }
@@ -283,22 +317,31 @@ impl TorrentWatchCore {
                         match calculate_file_checksum(path).await {
                             Ok(checksum) => (checksum, None),
                             Err(e) => {
-                                debug!("Failed to calculate checksum for database recording: {}", e);
+                                debug!(
+                                    "Failed to calculate checksum for database recording: {}",
+                                    e
+                                );
                                 return Ok(true); // Still consider it processed
                             }
                         }
                     };
-                    
+
                     let repo = db.processed_torrents();
                     let file_size = path.metadata().map(|m| m.len()).unwrap_or(0) as i64;
-                    
-                    if let Err(e) = repo.record_processed(
-                        path.to_str().unwrap_or("unknown"),
-                        &checksum,
-                        file_size,
-                        magnet_link.as_deref(),
-                    ).await {
-                        debug!("Failed to record processed {} in database: {}", file_type, e);
+
+                    if let Err(e) = repo
+                        .record_processed(
+                            path.to_str().unwrap_or("unknown"),
+                            &checksum,
+                            file_size,
+                            magnet_link.as_deref(),
+                        )
+                        .await
+                    {
+                        debug!(
+                            "Failed to record processed {} in database: {}",
+                            file_type, e
+                        );
                     } else {
                         debug!("Recorded {} in database: checksum {}", file_type, checksum);
                     }
@@ -311,7 +354,7 @@ impl TorrentWatchCore {
                 let error_str = format!("{}", e);
                 if error_str.contains("TRANSFER_ALREADY_ADDED") {
                     warn!("⚠️  Transfer already exists for {}, treating as success for archive/delete", path.display());
-                    
+
                     // Mark as processed
                     {
                         let mut processed = self.processed_files.lock().unwrap();
@@ -328,7 +371,10 @@ impl TorrentWatchCore {
                                     (checksum, Some(magnet))
                                 }
                                 Err(e) => {
-                                    debug!("Failed to re-read magnet file for database recording: {}", e);
+                                    debug!(
+                                        "Failed to re-read magnet file for database recording: {}",
+                                        e
+                                    );
                                     return Ok(true); // Still consider it processed
                                 }
                             }
@@ -336,22 +382,31 @@ impl TorrentWatchCore {
                             match calculate_file_checksum(path).await {
                                 Ok(checksum) => (checksum, None),
                                 Err(e) => {
-                                    debug!("Failed to calculate checksum for database recording: {}", e);
+                                    debug!(
+                                        "Failed to calculate checksum for database recording: {}",
+                                        e
+                                    );
                                     return Ok(true); // Still consider it processed
                                 }
                             }
                         };
-                        
+
                         let repo = db.processed_torrents();
                         let file_size = path.metadata().map(|m| m.len()).unwrap_or(0) as i64;
-                        
-                        if let Err(e) = repo.record_processed(
-                            path.to_str().unwrap_or("unknown"),
-                            &checksum,
-                            file_size,
-                            magnet_link.as_deref(),
-                        ).await {
-                            debug!("Failed to record processed {} in database: {}", file_type, e);
+
+                        if let Err(e) = repo
+                            .record_processed(
+                                path.to_str().unwrap_or("unknown"),
+                                &checksum,
+                                file_size,
+                                magnet_link.as_deref(),
+                            )
+                            .await
+                        {
+                            debug!(
+                                "Failed to record processed {} in database: {}",
+                                file_type, e
+                            );
                         } else {
                             debug!("Recorded {} in database: checksum {}", file_type, checksum);
                         }
@@ -370,7 +425,10 @@ impl TorrentWatchCore {
     pub fn find_torrent_files(&self, dir: &Path) -> Result<Vec<PathBuf>> {
         let mut torrent_files = Vec::new();
 
-        debug!("Searching for .torrent and .magnet files in: {}", dir.display());
+        debug!(
+            "Searching for .torrent and .magnet files in: {}",
+            dir.display()
+        );
 
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
@@ -382,7 +440,11 @@ impl TorrentWatchCore {
             }
         }
 
-        debug!("Found {} torrent/magnet files in {}", torrent_files.len(), dir.display());
+        debug!(
+            "Found {} torrent/magnet files in {}",
+            torrent_files.len(),
+            dir.display()
+        );
         Ok(torrent_files)
     }
 
@@ -444,21 +506,25 @@ impl TorrentWatchCore {
     ) -> Result<()> {
         if let Some(archive_path) = archive_dir {
             // Archive the file
-            let filename = file_path.file_name()
+            let filename = file_path
+                .file_name()
                 .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?;
             let archive_file_path = archive_path.join(filename);
-            
-            info!("📦 Archiving {} to {}", file_path.display(), archive_file_path.display());
-            
+
+            info!(
+                "📦 Archiving {} to {}",
+                file_path.display(),
+                archive_file_path.display()
+            );
+
             // Ensure archive directory exists
             if let Some(parent) = archive_file_path.parent() {
                 tokio::fs::create_dir_all(parent).await?;
             }
-            
+
             // Move file to archive directory
             tokio::fs::rename(file_path, &archive_file_path).await?;
             info!("✅ Successfully archived: {}", archive_file_path.display());
-            
         } else if delete_after_upload {
             // Delete the file
             info!("🗑️  Deleting processed file: {}", file_path.display());
@@ -466,7 +532,7 @@ impl TorrentWatchCore {
             info!("✅ Successfully deleted: {}", file_path.display());
         }
         // If neither archive nor delete is enabled, leave file in place
-        
+
         Ok(())
     }
 }
@@ -479,8 +545,8 @@ impl Default for TorrentWatchCore {
 
 /// Calculate SHA-256 checksum of file content
 pub async fn calculate_file_checksum(path: &Path) -> Result<String> {
-    use sha2::{Sha256, Digest};
-    
+    use sha2::{Digest, Sha256};
+
     let content = tokio::fs::read(path).await?;
     let mut hasher = Sha256::new();
     hasher.update(&content);
@@ -490,8 +556,8 @@ pub async fn calculate_file_checksum(path: &Path) -> Result<String> {
 
 /// Calculate SHA-256 checksum of a string
 pub fn calculate_string_checksum(content: &str) -> String {
-    use sha2::{Sha256, Digest};
-    
+    use sha2::{Digest, Sha256};
+
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     let result = hasher.finalize();
@@ -532,7 +598,9 @@ impl TorrentWatcher {
     /// This is a non-blocking operation that scans all watch directories once
     /// and processes any new .torrent/.magnet files found.
     pub async fn scan_once(&self, client: &PutioApiClient) -> Result<WatchStats> {
-        self.core.scan_directories(&self.watch_dirs, client, self.parent_id, None, false, None).await
+        self.core
+            .scan_directories(&self.watch_dirs, client, self.parent_id, None, false, None)
+            .await
     }
 
     /// Run the watcher in daemon mode
@@ -610,8 +678,8 @@ impl TorrentWatcher {
         &self,
         tx: Sender<notify::Result<Event>>,
     ) -> Result<notify::RecommendedWatcher> {
-        let watcher = notify::recommended_watcher(tx)
-            .context("Failed to create filesystem watcher")?;
+        let watcher =
+            notify::recommended_watcher(tx).context("Failed to create filesystem watcher")?;
         Ok(watcher)
     }
 
@@ -660,17 +728,26 @@ impl TorrentWatcher {
 
     /// Process existing .torrent and .magnet files in watch directories
     async fn process_existing_files(&self, client: &PutioApiClient) -> Result<()> {
-        let stats = self.core.scan_directories(&self.watch_dirs, client, self.parent_id, None, false, None).await?;
-        
-        info!("Initial scan completed - {} files processed, {} skipped, {} failed", 
-              stats.files_processed, stats.files_skipped, stats.files_failed);
-        
+        let stats = self
+            .core
+            .scan_directories(&self.watch_dirs, client, self.parent_id, None, false, None)
+            .await?;
+
+        info!(
+            "Initial scan completed - {} files processed, {} skipped, {} failed",
+            stats.files_processed, stats.files_skipped, stats.files_failed
+        );
+
         Ok(())
     }
 
     /// Process a single .torrent or .magnet file
     async fn process_file(&self, path: &Path, client: &PutioApiClient) -> Result<()> {
-        match self.core.process_torrent_file(path, client, self.parent_id, None).await {
+        match self
+            .core
+            .process_torrent_file(path, client, self.parent_id, None)
+            .await
+        {
             Ok(true) => Ok(()),  // Successfully processed
             Ok(false) => Ok(()), // Skipped (already processed)
             Err(e) => Err(e),    // Error occurred
