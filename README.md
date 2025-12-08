@@ -5,8 +5,8 @@ A high-performance Rust-based CLI tool for Put.io with support for downloads, tr
 ## Features
 
 - **Fast Downloads**: Concurrent downloads with configurable workers
-- **Resumable Downloads**: Automatic resume for interrupted downloads
-- **Chunked Downloads**: Split large files into chunks for parallel downloading
+- **Resumable Downloads**: Automatic resume for interrupted downloads using range requests
+- **Streaming Downloads**: Efficient buffered streaming with minimal memory usage
 - **Smart Progress Logging**: Size-based progress intervals with single-threshold logging (every 50% for 500MB+, 33% for 1GB+, 20% for 5GB+, 10% for 10GB+, 7% for 15GB+, 5% for 20GB+, 1% for 50GB+)
 - **Empty Directory Cleanup**: Enhanced detection and tracking with 5-scan threshold for automatic deletion of empty folders
 - **Smart Filtering**: Whitelist/blacklist patterns with glob support
@@ -21,30 +21,59 @@ A high-performance Rust-based CLI tool for Put.io with support for downloads, tr
 
 ## Architecture
 
-This project is organized as a Cargo workspace with the following crates:
+This project is organized as a Cargo workspace with specialized crates following separation of concerns:
 
-- **putio-sync-core**: Core library containing:
-  - Put.io API client
-  - Sync planner
-  - Local state management (SQLite)
-  - Configuration and authentication handling
-  - Download logic with chunked and resume support
+### Core Libraries
 
-- **putio-sync-cli**: Command-line interface providing commands:
+- **putio-sync-client**: Put.io API client
+  - OAuth and app-specific password authentication
+  - File listing, download, and transfer management
+  - Asynchronous HTTP client with retry logic
+
+- **putio-sync-db**: SQLite database layer
+  - Download tracking and history
+  - Transfer and queue management
+  - Statistics repositories
+
+- **putio-sync-download**: Download manager
+  - Streaming downloads with buffered I/O
+  - Resume support with range requests
+  - Progress tracking and callbacks
+  - Concurrent download orchestration
+
+- **putio-sync-file-manager**: File system utilities
+  - Path sanitization and validation
+  - Empty directory cleanup
+  - Cross-platform path handling
+
+- **putio-sync-daemon**: Background daemon service
+  - Periodic download synchronization
+  - Torrent file watching and upload
+  - Hot-reload configuration support
+  - Worker pool management
+
+- **putio-sync-core**: Shared utilities
+  - Configuration management
+  - File filtering and sorting
+  - Path utilities
+  - Logging and notifications
+
+### Applications
+
+- **putio-sync-cli**: Command-line interface
   - `login`: Authenticate with Put.io via OAuth
   - `list`: Browse files and folders with filtering
-  - `download`: Download files with workers, resume, and chunking support
+  - `download`: Download files with workers and resume support
   - `delete`: Remove files from Put.io
   - `create`: Add torrents from files or magnet links
-  - `watch`: Monitor directories for .torrent and .magnet files
-  - `daemon`: Unified daemon for downloads and torrent watching with hot-reload
+  - `daemon`: Unified daemon for downloads and torrent watching
   - `stat`: View download statistics
   - `history`: View download and delete history
 
-- **putio-sync-web**: Web server (coming soon) with:
-  - REST API for sync management
-  - React-based UI
-  - Real-time progress updates
+- **putio-sync-api**: Web API server
+  - REST API for file and transfer management
+  - JSON response format
+  - Authentication middleware
 
 ## Installation
 
@@ -197,8 +226,7 @@ Options:
   -f, --filter <PATTERN>    Filter files with glob pattern (e.g., "*.mkv")
   -d, --dir <PATH>          Download directory [default: from config]
   -w, --workers <N>         Number of concurrent workers [default: from config]
-  --chunk-size <SIZE>       Chunk size for large files (e.g., 256MB)
-  --buffer-size <SIZE>      Buffer size per file (e.g., 16MB)
+  --buffer-size <SIZE>      Buffer size for streaming (e.g., 16MB) [default: from config]
   --no-resume               Disable resume of partial downloads
   --skip-existing           Skip files already downloaded
   --delete-after            Delete from Put.io after download
@@ -221,8 +249,8 @@ putio-sync download --all --filter "*.mkv,*.mp4"
 # Download and delete from Put.io
 putio-sync download --all --delete-after
 
-# Resume downloads with chunking
-putio-sync download --all --chunk-size 256MB
+# Download with custom buffer size for streaming
+putio-sync download --all --buffer-size 32MB
 
 # Run in daemon mode, checking every 5 minutes
 putio-sync download --all --daemon --interval 300
@@ -389,20 +417,20 @@ paths = [
 ]
 ```
 
-### Chunked Downloads
+### Download Configuration
 
-Chunking improves download reliability for large files by downloading in smaller pieces:
+Configure download behavior including streaming buffer size and resume support:
 
-- **Disabled by default**: Files are downloaded as a single stream
-- **Enable chunking**: Set `chunk_size_mb` to enable (e.g., 256 for 256MB chunks)
-- **Benefits**: Better resume support, parallel chunk downloads, less memory usage
-- **Recommended**: 128-512MB chunks for files >1GB
+- **Streaming**: Files are downloaded using efficient buffered streaming
+- **Buffer Size**: Configurable buffer for reading/writing (default: 16MB)
+- **Resume Support**: Automatic resume using HTTP range requests for interrupted downloads
+- **Recommended**: 16-32MB buffer size for optimal performance
 
 ```toml
 [download]
-chunk_size_mb = 256        # Download files in 256MB chunks
-# chunk_size_mb = null     # Disable chunking (default)
-buffer_size_mb = 16        # Stream buffer size (always used)
+buffer_size_mb = 16        # Stream buffer size for downloads
+resume_enabled = true      # Enable automatic resume
+skip_existing = false      # Skip files that already exist locally
 ```
 
 ### Basic Configuration
@@ -415,13 +443,12 @@ token = "YOUR_OAUTH_TOKEN"
 [download]
 workers = 2
 target_directory = "~/Downloads/putio"  # Supports ~, absolute, and relative paths
-buffer_size_mb = 16
-chunk_size_mb = 256                     # Optional: Enable chunking for large files  
-resume_enabled = true
-skip_existing = false
+buffer_size_mb = 16                     # Stream buffer size for downloads
+resume_enabled = true                   # Enable automatic resume
+skip_existing = false                   # Skip files that already exist
 delete_after_download = true            # Clean up Put.io after successful downloads
-progress_style = "per-file"
-sort_order = "by-date"
+progress_style = "per-file"             # Progress bar style
+sort_order = "by-date"                  # File sorting order
 max_retries = 3                         # Retry failed downloads
 bandwidth_limit_bytes_per_sec = 1048576 # Optional: 1 MB/s limit
 
@@ -437,12 +464,16 @@ paths = []
 
 ## Advanced Features
 
-### Chunked Downloads
+### Streaming Downloads
 
-For large files, enable chunking to download multiple parts in parallel:
+All downloads use efficient buffered streaming with automatic resume support:
 
 ```bash
-putio-sync download --all --chunk-size 256MB --workers 4
+# Download with custom buffer size
+putio-sync download --all --buffer-size 32MB --workers 4
+
+# Resume is enabled by default - interrupted downloads automatically continue
+putio-sync download --all
 ```
 
 ### Filtering
