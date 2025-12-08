@@ -23,15 +23,32 @@ RUN cargo install cargo-chef
 
 # Copy workspace files for dependency planning
 COPY Cargo.toml Cargo.lock ./
+COPY putio-sync-client/Cargo.toml ./putio-sync-client/
+COPY putio-sync-db/Cargo.toml ./putio-sync-db/
+COPY putio-sync-download/Cargo.toml ./putio-sync-download/
+COPY putio-sync-file-manager/Cargo.toml ./putio-sync-file-manager/
+COPY putio-sync-daemon/Cargo.toml ./putio-sync-daemon/
 COPY putio-sync-core/Cargo.toml ./putio-sync-core/
 COPY putio-sync-cli/Cargo.toml ./putio-sync-cli/
 COPY putio-sync-api/Cargo.toml ./putio-sync-api/
 
 # Create minimal source files for dependency analysis
-RUN mkdir -p putio-sync-core/src putio-sync-cli/src putio-sync-api/src && \
+RUN mkdir -p putio-sync-client/src \
+             putio-sync-db/src \
+             putio-sync-download/src \
+             putio-sync-file-manager/src \
+             putio-sync-daemon/src \
+             putio-sync-core/src \
+             putio-sync-cli/src \
+             putio-sync-api/src && \
     echo 'fn main() {}' > putio-sync-cli/src/main.rs && \
-    echo 'pub mod commands { pub fn placeholder() {} } pub mod diagnostics {} pub mod download_ops {} pub mod output {} pub mod ui {} pub mod watch {}' > putio-sync-cli/src/lib.rs && \
+    echo 'pub fn placeholder() {}' > putio-sync-client/src/lib.rs && \
+    echo 'pub fn placeholder() {}' > putio-sync-db/src/lib.rs && \
+    echo 'pub fn placeholder() {}' > putio-sync-download/src/lib.rs && \
+    echo 'pub fn placeholder() {}' > putio-sync-file-manager/src/lib.rs && \
+    echo 'pub fn placeholder() {}' > putio-sync-daemon/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-core/src/lib.rs && \
+    echo 'pub fn placeholder() {}' > putio-sync-cli/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-api/src/lib.rs
 
 # Generate dependency recipe
@@ -43,6 +60,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo chef cook --release --recipe-path recipe.json
 
 # Copy real source code
+COPY putio-sync-client ./putio-sync-client
+COPY putio-sync-db ./putio-sync-db
+COPY putio-sync-download ./putio-sync-download
+COPY putio-sync-file-manager ./putio-sync-file-manager
+COPY putio-sync-daemon ./putio-sync-daemon
 COPY putio-sync-core ./putio-sync-core
 COPY putio-sync-cli ./putio-sync-cli
 COPY putio-sync-api ./putio-sync-api
