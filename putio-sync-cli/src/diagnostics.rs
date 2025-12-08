@@ -23,7 +23,7 @@ impl std::fmt::Display for HealthStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HealthStatus::Healthy => write!(f, "✅ Healthy"),
-            HealthStatus::Warning => write!(f, "⚠️  Warning"), 
+            HealthStatus::Warning => write!(f, "⚠️  Warning"),
             HealthStatus::Critical => write!(f, "❌ Critical"),
             HealthStatus::Unknown => write!(f, "❓ Unknown"),
         }
@@ -77,8 +77,7 @@ impl HealthCheck {
 }
 
 /// Daemon operational statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DaemonStats {
     pub uptime_seconds: u64,
     pub config_reloads: usize,
@@ -90,10 +89,8 @@ pub struct DaemonStats {
     pub worker_restarts: usize,
 }
 
-
 /// Download subsystem status
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DownloadStatus {
     pub workers_configured: usize,
     pub workers_active: usize,
@@ -108,10 +105,8 @@ pub struct DownloadStatus {
     pub api_errors_recent: usize,
 }
 
-
 /// Watch subsystem status  
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WatchStatus {
     pub directories_watched: Vec<String>,
     pub directories_accessible: usize,
@@ -122,7 +117,6 @@ pub struct WatchStatus {
     pub torrent_uploads_total: usize,
     pub torrent_uploads_failed: usize,
 }
-
 
 /// Complete system diagnostic snapshot
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,16 +253,16 @@ impl DiagnosticsCollector {
 
         // Generate health checks
         let mut health_checks = Vec::new();
-        
+
         // Check configuration
         health_checks.push(self.check_configuration_health(config_path).await);
-        
+
         // Check download subsystem
         health_checks.push(self.check_download_health(download_status));
-        
-        // Check watch subsystem  
+
+        // Check watch subsystem
         health_checks.push(self.check_watch_health(watch_status));
-        
+
         // Check daemon health
         health_checks.push(self.check_daemon_health());
 
@@ -307,7 +301,11 @@ impl DiagnosticsCollector {
         } else if uptime.as_secs() < 3600 {
             format!("{}m", uptime.as_secs() / 60)
         } else {
-            format!("{}h{}m", uptime.as_secs() / 3600, (uptime.as_secs() % 3600) / 60)
+            format!(
+                "{}h{}m",
+                uptime.as_secs() / 3600,
+                (uptime.as_secs() % 3600) / 60
+            )
         };
 
         format!(
@@ -328,7 +326,7 @@ impl DiagnosticsCollector {
                 return HealthCheck::critical("Configuration", "Config file does not exist")
                     .with_detail("path", &path.display().to_string());
             }
-            
+
             match Config::load(path) {
                 Ok(config) => {
                     if config.auth.is_none() {
@@ -362,7 +360,10 @@ impl DiagnosticsCollector {
         }
 
         HealthCheck::healthy("Download", "Download subsystem operational")
-            .with_detail("workers", &format!("{}/{}", status.workers_active, status.workers_configured))
+            .with_detail(
+                "workers",
+                &format!("{}/{}", status.workers_active, status.workers_configured),
+            )
             .with_detail("queued", &status.downloads_queued.to_string())
     }
 
@@ -378,9 +379,12 @@ impl DiagnosticsCollector {
         };
 
         if accessible_ratio < 0.5 {
-            return HealthCheck::critical("Watch", "More than half of watch directories are inaccessible")
-                .with_detail("accessible", &status.directories_accessible.to_string())
-                .with_detail("total", &status.directories_watched.len().to_string());
+            return HealthCheck::critical(
+                "Watch",
+                "More than half of watch directories are inaccessible",
+            )
+            .with_detail("accessible", &status.directories_accessible.to_string())
+            .with_detail("total", &status.directories_watched.len().to_string());
         }
 
         if accessible_ratio < 1.0 {
@@ -396,7 +400,7 @@ impl DiagnosticsCollector {
 
     fn check_daemon_health(&self) -> HealthCheck {
         let uptime = self.daemon_stats.uptime_seconds;
-        
+
         if uptime < 60 {
             return HealthCheck::warning("Daemon", "Daemon recently started")
                 .with_detail("uptime_seconds", &uptime.to_string());
@@ -409,7 +413,10 @@ impl DiagnosticsCollector {
 
         HealthCheck::healthy("Daemon", "Daemon operating normally")
             .with_detail("uptime_seconds", &uptime.to_string())
-            .with_detail("config_reloads", &self.daemon_stats.config_reloads.to_string())
+            .with_detail(
+                "config_reloads",
+                &self.daemon_stats.config_reloads.to_string(),
+            )
     }
 
     fn determine_overall_health(&self, health_checks: &[HealthCheck]) -> HealthStatus {
@@ -420,7 +427,7 @@ impl DiagnosticsCollector {
             match check.status {
                 HealthStatus::Critical => has_critical = true,
                 HealthStatus::Warning => has_warning = true,
-                HealthStatus::Healthy => {},
+                HealthStatus::Healthy => {}
                 HealthStatus::Unknown => has_warning = true,
             }
         }
@@ -435,18 +442,19 @@ impl DiagnosticsCollector {
     }
 
     async fn generate_config_summary(&self, config_path: Option<&PathBuf>) -> ConfigurationSummary {
-        let (config_file_path, config_file_exists, config_file_readable, config) = if let Some(path) = config_path {
-            let exists = path.exists();
-            let readable = exists && std::fs::metadata(path).is_ok();
-            let config = if readable {
-                Config::load(path).ok()
+        let (config_file_path, config_file_exists, config_file_readable, config) =
+            if let Some(path) = config_path {
+                let exists = path.exists();
+                let readable = exists && std::fs::metadata(path).is_ok();
+                let config = if readable {
+                    Config::load(path).ok()
+                } else {
+                    None
+                };
+                (Some(path.display().to_string()), exists, readable, config)
             } else {
-                None
+                (None, false, false, None)
             };
-            (Some(path.display().to_string()), exists, readable, config)
-        } else {
-            (None, false, false, None)
-        };
 
         if let Some(config) = config {
             ConfigurationSummary {
@@ -503,16 +511,22 @@ pub enum DaemonEvent {
 /// Format diagnostics for human-readable output
 pub fn format_diagnostics_report(diag: &SystemDiagnostics) -> String {
     let mut report = String::new();
-    
+
     report.push_str("🔍 putio-sync Diagnostics Report\n");
     report.push_str(&format!("Version: {}\n", diag.version));
-    report.push_str(&format!("Timestamp: {}\n", format_timestamp(diag.timestamp)));
+    report.push_str(&format!(
+        "Timestamp: {}\n",
+        format_timestamp(diag.timestamp)
+    ));
     report.push_str(&format!("Overall Health: {}\n\n", diag.overall_health));
 
     // Health checks
     report.push_str("📊 System Health Checks\n");
     for check in &diag.health_checks {
-        report.push_str(&format!("  {} {}: {}\n", check.status, check.subsystem, check.message));
+        report.push_str(&format!(
+            "  {} {}: {}\n",
+            check.status, check.subsystem, check.message
+        ));
         for (key, value) in &check.details {
             report.push_str(&format!("    {}: {}\n", key, value));
         }
@@ -522,40 +536,79 @@ pub fn format_diagnostics_report(diag: &SystemDiagnostics) -> String {
     // Daemon stats
     let uptime = Duration::from_secs(diag.daemon_stats.uptime_seconds);
     report.push_str("⏱️  Daemon Statistics\n");
-    report.push_str(&format!("  Uptime: {}h {}m {}s\n", 
-        uptime.as_secs() / 3600, 
-        (uptime.as_secs() % 3600) / 60, 
-        uptime.as_secs() % 60));
-    report.push_str(&format!("  Config reloads: {}\n", diag.daemon_stats.config_reloads));
-    report.push_str(&format!("  Download cycles: {}\n", diag.daemon_stats.download_cycles));
-    report.push_str(&format!("  Watch cycles: {}\n", diag.daemon_stats.watch_cycles));
-    report.push_str(&format!("  Worker restarts: {}\n", diag.daemon_stats.worker_restarts));
+    report.push_str(&format!(
+        "  Uptime: {}h {}m {}s\n",
+        uptime.as_secs() / 3600,
+        (uptime.as_secs() % 3600) / 60,
+        uptime.as_secs() % 60
+    ));
+    report.push_str(&format!(
+        "  Config reloads: {}\n",
+        diag.daemon_stats.config_reloads
+    ));
+    report.push_str(&format!(
+        "  Download cycles: {}\n",
+        diag.daemon_stats.download_cycles
+    ));
+    report.push_str(&format!(
+        "  Watch cycles: {}\n",
+        diag.daemon_stats.watch_cycles
+    ));
+    report.push_str(&format!(
+        "  Worker restarts: {}\n",
+        diag.daemon_stats.worker_restarts
+    ));
     report.push('\n');
 
     // Download status
     report.push_str("⬇️  Download Status\n");
-    report.push_str(&format!("  Workers: {}/{} active\n", 
-        diag.download_status.downloads_active, diag.download_status.workers_configured));
-    report.push_str(&format!("  Queue: {} downloads pending\n", diag.download_status.downloads_queued));
-    report.push_str(&format!("  Completed: {} files\n", diag.download_status.downloads_completed_total));
-    report.push_str(&format!("  Failed: {} files\n", diag.download_status.downloads_failed_total));
-    report.push_str(&format!("  Total downloaded: {} MB\n", diag.download_status.total_bytes_downloaded / 1024 / 1024));
+    report.push_str(&format!(
+        "  Workers: {}/{} active\n",
+        diag.download_status.downloads_active, diag.download_status.workers_configured
+    ));
+    report.push_str(&format!(
+        "  Queue: {} downloads pending\n",
+        diag.download_status.downloads_queued
+    ));
+    report.push_str(&format!(
+        "  Completed: {} files\n",
+        diag.download_status.downloads_completed_total
+    ));
+    report.push_str(&format!(
+        "  Failed: {} files\n",
+        diag.download_status.downloads_failed_total
+    ));
+    report.push_str(&format!(
+        "  Total downloaded: {} MB\n",
+        diag.download_status.total_bytes_downloaded / 1024 / 1024
+    ));
     report.push('\n');
 
     // Watch status
     report.push_str("👁️  Watch Status\n");
-    report.push_str(&format!("  Directories: {}/{} accessible\n", 
-        diag.watch_status.directories_accessible, diag.watch_status.directories_watched.len()));
-    report.push_str(&format!("  Files processed: {}\n", diag.watch_status.files_processed_total));
-    report.push_str(&format!("  Upload failures: {}\n", diag.watch_status.torrent_uploads_failed));
+    report.push_str(&format!(
+        "  Directories: {}/{} accessible\n",
+        diag.watch_status.directories_accessible,
+        diag.watch_status.directories_watched.len()
+    ));
+    report.push_str(&format!(
+        "  Files processed: {}\n",
+        diag.watch_status.files_processed_total
+    ));
+    report.push_str(&format!(
+        "  Upload failures: {}\n",
+        diag.watch_status.torrent_uploads_failed
+    ));
     report.push('\n');
 
     // Recent issues
     if !diag.recent_issues.is_empty() {
         report.push_str("⚠️  Recent Issues\n");
         for issue in diag.recent_issues.iter().take(5) {
-            report.push_str(&format!("  {} [{}] {}: {}\n", 
-                issue.severity, issue.category, issue.count, issue.description));
+            report.push_str(&format!(
+                "  {} [{}] {}: {}\n",
+                issue.severity, issue.category, issue.count, issue.description
+            ));
             for suggestion in &issue.suggestions {
                 report.push_str(&format!("    💡 {}\n", suggestion));
             }
@@ -577,9 +630,8 @@ mod tests {
 
     #[test]
     fn test_health_check_creation() {
-        let check = HealthCheck::healthy("Test", "All good")
-            .with_detail("key", "value");
-        
+        let check = HealthCheck::healthy("Test", "All good").with_detail("key", "value");
+
         assert_eq!(check.subsystem, "Test");
         assert_eq!(check.status, HealthStatus::Healthy);
         assert_eq!(check.message, "All good");
@@ -589,10 +641,10 @@ mod tests {
     #[test]
     fn test_daemon_stats_tracking() {
         let mut collector = DiagnosticsCollector::new();
-        
+
         collector.record_daemon_event(DaemonEvent::ConfigReload);
         collector.record_daemon_event(DaemonEvent::DownloadCycle);
-        
+
         assert_eq!(collector.daemon_stats.config_reloads, 1);
         assert_eq!(collector.daemon_stats.download_cycles, 1);
         assert!(collector.daemon_stats.last_config_reload.is_some());

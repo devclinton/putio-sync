@@ -28,7 +28,8 @@ impl RateLimiter {
         self.bytes_consumed += bytes;
 
         let elapsed = self.last_reset.elapsed();
-        let expected_duration = Duration::from_secs_f64(self.bytes_consumed as f64 / self.bytes_per_sec as f64);
+        let expected_duration =
+            Duration::from_secs_f64(self.bytes_consumed as f64 / self.bytes_per_sec as f64);
 
         if expected_duration > elapsed {
             let sleep_duration = expected_duration - elapsed;

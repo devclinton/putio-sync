@@ -145,7 +145,7 @@ impl PutioApiClient {
     /// # use putio_sync_client::ApiClient;
     /// # async fn example() {
     /// let client = ApiClient::new("my_token".to_string());
-    /// let transfer = client.get_transfer(12345).await.unwrap();
+    /// let transfer = client.get_transfer_info(12345).await.unwrap();
     /// println!("Transfer: {} ({}%)", transfer.transfer.name, transfer.transfer.percent_done.unwrap_or(0));
     /// # }
     /// ```
@@ -189,7 +189,8 @@ impl PutioApiClient {
             transfer_ids: ids_str,
         };
 
-        let _response: ApiResponse<serde_json::Value> = self.post("/transfers/cancel", &request).await?;
+        let _response: ApiResponse<serde_json::Value> =
+            self.post("/transfers/cancel", &request).await?;
         Ok(())
     }
 
@@ -219,14 +220,15 @@ impl PutioApiClient {
 
         let request = RetryRequest { id: transfer_id };
 
-        let _response: ApiResponse<serde_json::Value> = self.post("/transfers/retry", &request).await?;
+        let _response: ApiResponse<serde_json::Value> =
+            self.post("/transfers/retry", &request).await?;
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::super::PutioApiClient as ApiClient;
     use mockito::Server;
 
     #[tokio::test]
@@ -322,7 +324,7 @@ mod tests {
             .await;
 
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
-        let result = client.get_transfer(12345).await;
+        let result = client.get_transfer_info(12345).await;
 
         assert!(result.is_ok());
         let transfer = result.unwrap();

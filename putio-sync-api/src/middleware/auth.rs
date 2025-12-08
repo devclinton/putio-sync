@@ -3,11 +3,7 @@
 //! This module provides authentication middleware for API endpoints.
 
 use crate::error::ApiError;
-use axum::{
-    extract::Request,
-    middleware::Next,
-    response::Response,
-};
+use axum::{extract::Request, middleware::Next, response::Response};
 
 /// Authentication middleware
 ///
@@ -25,10 +21,7 @@ use axum::{
 /// let app = Router::new()
 ///     .layer(middleware::from_fn(auth_middleware));
 /// ```
-pub async fn auth_middleware(
-    request: Request,
-    next: Next,
-) -> Result<Response, ApiError> {
+pub async fn auth_middleware(request: Request, next: Next) -> Result<Response, ApiError> {
     // TODO: Implement actual authentication
     // For now, we allow all requests
 

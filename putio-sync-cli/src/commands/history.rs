@@ -2,8 +2,8 @@
 
 use anyhow::{Context, Result};
 use putio_sync_core::config::Config;
-use putio_sync_db::{Database, HistoryRepository};
 use putio_sync_db::models::HistoryAction;
+use putio_sync_db::{Database, HistoryRepository};
 use serde::Serialize;
 use std::path::PathBuf;
 use tracing::{debug, info};
@@ -102,7 +102,15 @@ pub async fn execute_history(
     match output_format.as_str() {
         "json" => display_json(&display_entries)?,
         "csv" => display_csv(&display_entries)?,
-        "table" | _ => display_table(&display_entries, total_count, limit, offset, action.as_deref(), since.as_deref(), until.as_deref())?,
+        _ => display_table(
+            &display_entries,
+            total_count,
+            limit,
+            offset,
+            action.as_deref(),
+            since.as_deref(),
+            until.as_deref(),
+        )?,
     }
 
     Ok(())
@@ -121,9 +129,13 @@ fn load_config(config_path: Option<PathBuf>) -> Result<Config> {
 
 /// Parse action string to HistoryAction
 fn parse_action(action_str: &str) -> Result<HistoryAction> {
-    action_str
-        .parse::<HistoryAction>()
-        .map_err(|e| anyhow::anyhow!("Invalid action '{}': {}. Expected 'downloaded' or 'deleted'", action_str, e))
+    action_str.parse::<HistoryAction>().map_err(|e| {
+        anyhow::anyhow!(
+            "Invalid action '{}': {}. Expected 'downloaded' or 'deleted'",
+            action_str,
+            e
+        )
+    })
 }
 
 /// Validate and format date to ISO 8601
@@ -132,10 +144,10 @@ fn validate_and_format_date(date_str: Option<&str>) -> Result<Option<String>> {
         use chrono::NaiveDate;
 
         let formats = vec![
-            "%Y-%m-%d",     // 2025-01-15
-            "%Y/%m/%d",     // 2025/01/15
-            "%m/%d/%Y",     // 01/15/2025
-            "%d-%b-%Y",     // 15-Jan-2025
+            "%Y-%m-%d", // 2025-01-15
+            "%Y/%m/%d", // 2025/01/15
+            "%m/%d/%Y", // 01/15/2025
+            "%d-%b-%Y", // 15-Jan-2025
         ];
 
         for format in &formats {
@@ -145,7 +157,10 @@ fn validate_and_format_date(date_str: Option<&str>) -> Result<Option<String>> {
             }
         }
 
-        anyhow::bail!("Invalid date format: '{}'. Expected format: YYYY-MM-DD", date);
+        anyhow::bail!(
+            "Invalid date format: '{}'. Expected format: YYYY-MM-DD",
+            date
+        );
     }
 
     Ok(None)
@@ -239,8 +254,8 @@ fn display_table(
 
 /// Display history in JSON format
 fn display_json(entries: &[HistoryDisplay]) -> Result<()> {
-    let json = serde_json::to_string_pretty(entries)
-        .context("Failed to serialize history to JSON")?;
+    let json =
+        serde_json::to_string_pretty(entries).context("Failed to serialize history to JSON")?;
     println!("{}", json);
     Ok(())
 }
@@ -411,7 +426,10 @@ mod tests {
     fn test_truncate_string() {
         assert_eq!(truncate_string("short", 10), "short");
         assert_eq!(truncate_string("exact length!", 13), "exact length!");
-        assert_eq!(truncate_string("this is a very long string", 15), "this is a ve...");
+        assert_eq!(
+            truncate_string("this is a very long string", 15),
+            "this is a ve..."
+        );
     }
 
     #[test]

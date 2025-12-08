@@ -64,12 +64,13 @@ where
 
                 // Check if this is a stalled download error
                 let is_stall_error = e.to_string().contains("Download stalled");
-                
+
                 // Use shorter delay for stalled downloads, longer for other errors
                 let delay = if is_stall_error {
                     Duration::from_secs(3) // 3 second delay for stalled downloads
                 } else {
-                    Duration::from_secs(initial_delay * (1 << (attempt - 1).min(4))) // Exponential backoff for other errors
+                    Duration::from_secs(initial_delay * (1 << (attempt - 1).min(4)))
+                    // Exponential backoff for other errors
                 };
 
                 if is_stall_error {

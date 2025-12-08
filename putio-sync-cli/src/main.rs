@@ -8,14 +8,14 @@ mod logging;
 // Import from library
 use putio_sync_cli::commands;
 
+use chrono::Utc;
 use cli::{Cli, Commands, QueueCommands, TransfersCommands};
 use tracing::{debug, error, info};
-use chrono::Utc;
 
 /// Get version string with git commit info
 fn get_version_with_commit() -> String {
     let version = env!("CARGO_PKG_VERSION");
-    
+
     // Try to get git commit hash at compile time
     match option_env!("GIT_HASH") {
         Some(hash) => format!("v{} ({})", version, hash),
@@ -44,18 +44,21 @@ fn get_version_with_commit() -> String {
 async fn main() {
     // Get version with commit info
     let version = get_version_with_commit();
-    
+
     // Initialize basic logging first for early debugging - these ALWAYS show
     eprintln!("=== PUTIO-SYNC STARTUP DEBUG ===");
     eprintln!("🚀 putio-sync {} starting up...", version);
     eprintln!("⚙️  Built for: {}", std::env::consts::OS);
     eprintln!("⚙️  Architecture: {}", std::env::consts::ARCH);
-    eprintln!("⚙️  Current time: {}", Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
-    
+    eprintln!(
+        "⚙️  Current time: {}",
+        Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    );
+
     // Force stdout/stderr flush
     use std::io::Write;
     let _ = std::io::stderr().flush();
-    
+
     eprintln!("🔧 Parsing command line arguments...");
     let args = match std::panic::catch_unwind(Cli::parse_args) {
         Ok(args) => {
@@ -71,7 +74,10 @@ async fn main() {
     eprintln!("🔧 Initializing logging system...");
     // Initialize logging based on verbosity flags
     logging::init(args.verbose, args.quiet);
-    eprintln!("✅ Logging initialized - verbosity: {}, quiet: {}", args.verbose, args.quiet);
+    eprintln!(
+        "✅ Logging initialized - verbosity: {}, quiet: {}",
+        args.verbose, args.quiet
+    );
 
     // Log startup information
     info!("putio-sync {}", version);
@@ -89,9 +95,10 @@ async fn main() {
 
     // Handle commands
     let result = match args.command {
-        Commands::Login { no_save, no_browser } => {
-            commands::execute_login(no_save, no_browser, args.config).await
-        }
+        Commands::Login {
+            no_save,
+            no_browser,
+        } => commands::execute_login(no_save, no_browser, args.config).await,
         Commands::Files(files_cmd) => match files_cmd {
             cli::FilesCommands::List {
                 path,
@@ -244,16 +251,7 @@ async fn main() {
             since,
             until,
             output,
-        } => {
-            commands::execute_stat(
-                by_extension,
-                since,
-                until,
-                output,
-                args.config,
-            )
-            .await
-        }
+        } => commands::execute_stat(by_extension, since, until, output, args.config).await,
         Commands::History {
             action,
             since,
@@ -262,16 +260,8 @@ async fn main() {
             offset,
             output,
         } => {
-            commands::execute_history(
-                action,
-                since,
-                until,
-                limit,
-                offset,
-                output,
-                args.config,
-            )
-            .await
+            commands::execute_history(action, since, until, limit, offset, output, args.config)
+                .await
         }
         Commands::Create {
             sources,
@@ -280,15 +270,7 @@ async fn main() {
             daemon,
             interval,
         } => {
-            commands::execute_create(
-                sources,
-                watch,
-                parent_id,
-                daemon,
-                interval,
-                args.config,
-            )
-            .await
+            commands::execute_create(sources, watch, parent_id, daemon, interval, args.config).await
         }
         Commands::Queue(queue_cmd) => match queue_cmd {
             QueueCommands::List { status, output } => {
@@ -299,9 +281,7 @@ async fn main() {
                 priority,
                 all,
                 filter,
-            } => {
-                commands::queue::execute_add(files, priority, all, filter, args.config).await
-            }
+            } => commands::queue::execute_add(files, priority, all, filter, args.config).await,
             QueueCommands::Pause { files } => {
                 commands::queue::execute_pause(files, args.config).await
             }
@@ -311,9 +291,7 @@ async fn main() {
             QueueCommands::Remove { files } => {
                 commands::queue::execute_remove(files, args.config).await
             }
-            QueueCommands::Clear { yes } => {
-                commands::queue::execute_clear(yes, args.config).await
-            }
+            QueueCommands::Clear { yes } => commands::queue::execute_clear(yes, args.config).await,
             QueueCommands::Priority { file_id, priority } => {
                 commands::queue::execute_priority(file_id, priority, args.config).await
             }
@@ -332,15 +310,8 @@ async fn main() {
                 daemon,
                 interval,
             } => {
-                commands::execute_create(
-                    sources,
-                    watch,
-                    parent_id,
-                    daemon,
-                    interval,
-                    args.config,
-                )
-                .await
+                commands::execute_create(sources, watch, parent_id, daemon, interval, args.config)
+                    .await
             }
             TransfersCommands::Cancel { transfer_ids, yes } => {
                 commands::transfers::execute_cancel(transfer_ids, yes, args.config).await
@@ -364,12 +335,21 @@ async fn main() {
             delete_torrents,
         } => {
             eprintln!("🔄 Entering daemon mode...");
-            eprintln!("⚙️  Daemon config - download_interval: {}s, watch_interval: {}s", download_interval, watch_interval);
+            eprintln!(
+                "⚙️  Daemon config - download_interval: {}s, watch_interval: {}s",
+                download_interval, watch_interval
+            );
             eprintln!("⚙️  Watch paths: {:?}", watch);
             eprintln!("⚙️  Filter: {:?}", filter);
-            eprintln!("⚙️  Skip existing: {}, Delete after: {}", skip_existing, delete_after);
-            eprintln!("⚙️  Watch only: {}, Download only: {}", watch_only, download_only);
-            
+            eprintln!(
+                "⚙️  Skip existing: {}, Delete after: {}",
+                skip_existing, delete_after
+            );
+            eprintln!(
+                "⚙️  Watch only: {}, Download only: {}",
+                watch_only, download_only
+            );
+
             commands::execute_daemon(
                 download_interval,
                 watch_interval,

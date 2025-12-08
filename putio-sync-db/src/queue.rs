@@ -1,7 +1,7 @@
 //! Queue repository for managing download queue
 
-use super::models::{QueueItem, QueueStatus};
 use super::error::{DbError, DbResult};
+use super::models::{QueueItem, QueueStatus};
 use sqlx::SqlitePool;
 use tracing::debug;
 

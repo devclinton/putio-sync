@@ -68,9 +68,8 @@ pub async fn list_local_files(
     let mut files = Vec::new();
 
     for entry in entries {
-        let entry = entry.map_err(|e| {
-            ApiError::Internal(format!("Failed to read directory entry: {}", e))
-        })?;
+        let entry = entry
+            .map_err(|e| ApiError::Internal(format!("Failed to read directory entry: {}", e)))?;
 
         let metadata = entry
             .metadata()
@@ -126,9 +125,8 @@ pub async fn delete_local_file(config: &Config, path: String) -> ApiResult<Succe
     let canonical_base = fs::canonicalize(base_dir)
         .map_err(|e| ApiError::Internal(format!("Failed to canonicalize base path: {}", e)))?;
 
-    let canonical_target = fs::canonicalize(&full_path).map_err(|e| {
-        ApiError::NotFound(format!("File not found: {} ({})", path, e))
-    })?;
+    let canonical_target = fs::canonicalize(&full_path)
+        .map_err(|e| ApiError::NotFound(format!("File not found: {} ({})", path, e)))?;
 
     if !canonical_target.starts_with(&canonical_base) {
         return Err(ApiError::BadRequest(

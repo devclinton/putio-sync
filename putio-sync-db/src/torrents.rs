@@ -1,7 +1,7 @@
 //! Processed torrents repository for tracking uploaded torrents
 
-use super::models::ProcessedTorrent;
 use super::error::{DbError, DbResult};
+use super::models::ProcessedTorrent;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
@@ -20,11 +20,14 @@ impl<'a> ProcessedTorrentsRepository<'a> {
 
     /// Check if a torrent file has been processed by checksum
     pub async fn is_processed(&self, checksum: &str) -> DbResult<bool> {
-        let result = sqlx::query("SELECT COUNT(*) as count FROM processed_torrents WHERE file_checksum = ?")
-            .bind(checksum)
-            .fetch_one(self.pool)
-            .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to check processed torrent: {}", e)))?;
+        let result =
+            sqlx::query("SELECT COUNT(*) as count FROM processed_torrents WHERE file_checksum = ?")
+                .bind(checksum)
+                .fetch_one(self.pool)
+                .await
+                .map_err(|e| {
+                    DbError::DatabaseError(format!("Failed to check processed torrent: {}", e))
+                })?;
 
         let count: i64 = result.get("count");
         Ok(count > 0)
@@ -52,9 +55,14 @@ impl<'a> ProcessedTorrentsRepository<'a> {
             .bind(magnet_link)
             .execute(self.pool)
             .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to record processed torrent: {}", e)))?;
+            .map_err(|e| {
+                DbError::DatabaseError(format!("Failed to record processed torrent: {}", e))
+            })?;
 
-        debug!("Recorded processed torrent: {} (checksum: {})", file_path, checksum);
+        debug!(
+            "Recorded processed torrent: {} (checksum: {})",
+            file_path, checksum
+        );
         Ok(())
     }
 
@@ -75,7 +83,9 @@ impl<'a> ProcessedTorrentsRepository<'a> {
         let result = sqlx::query("SELECT COUNT(*) as count FROM processed_torrents")
             .fetch_one(self.pool)
             .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to count processed torrents: {}", e)))?;
+            .map_err(|e| {
+                DbError::DatabaseError(format!("Failed to count processed torrents: {}", e))
+            })?;
 
         Ok(result.get("count"))
     }
@@ -83,16 +93,18 @@ impl<'a> ProcessedTorrentsRepository<'a> {
     /// Clean up old processed torrent records (older than specified days)
     pub async fn cleanup_old(&self, days: u32) -> DbResult<u64> {
         let query = "DELETE FROM processed_torrents WHERE processed_at < datetime('now', '-' || ? || ' days')";
-        
+
         let result = sqlx::query(query)
             .bind(days)
             .execute(self.pool)
             .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to cleanup old processed torrents: {}", e)))?;
+            .map_err(|e| {
+                DbError::DatabaseError(format!("Failed to cleanup old processed torrents: {}", e))
+            })?;
 
         let rows_deleted = result.rows_affected();
         info!("Cleaned up {} old processed torrent records", rows_deleted);
-        
+
         Ok(rows_deleted)
     }
 }
@@ -116,7 +128,7 @@ pub fn calculate_string_checksum(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Database;
+    use crate::Database;
     use std::fs;
     use tempfile::TempDir;
 

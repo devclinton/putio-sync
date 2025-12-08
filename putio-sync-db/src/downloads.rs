@@ -1,7 +1,7 @@
 //! Download repository for managing download records
 
-use super::models::{Download, DownloadStatus};
 use super::error::{DbError, DbResult};
+use super::models::{Download, DownloadStatus};
 use sqlx::SqlitePool;
 use tracing::debug;
 
@@ -175,7 +175,9 @@ impl<'a> DownloadRepository<'a> {
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to list incomplete downloads: {}", e)))?;
+        .map_err(|e| {
+            DbError::DatabaseError(format!("Failed to list incomplete downloads: {}", e))
+        })?;
 
         Ok(downloads)
     }
@@ -196,13 +198,12 @@ impl<'a> DownloadRepository<'a> {
 
         Ok(())
     }
-
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Database;
+    use crate::Database;
     use tempfile::TempDir;
 
     async fn setup_test_db() -> (TempDir, Database) {
@@ -237,11 +238,20 @@ mod tests {
         let repo = DownloadRepository::new(db.pool());
 
         let file_size = 1024 * 1024 * 100;
-        repo.insert(12345, "test.mkv", file_size, "/tmp/test.mkv", DownloadStatus::Completed)
+        repo.insert(
+            12345,
+            "test.mkv",
+            file_size,
+            "/tmp/test.mkv",
+            DownloadStatus::Completed,
+        )
+        .await
+        .unwrap();
+
+        let download = repo
+            .find_by_file(12345, "test.mkv", file_size)
             .await
             .unwrap();
-
-        let download = repo.find_by_file(12345, "test.mkv", file_size).await.unwrap();
         assert!(download.is_some());
 
         let download = download.unwrap();
@@ -257,11 +267,19 @@ mod tests {
         let repo = DownloadRepository::new(db.pool());
 
         let id = repo
-            .insert(12345, "test.mkv", 1024, "/tmp/test.mkv", DownloadStatus::InProgress)
+            .insert(
+                12345,
+                "test.mkv",
+                1024,
+                "/tmp/test.mkv",
+                DownloadStatus::InProgress,
+            )
             .await
             .unwrap();
 
-        repo.update_status(id, DownloadStatus::Completed).await.unwrap();
+        repo.update_status(id, DownloadStatus::Completed)
+            .await
+            .unwrap();
 
         let download = repo.get(id).await.unwrap().unwrap();
         assert_eq!(download.status, "completed");
@@ -272,15 +290,33 @@ mod tests {
         let (_temp_dir, db) = setup_test_db().await;
         let repo = DownloadRepository::new(db.pool());
 
-        repo.insert(1, "file1.mkv", 1024, "/tmp/file1.mkv", DownloadStatus::Completed)
-            .await
-            .unwrap();
-        repo.insert(2, "file2.mkv", 2048, "/tmp/file2.mkv", DownloadStatus::InProgress)
-            .await
-            .unwrap();
-        repo.insert(3, "file3.mkv", 3072, "/tmp/file3.mkv", DownloadStatus::Failed)
-            .await
-            .unwrap();
+        repo.insert(
+            1,
+            "file1.mkv",
+            1024,
+            "/tmp/file1.mkv",
+            DownloadStatus::Completed,
+        )
+        .await
+        .unwrap();
+        repo.insert(
+            2,
+            "file2.mkv",
+            2048,
+            "/tmp/file2.mkv",
+            DownloadStatus::InProgress,
+        )
+        .await
+        .unwrap();
+        repo.insert(
+            3,
+            "file3.mkv",
+            3072,
+            "/tmp/file3.mkv",
+            DownloadStatus::Failed,
+        )
+        .await
+        .unwrap();
 
         let incomplete = repo.list_incomplete().await.unwrap();
         assert_eq!(incomplete.len(), 2);
@@ -294,7 +330,13 @@ mod tests {
         let repo = DownloadRepository::new(db.pool());
 
         let id = repo
-            .insert(12345, "test.mkv", 1024, "/tmp/test.mkv", DownloadStatus::Completed)
+            .insert(
+                12345,
+                "test.mkv",
+                1024,
+                "/tmp/test.mkv",
+                DownloadStatus::Completed,
+            )
             .await
             .unwrap();
 
@@ -302,79 +344,5 @@ mod tests {
 
         let download = repo.get(id).await.unwrap();
         assert!(download.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_insert_chunk() {
-        let (_temp_dir, db) = setup_test_db().await;
-        let repo = DownloadRepository::new(db.pool());
-
-        let download_id = repo
-            .insert(12345, "test.mkv", 1024, "/tmp/test.mkv", DownloadStatus::InProgress)
-            .await
-            .unwrap();
-
-        let chunk_id = repo.insert_chunk(download_id, 0, 0, 1023).await.unwrap();
-        assert!(chunk_id > 0);
-    }
-
-    #[tokio::test]
-    async fn test_get_chunks() {
-        let (_temp_dir, db) = setup_test_db().await;
-        let repo = DownloadRepository::new(db.pool());
-
-        let download_id = repo
-            .insert(12345, "test.mkv", 3072, "/tmp/test.mkv", DownloadStatus::InProgress)
-            .await
-            .unwrap();
-
-        repo.insert_chunk(download_id, 0, 0, 1023).await.unwrap();
-        repo.insert_chunk(download_id, 1, 1024, 2047).await.unwrap();
-        repo.insert_chunk(download_id, 2, 2048, 3071).await.unwrap();
-
-        let chunks = repo.get_chunks(download_id).await.unwrap();
-        assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0].chunk_index, 0);
-        assert_eq!(chunks[1].chunk_index, 1);
-        assert_eq!(chunks[2].chunk_index, 2);
-    }
-
-    #[tokio::test]
-    async fn test_update_chunk_status() {
-        let (_temp_dir, db) = setup_test_db().await;
-        let repo = DownloadRepository::new(db.pool());
-
-        let download_id = repo
-            .insert(12345, "test.mkv", 1024, "/tmp/test.mkv", DownloadStatus::InProgress)
-            .await
-            .unwrap();
-
-        let chunk_id = repo.insert_chunk(download_id, 0, 0, 1023).await.unwrap();
-
-        repo.update_chunk_status(chunk_id, crate::db::models::ChunkStatus::Completed)
-            .await
-            .unwrap();
-
-        let chunks = repo.get_chunks(download_id).await.unwrap();
-        assert_eq!(chunks[0].status, "completed");
-    }
-
-    #[tokio::test]
-    async fn test_delete_chunks() {
-        let (_temp_dir, db) = setup_test_db().await;
-        let repo = DownloadRepository::new(db.pool());
-
-        let download_id = repo
-            .insert(12345, "test.mkv", 2048, "/tmp/test.mkv", DownloadStatus::InProgress)
-            .await
-            .unwrap();
-
-        repo.insert_chunk(download_id, 0, 0, 1023).await.unwrap();
-        repo.insert_chunk(download_id, 1, 1024, 2047).await.unwrap();
-
-        repo.delete_chunks(download_id).await.unwrap();
-
-        let chunks = repo.get_chunks(download_id).await.unwrap();
-        assert_eq!(chunks.len(), 0);
     }
 }

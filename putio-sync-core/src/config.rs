@@ -297,9 +297,10 @@ impl WatchConfig {
         if let Some(ref archive_dir) = self.archive_directory {
             if let Some(parent) = archive_dir.parent() {
                 if !parent.exists() {
-                    return Err(CoreError::ConfigError(
-                        format!("Archive directory parent does not exist: {}", parent.display()),
-                    ));
+                    return Err(CoreError::ConfigError(format!(
+                        "Archive directory parent does not exist: {}",
+                        parent.display()
+                    )));
                 }
             }
         }
@@ -313,7 +314,7 @@ impl Default for WatchConfig {
         WatchConfig {
             enabled: false,
             paths: vec![],
-            refresh_cycle: 60, // 60 seconds
+            refresh_cycle: 60,         // 60 seconds
             parent_folder_id: Some(0), // Root folder
             archive_directory: None,
             delete_after_upload: true,
@@ -390,19 +391,18 @@ impl Config {
         eprintln!("✅ Config file exists");
 
         eprintln!("📖 Reading config file contents...");
-        let contents = fs::read_to_string(path)
-            .map_err(|e| {
-                eprintln!("❌ Failed to read config file: {}", e);
-                CoreError::ConfigError(format!("Failed to read config file: {}", e))
-            })?;
-        
+        let contents = fs::read_to_string(path).map_err(|e| {
+            eprintln!("❌ Failed to read config file: {}", e);
+            CoreError::ConfigError(format!("Failed to read config file: {}", e))
+        })?;
+
         eprintln!("📝 Config file size: {} bytes", contents.len());
         eprintln!("🔧 Parsing TOML configuration...");
         let mut config: Config = toml::from_str(&contents).map_err(|e| {
             eprintln!("❌ Failed to parse TOML: {}", e);
             e
         })?;
-        
+
         eprintln!("✅ TOML parsing successful");
         eprintln!("📁 Expanding paths in configuration...");
         // Automatically expand paths during loading
@@ -410,7 +410,7 @@ impl Config {
             eprintln!("❌ Path expansion failed: {}", e);
             e
         })?;
-        
+
         eprintln!("✅ Configuration loaded and processed successfully");
         Ok(config)
     }
@@ -516,17 +516,17 @@ impl Config {
     pub fn expand_paths(&mut self) -> CoreResult<()> {
         // Expand download target directory
         self.download.target_directory = expand_path(&self.download.target_directory)?;
-        
-        // Expand sync local path  
+
+        // Expand sync local path
         self.sync.local_path = expand_path(&self.sync.local_path)?;
-        
+
         // Expand watch paths
         let mut expanded_watch_paths = Vec::new();
         for path in &self.watch.paths {
             expanded_watch_paths.push(expand_path(path)?);
         }
         self.watch.paths = expanded_watch_paths;
-        
+
         Ok(())
     }
 
@@ -579,14 +579,16 @@ impl Config {
         if self.watch.enabled {
             for path in &self.watch.paths {
                 if !path.exists() {
-                    return Err(CoreError::ConfigError(
-                        format!("Watch path does not exist: {}", path.display()),
-                    ));
+                    return Err(CoreError::ConfigError(format!(
+                        "Watch path does not exist: {}",
+                        path.display()
+                    )));
                 }
                 if !path.is_dir() {
-                    return Err(CoreError::ConfigError(
-                        format!("Watch path is not a directory: {}", path.display()),
-                    ));
+                    return Err(CoreError::ConfigError(format!(
+                        "Watch path is not a directory: {}",
+                        path.display()
+                    )));
                 }
             }
         }
@@ -1090,7 +1092,10 @@ mod tests {
             Some("*.exe".to_string())
         );
         assert!(config.watch.enabled);
-        assert_eq!(config.watch.paths, vec![PathBuf::from("/path1"), PathBuf::from("/path2")]);
+        assert_eq!(
+            config.watch.paths,
+            vec![PathBuf::from("/path1"), PathBuf::from("/path2")]
+        );
         assert_eq!(config.watch.refresh_cycle, 30);
         assert_eq!(config.watch.parent_folder_id, Some(123));
     }

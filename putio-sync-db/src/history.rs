@@ -1,7 +1,7 @@
 //! History repository for managing download and delete history
 
-use super::models::{DownloadHistory, HistoryAction};
 use super::error::{DbError, DbResult};
+use super::models::{DownloadHistory, HistoryAction};
 use sqlx::SqlitePool;
 use tracing::debug;
 
@@ -157,10 +157,9 @@ impl<'a> HistoryRepository<'a> {
         }
         q = q.bind(limit).bind(offset);
 
-        let history = q
-            .fetch_all(self.pool)
-            .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to query history by date: {}", e)))?;
+        let history = q.fetch_all(self.pool).await.map_err(|e| {
+            DbError::DatabaseError(format!("Failed to query history by date: {}", e))
+        })?;
 
         Ok(history)
     }
@@ -201,7 +200,7 @@ impl<'a> HistoryRepository<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Database;
+    use crate::Database;
     use tempfile::TempDir;
 
     async fn setup_test_db() -> (TempDir, Database) {
@@ -236,12 +235,26 @@ mod tests {
         let (_temp_dir, db) = setup_test_db().await;
         let repo = HistoryRepository::new(db.pool());
 
-        repo.insert(1, "file1.mkv", 1024, HistoryAction::Downloaded, Some(10), Some(100))
-            .await
-            .unwrap();
-        repo.insert(2, "file2.mp4", 2048, HistoryAction::Downloaded, Some(20), Some(100))
-            .await
-            .unwrap();
+        repo.insert(
+            1,
+            "file1.mkv",
+            1024,
+            HistoryAction::Downloaded,
+            Some(10),
+            Some(100),
+        )
+        .await
+        .unwrap();
+        repo.insert(
+            2,
+            "file2.mp4",
+            2048,
+            HistoryAction::Downloaded,
+            Some(20),
+            Some(100),
+        )
+        .await
+        .unwrap();
         repo.insert(3, "file3.txt", 512, HistoryAction::Deleted, None, None)
             .await
             .unwrap();
@@ -249,10 +262,16 @@ mod tests {
         let all = repo.query(None, 50, 0).await.unwrap();
         assert_eq!(all.len(), 3);
 
-        let downloaded = repo.query(Some(HistoryAction::Downloaded), 50, 0).await.unwrap();
+        let downloaded = repo
+            .query(Some(HistoryAction::Downloaded), 50, 0)
+            .await
+            .unwrap();
         assert_eq!(downloaded.len(), 2);
 
-        let deleted = repo.query(Some(HistoryAction::Deleted), 50, 0).await.unwrap();
+        let deleted = repo
+            .query(Some(HistoryAction::Deleted), 50, 0)
+            .await
+            .unwrap();
         assert_eq!(deleted.len(), 1);
         assert_eq!(deleted[0].file_id, 3);
     }
@@ -263,9 +282,16 @@ mod tests {
         let repo = HistoryRepository::new(db.pool());
 
         for i in 1..=10 {
-            repo.insert(i, &format!("file{}.mkv", i), 1024, HistoryAction::Downloaded, None, None)
-                .await
-                .unwrap();
+            repo.insert(
+                i,
+                &format!("file{}.mkv", i),
+                1024,
+                HistoryAction::Downloaded,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
         }
 
         let page1 = repo.query(None, 5, 0).await.unwrap();

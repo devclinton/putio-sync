@@ -1,8 +1,8 @@
 //! Account information and verification API endpoints
 
 use crate::client::PutioApiClient;
-use crate::models::{AccountInfo, AccountInfoResponse, ApiResponse};
 use crate::error::ClientResult;
+use crate::models::{AccountInfo, AccountInfoResponse, ApiResponse};
 
 impl PutioApiClient {
     /// Get account information

@@ -34,14 +34,14 @@ impl ProgressLogger {
     /// Create a new progress logger based on file size
     fn new(file_size: u64, filename: String) -> Self {
         let progress_interval = match file_size {
-            0..SIZE_500MB => 0.0, // No progress logging for files under 500MB
-            SIZE_500MB..SIZE_1GB => 50.0, // Log at 50% for files 500MB-1GB
-            SIZE_1GB..SIZE_5GB => 33.333333, // Log every 33% for files 1GB-5GB
-            SIZE_5GB..SIZE_10GB => 20.0, // Log every 20% for files 5GB-10GB
-            SIZE_10GB..SIZE_15GB => 10.0, // Log every 10% for files 10GB-15GB
+            0..SIZE_500MB => 0.0,             // No progress logging for files under 500MB
+            SIZE_500MB..SIZE_1GB => 50.0,     // Log at 50% for files 500MB-1GB
+            SIZE_1GB..SIZE_5GB => 33.333333,  // Log every 33% for files 1GB-5GB
+            SIZE_5GB..SIZE_10GB => 20.0,      // Log every 20% for files 5GB-10GB
+            SIZE_10GB..SIZE_15GB => 10.0,     // Log every 10% for files 10GB-15GB
             SIZE_15GB..SIZE_20GB => 7.142857, // Log every ~7% for files 15GB-20GB
-            SIZE_20GB..SIZE_50GB => 5.0, // Log every 5% for files 20GB-50GB
-            SIZE_50GB.. => 1.0, // Log every 1% for files over 50GB
+            SIZE_20GB..SIZE_50GB => 5.0,      // Log every 5% for files 20GB-50GB
+            SIZE_50GB.. => 1.0,               // Log every 1% for files over 50GB
         };
 
         Self {
@@ -59,12 +59,15 @@ impl ProgressLogger {
         }
 
         let current_percentage = (bytes_downloaded as f64 / total_bytes as f64) * 100.0;
-        
+
         // Calculate which threshold we should be at
-        let current_threshold = (current_percentage / self.progress_interval).floor() * self.progress_interval;
-        
+        let current_threshold =
+            (current_percentage / self.progress_interval).floor() * self.progress_interval;
+
         // Only log if we've crossed a new threshold and haven't logged it yet
-        if current_threshold > self.last_logged_percentage && current_percentage >= current_threshold {
+        if current_threshold > self.last_logged_percentage
+            && current_percentage >= current_threshold
+        {
             info!(
                 "📥 Download progress: {} - {:.1}% complete ({} / {})",
                 self.filename,
@@ -75,7 +78,7 @@ impl ProgressLogger {
             self.last_logged_percentage = current_threshold;
             return true;
         }
-        
+
         false
     }
 }
@@ -130,6 +133,7 @@ pub struct StreamDownloadResult {
 /// # Returns
 ///
 /// A `StreamDownloadResult` containing download statistics
+#[allow(clippy::too_many_arguments)]
 pub async fn stream_download(
     client: &PutioApiClient,
     url: &str,
@@ -175,12 +179,12 @@ pub async fn stream_download(
     // Make authenticated HTTP request with extended timeout for downloads
     debug!("Making download request to: {}", url);
     let mut request_builder = client.authenticated_download_request(url)?;
-    
+
     // Add user agent and other headers that Put.io might expect
     request_builder = request_builder
         .header("User-Agent", "putio-sync/0.0.1")
         .header("Accept", "*/*");
-    
+
     // Add Range header for resuming if specified
     if let Some(resume_from) = resume_from_byte {
         if let Some(expected) = expected_size {
@@ -193,27 +197,26 @@ pub async fn stream_download(
             request_builder = request_builder.header("Range", range_header);
         }
     }
-    
-    let request = request_builder
-        .build()
-        .map_err(DownloadError::HttpError)?;
-    
+
+    let request = request_builder.build().map_err(DownloadError::HttpError)?;
+
     debug!("Request URL: {}", request.url());
     debug!("Request method: {}", request.method());
     debug!("Request headers: {:?}", request.headers());
-    
-    let response = reqwest::Client::new()
-        .execute(request)
-        .await
-        .map_err(|e| {
-            error!("HTTP request failed: {}", e);
-            DownloadError::HttpError(e)
-        })?;
+
+    let response = reqwest::Client::new().execute(request).await.map_err(|e| {
+        error!("HTTP request failed: {}", e);
+        DownloadError::HttpError(e)
+    })?;
 
     let status = response.status();
-    debug!("Response status: {} {}", status.as_u16(), status.canonical_reason().unwrap_or("Unknown"));
+    debug!(
+        "Response status: {} {}",
+        status.as_u16(),
+        status.canonical_reason().unwrap_or("Unknown")
+    );
     debug!("Response headers: {:?}", response.headers());
-    
+
     // Log specific headers that might be relevant for debugging
     if let Some(content_type) = response.headers().get("content-type") {
         debug!("Content-Type: {:?}", content_type);
@@ -227,14 +230,18 @@ pub async fn stream_download(
     if let Some(content_range) = response.headers().get("content-range") {
         debug!("Content-Range: {:?}", content_range);
     }
-    
+
     // Check for valid response status: 200 (OK) for full download, 206 (Partial Content) for range requests
-    let is_valid_response = status.is_success() || (resume_from_byte.is_some() && status.as_u16() == 206);
-    
+    let is_valid_response =
+        status.is_success() || (resume_from_byte.is_some() && status.as_u16() == 206);
+
     if !is_valid_response {
         // Try to get response body for more detailed error info
-        let error_body = response.text().await.unwrap_or_else(|_| "Unable to read error response".to_string());
-        
+        let error_body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unable to read error response".to_string());
+
         // Enhanced error logging for 400 Bad Request
         if status.as_u16() == 400 {
             error!("=== 400 BAD REQUEST DETAILS ===");
@@ -243,18 +250,26 @@ pub async fn stream_download(
             if let Some(resume_from) = resume_from_byte {
                 error!("Resume requested from byte: {}", resume_from);
                 if let Some(expected) = expected_size {
-                    error!("Range header would be: bytes={}-{}", resume_from, expected - 1);
+                    error!(
+                        "Range header would be: bytes={}-{}",
+                        resume_from,
+                        expected - 1
+                    );
                 } else {
                     error!("Range header would be: bytes={}-", resume_from);
                 }
             } else {
                 error!("No range request (full download)");
             }
-            error!("Response status: {} {}", status.as_u16(), status.canonical_reason().unwrap_or("Unknown"));
+            error!(
+                "Response status: {} {}",
+                status.as_u16(),
+                status.canonical_reason().unwrap_or("Unknown")
+            );
             error!("Error response body: {}", error_body);
             error!("=== END 400 BAD REQUEST DETAILS ===");
         }
-        
+
         let error_msg = format!(
             "HTTP error {}: {} - Response: {}",
             status,
@@ -303,11 +318,8 @@ pub async fn stream_download(
     let mut rate_limiter = bandwidth_limit_bytes_per_sec.map(RateLimiter::new);
 
     // Create progress logger based on file size
-    let mut progress_logger = if let Some(size) = expected_size {
-        Some(ProgressLogger::new(size, filename.to_string()))
-    } else {
-        None
-    };
+    let mut progress_logger =
+        expected_size.map(|size| ProgressLogger::new(size, filename.to_string()));
 
     // Stream the response body with stall detection
     let mut stream = response.bytes_stream();
@@ -318,7 +330,6 @@ pub async fn stream_download(
     loop {
         match tokio::time::timeout(stall_timeout, stream.next()).await {
             Ok(Some(Ok(chunk))) => {
-
                 // Apply rate limiting if enabled
                 if let Some(ref mut limiter) = rate_limiter {
                     limiter.consume(chunk.len()).await;
@@ -332,7 +343,7 @@ pub async fn stream_download(
                 })?;
 
                 bytes_downloaded += chunk.len() as u64;
-                
+
                 // Use size-based progress logging for large files, fallback to 10MB intervals for smaller files
                 if let Some(ref mut logger) = progress_logger {
                     if let Some(size) = expected_size {
@@ -360,11 +371,11 @@ pub async fn stream_download(
                 // Timeout occurred - download has stalled
                 error!("Download stalled - no data received for {} seconds. Downloaded {} bytes so far.", 
                        stall_timeout.as_secs(), bytes_downloaded);
-                
+
                 // Flush and close the partial file
                 let _ = writer.flush().await;
                 let _ = writer.shutdown().await;
-                
+
                 return Err(DownloadError::ApiError(format!(
                     "Download stalled - no data received for {} seconds (downloaded {} bytes)",
                     stall_timeout.as_secs(),
@@ -405,7 +416,7 @@ pub async fn stream_download(
             // For new downloads, just use what we downloaded
             bytes_downloaded
         };
-        
+
         if total_bytes_written != expected {
             warn!(
                 "Total file size ({}) doesn't match expected size ({})",
@@ -447,13 +458,8 @@ pub async fn stream_download(
 mod tests {
     use super::*;
     use mockito::Server;
+    use std::time::Instant;
     use tempfile::TempDir;
-
-
-
-
-
-
 
     #[tokio::test]
     async fn test_stream_download_mock() {
@@ -472,12 +478,21 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let target_path = temp_dir.path().join("downloaded.txt");
 
-        let client = PutioApiClient::with_oauth_token("test_token".to_string(), server.url());
+        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/test-file.txt", server.url());
 
-        let result = stream_download(&client, &url, &target_path, "test.txt", Some(13), 1, None, None)
-            .await
-            .unwrap();
+        let result = stream_download(
+            &client,
+            &url,
+            &target_path,
+            "test.txt",
+            Some(13),
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         assert!(result.success);
         assert_eq!(result.bytes_downloaded, 13);
@@ -507,11 +522,21 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let target_path = temp_dir.path().join("downloaded.txt");
 
-        let client = PutioApiClient::with_oauth_token("test_token".to_string(), server.url());
+        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/test-file.txt", server.url());
 
         // Expect 10 bytes but will only get 5
-        let result = stream_download(&client, &url, &target_path, "test.txt", Some(10), 1, None, None).await;
+        let result = stream_download(
+            &client,
+            &url,
+            &target_path,
+            "test.txt",
+            Some(10),
+            1,
+            None,
+            None,
+        )
+        .await;
 
         assert!(result.is_err());
         assert!(!target_path.exists()); // Should clean up on failure
@@ -533,10 +558,11 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let target_path = temp_dir.path().join("downloaded.txt");
 
-        let client = PutioApiClient::with_oauth_token("test_token".to_string(), server.url());
+        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/not-found.txt", server.url());
 
-        let result = stream_download(&client, &url, &target_path, "test.txt", None, 1, None, None).await;
+        let result =
+            stream_download(&client, &url, &target_path, "test.txt", None, 1, None, None).await;
 
         assert!(result.is_err());
     }
@@ -570,15 +596,24 @@ mod tests {
             .create_async()
             .await;
 
-        let client = PutioApiClient::with_oauth_token("test_token".to_string(), server.url());
+        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/limited-file.txt", server.url());
 
         let start = Instant::now();
 
         // Set bandwidth limit to 1024 bytes/sec
-        let result = stream_download(&client, &url, &target_path, "test.txt", Some(2048), 1, Some(1024), None)
-            .await
-            .unwrap();
+        let result = stream_download(
+            &client,
+            &url,
+            &target_path,
+            "test.txt",
+            Some(2048),
+            1,
+            Some(1024),
+            None,
+        )
+        .await
+        .unwrap();
 
         let elapsed = start.elapsed();
 

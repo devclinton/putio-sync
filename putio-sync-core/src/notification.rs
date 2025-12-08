@@ -55,9 +55,7 @@ impl NotificationService {
                 debug!("Notification backend is None, skipping");
                 Ok(())
             }
-            NotificationBackend::Webhook => {
-                self.send_webhook_notification(event).await
-            }
+            NotificationBackend::Webhook => self.send_webhook_notification(event).await,
             NotificationBackend::Email => {
                 warn!("Email notifications not yet implemented");
                 Ok(())
@@ -67,13 +65,17 @@ impl NotificationService {
 
     /// Send webhook notification
     async fn send_webhook_notification(&self, event: DownloadCompletionEvent) -> CoreResult<()> {
-        let webhook_url = self.config.webhook_url.as_ref()
+        let webhook_url = self
+            .config
+            .webhook_url
+            .as_ref()
             .ok_or_else(|| CoreError::ConfigError("Webhook URL not configured".to_string()))?;
 
         info!("Sending webhook notification to: {}", webhook_url);
         debug!("Webhook payload: {:?}", event);
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .post(webhook_url)
             .json(&event)
             .send()
@@ -85,11 +87,18 @@ impl NotificationService {
             Ok(())
         } else {
             let status = response.status();
-            let error_body = response.text().await.unwrap_or_else(|_| "Unable to read response".to_string());
-            error!("Webhook notification failed with status {}: {}", status, error_body);
-            Err(CoreError::network_error(
-                &format!("Webhook returned status {}: {}", status, error_body)
-            ))
+            let error_body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unable to read response".to_string());
+            error!(
+                "Webhook notification failed with status {}: {}",
+                status, error_body
+            );
+            Err(CoreError::network_error(&format!(
+                "Webhook returned status {}: {}",
+                status, error_body
+            )))
         }
     }
 }

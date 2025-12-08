@@ -174,14 +174,11 @@ impl PutioDaemon {
         if config.enable_hot_reload {
             if let Some(ref config_path) = config.config_path {
                 let _daemon_config = self.config.clone();
-                let watcher = ConfigWatcher::new_with_path(
-                    config_path.clone(),
-                    move || {
-                        info!("Config file changed, reload would be triggered here");
-                        // In a full implementation, this would reload the config
-                        // and call handle_config_update
-                    },
-                );
+                let watcher = ConfigWatcher::new_with_path(config_path.clone(), move || {
+                    info!("Config file changed, reload would be triggered here");
+                    // In a full implementation, this would reload the config
+                    // and call handle_config_update
+                });
                 self.config_watcher = Some(watcher);
                 info!("Config watcher initialized: {}", config_path.display());
             } else {
@@ -243,6 +240,7 @@ impl PutioDaemon {
     /// Handle a configuration update
     ///
     /// This is called when the config file changes (hot-reload)
+    #[allow(dead_code)]
     async fn handle_config_update(&mut self, new_config: DaemonConfig) -> DaemonResult<()> {
         info!("Handling configuration update");
 

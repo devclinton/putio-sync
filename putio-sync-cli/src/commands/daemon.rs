@@ -45,10 +45,7 @@ pub async fn execute_daemon(
 
     // Extract OAuth token from auth config
     let oauth_token = match auth.auth_method {
-        AuthMethod::Token => {
-            auth.token
-                .ok_or_else(|| anyhow!("Token not configured"))?
-        }
+        AuthMethod::Token => auth.token.ok_or_else(|| anyhow!("Token not configured"))?,
         AuthMethod::AppPassword => {
             // For app password, we'll need to create a client and get a session token
             // For now, return an error as daemon mode requires OAuth token
@@ -110,8 +107,14 @@ pub async fn execute_daemon(
     };
 
     info!("Daemon configuration:");
-    info!("  Download directory: {}", daemon_config.download_dir.display());
-    info!("  Watch directories: {} paths", daemon_config.watch_dirs.len());
+    info!(
+        "  Download directory: {}",
+        daemon_config.download_dir.display()
+    );
+    info!(
+        "  Watch directories: {} paths",
+        daemon_config.watch_dirs.len()
+    );
     for path in &daemon_config.watch_dirs {
         info!("    - {}", path.display());
     }
@@ -123,15 +126,16 @@ pub async fn execute_daemon(
     let mut daemon = PutioDaemon::new(daemon_config);
 
     info!("Initializing daemon components...");
-    daemon.initialize().await
+    daemon
+        .initialize()
+        .await
         .context("Failed to initialize daemon")?;
 
     info!("✅ Daemon initialized successfully");
     info!("🔄 Starting daemon loop...");
     info!("Press Ctrl+C to stop");
 
-    daemon.start().await
-        .context("Daemon execution failed")?;
+    daemon.start().await.context("Daemon execution failed")?;
 
     info!("👋 Daemon stopped gracefully");
     Ok(())

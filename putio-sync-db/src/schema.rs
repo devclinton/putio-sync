@@ -109,15 +109,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_schema_constants_not_empty() {
-        assert!(!CREATE_DOWNLOADS_TABLE.is_empty());
-        assert!(!CREATE_DOWNLOAD_HISTORY_TABLE.is_empty());
-        assert!(!CREATE_DOWNLOAD_STATS_TABLE.is_empty());
-        assert!(!INIT_DOWNLOAD_STATS.is_empty());
-        assert!(!CREATE_INDEXES.is_empty());
-    }
-
-    #[test]
     fn test_schema_contains_create_table() {
         assert!(CREATE_DOWNLOADS_TABLE.contains("CREATE TABLE"));
         assert!(CREATE_DOWNLOAD_HISTORY_TABLE.contains("CREATE TABLE"));

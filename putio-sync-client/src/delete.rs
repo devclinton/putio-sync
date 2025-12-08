@@ -2,9 +2,9 @@
 
 use crate::client::PutioApiClient;
 use crate::error::ClientResult;
+use futures_util::future::BoxFuture;
 use serde::Serialize;
 use tracing::{debug, info};
-use futures_util::future::BoxFuture;
 
 /// Request body for deleting files
 #[derive(Debug, Serialize)]
@@ -51,9 +51,7 @@ impl PutioApiClient {
             file_ids: file_ids_str,
         };
 
-        let _response: serde_json::Value = self
-            .post("/files/delete", &request)
-            .await?;
+        let _response: serde_json::Value = self.post("/files/delete", &request).await?;
 
         info!("Successfully deleted {} file(s)", file_ids.len());
         Ok(())
@@ -123,7 +121,7 @@ impl PutioApiClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::super::PutioApiClient as ApiClient;
     use mockito::Server;
 
     #[tokio::test]

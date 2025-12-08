@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
 use glob::Pattern;
-use putio_sync_client::{PutioApiClient, FileEntry};
+use putio_sync_client::{FileEntry, PutioApiClient};
 use putio_sync_core::config::{AuthMethod, Config};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -45,9 +45,7 @@ pub async fn execute_delete(
             let username = auth
                 .username
                 .context("Username not configured for app password authentication")?;
-            let password = auth
-                .password
-                .context("App password not configured")?;
+            let password = auth.password.context("App password not configured")?;
             PutioApiClient::with_credentials(username, password)
         }
     };
@@ -154,7 +152,11 @@ pub async fn execute_delete(
     // Display summary
     println!("\n{}", "=".repeat(90));
     println!("Deletion Summary:");
-    println!("  Files deleted: {}/{}", deleted_count, files_to_delete.len());
+    println!(
+        "  Files deleted: {}/{}",
+        deleted_count,
+        files_to_delete.len()
+    );
     println!("  Space freed:   {}", format_bytes(deleted_size));
 
     if !errors.is_empty() {
@@ -219,14 +221,14 @@ fn filter_files(
 fn parse_date(date_str: &str) -> Result<NaiveDate> {
     // Try different date formats
     let formats = vec![
-        "%Y-%m-%d",     // 2026-01-15
-        "%Y-%m",        // 2026-01 (interpreted as first day of month)
-        "%Y/%m/%d",     // 2026/01/15
-        "%Y/%m",        // 2026/01
-        "%Y%m%d",       // 20260115
-        "%m/%d/%Y",     // 01/15/2026
-        "%d-%b-%Y",     // 15-Jan-2026
-        "%Y-%b-%d",     // 2026-Jan-15
+        "%Y-%m-%d", // 2026-01-15
+        "%Y-%m",    // 2026-01 (interpreted as first day of month)
+        "%Y/%m/%d", // 2026/01/15
+        "%Y/%m",    // 2026/01
+        "%Y%m%d",   // 20260115
+        "%m/%d/%Y", // 01/15/2026
+        "%d-%b-%Y", // 15-Jan-2026
+        "%Y-%b-%d", // 2026-Jan-15
     ];
 
     for format in &formats {
@@ -252,7 +254,10 @@ fn parse_date(date_str: &str) -> Result<NaiveDate> {
 
 /// Confirm deletion with user
 fn confirm_deletion(files: &[FileEntry]) -> Result<bool> {
-    print!("\nAre you sure you want to delete {} file(s)? [y/N] ", files.len());
+    print!(
+        "\nAre you sure you want to delete {} file(s)? [y/N] ",
+        files.len()
+    );
     io::stdout().flush()?;
 
     let mut input = String::new();
@@ -309,7 +314,10 @@ mod tests {
     fn test_truncate_string() {
         assert_eq!(truncate_string("short", 10), "short");
         assert_eq!(truncate_string("exact length!", 13), "exact length!");
-        assert_eq!(truncate_string("this is a very long string", 15), "this is a ve...");
+        assert_eq!(
+            truncate_string("this is a very long string", 15),
+            "this is a ve..."
+        );
     }
 
     #[test]

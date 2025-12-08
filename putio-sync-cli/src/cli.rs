@@ -57,7 +57,10 @@ pub enum Commands {
     #[command(about = "Authenticate with Put.io using OAuth token")]
     Login {
         /// Don't save token to config file
-        #[arg(long = "no-save", help = "Don't save token to config file (token is saved by default)")]
+        #[arg(
+            long = "no-save",
+            help = "Don't save token to config file (token is saved by default)"
+        )]
         no_save: bool,
 
         /// Don't open browser automatically
@@ -235,17 +238,11 @@ pub enum Commands {
         no_resume: bool,
 
         /// Skip files already downloaded
-        #[arg(
-            long = "skip-existing",
-            help = "Skip files already downloaded"
-        )]
+        #[arg(long = "skip-existing", help = "Skip files already downloaded")]
         skip_existing: bool,
 
         /// Delete from Put.io after download
-        #[arg(
-            long = "delete-after",
-            help = "Delete from Put.io after download"
-        )]
+        #[arg(long = "delete-after", help = "Delete from Put.io after download")]
         delete_after: bool,
 
         /// Delete empty folders after downloading files from them
@@ -350,10 +347,7 @@ pub enum Commands {
     /// Display download statistics
     Stat {
         /// Show breakdown by file extension
-        #[arg(
-            long = "by-extension",
-            help = "Show breakdown by file extension"
-        )]
+        #[arg(long = "by-extension", help = "Show breakdown by file extension")]
         by_extension: bool,
 
         /// Show stats since date
@@ -365,11 +359,7 @@ pub enum Commands {
         since: Option<String>,
 
         /// Show stats until date
-        #[arg(
-            long = "until",
-            value_name = "DATE",
-            help = "Show stats until date"
-        )]
+        #[arg(long = "until", value_name = "DATE", help = "Show stats until date")]
         until: Option<String>,
 
         /// Output format
@@ -402,11 +392,7 @@ pub enum Commands {
         since: Option<String>,
 
         /// Show history until date
-        #[arg(
-            long = "until",
-            value_name = "DATE",
-            help = "Show history until date"
-        )]
+        #[arg(long = "until", value_name = "DATE", help = "Show history until date")]
         until: Option<String>,
 
         /// Limit number of results
@@ -534,10 +520,7 @@ pub enum Commands {
         filter: Option<String>,
 
         /// Skip files already downloaded
-        #[arg(
-            long = "skip-existing",
-            help = "Skip files already downloaded"
-        )]
+        #[arg(long = "skip-existing", help = "Skip files already downloaded")]
         skip_existing: bool,
 
         /// Delete from Put.io after successful download
@@ -597,19 +580,39 @@ pub enum Commands {
     #[command(about = "Start HTTP API server")]
     Server {
         /// Enable watch mode for monitoring torrent directories
-        #[arg(short = 'w', long = "watch", help = "Enable watch mode for torrent files")]
+        #[arg(
+            short = 'w',
+            long = "watch",
+            help = "Enable watch mode for torrent files"
+        )]
         watch: bool,
 
         /// Enable download mode for automatic downloading
-        #[arg(short = 'd', long = "download", help = "Enable automatic download mode")]
+        #[arg(
+            short = 'd',
+            long = "download",
+            help = "Enable automatic download mode"
+        )]
         download: bool,
 
         /// Port to bind the HTTP server (default: 15432)
-        #[arg(short = 'p', long = "port", value_name = "PORT", default_value = "15432", help = "Port to bind HTTP server")]
+        #[arg(
+            short = 'p',
+            long = "port",
+            value_name = "PORT",
+            default_value = "15432",
+            help = "Port to bind HTTP server"
+        )]
         port: u16,
 
         /// Bind address for the HTTP server (default: 0.0.0.0)
-        #[arg(short = 'b', long = "bind", value_name = "ADDRESS", default_value = "0.0.0.0", help = "Address to bind HTTP server")]
+        #[arg(
+            short = 'b',
+            long = "bind",
+            value_name = "ADDRESS",
+            default_value = "0.0.0.0",
+            help = "Address to bind HTTP server"
+        )]
         bind: String,
     },
 
@@ -617,7 +620,11 @@ pub enum Commands {
     #[command(about = "Show system status and health information")]
     Status {
         /// Show detailed diagnostics
-        #[arg(short = 'd', long = "detailed", help = "Show detailed diagnostics report")]
+        #[arg(
+            short = 'd',
+            long = "detailed",
+            help = "Show detailed diagnostics report"
+        )]
         detailed: bool,
 
         /// Output in JSON format
@@ -879,11 +886,7 @@ pub enum QueueCommands {
     #[command(about = "Clear completed items from queue")]
     Clear {
         /// Skip confirmation prompt
-        #[arg(
-            short = 'y',
-            long = "yes",
-            help = "Skip confirmation prompt"
-        )]
+        #[arg(short = 'y', long = "yes", help = "Skip confirmation prompt")]
         yes: bool,
     },
 
@@ -895,7 +898,10 @@ pub enum QueueCommands {
         file_id: i64,
 
         /// New priority
-        #[arg(value_name = "PRIORITY", help = "New priority (higher = downloaded first)")]
+        #[arg(
+            value_name = "PRIORITY",
+            help = "New priority (higher = downloaded first)"
+        )]
         priority: i64,
     },
 
@@ -985,11 +991,7 @@ pub enum TransfersCommands {
         transfer_ids: Vec<i64>,
 
         /// Skip confirmation prompt
-        #[arg(
-            short = 'y',
-            long = "yes",
-            help = "Skip confirmation prompt"
-        )]
+        #[arg(short = 'y', long = "yes", help = "Skip confirmation prompt")]
         yes: bool,
     },
 
