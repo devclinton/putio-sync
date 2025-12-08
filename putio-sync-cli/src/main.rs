@@ -10,6 +10,7 @@ use putio_sync_cli::commands;
 
 use chrono::Utc;
 use cli::{Cli, Commands, QueueCommands, TransfersCommands};
+use putio_sync_core::config::Config;
 use tracing::{debug, error, info};
 
 /// Get version string with git commit info
@@ -71,12 +72,47 @@ async fn main() {
         }
     };
 
+    eprintln!("🔧 Loading configuration...");
+    // Load config early for logging configuration
+    let mut config = if let Some(config_path) = args.config.as_ref() {
+        match Config::load(config_path) {
+            Ok(cfg) => {
+                eprintln!("✅ Configuration loaded successfully from {}", config_path.display());
+                cfg
+            }
+            Err(e) => {
+                eprintln!("⚠️  Failed to load config from {}: {}", config_path.display(), e);
+                eprintln!("⚠️  Using defaults");
+                Config::default()
+            }
+        }
+    } else {
+        eprintln!("⚠️  No config file specified, using defaults");
+        Config::default()
+    };
+
     eprintln!("🔧 Initializing logging system...");
-    // Initialize logging based on verbosity flags
-    logging::init(args.verbose, args.quiet);
+    // Override log level based on verbosity flags
+    if args.quiet {
+        config.logging.level = "error".to_string();
+    } else {
+        config.logging.level = match args.verbose {
+            0 => "info".to_string(),
+            1 => "debug".to_string(),
+            _ => "trace".to_string(),
+        };
+    }
+
+    // Initialize logging from config
+    if let Err(e) = putio_sync_core::logging::init_logging(&config.logging) {
+        eprintln!("⚠️  Failed to initialize logging: {}", e);
+        eprintln!("⚠️  Falling back to basic logging");
+        logging::init(args.verbose, args.quiet);
+    }
+
     eprintln!(
-        "✅ Logging initialized - verbosity: {}, quiet: {}",
-        args.verbose, args.quiet
+        "✅ Logging initialized - level: {}, verbosity: {}, quiet: {}",
+        config.logging.level, args.verbose, args.quiet
     );
 
     // Log startup information

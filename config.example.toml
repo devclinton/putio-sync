@@ -196,6 +196,57 @@ backend = "none"
 # email = "your.email@example.com"
 
 # ============================================================================
+# Logging Configuration
+# ============================================================================
+[logging]
+# Log level: trace, debug, info, warn, error
+# - trace: Most verbose, includes all debug information
+# - debug: Detailed debugging information
+# - info: General informational messages (default)
+# - warn: Warning messages
+# - error: Error messages only
+# Default: "info"
+level = "info"
+
+# Enable file logging (logs written to disk)
+# Default: true
+file_enabled = true
+
+# Log file path (supports ~ for home directory expansion)
+# Logs are automatically rotated daily
+# Default: "~/.putiosync/logs/putio-sync.log"
+file_path = "~/.putiosync/logs/putio-sync.log"
+
+# Maximum log file size before rotation (in MB)
+# Note: Currently daily rotation is used, this is for future size-based rotation
+# Default: 10
+max_file_size_mb = 10
+
+# Number of rotated log files to keep
+# Default: 5
+max_backups = 5
+
+# Enable console logging (output to terminal)
+# Default: true
+console_enabled = true
+
+# Console output format
+# Options: "compact", "pretty", "json"
+# - compact: Single line per log (default, best for production)
+# - pretty: Multi-line format (best for development/debugging)
+# - json: Structured JSON format (best for log aggregation)
+# Default: "compact"
+console_format = "compact"
+
+# Module-specific log filters
+# Allows fine-grained control over logging per module
+# Examples:
+#   - "putio_sync_download=trace" - enable trace logs for download module
+#   - "putio_sync_client=debug" - enable debug logs for client module
+# Default: [] (no module-specific filters)
+module_filters = []
+
+# ============================================================================
 # Database Configuration (Advanced)
 # ============================================================================
 # Database location (SQLite)

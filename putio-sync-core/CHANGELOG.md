@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Comprehensive logging configuration system
+  - Added `LoggingConfig` struct with full configuration support
+  - Added `ConsoleFormat` enum (compact, pretty, json) for flexible output formatting
+  - File logging with daily log rotation via tracing-appender
+  - Configurable log levels (trace, debug, info, warn, error)
+  - Module-specific log level filtering for fine-grained control
+  - Support for both console and file output simultaneously
+  - RUST_LOG environment variable override support
+  - Home directory expansion for log file paths (~/.putiosync/logs/*)
+  - Automatic creation of log directories
+  - Legacy compatibility functions (init, init_from_env) for backward compatibility
+  - CLI integration with verbosity flag override (-v for debug, -vv for trace, -q for quiet)
+  - Configuration via [logging] section in config.toml:
+    - `level`: Log level (default: "info")
+    - `file_enabled`: Enable file logging (default: true)
+    - `file_path`: Log file path (default: ~/.putiosync/logs/putio-sync.log)
+    - `console_enabled`: Enable console logging (default: true)
+    - `console_format`: Console format (default: "compact")
+    - `module_filters`: Per-module log level filters (default: [])
+  - Comprehensive tests for logging configuration
+  - Updated config.example.toml with detailed logging documentation
 - Docker distribution and deployment support
   - Alpine Linux-based Dockerfile with multi-stage build for minimal image size
   - Multi-platform container support (linux/amd64, linux/arm64)

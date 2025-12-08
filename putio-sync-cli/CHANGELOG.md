@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Logging configuration integration from putio-sync-core
+  - Early configuration loading for logging initialization
+  - Verbosity flag override for log levels (-v for debug, -vv for trace)
+  - Quiet mode override for error-only logging (-q)
+  - Fallback to legacy logging on initialization errors
+  - Configuration-based logging with file and console output support
+
 ### Changed
 - **BREAKING**: CLI command structure reorganized for better hierarchy
   - `putio-sync list` moved to `putio-sync files list`

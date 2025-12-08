@@ -31,6 +31,9 @@ pub struct Config {
     /// Notification configuration
     #[serde(default)]
     pub notifications: NotificationConfig,
+    /// Logging configuration
+    #[serde(default)]
+    pub logging: crate::logging::LoggingConfig,
 }
 
 /// Authentication method
@@ -840,6 +843,7 @@ impl ConfigBuilder {
             download: self.download,
             watch: self.watch,
             notifications: NotificationConfig::default(),
+            logging: crate::logging::LoggingConfig::default(),
         }
     }
 }
