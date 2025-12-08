@@ -3,8 +3,8 @@
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
 use glob::Pattern;
-use putio_sync_core::api::{ApiClient, FileEntry};
-use putio_sync_core::config::Config;
+use putio_sync_client::{PutioApiClient, FileEntry};
+use putio_sync_core::config::{AuthMethod, Config};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use tracing::{debug, info};
@@ -29,11 +29,28 @@ pub async fn execute_delete(
     let config = load_config(config_path)?;
 
     // Create API client
-    let auth_config = config
+    let auth = config
         .auth
         .clone()
         .context("No authentication configured. Run 'putio-sync login' first.")?;
-    let client = ApiClient::from_auth_config(auth_config);
+
+    let client = match auth.auth_method {
+        AuthMethod::Token => {
+            let token = auth
+                .token
+                .context("OAuth token not configured. Run 'putio-sync login' first.")?;
+            PutioApiClient::new(token)
+        }
+        AuthMethod::AppPassword => {
+            let username = auth
+                .username
+                .context("Username not configured for app password authentication")?;
+            let password = auth
+                .password
+                .context("App password not configured")?;
+            PutioApiClient::with_credentials(username, password)
+        }
+    };
 
     // Validate arguments
     if !all && files.is_empty() {
@@ -58,7 +75,7 @@ pub async fn execute_delete(
         debug!("Fetching specific files: {:?}", files);
         let mut fetched_files = Vec::new();
         for file_id in &files {
-            let response = client.get_file(*file_id).await?;
+            let response = client.get_file_details(*file_id).await?;
             fetched_files.push(response.file);
         }
         filter_files(fetched_files, filter.as_deref(), before_date.as_ref())

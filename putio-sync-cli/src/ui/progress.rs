@@ -5,7 +5,7 @@
 
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle as IndicatifStyle};
 use putio_sync_core::config::ProgressStyle;
-use putio_sync_core::download::ProgressCallback;
+use putio_sync_download::ProgressCallback;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -218,7 +218,7 @@ impl ProgressCallback for ProgressCallbackImpl {
         self.display.file_started(file_id, filename, file_size);
     }
 
-    fn on_file_progress(&self, progress: &putio_sync_core::download::DownloadProgress) {
+    fn on_file_progress(&self, progress: &putio_sync_download::DownloadProgress) {
         self.display
             .update_file_progress(progress.file_id, progress.bytes_downloaded);
 
@@ -231,7 +231,7 @@ impl ProgressCallback for ProgressCallbackImpl {
         self.display.file_completed(file_id, success);
     }
 
-    fn on_overall_progress(&self, _progress: &putio_sync_core::download::OverallProgress) {
+    fn on_overall_progress(&self, _progress: &putio_sync_download::OverallProgress) {
         // Already handled in update_file_progress
     }
 }

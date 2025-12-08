@@ -2,8 +2,8 @@
 
 use anyhow::{Context, Result};
 use putio_sync_core::config::Config;
-use putio_sync_core::db::{Database, HistoryRepository};
-use putio_sync_core::db::models::HistoryAction;
+use putio_sync_db::{Database, HistoryRepository};
+use putio_sync_db::models::HistoryAction;
 use serde::Serialize;
 use std::path::PathBuf;
 use tracing::{debug, info};
