@@ -47,6 +47,10 @@ pub struct DaemonConfig {
     pub buffer_size_mb: usize,
     /// Delete files from Put.io after successful download
     pub delete_after_download: bool,
+    /// Enable API mode (use API server for downloads instead of local manager)
+    pub api_enabled: bool,
+    /// API server URL (required if api_enabled is true)
+    pub api_url: Option<String>,
 }
 
 impl Default for DaemonConfig {
@@ -64,8 +68,25 @@ impl Default for DaemonConfig {
             workers: 1,
             buffer_size_mb: 64,
             delete_after_download: false,
+            api_enabled: false,
+            api_url: None,
         }
     }
+}
+
+/// Download mode for the daemon
+///
+/// Determines whether downloads are handled locally or through an API server.
+pub enum DownloadMode {
+    /// Local mode - daemon manages downloads directly
+    Local(DownloadManager),
+    /// Remote mode - daemon uses API server for downloads
+    Remote {
+        /// API server base URL
+        api_url: String,
+        /// HTTP client for API requests
+        client: reqwest::Client,
+    },
 }
 
 /// Main daemon orchestrator
@@ -73,7 +94,7 @@ impl Default for DaemonConfig {
 /// Coordinates all sync operations and manages the lifecycle of:
 /// - API client
 /// - Database
-/// - Download manager
+/// - Download manager (local or remote)
 /// - File watcher
 /// - Config watcher
 pub struct PutioDaemon {
@@ -83,8 +104,8 @@ pub struct PutioDaemon {
     client: Option<Arc<PutioApiClient>>,
     /// Database connection
     database: Option<Arc<Database>>,
-    /// Download manager
-    download_manager: Option<DownloadManager>,
+    /// Download mode (local or remote API)
+    download_mode: Option<DownloadMode>,
     /// File watcher for torrents/magnets
     file_watcher: Option<TorrentWatcher>,
     /// Config file watcher (for hot-reload)
@@ -98,7 +119,7 @@ impl PutioDaemon {
             config: Arc::new(RwLock::new(config)),
             client: None,
             database: None,
-            download_manager: None,
+            download_mode: None,
             file_watcher: None,
             config_watcher: None,
         }
@@ -142,31 +163,43 @@ impl PutioDaemon {
             info!("No database path configured, running without persistence");
         }
 
-        // Initialize download manager
-        let download_config = putio_sync_download::DownloadConfig {
-            target_directory: config.download_dir.clone(),
-            skip_existing: true,
-            buffer_size_mb: config.buffer_size_mb,
-            bandwidth_limit_bytes_per_sec: None,
-            max_retries: 3,
-            retry_initial_delay_secs: 2,
-            workers: config.workers,
-            delete_after_download: config.delete_after_download,
-        };
+        // Initialize download mode (local or remote API)
+        if config.api_enabled {
+            // API mode - use remote API server for downloads
+            let api_url = config.api_url.as_ref().ok_or_else(|| {
+                crate::error::DaemonError::ConfigError(
+                    "API URL is required when api_enabled is true".to_string(),
+                )
+            })?;
 
-        self.download_manager = if let Some(ref db) = self.database {
-            Some(DownloadManager::new(
-                client.clone(),
-                db.clone(),
-                download_config,
-            ))
+            let http_client = reqwest::Client::new();
+            self.download_mode = Some(DownloadMode::Remote {
+                api_url: api_url.clone(),
+                client: http_client,
+            });
+            info!("Download mode: Remote API ({})", api_url);
         } else {
-            Some(DownloadManager::new_without_database(
-                client.clone(),
-                download_config,
-            ))
-        };
-        info!("Download manager initialized");
+            // Local mode - create own download manager
+            let download_config = putio_sync_download::DownloadConfig {
+                target_directory: config.download_dir.clone(),
+                skip_existing: true,
+                buffer_size_mb: config.buffer_size_mb,
+                bandwidth_limit_bytes_per_sec: None,
+                max_retries: 3,
+                retry_initial_delay_secs: 2,
+                workers: config.workers,
+                delete_after_download: config.delete_after_download,
+            };
+
+            let download_manager = if let Some(ref db) = self.database {
+                DownloadManager::new(client.clone(), db.clone(), download_config)
+            } else {
+                DownloadManager::new_without_database(client.clone(), download_config)
+            };
+
+            self.download_mode = Some(DownloadMode::Local(download_manager));
+            info!("Download mode: Local");
+        }
 
         // Initialize file watcher
         if !config.watch_dirs.is_empty() {
@@ -250,33 +283,43 @@ impl PutioDaemon {
             None
         };
 
-        // Spawn download tasks if download manager is configured
-        let (sync_task, download_task) = if self.download_manager.is_some() {
-            let config = self.config.read().await;
-            let sync_interval = config.watch_interval; // Interval for syncing from Put.io
-            let worker_interval = config.watch_interval; // Interval for processing queue
-            drop(config);
+        // Spawn download tasks if in local mode (not API mode)
+        let (sync_task, download_task) = match &self.download_mode {
+            Some(DownloadMode::Local(_)) => {
+                // Take the download manager to move into tasks
+                if let Some(DownloadMode::Local(dm)) = self.download_mode.take() {
+                    let config = self.config.read().await;
+                    let sync_interval = config.watch_interval; // Interval for syncing from Put.io
+                    let worker_interval = config.watch_interval; // Interval for processing queue
+                    drop(config);
 
-            let dm = self.download_manager.take().unwrap();
+                    // Clone download manager for the two separate tasks
+                    let dm_sync = dm.clone();
+                    let dm_workers = dm;
 
-            // Clone download manager for the two separate tasks
-            let dm_sync = dm.clone();
-            let dm_workers = dm;
+                    // Spawn sync task (refreshes queue from Put.io)
+                    let sync_handle = tokio::spawn(async move {
+                        Self::run_sync_loop(dm_sync, sync_interval).await;
+                    });
 
-            // Spawn sync task (refreshes queue from Put.io)
-            let sync_handle = tokio::spawn(async move {
-                Self::run_sync_loop(dm_sync, sync_interval).await;
-            });
+                    // Spawn worker task (processes queue)
+                    let worker_handle = tokio::spawn(async move {
+                        Self::run_download_loop(dm_workers, worker_interval).await;
+                    });
 
-            // Spawn worker task (processes queue)
-            let worker_handle = tokio::spawn(async move {
-                Self::run_download_loop(dm_workers, worker_interval).await;
-            });
-
-            (Some(sync_handle), Some(worker_handle))
-        } else {
-            info!("Download manager not configured, skipping download tasks");
-            (None, None)
+                    (Some(sync_handle), Some(worker_handle))
+                } else {
+                    unreachable!()
+                }
+            }
+            Some(DownloadMode::Remote { api_url, .. }) => {
+                info!("Running in API mode - downloads handled by API server at {}", api_url);
+                (None, None)
+            }
+            None => {
+                info!("Download mode not configured, skipping download tasks");
+                (None, None)
+            }
         };
 
         info!("Daemon started successfully");
@@ -449,6 +492,6 @@ mod tests {
         let daemon = PutioDaemon::new(config);
         assert!(daemon.client.is_none());
         assert!(daemon.database.is_none());
-        assert!(daemon.download_manager.is_none());
+        assert!(daemon.download_mode.is_none());
     }
 }

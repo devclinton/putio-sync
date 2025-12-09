@@ -2,7 +2,7 @@
 //!
 //! Starts an HTTP API server with optional daemon modes for watch and download.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthMethod, Config};
 use std::path::PathBuf;
@@ -88,8 +88,11 @@ pub async fn execute_server(
         info!("Download mode: DISABLED");
     }
 
-    // Create application with config
-    let app = putio_sync_api::create_app(config.clone());
+    // Create application with config (with database path)
+    let database_path = Some(std::path::PathBuf::from(".putiosync.db"));
+    let app = putio_sync_api::create_app(config.clone(), database_path)
+        .await
+        .map_err(|e| anyhow!("Failed to create API app: {}", e))?;
 
     // Start HTTP server
     info!("Starting HTTP server on http://{}", addr);
