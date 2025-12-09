@@ -486,6 +486,31 @@ impl DiagnosticsCollector {
     }
 
     fn generate_environment_info(&self) -> EnvironmentInfo {
+        use sysinfo::{Disks, System};
+
+        // Get disk space information for the working directory
+        let disk_space_mb = std::env::current_dir()
+            .ok()
+            .and_then(|cwd| {
+                let disks = Disks::new_with_refreshed_list();
+                disks
+                    .iter()
+                    .find(|disk| cwd.starts_with(disk.mount_point()))
+                    .map(|disk| disk.available_space() / 1024 / 1024) // Convert bytes to MB
+            });
+
+        // Get current process memory usage
+        let memory_usage_mb = {
+            use sysinfo::ProcessesToUpdate;
+
+            let mut sys = System::new();
+            let pid = sysinfo::Pid::from_u32(std::process::id());
+            sys.refresh_processes(ProcessesToUpdate::Some(&[pid]));
+
+            sys.process(pid)
+                .map(|process| process.memory() / 1024 / 1024) // Convert bytes to MB
+        };
+
         EnvironmentInfo {
             os: std::env::consts::OS.to_string(),
             architecture: std::env::consts::ARCH.to_string(),
@@ -493,8 +518,8 @@ impl DiagnosticsCollector {
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|_| "unknown".to_string()),
             home_directory: std::env::var("HOME").ok(),
-            disk_space_available_mb: None, // TODO: Implement disk space check
-            memory_usage_mb: None,         // TODO: Implement memory usage check
+            disk_space_available_mb: disk_space_mb.map(|s| s as u64),
+            memory_usage_mb: memory_usage_mb.map(|m| m as u64),
         }
     }
 }

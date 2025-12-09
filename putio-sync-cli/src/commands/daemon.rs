@@ -111,8 +111,8 @@ pub async fn execute_daemon(
         workers,
         buffer_size_mb,
         delete_after_download,
-        api_enabled: false,  // TODO: Add to config file
-        api_url: None,       // TODO: Add to config file
+        api_enabled: config.api.enabled,
+        api_url: config.api.url.clone(),
     };
 
     info!("Daemon configuration:");

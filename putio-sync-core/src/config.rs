@@ -31,6 +31,9 @@ pub struct Config {
     /// Notification configuration
     #[serde(default)]
     pub notifications: NotificationConfig,
+    /// API/Daemon mode configuration
+    #[serde(default)]
+    pub api: ApiConfig,
     /// Logging configuration
     #[serde(default)]
     pub logging: crate::logging::LoggingConfig,
@@ -252,6 +255,19 @@ pub struct NotificationConfig {
     pub email: Option<String>,
 }
 
+/// API/Daemon mode configuration
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ApiConfig {
+    /// Enable daemon to communicate with API server for downloads
+    /// When true, the daemon will send download requests to an API server
+    /// instead of downloading files directly
+    pub enabled: bool,
+    /// API server URL (e.g., "http://localhost:15432")
+    /// Required when enabled is true
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
 impl Default for SyncConfig {
     fn default() -> Self {
         SyncConfig {
@@ -332,6 +348,15 @@ impl Default for NotificationConfig {
             backend: NotificationBackend::None,
             webhook_url: None,
             email: None,
+        }
+    }
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        ApiConfig {
+            enabled: false,
+            url: None,
         }
     }
 }
@@ -843,6 +868,7 @@ impl ConfigBuilder {
             download: self.download,
             watch: self.watch,
             notifications: NotificationConfig::default(),
+            api: ApiConfig::default(),
             logging: crate::logging::LoggingConfig::default(),
         }
     }
@@ -889,6 +915,7 @@ mod tests {
                 delete_after_upload: false,
             },
             notifications: NotificationConfig::default(),
+            api: ApiConfig::default(),
             logging: crate::logging::LoggingConfig::default(),
         }
     }
