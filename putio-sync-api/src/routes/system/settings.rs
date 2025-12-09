@@ -215,15 +215,10 @@ async fn update_download_settings(
         config.download.delete_empty_folders = settings.delete_empty_folders;
     }
 
-    // TODO: Notify download manager to reload configuration
-    // Implementation options:
-    // 1. Add DownloadManager::update_config() method to update config in-place
-    // 2. Recreate DownloadManager with new config (via write lock on state.download_manager)
-    // 3. Use message passing channel to notify running workers
-    // Current limitation: Download manager must be recreated or server restarted for changes to take effect
-    // Note: This affects ongoing downloads, so careful state management is required
-
-    // Update download manager with new config
+    // Hot reload: Recreate download manager with new configuration
+    // Note: This recreates the download manager, which will affect any ongoing downloads.
+    // Active downloads will be interrupted and will need to restart.
+    // Future enhancement: Add graceful config reload that preserves active downloads.
     if let Ok(mut dm) = state.download_manager.try_write() {
         // Recreate download manager with new config
         let download_config = {
@@ -302,17 +297,13 @@ async fn update_watcher_config(
     // Persist config to file
     persist_config(&state).await?;
 
-    // TODO: Notify file watcher to reload configuration
-    // The file watcher runs in a separate thread (spawned in server.rs spawn_watch_daemon)
-    // Implementation options:
-    // 1. Use a tokio::sync::watch channel to send config updates to the watcher thread
-    // 2. Store watch channel sender in AppState for config reload notifications
-    // 3. Have the watcher periodically check config file modification time
-    // Current limitation: File watcher must be restarted (server restart) for changes to take effect
-    // Note: Requires architectural change to pass messages between API and daemon threads
+    // Note: File watcher hot reload is not currently supported.
+    // The file watcher runs in a separate thread (spawned in server.rs spawn_watch_daemon).
+    // Config updates are persisted to file but require a server restart to take effect.
+    // Future enhancement: Implement message passing channel from API to watcher thread for live reload.
 
     Ok(Json(SuccessResponse {
-        message: "File watcher configuration updated successfully".to_string(),
+        message: "File watcher configuration updated successfully. Note: Server restart required for changes to take effect.".to_string(),
     }))
 }
 
@@ -401,15 +392,16 @@ async fn update_notification_settings(
         config.notifications.webhook_url = settings.webhook_url;
         config.notifications.email = settings.email;
 
-        // TODO: Reinitialize notification system with new configuration
-        // Note: Notification system reinitialization not yet implemented
+        // Note: Notification system hot reload is not currently implemented.
+        // The notification system is initialized at startup and changes require a server restart.
+        // Future enhancement: Add dynamic notification backend reinitialization.
     }
 
     // Persist config to file
     persist_config(&state).await?;
 
     Ok(Json(SuccessResponse {
-        message: "Notification configuration updated successfully".to_string(),
+        message: "Notification configuration updated successfully. Note: Server restart required for changes to take effect.".to_string(),
     }))
 }
 
