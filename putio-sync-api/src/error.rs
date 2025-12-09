@@ -23,6 +23,8 @@ pub enum ApiError {
     Unauthorized(String),
     /// Internal server error
     Internal(String),
+    /// Internal error (alias for Internal)
+    InternalError(String),
 }
 
 /// API error response body
@@ -44,6 +46,7 @@ impl fmt::Display for ApiError {
             ApiError::BadRequest(msg) => write!(f, "Bad request: {}", msg),
             ApiError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
             ApiError::Internal(msg) => write!(f, "Internal error: {}", msg),
+            ApiError::InternalError(msg) => write!(f, "Internal error: {}", msg),
         }
     }
 }
@@ -71,6 +74,7 @@ impl IntoResponse for ApiError {
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
             ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+            ApiError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
         };
 
         let body = ErrorResponse {
