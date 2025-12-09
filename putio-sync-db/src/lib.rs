@@ -186,6 +186,9 @@ impl Database {
                 DbError::DatabaseError(format!("Failed to create download_queue table: {}", e))
             })?;
 
+        // Migrate: Add relative_path column to download_queue if it doesn't exist
+        self.migrate_add_relative_path_column().await?;
+
         // Create processed_torrents table
         sqlx::query(schema::CREATE_PROCESSED_TORRENTS_TABLE)
             .execute(&self.pool)
@@ -203,6 +206,34 @@ impl Database {
         info!("Database migrations completed");
 
         Ok(())
+    }
+
+    /// Migrate: Add relative_path column to download_queue table if it doesn't exist
+    async fn migrate_add_relative_path_column(&self) -> DbResult<()> {
+        // Check if the column already exists
+        let result: Result<(i64,), sqlx::Error> = sqlx::query_as(
+            "SELECT COUNT(*) FROM pragma_table_info('download_queue') WHERE name = 'relative_path'"
+        )
+        .fetch_one(&self.pool)
+        .await;
+
+        match result {
+            Ok((count,)) if count > 0 => {
+                debug!("Column 'relative_path' already exists in download_queue table");
+                Ok(())
+            }
+            _ => {
+                debug!("Adding 'relative_path' column to download_queue table");
+                sqlx::query("ALTER TABLE download_queue ADD COLUMN relative_path TEXT NOT NULL DEFAULT ''")
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        DbError::DatabaseError(format!("Failed to add relative_path column: {}", e))
+                    })?;
+                info!("Successfully added 'relative_path' column to download_queue table");
+                Ok(())
+            }
+        }
     }
 
     /// Close the database connection

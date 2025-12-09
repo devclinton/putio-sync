@@ -95,7 +95,11 @@ pub async fn execute_download(
         warn!("Chunk size specified but chunked downloads not supported - using streaming with range request resume instead");
     }
 
+    // Store settings that need to be handled separately
+    let workers_count = workers.unwrap_or(old_config.workers);
+
     // Create new download config
+    let delete_after_download = delete_after || old_config.delete_after_download;
     let download_config = DownloadConfig {
         target_directory: target_directory.clone(),
         skip_existing: skip_existing_flag,
@@ -103,11 +107,9 @@ pub async fn execute_download(
         bandwidth_limit_bytes_per_sec,
         max_retries: old_config.max_retries,
         retry_initial_delay_secs: old_config.retry_initial_delay_secs,
+        workers: workers_count,
+        delete_after_download,
     };
-
-    // Store settings that need to be handled separately
-    let workers_count = workers.unwrap_or(old_config.workers);
-    let delete_after_download = delete_after || old_config.delete_after_download;
     let delete_empty_folders_flag = delete_empty_folders.unwrap_or(old_config.delete_empty_folders);
     let sort_order = if let Some(s) = sort {
         parse_sort_order(&s)?

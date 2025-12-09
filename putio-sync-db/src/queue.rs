@@ -23,19 +23,21 @@ impl<'a> QueueRepository<'a> {
         filename: &str,
         file_size: i64,
         download_url: &str,
+        relative_path: &str,
         priority: i64,
     ) -> DbResult<i64> {
         debug!(
-            "Adding to queue: file_id={}, filename={}, size={}, priority={}",
-            file_id, filename, file_size, priority
+            "Adding to queue: file_id={}, filename={}, size={}, relative_path={}, priority={}",
+            file_id, filename, file_size, relative_path, priority
         );
 
         let result = sqlx::query(
             r#"
-            INSERT INTO download_queue (file_id, filename, file_size, download_url, priority, status)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO download_queue (file_id, filename, file_size, download_url, relative_path, priority, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(file_id) DO UPDATE SET
                 priority = excluded.priority,
+                relative_path = excluded.relative_path,
                 updated_at = CURRENT_TIMESTAMP
             "#,
         )
@@ -43,6 +45,7 @@ impl<'a> QueueRepository<'a> {
         .bind(filename)
         .bind(file_size)
         .bind(download_url)
+        .bind(relative_path)
         .bind(priority)
         .bind(QueueStatus::Pending.to_string())
         .execute(self.pool)
@@ -68,6 +71,50 @@ impl<'a> QueueRepository<'a> {
         Ok(items)
     }
 
+    /// Atomically claim the next pending item by updating its status to downloading
+    ///
+    /// This prevents race conditions where multiple workers try to process the same item.
+    /// Returns None if no pending items are available.
+    pub async fn claim_next_pending(&self) -> DbResult<Option<QueueItem>> {
+        // Start a transaction to ensure atomicity
+        let mut tx = self.pool.begin().await
+            .map_err(|e| DbError::DatabaseError(format!("Failed to begin transaction: {}", e)))?;
+
+        // Get the next pending item
+        let item = sqlx::query_as::<_, QueueItem>(
+            r#"
+            SELECT * FROM download_queue
+            WHERE status = 'pending'
+            ORDER BY priority DESC, created_at ASC
+            LIMIT 1
+            "#,
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| DbError::DatabaseError(format!("Failed to get next pending item: {}", e)))?;
+
+        if let Some(ref queue_item) = item {
+            // Update the status to downloading
+            sqlx::query(
+                r#"
+                UPDATE download_queue
+                SET status = 'downloading', updated_at = CURRENT_TIMESTAMP
+                WHERE file_id = ?
+                "#,
+            )
+            .bind(queue_item.file_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DbError::DatabaseError(format!("Failed to update item status: {}", e)))?;
+        }
+
+        // Commit the transaction
+        tx.commit().await
+            .map_err(|e| DbError::DatabaseError(format!("Failed to commit transaction: {}", e)))?;
+
+        Ok(item)
+    }
+
     /// Get all queue items
     pub async fn get_all(&self) -> DbResult<Vec<QueueItem>> {
         let items = sqlx::query_as::<_, QueueItem>(
@@ -81,6 +128,22 @@ impl<'a> QueueRepository<'a> {
         .map_err(|e| DbError::DatabaseError(format!("Failed to get queue items: {}", e)))?;
 
         Ok(items)
+    }
+
+    /// Get a queue item by file_id
+    pub async fn get_by_file_id(&self, file_id: i64) -> DbResult<Option<QueueItem>> {
+        let item = sqlx::query_as::<_, QueueItem>(
+            r#"
+            SELECT * FROM download_queue
+            WHERE file_id = ?
+            "#,
+        )
+        .bind(file_id)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| DbError::DatabaseError(format!("Failed to get queue item by file_id: {}", e)))?;
+
+        Ok(item)
     }
 
     /// Update queue item status

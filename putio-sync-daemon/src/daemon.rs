@@ -15,7 +15,7 @@ use putio_sync_file_manager::TorrentWatcher;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Configuration for the daemon
 ///
@@ -35,10 +35,18 @@ pub struct DaemonConfig {
     pub watch_interval: u64,
     /// Parent folder ID for transfers
     pub parent_id: Option<i64>,
+    /// Delete torrent/magnet files after upload
+    pub delete_after_upload: bool,
     /// Enable config hot-reloading
     pub enable_hot_reload: bool,
     /// Config file path (for hot-reload)
     pub config_path: Option<PathBuf>,
+    /// Number of concurrent download workers
+    pub workers: usize,
+    /// Buffer size for streaming downloads in megabytes
+    pub buffer_size_mb: usize,
+    /// Delete files from Put.io after successful download
+    pub delete_after_download: bool,
 }
 
 impl Default for DaemonConfig {
@@ -50,8 +58,12 @@ impl Default for DaemonConfig {
             watch_dirs: Vec::new(),
             watch_interval: 60,
             parent_id: None,
+            delete_after_upload: false,
             enable_hot_reload: false,
             config_path: None,
+            workers: 1,
+            buffer_size_mb: 64,
+            delete_after_download: false,
         }
     }
 }
@@ -134,10 +146,12 @@ impl PutioDaemon {
         let download_config = putio_sync_download::DownloadConfig {
             target_directory: config.download_dir.clone(),
             skip_existing: true,
-            buffer_size_mb: 64,
+            buffer_size_mb: config.buffer_size_mb,
             bandwidth_limit_bytes_per_sec: None,
             max_retries: 3,
             retry_initial_delay_secs: 2,
+            workers: config.workers,
+            delete_after_download: config.delete_after_download,
         };
 
         self.download_manager = if let Some(ref db) = self.database {
@@ -192,10 +206,12 @@ impl PutioDaemon {
 
     /// Start the daemon
     ///
-    /// This runs the main daemon loop, processing:
-    /// - File watch events
+    /// This spawns independent async tasks for:
+    /// - File watch events (torrent/magnet scanner)
     /// - Download synchronization
-    /// - Config updates
+    /// - Config updates (hot reload)
+    ///
+    /// Each task manages its own timing and runs independently.
     pub async fn start(&mut self) -> DaemonResult<()> {
         info!("Starting Put.io sync daemon");
 
@@ -204,37 +220,172 @@ impl PutioDaemon {
             self.initialize().await?;
         }
 
-        // Start file watcher if configured
-        if let Some(ref _file_watcher) = self.file_watcher {
-            if let Some(ref _client) = self.client {
-                info!("Starting file watcher daemon...");
-                // In a full implementation, this would run in a separate task
-                // For now, we just log that it would start
-                debug!("File watcher would run in background");
-
-                // Example of how it would be used:
-                // tokio::spawn(async move {
-                //     if let Err(e) = file_watcher.run_daemon(client).await {
-                //         error!("File watcher error: {}", e);
-                //     }
-                // });
-            }
-        }
-
-        // Start config watcher if configured
-        if let Some(ref mut _config_watcher) = self.config_watcher {
+        // Start config watcher in background task if configured
+        if let Some(mut config_watcher) = self.config_watcher.take() {
             info!("Starting config watcher...");
-            // In a full implementation, this would run in a separate task
-            debug!("Config watcher would run in background");
+            tokio::spawn(async move {
+                if let Err(e) = config_watcher.start().await {
+                    error!("Config watcher error: {}", e);
+                }
+            });
+            debug!("Config watcher started in background");
         }
+
+        // Spawn watch task if file watcher is configured
+        let watch_task = if self.file_watcher.is_some() && self.client.is_some() && self.database.is_some() {
+            let config = self.config.read().await;
+            let watch_interval = config.watch_interval;
+            let delete_after_upload = config.delete_after_upload;
+            drop(config);
+
+            let watcher = self.file_watcher.take().unwrap();
+            let client = self.client.clone().unwrap();
+            let database = self.database.clone().unwrap();
+
+            Some(tokio::spawn(async move {
+                Self::run_watch_loop(watcher, client, database, watch_interval, delete_after_upload).await;
+            }))
+        } else {
+            info!("File watcher not configured, skipping watch task");
+            None
+        };
+
+        // Spawn download tasks if download manager is configured
+        let (sync_task, download_task) = if self.download_manager.is_some() {
+            let config = self.config.read().await;
+            let sync_interval = config.watch_interval; // Interval for syncing from Put.io
+            let worker_interval = config.watch_interval; // Interval for processing queue
+            drop(config);
+
+            let dm = self.download_manager.take().unwrap();
+
+            // Clone download manager for the two separate tasks
+            let dm_sync = dm.clone();
+            let dm_workers = dm;
+
+            // Spawn sync task (refreshes queue from Put.io)
+            let sync_handle = tokio::spawn(async move {
+                Self::run_sync_loop(dm_sync, sync_interval).await;
+            });
+
+            // Spawn worker task (processes queue)
+            let worker_handle = tokio::spawn(async move {
+                Self::run_download_loop(dm_workers, worker_interval).await;
+            });
+
+            (Some(sync_handle), Some(worker_handle))
+        } else {
+            info!("Download manager not configured, skipping download tasks");
+            (None, None)
+        };
 
         info!("Daemon started successfully");
+        info!("  - Watch task: {}", if watch_task.is_some() { "running" } else { "disabled" });
+        info!("  - Sync task: {}", if sync_task.is_some() { "running" } else { "disabled" });
+        info!("  - Download workers task: {}", if download_task.is_some() { "running" } else { "disabled" });
         info!("Press Ctrl+C to stop");
 
-        // In a full implementation, this would have a main loop
-        // that coordinates all operations and handles shutdown
+        // Wait for shutdown signal
+        tokio::signal::ctrl_c().await
+            .map_err(|e| crate::error::DaemonError::InternalError(format!("Failed to listen for Ctrl+C: {}", e)))?;
 
+        info!("Received shutdown signal");
+
+        // Tasks will be automatically cancelled when dropped
+        if let Some(task) = watch_task {
+            task.abort();
+        }
+        if let Some(task) = sync_task {
+            task.abort();
+        }
+        if let Some(task) = download_task {
+            task.abort();
+        }
+
+        info!("Daemon shutting down...");
         Ok(())
+    }
+
+    /// Run the watch loop as an independent async task
+    async fn run_watch_loop(
+        watcher: TorrentWatcher,
+        client: Arc<PutioApiClient>,
+        database: Arc<Database>,
+        interval_secs: u64,
+        delete_after_upload: bool,
+    ) {
+        info!("Watch task started with interval: {}s", interval_secs);
+        let interval = tokio::time::Duration::from_secs(interval_secs);
+        let mut cycle = 0;
+
+        loop {
+            cycle += 1;
+            debug!("Watch task cycle #{}", cycle);
+
+            // Scan watch directories for new torrent/magnet files
+            match watcher.scan_once(&client, delete_after_upload, Some(&database)).await {
+                Ok(stats) => {
+                    if stats.files_found > 0 {
+                        info!(
+                            "Watch scan - found: {}, processed: {}, skipped: {}, failed: {}",
+                            stats.files_found,
+                            stats.files_processed,
+                            stats.files_skipped,
+                            stats.files_failed
+                        );
+                    } else {
+                        debug!("Watch scan - no new files");
+                    }
+                }
+                Err(e) => {
+                    error!("Error scanning watch directories: {}", e);
+                }
+            }
+
+            // Sleep for the interval
+            tokio::time::sleep(interval).await;
+        }
+    }
+
+    /// Run the sync loop as an independent async task
+    ///
+    /// Periodically syncs the file list from Put.io to the download queue
+    async fn run_sync_loop(download_manager: DownloadManager, interval_secs: u64) {
+        info!("Put.io sync task started with interval: {}s", interval_secs);
+        download_manager.run_sync_loop(interval_secs).await;
+    }
+
+    /// Run the download worker loop as an independent async task
+    ///
+    /// Continuously processes items from the download queue
+    async fn run_download_loop(download_manager: DownloadManager, interval_secs: u64) {
+        info!("Download worker task started with interval: {}s", interval_secs);
+        let interval = tokio::time::Duration::from_secs(interval_secs);
+        let mut cycle = 0;
+
+        loop {
+            cycle += 1;
+            info!("Download worker cycle #{} starting", cycle);
+
+            // Process download queue
+            match download_manager.run_worker_cycle().await {
+                Ok(processed) => {
+                    if processed > 0 {
+                        info!("Download workers processed {} items", processed);
+                    } else {
+                        info!("Download workers - no items to process");
+                    }
+                }
+                Err(e) => {
+                    error!("Error in download workers: {}", e);
+                }
+            }
+
+            info!("Download worker cycle #{} completed, sleeping for {}s", cycle, interval_secs);
+            // Sleep for the interval
+            tokio::time::sleep(interval).await;
+            info!("Download worker cycle #{} woke up from sleep", cycle);
+        }
     }
 
     /// Handle a configuration update
