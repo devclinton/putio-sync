@@ -62,8 +62,11 @@ pub async fn execute_daemon(
         watch_paths
     };
 
-    // Determine download directory
+    // Determine download directory, workers, buffer size, and delete_after_download
     let download_dir = config.download.target_directory.clone();
+    let workers = config.download.workers;
+    let buffer_size_mb = config.download.buffer_size_mb;
+    let delete_after_download = config.download.delete_after_download;
 
     // Warn about unsupported CLI flags
     if filter.is_some() {
@@ -102,8 +105,12 @@ pub async fn execute_daemon(
         watch_dirs,
         watch_interval,
         parent_id,
+        delete_after_upload: config.watch.delete_after_upload,
         enable_hot_reload: true,
         config_path: Some(config_file_path),
+        workers,
+        buffer_size_mb,
+        delete_after_download,
     };
 
     info!("Daemon configuration:");
@@ -119,6 +126,8 @@ pub async fn execute_daemon(
         info!("    - {}", path.display());
     }
     info!("  Watch interval: {}s", daemon_config.watch_interval);
+    info!("  Download workers: {}", daemon_config.workers);
+    info!("  Buffer size: {}MB", daemon_config.buffer_size_mb);
     info!("  Parent folder ID: {:?}", daemon_config.parent_id);
     info!("  Hot reload: {}", daemon_config.enable_hot_reload);
 

@@ -17,7 +17,9 @@ pub use error::{DownloadError, DownloadResult};
 pub use files::{
     check_resume, cleanup_partial, create_temp_path, get_original_path, is_partial_download,
 };
-pub use manager::{DownloadConfig, DownloadFile, DownloadManager, DownloadOperationResult};
+pub use manager::{
+    DownloadConfig, DownloadFile, DownloadManager, DownloadOperationResult, SyncStats,
+};
 pub use progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 pub use rate_limiter::RateLimiter;
 pub use stream::{stream_download, StreamDownloadResult, DEFAULT_BUFFER_SIZE};

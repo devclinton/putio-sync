@@ -55,12 +55,21 @@ CREATE TABLE IF NOT EXISTS download_queue (
     filename TEXT NOT NULL,
     file_size INTEGER NOT NULL,
     download_url TEXT NOT NULL,
+    relative_path TEXT NOT NULL DEFAULT '',
     priority INTEGER DEFAULT 0,
     status TEXT NOT NULL CHECK(status IN ('pending', 'downloading', 'paused', 'completed', 'failed')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(file_id)
 )
+"#;
+
+/// Migration to add relative_path column to download_queue table
+/// This is for upgrading existing databases
+pub const MIGRATE_ADD_RELATIVE_PATH: &str = r#"
+-- Add relative_path column if it doesn't exist
+-- SQLite doesn't support IF NOT EXISTS for columns, so we check if it exists first
+-- This will be handled by code checking PRAGMA table_info
 "#;
 
 /// SQL to create the processed_torrents table

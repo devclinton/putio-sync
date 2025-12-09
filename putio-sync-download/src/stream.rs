@@ -5,7 +5,7 @@ use crate::files::create_temp_path;
 use crate::rate_limiter::RateLimiter;
 use putio_sync_client::PutioApiClient;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tracing::{debug, error, info, warn};
@@ -28,6 +28,8 @@ struct ProgressLogger {
     progress_interval: f64,
     last_logged_percentage: f64,
     filename: String,
+    last_bytes: u64,
+    last_time: Instant,
 }
 
 impl ProgressLogger {
@@ -48,6 +50,8 @@ impl ProgressLogger {
             progress_interval,
             last_logged_percentage: 0.0,
             filename,
+            last_bytes: 0,
+            last_time: Instant::now(),
         }
     }
 
@@ -68,14 +72,28 @@ impl ProgressLogger {
         if current_threshold > self.last_logged_percentage
             && current_percentage >= current_threshold
         {
+            // Calculate transfer speed
+            let now = Instant::now();
+            let elapsed = now.duration_since(self.last_time).as_secs_f64();
+            let bytes_diff = bytes_downloaded.saturating_sub(self.last_bytes) as f64;
+            let speed_bps = if elapsed > 0.0 {
+                bytes_diff / elapsed
+            } else {
+                0.0
+            };
+
             info!(
-                "📥 Download progress: {} - {:.1}% complete ({} / {})",
+                "📥 Download progress: {} - {:.1}% complete ({} / {}) @ {}",
                 self.filename,
                 current_threshold,
                 format_bytes(bytes_downloaded),
-                format_bytes(total_bytes)
+                format_bytes(total_bytes),
+                format_speed(speed_bps)
             );
+
             self.last_logged_percentage = current_threshold;
+            self.last_bytes = bytes_downloaded;
+            self.last_time = now;
             return true;
         }
 
@@ -98,6 +116,24 @@ fn format_bytes(bytes: u64) -> String {
         format!("{} {}", bytes, UNITS[unit_idx])
     } else {
         format!("{:.2} {}", size, UNITS[unit_idx])
+    }
+}
+
+/// Format transfer speed as human-readable string
+fn format_speed(bytes_per_sec: f64) -> String {
+    const UNITS: &[&str] = &["B/s", "KB/s", "MB/s", "GB/s"];
+    let mut speed = bytes_per_sec;
+    let mut unit_idx = 0;
+
+    while speed >= 1024.0 && unit_idx < UNITS.len() - 1 {
+        speed /= 1024.0;
+        unit_idx += 1;
+    }
+
+    if unit_idx == 0 {
+        format!("{:.0} {}", speed, UNITS[unit_idx])
+    } else {
+        format!("{:.2} {}", speed, UNITS[unit_idx])
     }
 }
 

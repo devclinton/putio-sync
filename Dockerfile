@@ -88,12 +88,12 @@ RUN apk add --no-cache \
     libgcc
 
 # Create non-root user
-RUN addgroup -g 568 putio && \
-    adduser -D -u 568 -G putio putio
+RUN adduser -D -u 98 -G users others
+RUN adduser -D -u 99 -G users putio
 
 # Create directories
 RUN mkdir -p /config /downloads /watches && \
-    chown -R putio:putio /config /downloads /watches
+    chown -R putio:users /config /downloads /watches
 
 # Copy binary from builder (using tmp copy to avoid cache mount issues)
 COPY --from=builder /tmp/putio-sync /usr/local/bin/putio-sync
@@ -105,7 +105,7 @@ USER putio
 VOLUME ["/config", "/downloads", "/watches"]
 
 # Set working directory
-WORKDIR /downloads
+WORKDIR /config
 
 # default to info logging
 ENV RUST_LOG=info

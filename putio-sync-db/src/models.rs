@@ -59,6 +59,8 @@ pub struct QueueItem {
     pub file_size: i64,
     /// Download URL
     pub download_url: String,
+    /// Relative path from root (for maintaining directory structure)
+    pub relative_path: String,
     /// Priority (higher = downloaded first)
     pub priority: i64,
     /// Queue status

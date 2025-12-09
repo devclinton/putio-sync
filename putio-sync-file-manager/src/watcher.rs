@@ -597,9 +597,21 @@ impl TorrentWatcher {
     ///
     /// This is a non-blocking operation that scans all watch directories once
     /// and processes any new .torrent/.magnet files found.
-    pub async fn scan_once(&self, client: &PutioApiClient) -> Result<WatchStats> {
+    pub async fn scan_once(
+        &self,
+        client: &PutioApiClient,
+        delete_after_upload: bool,
+        database: Option<&Database>,
+    ) -> Result<WatchStats> {
         self.core
-            .scan_directories(&self.watch_dirs, client, self.parent_id, None, false, None)
+            .scan_directories(
+                &self.watch_dirs,
+                client,
+                self.parent_id,
+                None,
+                delete_after_upload,
+                database,
+            )
             .await
     }
 

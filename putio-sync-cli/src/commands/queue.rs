@@ -138,7 +138,7 @@ pub async fn execute_add(
         let download_url = client.get_download_url(file.id);
 
         queue_repo
-            .add(file.id, &file.name, file.size, &download_url, priority)
+            .add(file.id, &file.name, file.size, &download_url, "", priority)
             .await
             .with_context(|| format!("Failed to add file {} to queue", file.id))?;
 
