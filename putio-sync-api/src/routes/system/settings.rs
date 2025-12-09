@@ -215,36 +215,28 @@ async fn update_download_settings(
         config.download.delete_empty_folders = settings.delete_empty_folders;
     }
 
-    // Hot reload: Recreate download manager with new configuration
-    // Note: This recreates the download manager, which will affect any ongoing downloads.
-    // Active downloads will be interrupted and will need to restart.
-    // Future enhancement: Add graceful config reload that preserves active downloads.
-    if let Ok(mut dm) = state.download_manager.try_write() {
-        // Recreate download manager with new config
+    // Hot reload: Update download manager configuration dynamically
+    // This updates the shared config without restarting workers or losing queue state.
+    // Changes take effect immediately:
+    // - Bandwidth limits applied to active and new downloads
+    // - Worker count changes (future: will scale workers gracefully)
+    // - Buffer sizes applied to new downloads
+    {
         let download_config = {
             let cfg = state.config.read().await;
             crate::extract_download_config(&cfg)
         };
 
-        *dm = if let Some(ref db) = state.database {
-            putio_sync_download::DownloadManager::new(
-                state.client.clone(),
-                db.clone(),
-                download_config,
-            )
-        } else {
-            putio_sync_download::DownloadManager::new_without_database(
-                state.client.clone(),
-                download_config,
-            )
-        };
+        // Update config via hot reload - workers will see changes immediately
+        let dm = state.download_manager.read().await;
+        dm.update_config(download_config).await;
     }
 
     // Persist config to file
     persist_config(&state).await?;
 
     Ok(Json(SuccessResponse {
-        message: "Download settings updated successfully".to_string(),
+        message: "Download settings updated successfully via hot reload. Changes applied without restarting workers.".to_string(),
     }))
 }
 

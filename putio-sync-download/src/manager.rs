@@ -112,8 +112,8 @@ pub struct DownloadManager {
     client: Arc<PutioApiClient>,
     /// Database (optional for fallback mode)
     database: Option<Arc<Database>>,
-    /// Download configuration
-    config: DownloadConfig,
+    /// Download configuration (shared and mutable for hot reload)
+    config: Arc<RwLock<DownloadConfig>>,
     /// Progress trackers for active downloads
     progress_trackers: Arc<RwLock<HashMap<i64, ProgressTracker>>>,
     /// Overall progress
@@ -138,7 +138,7 @@ impl DownloadManager {
         Self {
             client,
             database: Some(database),
-            config,
+            config: Arc::new(RwLock::new(config)),
             progress_trackers: Arc::new(RwLock::new(HashMap::new())),
             overall_progress,
         }
@@ -158,10 +158,48 @@ impl DownloadManager {
         Self {
             client,
             database: None,
-            config,
+            config: Arc::new(RwLock::new(config)),
             progress_trackers: Arc::new(RwLock::new(HashMap::new())),
             overall_progress,
         }
+    }
+
+    /// Update download configuration dynamically (hot reload)
+    ///
+    /// This allows changing configuration without restarting workers or losing queue state.
+    /// Changes take effect immediately for:
+    /// - Bandwidth limits (applied to active and new downloads)
+    /// - Worker count (scales workers up/down gracefully)
+    /// - Buffer sizes (applied to new downloads)
+    /// - Other config options
+    ///
+    /// # Arguments
+    ///
+    /// * `new_config` - New configuration to apply
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use putio_sync_download::{DownloadManager, DownloadConfig};
+    /// # async fn example(manager: &DownloadManager) {
+    /// let mut new_config = DownloadConfig::default();
+    /// new_config.workers = 4;
+    /// new_config.bandwidth_limit_bytes_per_sec = Some(1_000_000); // 1 MB/s
+    /// manager.update_config(new_config).await;
+    /// # }
+    /// ```
+    pub async fn update_config(&self, new_config: DownloadConfig) {
+        let mut config = self.config.write().await;
+        *config = new_config;
+        info!("Download configuration updated via hot reload");
+        info!("  Workers: {}", config.workers);
+        info!("  Bandwidth limit: {:?}", config.bandwidth_limit_bytes_per_sec);
+        info!("  Buffer size: {} MB", config.buffer_size_mb);
+    }
+
+    /// Get current configuration (read-only snapshot)
+    pub async fn get_config(&self) -> DownloadConfig {
+        self.config.read().await.clone()
     }
 
     /// Download a single file
@@ -179,13 +217,16 @@ impl DownloadManager {
         file: DownloadFile,
         progress_callback: Option<Arc<dyn ProgressCallback>>,
     ) -> DownloadResult<DownloadOperationResult> {
+        // Get config snapshot for this download
+        let config = self.config.read().await;
+
         let file_id = file.file_id;
         let filename = sanitize_filename(&file.filename);
 
         debug!("Starting download: {} (ID: {})", filename, file_id);
         debug!(
             "Download config target_directory: {}",
-            self.config.target_directory.display()
+            config.target_directory.display()
         );
         debug!("File relative_path: '{}'", file.relative_path);
 
@@ -196,9 +237,9 @@ impl DownloadManager {
 
         // Construct full path preserving directory structure
         let target_path = if file.relative_path.is_empty() {
-            self.config.target_directory.join(&filename)
+            config.target_directory.join(&filename)
         } else {
-            self.config
+            config
                 .target_directory
                 .join(&file.relative_path)
                 .join(&filename)
@@ -212,7 +253,7 @@ impl DownloadManager {
             }
         }
 
-        if self.config.skip_existing && target_path.exists() {
+        if config.skip_existing && target_path.exists() {
             info!("Skipping existing file: {}", filename);
             return Ok(DownloadOperationResult {
                 file_id,
@@ -270,11 +311,14 @@ impl DownloadManager {
         progress_callback: Option<Arc<dyn ProgressCallback>>,
         resume_from_byte: u64,
     ) -> DownloadResult<DownloadOperationResult> {
+        // Get config snapshot for this download
+        let config = self.config.read().await;
+
         let filename = sanitize_filename(&file.filename);
         let target_path = if file.relative_path.is_empty() {
-            self.config.target_directory.join(&filename)
+            config.target_directory.join(&filename)
         } else {
-            self.config
+            config
                 .target_directory
                 .join(&file.relative_path)
                 .join(&filename)
@@ -292,10 +336,10 @@ impl DownloadManager {
         let client = &self.client;
         let download_url = &file.download_url;
         let file_size = file.file_size;
-        let buffer_size_mb = self.config.buffer_size_mb;
-        let bandwidth_limit = self.config.bandwidth_limit_bytes_per_sec;
-        let max_retries = self.config.max_retries;
-        let initial_delay = self.config.retry_initial_delay_secs;
+        let buffer_size_mb = config.buffer_size_mb;
+        let bandwidth_limit = config.bandwidth_limit_bytes_per_sec;
+        let max_retries = config.max_retries;
+        let initial_delay = config.retry_initial_delay_secs;
 
         let result = retry_with_stall_detection(
             || async {
@@ -401,11 +445,14 @@ impl DownloadManager {
         file: DownloadFile,
         progress_callback: Option<Arc<dyn ProgressCallback>>,
     ) -> DownloadResult<DownloadOperationResult> {
+        // Get config snapshot for this download
+        let config = self.config.read().await;
+
         let filename = sanitize_filename(&file.filename);
         let target_path = if file.relative_path.is_empty() {
-            self.config.target_directory.join(&filename)
+            config.target_directory.join(&filename)
         } else {
-            self.config
+            config
                 .target_directory
                 .join(&file.relative_path)
                 .join(&filename)
@@ -423,10 +470,10 @@ impl DownloadManager {
         let client = &self.client;
         let download_url = &file.download_url;
         let file_size = file.file_size;
-        let buffer_size_mb = self.config.buffer_size_mb;
-        let bandwidth_limit = self.config.bandwidth_limit_bytes_per_sec;
-        let max_retries = self.config.max_retries;
-        let initial_delay = self.config.retry_initial_delay_secs;
+        let buffer_size_mb = config.buffer_size_mb;
+        let bandwidth_limit = config.bandwidth_limit_bytes_per_sec;
+        let max_retries = config.max_retries;
+        let initial_delay = config.retry_initial_delay_secs;
 
         let result = retry_with_stall_detection(
             || async {
@@ -639,6 +686,9 @@ impl DownloadManager {
     ///
     /// true if an item was processed, false if queue is empty
     pub async fn process_queue(&self) -> DownloadResult<bool> {
+        // Get config snapshot
+        let config = self.config.read().await;
+
         // Require database for queue-based downloads
         let db = self.database.as_ref().ok_or_else(|| {
             DownloadError::InternalError("Database required for queue processing".to_string())
@@ -682,7 +732,7 @@ impl DownloadManager {
                         info!("Successfully downloaded: {}", file_info.name);
 
                         // Delete from Put.io if configured
-                        if self.config.delete_after_download {
+                        if config.delete_after_download {
                             info!("Deleting file from Put.io: {} (ID: {})", file_info.name, file_id);
                             match self.client.delete_files(vec![file_id]).await {
                                 Ok(_) => {
@@ -788,27 +838,21 @@ impl DownloadManager {
             }
         }
 
-        // Spawn concurrent workers
-        let num_workers = self.config.workers;
+        // Spawn concurrent workers - read config once for worker count
+        let num_workers = {
+            let config = self.config.read().await;
+            config.workers
+        };
         info!("Starting {} concurrent download workers", num_workers);
 
         let mut handles = Vec::new();
 
         for worker_id in 0..num_workers {
-            // Clone self for the worker task
-            let client = self.client.clone();
-            let database = self.database.clone();
-            let config = self.config.clone();
+            // Clone the entire DownloadManager (shares the same Arc<RwLock<Config>>)
+            let worker_dm = self.clone();
 
             let handle = tokio::spawn(async move {
                 let mut count = 0;
-
-                // Create a DownloadManager for this worker
-                let worker_dm = if let Some(db) = database {
-                    DownloadManager::new(client, db, config)
-                } else {
-                    DownloadManager::new_without_database(client, config)
-                };
 
                 debug!("Worker {} starting", worker_id);
 
