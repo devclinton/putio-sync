@@ -165,6 +165,7 @@ pub async fn create_app(
         .nest("/local/files", create_local_files_router())
         .nest("/local/queue", create_local_queue_router())
         .nest("/local/downloads", create_local_downloads_router())
+        .nest("/local/watcher", create_local_watcher_router())
         .nest("/settings", create_settings_router())
         .nest("/stats", create_stats_router())
         .nest("/history", create_history_router())
@@ -209,9 +210,12 @@ fn create_local_downloads_router() -> Router<AppState> {
         .route("/", axum::routing::get(downloads_placeholder))
 }
 
+fn create_local_watcher_router() -> Router<AppState> {
+    routes::local::watcher::router()
+}
+
 fn create_settings_router() -> Router<AppState> {
-    Router::new()
-        .route("/", axum::routing::get(settings_placeholder))
+    routes::system::settings::router()
 }
 
 fn create_stats_router() -> Router<AppState> {
@@ -265,10 +269,6 @@ async fn queue_placeholder() -> &'static str {
 
 async fn downloads_placeholder() -> &'static str {
     "Downloads endpoint - implementation pending"
-}
-
-async fn settings_placeholder() -> &'static str {
-    "Settings endpoint - implementation pending"
 }
 
 async fn stats_placeholder() -> &'static str {
