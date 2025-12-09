@@ -18,6 +18,8 @@ use std::path::PathBuf;
 
 // Re-export AppState from parent
 pub use crate::AppState;
+use putio_sync_core::config::{NotificationBackend, ProgressStyle, SortOrder};
+use putio_sync_core::logging::ConsoleFormat;
 
 /// Helper function to persist config to file
 async fn persist_config(state: &AppState) -> Result<(), ApiError> {
@@ -28,6 +30,63 @@ async fn persist_config(state: &AppState) -> Result<(), ApiError> {
         })?;
     }
     Ok(())
+}
+
+/// Parse ProgressStyle from string
+fn parse_progress_style(s: &str) -> Result<ProgressStyle, ApiError> {
+    match s.to_lowercase().as_str() {
+        "perfile" | "per-file" | "per_file" => Ok(ProgressStyle::PerFile),
+        "overall" => Ok(ProgressStyle::Overall),
+        "individual" => Ok(ProgressStyle::Individual),
+        "rotating" => Ok(ProgressStyle::Rotating),
+        "none" => Ok(ProgressStyle::None),
+        _ => Err(ApiError::BadRequest(format!(
+            "Invalid progress_style: '{}'. Valid values: PerFile, Overall, Individual, Rotating, None",
+            s
+        ))),
+    }
+}
+
+/// Parse SortOrder from string
+fn parse_sort_order(s: &str) -> Result<SortOrder, ApiError> {
+    match s.to_lowercase().as_str() {
+        "bydate" | "by-date" | "by_date" | "date" => Ok(SortOrder::ByDate),
+        "byname" | "by-name" | "by_name" | "name" => Ok(SortOrder::ByName),
+        "byextension" | "by-extension" | "by_extension" | "extension" => {
+            Ok(SortOrder::ByExtension)
+        }
+        "bysize" | "by-size" | "by_size" | "size" => Ok(SortOrder::BySize),
+        _ => Err(ApiError::BadRequest(format!(
+            "Invalid sort_order: '{}'. Valid values: ByDate, ByName, ByExtension, BySize",
+            s
+        ))),
+    }
+}
+
+/// Parse ConsoleFormat from string
+fn parse_console_format(s: &str) -> Result<ConsoleFormat, ApiError> {
+    match s.to_lowercase().as_str() {
+        "compact" => Ok(ConsoleFormat::Compact),
+        "pretty" => Ok(ConsoleFormat::Pretty),
+        "json" => Ok(ConsoleFormat::Json),
+        _ => Err(ApiError::BadRequest(format!(
+            "Invalid console_format: '{}'. Valid values: Compact, Pretty, Json",
+            s
+        ))),
+    }
+}
+
+/// Parse NotificationBackend from string
+fn parse_notification_backend(s: &str) -> Result<NotificationBackend, ApiError> {
+    match s.to_lowercase().as_str() {
+        "none" => Ok(NotificationBackend::None),
+        "webhook" => Ok(NotificationBackend::Webhook),
+        "email" => Ok(NotificationBackend::Email),
+        _ => Err(ApiError::BadRequest(format!(
+            "Invalid notification backend: '{}'. Valid values: None, Webhook, Email",
+            s
+        ))),
+    }
 }
 
 /// Download settings (comprehensive view of DownloadConfig)
@@ -130,6 +189,10 @@ async fn update_download_settings(
     State(state): State<AppState>,
     Json(settings): Json<DownloadSettings>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
+    // Parse enums before acquiring write lock
+    let progress_style = parse_progress_style(&settings.progress_style)?;
+    let sort_order = parse_sort_order(&settings.sort_order)?;
+
     {
         let mut config = state.config.write().await;
 
@@ -141,6 +204,8 @@ async fn update_download_settings(
         config.download.delete_after_download = settings.delete_after_download;
         config.download.resume_enabled = settings.resume_enabled;
         config.download.chunk_size_mb = settings.chunk_size_mb;
+        config.download.progress_style = progress_style;
+        config.download.sort_order = sort_order;
         config.download.reverse_sort = settings.reverse_sort;
         config.download.whitelist_patterns = settings.whitelist_patterns;
         config.download.blacklist_patterns = settings.blacklist_patterns;
@@ -148,9 +213,36 @@ async fn update_download_settings(
         config.download.max_retries = settings.max_retries;
         config.download.retry_initial_delay_secs = settings.retry_initial_delay_secs;
         config.download.delete_empty_folders = settings.delete_empty_folders;
+    }
 
-        // TODO: Parse and update progress_style and sort_order enums from strings
-        // TODO: Notify download manager to reload configuration
+    // TODO: Notify download manager to reload configuration
+    // Implementation options:
+    // 1. Add DownloadManager::update_config() method to update config in-place
+    // 2. Recreate DownloadManager with new config (via write lock on state.download_manager)
+    // 3. Use message passing channel to notify running workers
+    // Current limitation: Download manager must be recreated or server restarted for changes to take effect
+    // Note: This affects ongoing downloads, so careful state management is required
+
+    // Update download manager with new config
+    if let Ok(mut dm) = state.download_manager.try_write() {
+        // Recreate download manager with new config
+        let download_config = {
+            let cfg = state.config.read().await;
+            crate::extract_download_config(&cfg)
+        };
+
+        *dm = if let Some(ref db) = state.database {
+            putio_sync_download::DownloadManager::new(
+                state.client.clone(),
+                db.clone(),
+                download_config,
+            )
+        } else {
+            putio_sync_download::DownloadManager::new_without_database(
+                state.client.clone(),
+                download_config,
+            )
+        };
     }
 
     // Persist config to file
@@ -205,12 +297,19 @@ async fn update_watcher_config(
         config.watch.parent_folder_id = watcher.parent_folder_id;
         config.watch.archive_directory = watcher.archive_directory.map(PathBuf::from);
         config.watch.delete_after_upload = watcher.delete_after_upload;
-
-        // TODO: Notify file watcher to reload configuration
     }
 
     // Persist config to file
     persist_config(&state).await?;
+
+    // TODO: Notify file watcher to reload configuration
+    // The file watcher runs in a separate thread (spawned in server.rs spawn_watch_daemon)
+    // Implementation options:
+    // 1. Use a tokio::sync::watch channel to send config updates to the watcher thread
+    // 2. Store watch channel sender in AppState for config reload notifications
+    // 3. Have the watcher periodically check config file modification time
+    // Current limitation: File watcher must be restarted (server restart) for changes to take effect
+    // Note: Requires architectural change to pass messages between API and daemon threads
 
     Ok(Json(SuccessResponse {
         message: "File watcher configuration updated successfully".to_string(),
@@ -242,6 +341,9 @@ async fn update_logging_settings(
     State(state): State<AppState>,
     Json(settings): Json<LoggingSettings>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
+    // Parse enum before acquiring write lock
+    let console_format = parse_console_format(&settings.console_format)?;
+
     {
         let mut config = state.config.write().await;
 
@@ -250,11 +352,20 @@ async fn update_logging_settings(
         config.logging.file_enabled = settings.file_enabled;
         config.logging.file_path = settings.file_path.into();
         config.logging.console_enabled = settings.console_enabled;
+        config.logging.console_format = console_format;
         config.logging.module_filters = settings.module_filters;
-
-        // TODO: Parse and update console_format enum from string
-        // TODO: Reinitialize logging system with new configuration
     }
+
+    // TODO: Reinitialize logging system with new configuration
+    // Rust tracing/logging is typically initialized once at application startup using
+    // tracing_subscriber::registry().init() which consumes the registry.
+    // Dynamic reconfiguration options:
+    // 1. Use tracing_subscriber::reload::Layer for hot-reloadable log levels
+    //    (requires architectural change at startup)
+    // 2. Use EnvFilter::reload() if using the reload feature
+    // 3. Require application restart for logging changes
+    // Current limitation: Logging changes require server restart
+    // See: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/reload/
 
     // Persist config to file
     persist_config(&state).await?;
@@ -287,16 +398,20 @@ async fn update_notification_settings(
     State(state): State<AppState>,
     Json(settings): Json<NotificationSettings>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
+    // Parse enum before acquiring write lock
+    let backend = parse_notification_backend(&settings.backend)?;
+
     {
         let mut config = state.config.write().await;
 
         // Update notification configuration
         config.notifications.enabled = settings.enabled;
+        config.notifications.backend = backend;
         config.notifications.webhook_url = settings.webhook_url;
         config.notifications.email = settings.email;
 
-        // TODO: Parse and update backend enum from string
         // TODO: Reinitialize notification system with new configuration
+        // Note: Notification system reinitialization not yet implemented
     }
 
     // Persist config to file

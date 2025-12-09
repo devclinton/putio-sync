@@ -37,11 +37,25 @@ use axum::Router;
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::Config;
 use putio_sync_db::Database;
-use putio_sync_download::DownloadManager;
+use putio_sync_download::{DownloadConfig, DownloadManager};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
+
+/// Extract DownloadConfig from Config
+pub fn extract_download_config(config: &Config) -> DownloadConfig {
+    DownloadConfig {
+        target_directory: config.download.target_directory.clone(),
+        skip_existing: config.download.skip_existing,
+        buffer_size_mb: config.download.buffer_size_mb,
+        bandwidth_limit_bytes_per_sec: config.download.bandwidth_limit_bytes_per_sec,
+        max_retries: config.download.max_retries,
+        retry_initial_delay_secs: config.download.retry_initial_delay_secs,
+        workers: config.download.workers,
+        delete_after_download: config.download.delete_after_download,
+    }
+}
 
 /// Global application state
 ///
@@ -139,16 +153,7 @@ pub async fn create_app(
     };
 
     // Initialize download manager
-    let download_config = putio_sync_download::DownloadConfig {
-        target_directory: config.download.target_directory.clone(),
-        skip_existing: config.download.skip_existing,
-        buffer_size_mb: config.download.buffer_size_mb,
-        bandwidth_limit_bytes_per_sec: config.download.bandwidth_limit_bytes_per_sec,
-        max_retries: config.download.max_retries,
-        retry_initial_delay_secs: config.download.retry_initial_delay_secs,
-        workers: config.download.workers,
-        delete_after_download: config.download.delete_after_download,
-    };
+    let download_config = extract_download_config(&config);
 
     let download_manager = if let Some(ref db) = database {
         DownloadManager::new(client.clone(), db.clone(), download_config)
