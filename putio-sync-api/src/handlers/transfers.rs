@@ -222,6 +222,24 @@ pub async fn cancel_transfers(
     })
 }
 
+/// Remove a single transfer
+///
+/// # Arguments
+///
+/// * `config` - Application configuration
+/// * `transfer_id` - Transfer ID to remove
+///
+/// # Returns
+///
+/// Success response
+pub async fn remove_transfer(config: &Config, transfer_id: i64) -> ApiResult<SuccessResponse> {
+    // Use cancel_transfers with a single transfer ID
+    let request = CancelTransfersRequest {
+        transfer_ids: vec![transfer_id],
+    };
+    cancel_transfers(config, request).await
+}
+
 /// Retry a failed transfer
 ///
 /// # Arguments
