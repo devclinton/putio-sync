@@ -103,7 +103,7 @@ async fn main() {
         };
     }
 
-    // Initialize logging from config
+    // Initialize logging system
     if let Err(e) = putio_sync_core::logging::init_logging(&config.logging) {
         eprintln!("⚠️  Failed to initialize logging: {}", e);
         eprintln!("⚠️  Falling back to basic logging");

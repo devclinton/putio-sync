@@ -889,6 +889,7 @@ mod tests {
                 delete_after_upload: false,
             },
             notifications: NotificationConfig::default(),
+            logging: crate::logging::LoggingConfig::default(),
         }
     }
 

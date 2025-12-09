@@ -61,6 +61,9 @@ pub fn extract_download_config(config: &Config) -> DownloadConfig {
 ///
 /// This state is shared across all route handlers and provides access to
 /// all core services: database, download manager, API client, and configuration.
+///
+/// Note: Logging hot reload is not currently supported due to tracing-subscriber's
+/// complex layer type system. Logging configuration changes require a server restart.
 #[derive(Clone)]
 pub struct AppState {
     /// Application configuration (wrapped in RwLock for settings updates)

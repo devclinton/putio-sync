@@ -43,9 +43,7 @@ async fn list_transfers(
 ) -> Result<Json<ListResponse<TransferResponse>>, ApiError> {
     transfers::list_transfers(&state.config)
         .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
+        .map(Json)}
 
 /// Add a new transfer
 ///
@@ -56,9 +54,7 @@ async fn add_transfer(
 ) -> Result<Json<TransferResponse>, ApiError> {
     transfers::add_transfer(&state.config, request)
         .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
+        .map(Json)}
 
 /// Get transfer details
 ///
@@ -69,9 +65,7 @@ async fn get_transfer(
 ) -> Result<Json<TransferResponse>, ApiError> {
     transfers::get_transfer(&state.config, transfer_id)
         .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
+        .map(Json)}
 
 /// Remove a transfer
 ///
@@ -82,9 +76,7 @@ async fn remove_transfer(
 ) -> Result<Json<SuccessResponse>, ApiError> {
     transfers::remove_transfer(&state.config, transfer_id)
         .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
+        .map(Json)}
 
 /// Start/resume a transfer
 ///

@@ -353,25 +353,16 @@ async fn update_logging_settings(
         config.logging.file_path = settings.file_path.into();
         config.logging.console_enabled = settings.console_enabled;
         config.logging.console_format = console_format;
-        config.logging.module_filters = settings.module_filters;
+        config.logging.module_filters = settings.module_filters.clone();
     }
-
-    // TODO: Reinitialize logging system with new configuration
-    // Rust tracing/logging is typically initialized once at application startup using
-    // tracing_subscriber::registry().init() which consumes the registry.
-    // Dynamic reconfiguration options:
-    // 1. Use tracing_subscriber::reload::Layer for hot-reloadable log levels
-    //    (requires architectural change at startup)
-    // 2. Use EnvFilter::reload() if using the reload feature
-    // 3. Require application restart for logging changes
-    // Current limitation: Logging changes require server restart
-    // See: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/reload/
 
     // Persist config to file
     persist_config(&state).await?;
 
+    // Note: Logging hot reload is not currently supported due to tracing-subscriber's
+    // complex layer type system. Changes will take effect after server restart.
     Ok(Json(SuccessResponse {
-        message: "Logging configuration updated successfully. Note: Some changes may require restart.".to_string(),
+        message: "Logging configuration updated successfully. Note: Server restart required for changes to take effect.".to_string(),
     }))
 }
 

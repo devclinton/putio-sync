@@ -88,7 +88,7 @@ async fn start_download(
         .client
         .get_file_details(request.file_id)
         .await
-        .map_err(|e| ApiError::Client(e))?;
+        .map_err(ApiError::Client)?;
 
     // TODO: Add file to download queue and start download
     // This requires adding a method like:

@@ -10,10 +10,25 @@
 use crate::error::CoreError;
 use std::path::PathBuf;
 use tracing_appender::{non_blocking, rolling};
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing_subscriber::{
+    fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
+};
 
 /// Result type for logging operations
 pub type LoggingResult<T> = Result<T, CoreError>;
+
+// NOTE: Dynamic logging hot reload was attempted but is not currently supported due to
+// tracing-subscriber's complex layer type system. The reload::Layer wrapper creates type
+// incompatibilities when combined with file_layer and fmt::layer() in the subscriber stack.
+//
+// Potential future approaches:
+// - Use a simpler reload mechanism without wrapping multiple layers
+// - Restructure logging initialization to be more reload-friendly
+// - Use global state pattern with dynamic log level checking
+//
+// For now, logging configuration changes require a server restart.
+//
+// See: https://github.com/tokio-rs/tracing/issues/1629 for related discussions
 
 /// Console output format options
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, PartialEq)]
