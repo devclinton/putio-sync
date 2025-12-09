@@ -40,9 +40,7 @@ async fn list_files(
 ) -> Result<Json<ListResponse<FileResponse>>, ApiError> {
     files::list_files(&state.config, request)
         .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
+        .map(Json)}
 
 /// Get file details
 ///
@@ -53,9 +51,7 @@ async fn get_file(
 ) -> Result<Json<FileResponse>, ApiError> {
     files::get_file(&state.config, file_id)
         .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
+        .map(Json)}
 
 /// Delete a file or folder
 ///
@@ -70,9 +66,7 @@ async fn delete_file(
 
     files::delete_files(&state.config, request)
         .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
+        .map(Json)}
 
 /// Get download URL for a file
 ///
