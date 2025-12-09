@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Daemon command now reads and passes `buffer_size_mb` from config file
+- Daemon command now reads and passes `delete_after_download` from config file
+- Daemon startup logs now display buffer size configuration
+- Download command now supports `delete_after_download` configuration
 - Logging configuration integration from putio-sync-core
   - Early configuration loading for logging initialization
   - Verbosity flag override for log levels (-v for debug, -vv for trace)

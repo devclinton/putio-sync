@@ -5,6 +5,21 @@ All notable changes to putio-sync-daemon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Added `buffer_size_mb` configuration option to DaemonConfig
+- Added `delete_after_download` configuration option to DaemonConfig
+- Enhanced logging in download worker loop for better debugging
+  - Logs cycle start, completion, and sleep/wake events at INFO level
+  - Always shows whether items were processed or queue was empty
+
+### Changed
+- DaemonConfig now includes `buffer_size_mb` field (default: 64MB)
+- DaemonConfig now includes `delete_after_download` field (default: false)
+- Download worker loop now provides detailed lifecycle logging
+- DownloadConfig initialization now uses configurable buffer_size_mb and delete_after_download
+
 ## [0.2.0] - 2024-12-07
 
 ### Added
