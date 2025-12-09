@@ -5,6 +5,17 @@ All notable changes to putio-sync-download will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Added `delete_after_download` configuration option to DownloadConfig
+- Automatic deletion of files from Put.io after successful download when enabled
+- Configurable buffer size for streaming downloads via `buffer_size_mb` parameter
+
+### Changed
+- DownloadConfig now includes `delete_after_download` field (default: false)
+- `process_queue()` now deletes files from Put.io after download if configured
+
 ## [0.2.0] - 2025-12-07
 
 ### Added
