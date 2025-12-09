@@ -17,6 +17,9 @@ putio-sync-file-manager = { path = "../putio-sync-file-manager" }
 # Async runtime
 tokio = { workspace = true }
 
+# HTTP client (for API mode)
+reqwest = { workspace = true }
+
 # File watching
 notify = "6.1"
 
