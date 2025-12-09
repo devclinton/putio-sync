@@ -19,14 +19,36 @@ use std::path::PathBuf;
 // Re-export AppState from parent
 pub use crate::AppState;
 
-/// Settings response (simplified view of Config)
+/// Helper function to persist config to file
+async fn persist_config(state: &AppState) -> Result<(), ApiError> {
+    if let Some(ref config_path) = state.config_path {
+        let config = state.config.read().await;
+        config.save(config_path.as_ref()).map_err(|e| {
+            ApiError::InternalError(format!("Failed to persist config: {}", e))
+        })?;
+    }
+    Ok(())
+}
+
+/// Download settings (comprehensive view of DownloadConfig)
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SettingsResponse {
+pub struct DownloadSettings {
     pub workers: usize,
-    pub buffer_size_mb: usize,
-    pub delete_after_download: bool,
-    pub skip_existing: bool,
     pub target_directory: String,
+    pub buffer_size_mb: usize,
+    pub skip_existing: bool,
+    pub delete_after_download: bool,
+    pub resume_enabled: bool,
+    pub chunk_size_mb: Option<usize>,
+    pub progress_style: String,
+    pub sort_order: String,
+    pub reverse_sort: bool,
+    pub whitelist_patterns: Option<String>,
+    pub blacklist_patterns: Option<String>,
+    pub bandwidth_limit_bytes_per_sec: Option<u64>,
+    pub max_retries: u32,
+    pub retry_initial_delay_secs: u64,
+    pub delete_empty_folders: bool,
 }
 
 /// File watcher configuration
@@ -40,52 +62,102 @@ pub struct WatcherConfig {
     pub delete_after_upload: bool,
 }
 
+/// Logging configuration
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LoggingSettings {
+    pub level: String,
+    pub file_enabled: bool,
+    pub file_path: String,
+    pub console_enabled: bool,
+    pub console_format: String,
+    pub module_filters: Vec<String>,
+}
+
+/// Notification configuration
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NotificationSettings {
+    pub enabled: bool,
+    pub backend: String,
+    pub webhook_url: Option<String>,
+    pub email: Option<String>,
+}
+
 /// Create the settings router
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/", get(get_settings))
-        .route("/", put(update_settings))
+        .route("/download", get(get_download_settings))
+        .route("/download", put(update_download_settings))
         .route("/watcher", get(get_watcher_config))
         .route("/watcher", put(update_watcher_config))
+        .route("/logging", get(get_logging_settings))
+        .route("/logging", put(update_logging_settings))
+        .route("/notifications", get(get_notification_settings))
+        .route("/notifications", put(update_notification_settings))
 }
 
-/// Get current settings
+/// Get download settings
 ///
-/// GET /settings
-async fn get_settings(
+/// GET /settings/download
+async fn get_download_settings(
     State(state): State<AppState>,
-) -> Result<Json<SettingsResponse>, ApiError> {
+) -> Result<Json<DownloadSettings>, ApiError> {
     let config = state.config.read().await;
 
-    Ok(Json(SettingsResponse {
+    Ok(Json(DownloadSettings {
         workers: config.download.workers,
-        buffer_size_mb: config.download.buffer_size_mb,
-        delete_after_download: config.download.delete_after_download,
-        skip_existing: config.download.skip_existing,
         target_directory: config.download.target_directory.to_string_lossy().to_string(),
+        buffer_size_mb: config.download.buffer_size_mb,
+        skip_existing: config.download.skip_existing,
+        delete_after_download: config.download.delete_after_download,
+        resume_enabled: config.download.resume_enabled,
+        chunk_size_mb: config.download.chunk_size_mb,
+        progress_style: format!("{:?}", config.download.progress_style),
+        sort_order: format!("{:?}", config.download.sort_order),
+        reverse_sort: config.download.reverse_sort,
+        whitelist_patterns: config.download.whitelist_patterns.clone(),
+        blacklist_patterns: config.download.blacklist_patterns.clone(),
+        bandwidth_limit_bytes_per_sec: config.download.bandwidth_limit_bytes_per_sec,
+        max_retries: config.download.max_retries,
+        retry_initial_delay_secs: config.download.retry_initial_delay_secs,
+        delete_empty_folders: config.download.delete_empty_folders,
     }))
 }
 
-/// Update settings
+/// Update download settings
 ///
-/// PUT /settings
-async fn update_settings(
+/// PUT /settings/download
+async fn update_download_settings(
     State(state): State<AppState>,
-    Json(settings): Json<SettingsResponse>,
+    Json(settings): Json<DownloadSettings>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    let mut config = state.config.write().await;
+    {
+        let mut config = state.config.write().await;
 
-    // Update configuration
-    config.download.workers = settings.workers;
-    config.download.buffer_size_mb = settings.buffer_size_mb;
-    config.download.delete_after_download = settings.delete_after_download;
-    config.download.skip_existing = settings.skip_existing;
-    config.download.target_directory = settings.target_directory.into();
+        // Update configuration
+        config.download.workers = settings.workers;
+        config.download.target_directory = settings.target_directory.into();
+        config.download.buffer_size_mb = settings.buffer_size_mb;
+        config.download.skip_existing = settings.skip_existing;
+        config.download.delete_after_download = settings.delete_after_download;
+        config.download.resume_enabled = settings.resume_enabled;
+        config.download.chunk_size_mb = settings.chunk_size_mb;
+        config.download.reverse_sort = settings.reverse_sort;
+        config.download.whitelist_patterns = settings.whitelist_patterns;
+        config.download.blacklist_patterns = settings.blacklist_patterns;
+        config.download.bandwidth_limit_bytes_per_sec = settings.bandwidth_limit_bytes_per_sec;
+        config.download.max_retries = settings.max_retries;
+        config.download.retry_initial_delay_secs = settings.retry_initial_delay_secs;
+        config.download.delete_empty_folders = settings.delete_empty_folders;
 
-    // TODO: Persist to config file
+        // TODO: Parse and update progress_style and sort_order enums from strings
+        // TODO: Notify download manager to reload configuration
+    }
+
+    // Persist config to file
+    persist_config(&state).await?;
 
     Ok(Json(SuccessResponse {
-        message: "Settings updated successfully".to_string(),
+        message: "Download settings updated successfully".to_string(),
     }))
 }
 
@@ -123,21 +195,115 @@ async fn update_watcher_config(
     State(state): State<AppState>,
     Json(watcher): Json<WatcherConfig>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    let mut config = state.config.write().await;
+    {
+        let mut config = state.config.write().await;
 
-    // Update file watcher configuration
-    config.watch.enabled = watcher.enabled;
-    config.watch.paths = watcher.paths.into_iter().map(PathBuf::from).collect();
-    config.watch.refresh_cycle = watcher.refresh_cycle;
-    config.watch.parent_folder_id = watcher.parent_folder_id;
-    config.watch.archive_directory = watcher.archive_directory.map(PathBuf::from);
-    config.watch.delete_after_upload = watcher.delete_after_upload;
+        // Update file watcher configuration
+        config.watch.enabled = watcher.enabled;
+        config.watch.paths = watcher.paths.into_iter().map(PathBuf::from).collect();
+        config.watch.refresh_cycle = watcher.refresh_cycle;
+        config.watch.parent_folder_id = watcher.parent_folder_id;
+        config.watch.archive_directory = watcher.archive_directory.map(PathBuf::from);
+        config.watch.delete_after_upload = watcher.delete_after_upload;
 
-    // TODO: Persist to config file
-    // TODO: Notify file watcher to reload configuration
+        // TODO: Notify file watcher to reload configuration
+    }
+
+    // Persist config to file
+    persist_config(&state).await?;
 
     Ok(Json(SuccessResponse {
         message: "File watcher configuration updated successfully".to_string(),
+    }))
+}
+
+/// Get logging settings
+///
+/// GET /settings/logging
+async fn get_logging_settings(
+    State(state): State<AppState>,
+) -> Result<Json<LoggingSettings>, ApiError> {
+    let config = state.config.read().await;
+
+    Ok(Json(LoggingSettings {
+        level: config.logging.level.clone(),
+        file_enabled: config.logging.file_enabled,
+        file_path: config.logging.file_path.to_string_lossy().to_string(),
+        console_enabled: config.logging.console_enabled,
+        console_format: format!("{:?}", config.logging.console_format),
+        module_filters: config.logging.module_filters.clone(),
+    }))
+}
+
+/// Update logging settings
+///
+/// PUT /settings/logging
+async fn update_logging_settings(
+    State(state): State<AppState>,
+    Json(settings): Json<LoggingSettings>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    {
+        let mut config = state.config.write().await;
+
+        // Update logging configuration
+        config.logging.level = settings.level;
+        config.logging.file_enabled = settings.file_enabled;
+        config.logging.file_path = settings.file_path.into();
+        config.logging.console_enabled = settings.console_enabled;
+        config.logging.module_filters = settings.module_filters;
+
+        // TODO: Parse and update console_format enum from string
+        // TODO: Reinitialize logging system with new configuration
+    }
+
+    // Persist config to file
+    persist_config(&state).await?;
+
+    Ok(Json(SuccessResponse {
+        message: "Logging configuration updated successfully. Note: Some changes may require restart.".to_string(),
+    }))
+}
+
+/// Get notification settings
+///
+/// GET /settings/notifications
+async fn get_notification_settings(
+    State(state): State<AppState>,
+) -> Result<Json<NotificationSettings>, ApiError> {
+    let config = state.config.read().await;
+
+    Ok(Json(NotificationSettings {
+        enabled: config.notifications.enabled,
+        backend: format!("{:?}", config.notifications.backend),
+        webhook_url: config.notifications.webhook_url.clone(),
+        email: config.notifications.email.clone(),
+    }))
+}
+
+/// Update notification settings
+///
+/// PUT /settings/notifications
+async fn update_notification_settings(
+    State(state): State<AppState>,
+    Json(settings): Json<NotificationSettings>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    {
+        let mut config = state.config.write().await;
+
+        // Update notification configuration
+        config.notifications.enabled = settings.enabled;
+        config.notifications.webhook_url = settings.webhook_url;
+        config.notifications.email = settings.email;
+
+        // TODO: Parse and update backend enum from string
+        // TODO: Reinitialize notification system with new configuration
+    }
+
+    // Persist config to file
+    persist_config(&state).await?;
+
+    Ok(Json(SuccessResponse {
+        message: "Notification configuration updated successfully".to_string(),
     }))
 }
 

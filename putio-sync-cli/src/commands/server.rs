@@ -88,9 +88,9 @@ pub async fn execute_server(
         info!("Download mode: DISABLED");
     }
 
-    // Create application with config (with database path)
+    // Create application with config (with database path and config path for hot reload)
     let database_path = Some(std::path::PathBuf::from(".putiosync.db"));
-    let app = putio_sync_api::create_app(config.clone(), database_path)
+    let app = putio_sync_api::create_app(config.clone(), database_path, Some(config_file_path.clone()))
         .await
         .map_err(|e| anyhow!("Failed to create API app: {}", e))?;
 

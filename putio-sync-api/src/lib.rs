@@ -51,6 +51,8 @@ use tower_http::trace::TraceLayer;
 pub struct AppState {
     /// Application configuration (wrapped in RwLock for settings updates)
     pub config: Arc<RwLock<Config>>,
+    /// Path to config file for hot reload and persistence
+    pub config_path: Option<Arc<std::path::PathBuf>>,
     /// Put.io API client
     pub client: Arc<PutioApiClient>,
     /// Database connection (optional)
@@ -68,6 +70,7 @@ pub struct AppState {
 ///
 /// * `config` - Application configuration
 /// * `database_path` - Optional path to SQLite database file
+/// * `config_path` - Optional path to config file for hot reload and persistence
 ///
 /// # Examples
 ///
@@ -80,7 +83,8 @@ pub struct AppState {
 /// async fn main() {
 ///     let config = Config::default();
 ///     let db_path = Some(PathBuf::from("putio-sync.db"));
-///     let app = create_app(config, db_path).await.unwrap();
+///     let config_path = Some(PathBuf::from("config.toml"));
+///     let app = create_app(config, db_path, config_path).await.unwrap();
 ///     let listener = tokio::net::TcpListener::bind("0.0.0.0:15432")
 ///         .await
 ///         .unwrap();
@@ -90,6 +94,7 @@ pub struct AppState {
 pub async fn create_app(
     config: Config,
     database_path: Option<std::path::PathBuf>,
+    config_path: Option<std::path::PathBuf>,
 ) -> Result<Router, Box<dyn std::error::Error>> {
     use putio_sync_core::config::AuthMethod;
     use tracing::{info, warn};
@@ -153,6 +158,7 @@ pub async fn create_app(
 
     let state = AppState {
         config: Arc::new(RwLock::new(config)),
+        config_path: config_path.map(Arc::new),
         client,
         database,
         download_manager: Arc::new(RwLock::new(download_manager)),
@@ -290,7 +296,7 @@ mod tests {
         // Set up minimal auth config
         config.auth = Some(AuthConfig::with_token("test_token".to_string()));
 
-        let _app = create_app(config, None).await;
-        // Test that app can be created without database
+        let _app = create_app(config, None, None).await;
+        // Test that app can be created without database or config path
     }
 }
