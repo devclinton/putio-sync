@@ -31,6 +31,23 @@ pub struct WatchStats {
     pub files_skipped: usize,
 }
 
+/// Runtime statistics for the file watcher
+#[derive(Debug, Clone)]
+pub struct WatcherRuntimeStats {
+    /// Total files processed since watcher started
+    pub total_processed: usize,
+    /// Current watch directories
+    pub watch_directories: Vec<PathBuf>,
+    /// Parent folder ID for uploads
+    pub parent_folder_id: Option<i64>,
+    /// Check interval in seconds
+    pub interval_seconds: u64,
+    /// Archive directory (if configured)
+    pub archive_directory: Option<PathBuf>,
+    /// Delete after upload setting
+    pub delete_after_upload: bool,
+}
+
 impl WatchStats {
     /// Create new empty stats
     pub fn new() -> Self {
@@ -654,6 +671,23 @@ impl TorrentWatcher {
     /// Get current configuration (read-only snapshot)
     pub fn get_config(&self) -> WatcherConfig {
         self.config.read().unwrap().clone()
+    }
+
+    /// Get runtime statistics
+    ///
+    /// Returns current watcher statistics including processed files count
+    /// and current configuration.
+    pub fn get_stats(&self) -> WatcherRuntimeStats {
+        let config = self.config.read().unwrap();
+
+        WatcherRuntimeStats {
+            total_processed: self.core.processed_files_count(),
+            watch_directories: config.watch_dirs.clone(),
+            parent_folder_id: config.parent_id,
+            interval_seconds: config.interval.as_secs(),
+            archive_directory: config.archive_dir.clone(),
+            delete_after_upload: config.delete_after_upload,
+        }
     }
 
     /// Perform a single scan check (for use by unified daemon)
