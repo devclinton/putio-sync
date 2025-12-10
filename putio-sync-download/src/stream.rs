@@ -353,7 +353,11 @@ pub async fn stream_download(
             })?
     };
 
-    let mut writer = BufWriter::with_capacity(buffer_size, file);
+    // Create channel for continuous disk writing
+    // Channel size determines how much data can be buffered in memory
+    let channel_capacity = buffer_size / (128 * 1024); // Number of ~128KB chunks that fit in buffer
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(channel_capacity);
+
     let mut bytes_downloaded = 0u64;
 
     // Create rate limiter if bandwidth limit is set
@@ -363,85 +367,132 @@ pub async fn stream_download(
     let mut progress_logger =
         expected_size.map(|size| ProgressLogger::new(size, filename.to_string()));
 
-    // Stream the response body with stall detection
-    let mut stream = response.bytes_stream();
-    let stall_timeout = Duration::from_secs(60); // 60 seconds timeout for stalled downloads
+    // Spawn disk writer task that runs concurrently
+    let writer_handle = tokio::spawn({
+        let temp_path = temp_path.clone();
+        async move {
+            let mut writer = BufWriter::with_capacity(buffer_size, file);
+            let mut total_written = 0u64;
 
-    use futures_util::StreamExt;
-
-    loop {
-        match tokio::time::timeout(stall_timeout, stream.next()).await {
-            Ok(Some(Ok(chunk))) => {
-                // Apply rate limiting if enabled
-                if let Some(ref mut limiter) = rate_limiter {
-                    limiter.consume(chunk.len()).await;
-                }
-
+            // Continuously read from channel and write to disk
+            while let Some(chunk) = rx.recv().await {
                 writer.write_all(&chunk).await.map_err(|e| {
                     DownloadError::IoError(std::io::Error::new(
                         e.kind(),
                         format!("Failed to write to download file: {}", e),
                     ))
                 })?;
+                total_written += chunk.len() as u64;
+            }
 
-                bytes_downloaded += chunk.len() as u64;
+            // Flush any remaining buffered data
+            writer.flush().await.map_err(|e| {
+                DownloadError::IoError(std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to flush download file: {}", e),
+                ))
+            })?;
 
-                // Use size-based progress logging for large files, fallback to 10MB intervals for smaller files
-                if let Some(ref mut logger) = progress_logger {
-                    if let Some(size) = expected_size {
-                        let total_downloaded = if let Some(resume_from) = resume_from_byte {
-                            resume_from + bytes_downloaded
-                        } else {
-                            bytes_downloaded
-                        };
-                        logger.maybe_log_progress(total_downloaded, size);
+            // Ensure all data is written to disk
+            writer.shutdown().await.map_err(|e| {
+                DownloadError::IoError(std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to close download file: {}", e),
+                ))
+            })?;
+
+            debug!(
+                "Disk writer finished: wrote {} bytes to {}",
+                total_written,
+                temp_path.display()
+            );
+
+            Ok::<u64, DownloadError>(total_written)
+        }
+    });
+
+    // Stream the response body with stall detection
+    let mut stream = response.bytes_stream();
+    let stall_timeout = Duration::from_secs(60); // 60 seconds timeout for stalled downloads
+
+    use futures_util::StreamExt;
+
+    // Network download loop - never blocks on disk I/O
+    let network_result: Result<(), DownloadError> = async {
+        loop {
+            match tokio::time::timeout(stall_timeout, stream.next()).await {
+                Ok(Some(Ok(chunk))) => {
+                    // Apply rate limiting if enabled
+                    if let Some(ref mut limiter) = rate_limiter {
+                        limiter.consume(chunk.len()).await;
                     }
-                } else if bytes_downloaded % (10 * 1024 * 1024) == 0 {
-                    // Fallback debug logging for files without expected_size
-                    debug!("Downloaded {} bytes so far...", bytes_downloaded);
+
+                    bytes_downloaded += chunk.len() as u64;
+
+                    // Send to disk writer (async, non-blocking if channel has space)
+                    tx.send(chunk).await.map_err(|_| {
+                        DownloadError::IoError(std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe,
+                            "Disk writer task failed",
+                        ))
+                    })?;
+
+                    // Use size-based progress logging for large files
+                    if let Some(ref mut logger) = progress_logger {
+                        if let Some(size) = expected_size {
+                            let total_downloaded = if let Some(resume_from) = resume_from_byte {
+                                resume_from + bytes_downloaded
+                            } else {
+                                bytes_downloaded
+                            };
+                            logger.maybe_log_progress(total_downloaded, size);
+                        }
+                    } else if bytes_downloaded % (10 * 1024 * 1024) == 0 {
+                        // Fallback debug logging for files without expected_size
+                        debug!("Downloaded {} bytes so far...", bytes_downloaded);
+                    }
+                }
+                Ok(Some(Err(e))) => {
+                    return Err(DownloadError::HttpError(e));
+                }
+                Ok(None) => {
+                    // Stream ended normally
+                    debug!("Download stream ended normally");
+                    break;
+                }
+                Err(_) => {
+                    // Timeout occurred - download has stalled
+                    error!("Download stalled - no data received for {} seconds. Downloaded {} bytes so far.",
+                           stall_timeout.as_secs(), bytes_downloaded);
+
+                    return Err(DownloadError::ApiError(format!(
+                        "Download stalled - no data received for {} seconds (downloaded {} bytes)",
+                        stall_timeout.as_secs(),
+                        bytes_downloaded
+                    )));
                 }
             }
-            Ok(Some(Err(e))) => {
-                return Err(DownloadError::HttpError(e));
-            }
-            Ok(None) => {
-                // Stream ended normally
-                debug!("Download stream ended normally");
-                break;
-            }
-            Err(_) => {
-                // Timeout occurred - download has stalled
-                error!("Download stalled - no data received for {} seconds. Downloaded {} bytes so far.", 
-                       stall_timeout.as_secs(), bytes_downloaded);
-
-                // Flush and close the partial file
-                let _ = writer.flush().await;
-                let _ = writer.shutdown().await;
-
-                return Err(DownloadError::ApiError(format!(
-                    "Download stalled - no data received for {} seconds (downloaded {} bytes)",
-                    stall_timeout.as_secs(),
-                    bytes_downloaded
-                )));
-            }
         }
+        Ok(())
     }
+    .await;
 
-    // Flush any remaining buffered data
-    writer.flush().await.map_err(|e| {
+    // Drop sender to signal disk writer to finish
+    drop(tx);
+
+    // Wait for disk writer to finish and check for errors
+    let disk_result = writer_handle.await.map_err(|e| {
         DownloadError::IoError(std::io::Error::new(
-            e.kind(),
-            format!("Failed to flush download file: {}", e),
+            std::io::ErrorKind::Other,
+            format!("Disk writer task panicked: {}", e),
         ))
     })?;
 
-    // Ensure all data is written to disk
-    writer.shutdown().await.map_err(|e| {
-        DownloadError::IoError(std::io::Error::new(
-            e.kind(),
-            format!("Failed to close download file: {}", e),
-        ))
-    })?;
+    // Propagate any network errors
+    network_result?;
+
+    // Propagate any disk errors
+    disk_result?;
 
     debug!(
         "Downloaded {} bytes to {}",
