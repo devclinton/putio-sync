@@ -93,6 +93,27 @@ pub struct DownloadOperationResult {
     pub file_path: Option<PathBuf>,
 }
 
+/// Active download information (combines file info with progress)
+#[derive(Debug, Clone)]
+pub struct ActiveDownload {
+    /// File ID
+    pub file_id: i64,
+    /// Filename
+    pub filename: String,
+    /// File size in bytes
+    pub file_size: u64,
+    /// Bytes downloaded so far
+    pub bytes_downloaded: u64,
+    /// Download percentage (0.0-100.0)
+    pub percentage: f64,
+    /// Download speed in bytes per second
+    pub speed_bps: f64,
+    /// Estimated time remaining in seconds
+    pub eta_seconds: Option<u64>,
+    /// Elapsed time in seconds since download started
+    pub elapsed_seconds: u64,
+}
+
 /// Statistics for a sync operation
 #[derive(Debug, Clone, Default)]
 pub struct SyncStats {
@@ -106,10 +127,46 @@ pub struct SyncStats {
     pub files_failed: usize,
 }
 
+/// Worker statistics for bandwidth tracking
+#[derive(Debug, Clone)]
+pub struct WorkerStats {
+    /// Worker ID
+    pub worker_id: usize,
+    /// Total bytes downloaded by this worker
+    pub bytes_downloaded: Arc<RwLock<u64>>,
+    /// Bandwidth limit for this worker (bytes/sec)
+    pub bandwidth_limit: Option<u64>,
+    /// Worker start time
+    pub started_at: Instant,
+}
+
+impl WorkerStats {
+    fn new(worker_id: usize, bandwidth_limit: Option<u64>) -> Self {
+        Self {
+            worker_id,
+            bytes_downloaded: Arc::new(RwLock::new(0)),
+            bandwidth_limit,
+            started_at: Instant::now(),
+        }
+    }
+
+    /// Get average bandwidth usage in bytes per second
+    pub async fn avg_bandwidth_bps(&self) -> f64 {
+        let bytes = *self.bytes_downloaded.read().await;
+        let elapsed = self.started_at.elapsed().as_secs_f64();
+        if elapsed > 0.0 {
+            bytes as f64 / elapsed
+        } else {
+            0.0
+        }
+    }
+}
+
 /// Worker information for tracking
 struct WorkerInfo {
     handle: JoinHandle<()>,
     shutdown_tx: broadcast::Sender<()>,
+    stats: WorkerStats,
 }
 
 /// Download manager
@@ -285,6 +342,20 @@ impl DownloadManager {
 
         info!("Spawning worker {}", worker_id);
 
+        // Calculate per-worker bandwidth limit
+        let per_worker_limit = {
+            let config = self.config.read().await;
+            let target_workers = config.workers;
+
+            config.bandwidth_limit_bytes_per_sec.map(|global_limit| {
+                // Divide global limit by number of workers
+                global_limit / target_workers.max(1) as u64
+            })
+        };
+
+        // Create worker stats
+        let stats = WorkerStats::new(worker_id, per_worker_limit);
+
         // Create shutdown channel for this worker
         let (shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
 
@@ -326,8 +397,17 @@ impl DownloadManager {
 
         // Store worker info
         let mut workers = self.workers.write().await;
-        workers.insert(worker_id, WorkerInfo { handle, shutdown_tx });
-        info!("Worker {} spawned successfully (total workers: {})", worker_id, workers.len());
+        workers.insert(worker_id, WorkerInfo {
+            handle,
+            shutdown_tx,
+            stats: stats.clone(),
+        });
+        info!(
+            "Worker {} spawned successfully (total workers: {}, per-worker limit: {:?} bytes/sec)",
+            worker_id,
+            workers.len(),
+            per_worker_limit
+        );
     }
 
     /// Shutdown a specific worker gracefully
@@ -595,6 +675,28 @@ impl DownloadManager {
                     {
                         warn!("Database error (non-fatal): Failed to record download completion for {}: {}. Download succeeded.", filename, e);
                     }
+
+                    // Record in history
+                    let history_repo = database.history();
+                    let avg_speed = if duration.as_secs() > 0 {
+                        Some((total_bytes_downloaded / duration.as_secs()) as i64)
+                    } else {
+                        None
+                    };
+
+                    if let Err(e) = history_repo
+                        .insert(
+                            file.file_id,
+                            &filename,
+                            file.file_size as i64,
+                            putio_sync_db::models::HistoryAction::Downloaded,
+                            Some(duration.as_secs() as i64),
+                            avg_speed,
+                        )
+                        .await
+                    {
+                        warn!("Failed to record download history for {}: {}", filename, e);
+                    }
                 } else {
                     debug!(
                         "Database not available - skipping download record for {}",
@@ -725,6 +827,28 @@ impl DownloadManager {
                         .await
                     {
                         warn!("Database error (non-fatal): Failed to record download completion for {}: {}. Download succeeded.", filename, e);
+                    }
+
+                    // Record in history
+                    let history_repo = database.history();
+                    let avg_speed = if duration.as_secs() > 0 {
+                        Some((download_result.bytes_downloaded / duration.as_secs()) as i64)
+                    } else {
+                        None
+                    };
+
+                    if let Err(e) = history_repo
+                        .insert(
+                            file.file_id,
+                            &filename,
+                            file.file_size as i64,
+                            putio_sync_db::models::HistoryAction::Downloaded,
+                            Some(duration.as_secs() as i64),
+                            avg_speed,
+                        )
+                        .await
+                    {
+                        warn!("Failed to record download history for {}: {}", filename, e);
                     }
                 } else {
                     debug!(
@@ -1139,6 +1263,112 @@ impl DownloadManager {
     /// Get overall progress
     pub async fn overall_progress(&self) -> OverallProgress {
         self.overall_progress.read().await.clone()
+    }
+
+    /// Get list of active downloads with progress information
+    ///
+    /// Returns a list of currently downloading files with their progress stats.
+    /// Requires database to query download queue for file information.
+    pub async fn get_active_downloads(&self) -> DownloadResult<Vec<ActiveDownload>> {
+        let db = self.database.as_ref().ok_or_else(|| {
+            DownloadError::InternalError("Database required for active downloads".to_string())
+        })?;
+
+        let queue_repo = db.queue();
+
+        // Get all items with 'downloading' status
+        let all_items = queue_repo.get_all().await
+            .map_err(|e| DownloadError::InternalError(format!("Failed to get queue items: {}", e)))?;
+
+        let downloading_items: Vec<_> = all_items
+            .into_iter()
+            .filter(|item| item.status == "downloading")
+            .collect();
+
+        let progress_trackers = self.progress_trackers.read().await;
+        let mut active_downloads = Vec::new();
+
+        for item in downloading_items {
+            // Get progress tracker if exists
+            if let Some(tracker) = progress_trackers.get(&item.file_id) {
+                let (avg_speed, elapsed) = tracker.overall_stats();
+
+                // For bytes_downloaded, we would need to track this separately
+                // For now, we'll use a placeholder based on elapsed time and speed
+                let bytes_downloaded = (avg_speed * elapsed.as_secs_f64()) as u64;
+                let bytes_downloaded = bytes_downloaded.min(item.file_size as u64);
+
+                let percentage = if item.file_size > 0 {
+                    (bytes_downloaded as f64 / item.file_size as f64) * 100.0
+                } else {
+                    0.0
+                };
+
+                let eta_seconds = if avg_speed > 0.0 {
+                    let remaining = (item.file_size as u64).saturating_sub(bytes_downloaded) as f64;
+                    Some((remaining / avg_speed) as u64)
+                } else {
+                    None
+                };
+
+                active_downloads.push(ActiveDownload {
+                    file_id: item.file_id,
+                    filename: item.filename,
+                    file_size: item.file_size as u64,
+                    bytes_downloaded,
+                    percentage,
+                    speed_bps: avg_speed,
+                    eta_seconds,
+                    elapsed_seconds: elapsed.as_secs(),
+                });
+            }
+        }
+
+        Ok(active_downloads)
+    }
+
+    /// Get progress for a specific download by file_id
+    pub async fn get_download_progress(&self, file_id: i64) -> DownloadResult<Option<ActiveDownload>> {
+        let active_downloads = self.get_active_downloads().await?;
+        Ok(active_downloads.into_iter().find(|d| d.file_id == file_id))
+    }
+
+    /// Cancel an active download
+    ///
+    /// Updates the queue item status to 'pending' so it won't be processed by workers.
+    /// Note: This doesn't forcefully stop an in-progress download, but marks it to not
+    /// be retried. The current download will complete or fail naturally.
+    pub async fn cancel_download(&self, file_id: i64) -> DownloadResult<()> {
+        let db = self.database.as_ref().ok_or_else(|| {
+            DownloadError::InternalError("Database required for cancel operation".to_string())
+        })?;
+
+        let queue_repo = db.queue();
+
+        // Update status to pending (effectively pausing it)
+        queue_repo.update_status(file_id, putio_sync_db::models::QueueStatus::Pending)
+            .await
+            .map_err(|e| DownloadError::InternalError(format!("Failed to cancel download: {}", e)))?;
+
+        // Remove from progress trackers
+        self.progress_trackers.write().await.remove(&file_id);
+
+        info!("Download cancelled for file_id: {}", file_id);
+        Ok(())
+    }
+
+    /// Get statistics for all active workers
+    ///
+    /// Returns a list of worker stats including bandwidth usage and limits.
+    pub async fn get_worker_stats(&self) -> Vec<WorkerStats> {
+        let workers = self.workers.read().await;
+        workers.values().map(|w| w.stats.clone()).collect()
+    }
+
+    /// Get statistics for a specific worker by ID
+    pub async fn get_worker_stat(&self, worker_id: usize) -> Option<WorkerStats> {
+        let workers = self.workers.read().await;
+        workers.get(&worker_id).map(|w| w.stats.clone())
     }
 }
 

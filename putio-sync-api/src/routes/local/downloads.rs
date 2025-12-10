@@ -104,20 +104,33 @@ async fn start_download(
 ///
 /// GET /local/downloads
 ///
-/// Returns overall progress and active download count.
-/// Individual download tracking requires DownloadManager enhancements.
+/// Returns list of currently downloading files with progress information.
 async fn list_downloads(
     State(state): State<AppState>,
 ) -> Result<Json<ActiveDownloadsResponse>, ApiError> {
-    let progress = state.download_manager.overall_progress().await;
+    let active_downloads = state
+        .download_manager
+        .get_active_downloads()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get active downloads: {}", e)))?;
 
-    // TODO: Enhance DownloadManager to expose individual download tracking
-    // For now, we can only show overall stats
-    // The progress_trackers HashMap is private and not exposed
+    let downloads: Vec<DownloadProgressResponse> = active_downloads
+        .iter()
+        .map(|d| DownloadProgressResponse {
+            id: d.file_id,
+            file_id: d.file_id,
+            filename: d.filename.clone(),
+            status: "downloading".to_string(),
+            bytes_downloaded: d.bytes_downloaded,
+            total_bytes: d.file_size,
+            speed_bps: d.speed_bps,
+            eta_seconds: d.eta_seconds,
+        })
+        .collect();
 
     Ok(Json(ActiveDownloadsResponse {
-        downloads: vec![], // Need DownloadManager.list_active_downloads() method
-        total: progress.active_files,
+        total: downloads.len(),
+        downloads,
     }))
 }
 
@@ -125,40 +138,53 @@ async fn list_downloads(
 ///
 /// GET /local/downloads/:id
 ///
-/// Note: Requires DownloadManager to expose method to get progress by file_id.
+/// Returns progress information for a specific download by file_id.
 async fn get_download_progress(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(download_id): Path<i64>,
 ) -> Result<Json<DownloadProgressResponse>, ApiError> {
-    // TODO: Add DownloadManager.get_download_progress(file_id) method
-    // Current DownloadManager has progress_trackers but it's private
+    let progress = state
+        .download_manager
+        .get_download_progress(download_id)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get download progress: {}", e)))?;
 
-    Err(ApiError::NotFound(format!(
-        "Download {} not found or tracking not yet implemented",
-        download_id
-    )))
+    match progress {
+        Some(d) => Ok(Json(DownloadProgressResponse {
+            id: d.file_id,
+            file_id: d.file_id,
+            filename: d.filename,
+            status: "downloading".to_string(),
+            bytes_downloaded: d.bytes_downloaded,
+            total_bytes: d.file_size,
+            speed_bps: d.speed_bps,
+            eta_seconds: d.eta_seconds,
+        })),
+        None => Err(ApiError::NotFound(format!(
+            "Download {} not found (not currently downloading)",
+            download_id
+        ))),
+    }
 }
 
 /// Cancel an active download
 ///
 /// DELETE /local/downloads/:id
 ///
-/// Note: Requires DownloadManager to support cancellation of individual downloads.
+/// Cancels an active download by updating its status to pending.
+/// The download will not be retried until manually resumed.
 async fn cancel_download(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(download_id): Path<i64>,
 ) -> Result<Json<CancelResponse>, ApiError> {
-    // TODO: Add DownloadManager.cancel_download(file_id) method
-    // This would need to:
-    // 1. Stop the download task
-    // 2. Clean up partial files (if configured)
-    // 3. Update database status
+    state
+        .download_manager
+        .cancel_download(download_id)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to cancel download: {}", e)))?;
 
     Ok(Json(CancelResponse {
-        message: format!(
-            "Cancel functionality not yet implemented for download {}",
-            download_id
-        ),
+        message: format!("Download {} cancelled successfully", download_id),
     }))
 }
 

@@ -11,14 +11,12 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use putio_sync_db::models::HistoryAction;
 use serde::Serialize;
-use std::sync::Arc;
+use tracing::error;
 
-/// Application state (will include Database in Task 4)
-#[derive(Clone)]
-pub struct AppState {
-    pub config: Arc<putio_sync_core::config::Config>,
-}
+// Re-export AppState from parent
+pub use crate::AppState;
 
 /// Download statistics
 #[derive(Debug, Serialize)]
@@ -58,14 +56,59 @@ pub fn router() -> Router<AppState> {
 ///
 /// GET /stats/downloads
 async fn download_stats(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
 ) -> Result<Json<DownloadStats>, ApiError> {
-    // TODO: Implement with Database in Task 4
+    let db = state.database.as_ref().ok_or_else(|| {
+        ApiError::InternalError("Database not available".to_string())
+    })?;
+
+    let history_repo = db.history();
+
+    // Get total download count
+    let total_downloads = history_repo
+        .count(Some(HistoryAction::Downloaded))
+        .await
+        .map_err(|e| {
+            error!("Failed to count downloads: {}", e);
+            ApiError::InternalError(format!("Failed to count downloads: {}", e))
+        })? as u64;
+
+    // Get all downloaded entries to calculate totals
+    let downloads = history_repo
+        .query(Some(HistoryAction::Downloaded), 10000, 0)
+        .await
+        .map_err(|e| {
+            error!("Failed to query downloads: {}", e);
+            ApiError::InternalError(format!("Failed to query downloads: {}", e))
+        })?;
+
+    let total_bytes: i64 = downloads.iter().map(|d| d.file_size).sum();
+    let total_time_seconds: i64 = downloads
+        .iter()
+        .filter_map(|d| d.duration_seconds)
+        .sum();
+
+    let total_speed: i64 = downloads
+        .iter()
+        .filter_map(|d| d.average_speed)
+        .sum();
+
+    let speed_count = downloads
+        .iter()
+        .filter(|d| d.average_speed.is_some())
+        .count();
+
+    let average_speed_bps = if speed_count > 0 {
+        total_speed as f64 / speed_count as f64
+    } else {
+        0.0
+    };
+
     Ok(Json(DownloadStats {
-        total_downloads: 0,
-        total_bytes: 0,
-        average_speed_bps: 0.0,
-        total_time_seconds: 0,
+        total_downloads,
+        total_bytes: total_bytes as u64,
+        average_speed_bps,
+        total_time_seconds: total_time_seconds as u64,
     }))
 }
 
@@ -89,7 +132,8 @@ async fn transfer_stats(
 async fn disk_stats(
     State(state): State<AppState>,
 ) -> Result<Json<DiskStats>, ApiError> {
-    let download_dir = &state.config.download.target_directory;
+    let config = state.config.read().await;
+    let download_dir = &config.download.target_directory;
 
     // Try to get disk space info (platform-specific)
     #[cfg(unix)]
