@@ -14,12 +14,15 @@ use tracing::{debug, error, info, warn};
 pub const DEFAULT_BUFFER_SIZE: usize = 64 * 1024 * 1024;
 
 /// Size thresholds for progress logging in bytes
-const SIZE_500MB: u64 = 500 * 1024 * 1024;
+const SIZE_256MB: u64 = 256 * 1024 * 1024;
+const SIZE_512MB: u64 = 512 * 1024 * 1024;
 const SIZE_1GB: u64 = 1024 * 1024 * 1024;
-const SIZE_5GB: u64 = 5 * 1024 * 1024 * 1024;
-const SIZE_10GB: u64 = 10 * 1024 * 1024 * 1024;
-const SIZE_15GB: u64 = 15 * 1024 * 1024 * 1024;
-const SIZE_20GB: u64 = 20 * 1024 * 1024 * 1024;
+const SIZE_2GB: u64 = 2 * 1024 * 1024 * 1024;
+const SIZE_4GB: u64 = 4 * 1024 * 1024 * 1024;
+const SIZE_8GB: u64 = 8 * 1024 * 1024 * 1024;
+const SIZE_16GB: u64 = 16 * 1024 * 1024 * 1024;
+const SIZE_30GB: u64 = 30 * 1024 * 1024 * 1024;
+const SIZE_40GB: u64 = 40 * 1024 * 1024 * 1024;
 const SIZE_50GB: u64 = 50 * 1024 * 1024 * 1024;
 
 /// Helper struct to track size-based progress logging
@@ -36,14 +39,17 @@ impl ProgressLogger {
     /// Create a new progress logger based on file size
     fn new(file_size: u64, filename: String) -> Self {
         let progress_interval = match file_size {
-            0..SIZE_500MB => 0.0,             // No progress logging for files under 500MB
-            SIZE_500MB..SIZE_1GB => 50.0,     // Log at 50% for files 500MB-1GB
-            SIZE_1GB..SIZE_5GB => 33.333333,  // Log every 33% for files 1GB-5GB
-            SIZE_5GB..SIZE_10GB => 20.0,      // Log every 20% for files 5GB-10GB
-            SIZE_10GB..SIZE_15GB => 10.0,     // Log every 10% for files 10GB-15GB
-            SIZE_15GB..SIZE_20GB => 7.142857, // Log every ~7% for files 15GB-20GB
-            SIZE_20GB..SIZE_50GB => 5.0,      // Log every 5% for files 20GB-50GB
-            SIZE_50GB.. => 1.0,               // Log every 1% for files over 50GB
+            0..SIZE_256MB => 0.0,      // No progress logging for files under 256MB
+            SIZE_256MB..SIZE_512MB => 50.0,  // Log every 50% for files 256MB-512MB
+            SIZE_512MB..SIZE_1GB => 40.0,    // Log every 40% for files 512MB-1GB
+            SIZE_1GB..SIZE_2GB => 35.0,      // Log every 35% for files 1GB-2GB
+            SIZE_2GB..SIZE_4GB => 25.0,      // Log every 25% for files 2GB-4GB
+            SIZE_4GB..SIZE_8GB => 15.0,      // Log every 15% for files 4GB-8GB
+            SIZE_8GB..SIZE_16GB => 7.0,      // Log every 7% for files 8GB-16GB
+            SIZE_16GB..SIZE_30GB => 3.0,     // Log every 3% for files 16GB-30GB
+            SIZE_30GB..SIZE_40GB => 2.0,     // Log every 2% for files 30GB-40GB
+            SIZE_40GB..SIZE_50GB => 1.5,     // Log every 1.5% for files 40GB-50GB
+            SIZE_50GB.. => 1.25,             // Log every 1.25% for files over 50GB
         };
 
         Self {
