@@ -78,8 +78,8 @@ impl Default for DaemonConfig {
 ///
 /// Determines whether downloads are handled locally or through an API server.
 pub enum DownloadMode {
-    /// Local mode - daemon manages downloads directly
-    Local(DownloadManager),
+    /// Local mode - daemon manages downloads directly (shared with API for hot reload)
+    Local(Arc<DownloadManager>),
     /// Remote mode - daemon uses API server for downloads
     Remote {
         /// API server base URL
@@ -106,8 +106,8 @@ pub struct PutioDaemon {
     database: Option<Arc<Database>>,
     /// Download mode (local or remote API)
     download_mode: Option<DownloadMode>,
-    /// File watcher for torrents/magnets
-    file_watcher: Option<TorrentWatcher>,
+    /// File watcher for torrents/magnets (shared with API for hot reload)
+    file_watcher: Option<Arc<TorrentWatcher>>,
     /// Config file watcher (for hot-reload)
     config_watcher: Option<ConfigWatcher>,
 }
@@ -197,17 +197,18 @@ impl PutioDaemon {
                 DownloadManager::new_without_database(client.clone(), download_config)
             };
 
-            self.download_mode = Some(DownloadMode::Local(download_manager));
+            // Wrap in Arc for sharing with API (hot reload support via internal config RwLock)
+            self.download_mode = Some(DownloadMode::Local(Arc::new(download_manager)));
             info!("Download mode: Local");
         }
 
-        // Initialize file watcher
+        // Initialize file watcher (shared Arc for hot reload via API)
         if !config.watch_dirs.is_empty() {
-            let file_watcher = TorrentWatcher::new(
+            let file_watcher = Arc::new(TorrentWatcher::new(
                 config.watch_dirs.clone(),
                 config.parent_id,
                 config.watch_interval,
-            );
+            ));
             self.file_watcher = Some(file_watcher);
             info!(
                 "File watcher initialized for {} directories",
@@ -271,7 +272,8 @@ impl PutioDaemon {
             let delete_after_upload = config.delete_after_upload;
             drop(config);
 
-            let watcher = self.file_watcher.take().unwrap();
+            // Clone Arc (cheap) - watcher remains accessible for API hot reload
+            let watcher = self.file_watcher.clone().unwrap();
             let client = self.client.clone().unwrap();
             let database = self.database.clone().unwrap();
 
@@ -286,16 +288,16 @@ impl PutioDaemon {
         // Spawn download tasks if in local mode (not API mode)
         let (sync_task, download_task) = match &self.download_mode {
             Some(DownloadMode::Local(_)) => {
-                // Take the download manager to move into tasks
-                if let Some(DownloadMode::Local(dm)) = self.download_mode.take() {
+                // Clone Arc (cheap) - download manager remains accessible for API hot reload
+                if let Some(DownloadMode::Local(dm)) = &self.download_mode {
                     let config = self.config.read().await;
                     let sync_interval = config.watch_interval; // Interval for syncing from Put.io
                     let worker_interval = config.watch_interval; // Interval for processing queue
                     drop(config);
 
-                    // Clone download manager for the two separate tasks
+                    // Clone Arc for the two separate tasks (cheap operation)
                     let dm_sync = dm.clone();
-                    let dm_workers = dm;
+                    let dm_workers = dm.clone();
 
                     // Spawn sync task (refreshes queue from Put.io)
                     let sync_handle = tokio::spawn(async move {
@@ -351,7 +353,7 @@ impl PutioDaemon {
 
     /// Run the watch loop as an independent async task
     async fn run_watch_loop(
-        watcher: TorrentWatcher,
+        watcher: Arc<TorrentWatcher>,
         client: Arc<PutioApiClient>,
         database: Arc<Database>,
         interval_secs: u64,
@@ -393,7 +395,7 @@ impl PutioDaemon {
     /// Run the sync loop as an independent async task
     ///
     /// Periodically syncs the file list from Put.io to the download queue
-    async fn run_sync_loop(download_manager: DownloadManager, interval_secs: u64) {
+    async fn run_sync_loop(download_manager: Arc<DownloadManager>, interval_secs: u64) {
         info!("Put.io sync task started with interval: {}s", interval_secs);
         download_manager.run_sync_loop(interval_secs).await;
     }
@@ -401,7 +403,7 @@ impl PutioDaemon {
     /// Run the download worker loop as an independent async task
     ///
     /// Continuously processes items from the download queue
-    async fn run_download_loop(download_manager: DownloadManager, interval_secs: u64) {
+    async fn run_download_loop(download_manager: Arc<DownloadManager>, interval_secs: u64) {
         info!("Download worker task started with interval: {}s", interval_secs);
         let interval = tokio::time::Duration::from_secs(interval_secs);
         let mut cycle = 0;
@@ -456,6 +458,29 @@ impl PutioDaemon {
     /// Get the current configuration
     pub async fn get_config(&self) -> DaemonConfig {
         self.config.read().await.clone()
+    }
+
+    /// Get the API client (for use by API server)
+    pub fn get_client(&self) -> Option<Arc<PutioApiClient>> {
+        self.client.clone()
+    }
+
+    /// Get the database (for use by API server)
+    pub fn get_database(&self) -> Option<Arc<Database>> {
+        self.database.clone()
+    }
+
+    /// Get the download manager if in local mode (for use by API server)
+    pub fn get_download_manager(&self) -> Option<Arc<DownloadManager>> {
+        match &self.download_mode {
+            Some(DownloadMode::Local(dm)) => Some(dm.clone()),
+            _ => None,
+        }
+    }
+
+    /// Get the file watcher (for use by API server hot reload)
+    pub fn get_file_watcher(&self) -> Option<Arc<TorrentWatcher>> {
+        self.file_watcher.clone()
     }
 
     /// Shutdown the daemon gracefully

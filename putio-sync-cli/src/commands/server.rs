@@ -94,6 +94,7 @@ pub async fn execute_server(
         config.clone(),
         database_path,
         Some(config_file_path.clone()),
+        None, // No file watcher in standalone server mode
     )
     .await
     .map_err(|e| anyhow!("Failed to create API app: {}", e))?;

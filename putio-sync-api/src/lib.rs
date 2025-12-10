@@ -74,8 +74,10 @@ pub struct AppState {
     pub client: Arc<PutioApiClient>,
     /// Database connection (optional)
     pub database: Option<Arc<Database>>,
-    /// Download manager
-    pub download_manager: Arc<RwLock<DownloadManager>>,
+    /// Download manager (uses internal RwLock for hot reload)
+    pub download_manager: Arc<DownloadManager>,
+    /// File watcher (optional, for hot reload)
+    pub file_watcher: Option<Arc<putio_sync_file_manager::TorrentWatcher>>,
 }
 
 /// Create the main application router
@@ -112,6 +114,7 @@ pub async fn create_app(
     config: Config,
     database_path: Option<std::path::PathBuf>,
     config_path: Option<std::path::PathBuf>,
+    file_watcher: Option<Arc<putio_sync_file_manager::TorrentWatcher>>,
 ) -> Result<Router, Box<dyn std::error::Error>> {
     use putio_sync_core::config::AuthMethod;
     use tracing::{info, warn};
@@ -169,7 +172,8 @@ pub async fn create_app(
         config_path: config_path.map(Arc::new),
         client,
         database,
-        download_manager: Arc::new(RwLock::new(download_manager)),
+        download_manager: Arc::new(download_manager),
+        file_watcher,
     };
 
     Ok(Router::new()

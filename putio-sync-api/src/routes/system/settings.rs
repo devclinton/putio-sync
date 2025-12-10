@@ -228,8 +228,7 @@ async fn update_download_settings(
         };
 
         // Update config via hot reload - workers will see changes immediately
-        let dm = state.download_manager.read().await;
-        dm.update_config(download_config).await;
+        state.download_manager.update_config(download_config).await;
     }
 
     // Persist config to file
@@ -274,29 +273,49 @@ async fn update_watcher_config(
     State(state): State<AppState>,
     Json(watcher): Json<WatcherConfig>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
+    use putio_sync_file_manager::watcher::WatcherConfig as FileWatcherConfig;
+    use std::time::Duration;
+
+    let watch_paths: Vec<PathBuf> = watcher.paths.into_iter().map(PathBuf::from).collect();
+    let archive_dir = watcher.archive_directory.map(PathBuf::from);
+
     {
         let mut config = state.config.write().await;
 
         // Update file watcher configuration
         config.watch.enabled = watcher.enabled;
-        config.watch.paths = watcher.paths.into_iter().map(PathBuf::from).collect();
+        config.watch.paths = watch_paths.clone();
         config.watch.refresh_cycle = watcher.refresh_cycle;
         config.watch.parent_folder_id = watcher.parent_folder_id;
-        config.watch.archive_directory = watcher.archive_directory.map(PathBuf::from);
+        config.watch.archive_directory = archive_dir.clone();
         config.watch.delete_after_upload = watcher.delete_after_upload;
+    }
+
+    // Hot reload: Update file watcher configuration dynamically
+    // This updates the shared config without restarting the watcher daemon.
+    // Changes take effect on the next scan cycle.
+    if let Some(ref file_watcher) = state.file_watcher {
+        let new_watcher_config = FileWatcherConfig {
+            watch_dirs: watch_paths,
+            parent_id: watcher.parent_folder_id,
+            interval: Duration::from_secs(watcher.refresh_cycle.max(1) as u64),
+            archive_dir,
+            delete_after_upload: watcher.delete_after_upload,
+        };
+
+        file_watcher.update_config(new_watcher_config);
     }
 
     // Persist config to file
     persist_config(&state).await?;
 
-    // Note: File watcher hot reload is not currently supported.
-    // The file watcher runs in a separate thread (spawned in server.rs spawn_watch_daemon).
-    // Config updates are persisted to file but require a server restart to take effect.
-    // Future enhancement: Implement message passing channel from API to watcher thread for live reload.
+    let message = if state.file_watcher.is_some() {
+        "File watcher configuration updated successfully via hot reload. Changes will take effect on next scan cycle.".to_string()
+    } else {
+        "File watcher configuration updated successfully. Note: Server restart required for changes to take effect (watcher not available for hot reload).".to_string()
+    };
 
-    Ok(Json(SuccessResponse {
-        message: "File watcher configuration updated successfully. Note: Server restart required for changes to take effect.".to_string(),
-    }))
+    Ok(Json(SuccessResponse { message }))
 }
 
 /// Get logging settings

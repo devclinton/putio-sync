@@ -109,8 +109,7 @@ async fn start_download(
 async fn list_downloads(
     State(state): State<AppState>,
 ) -> Result<Json<ActiveDownloadsResponse>, ApiError> {
-    let manager = state.download_manager.read().await;
-    let progress = manager.overall_progress().await;
+    let progress = state.download_manager.overall_progress().await;
 
     // TODO: Enhance DownloadManager to expose individual download tracking
     // For now, we can only show overall stats
