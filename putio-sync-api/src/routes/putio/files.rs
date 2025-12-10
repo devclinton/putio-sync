@@ -16,11 +16,8 @@ use axum::{
     Json, Router,
 };
 
-/// Application state (will be updated in Task 4)
-#[derive(Clone)]
-pub struct AppState {
-    pub config: std::sync::Arc<putio_sync_core::config::Config>,
-}
+// Re-export AppState from parent
+pub use crate::AppState;
 
 /// Create the Put.io files router
 pub fn router() -> Router<AppState> {
@@ -38,7 +35,8 @@ async fn list_files(
     State(state): State<AppState>,
     Query(request): Query<ListFilesRequest>,
 ) -> Result<Json<ListResponse<FileResponse>>, ApiError> {
-    files::list_files(&state.config, request)
+    let config = state.config.read().await;
+    files::list_files(&config, request)
         .await
         .map(Json)}
 
@@ -49,7 +47,8 @@ async fn get_file(
     State(state): State<AppState>,
     Path(file_id): Path<i64>,
 ) -> Result<Json<FileResponse>, ApiError> {
-    files::get_file(&state.config, file_id)
+    let config = state.config.read().await;
+    files::get_file(&config, file_id)
         .await
         .map(Json)}
 
@@ -64,7 +63,8 @@ async fn delete_file(
         file_ids: vec![file_id],
     };
 
-    files::delete_files(&state.config, request)
+    let config = state.config.read().await;
+    files::delete_files(&config, request)
         .await
         .map(Json)}
 

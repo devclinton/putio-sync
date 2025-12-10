@@ -18,11 +18,8 @@ use axum::{
     Json, Router,
 };
 
-/// Application state
-#[derive(Clone)]
-pub struct AppState {
-    pub config: std::sync::Arc<putio_sync_core::config::Config>,
-}
+// Re-export AppState from parent
+pub use crate::AppState;
 
 /// Create the Put.io transfers router
 pub fn router() -> Router<AppState> {
@@ -41,7 +38,8 @@ pub fn router() -> Router<AppState> {
 async fn list_transfers(
     State(state): State<AppState>,
 ) -> Result<Json<ListResponse<TransferResponse>>, ApiError> {
-    transfers::list_transfers(&state.config)
+    let config = state.config.read().await;
+    transfers::list_transfers(&config)
         .await
         .map(Json)}
 
@@ -52,7 +50,8 @@ async fn add_transfer(
     State(state): State<AppState>,
     Json(request): Json<AddTransferRequest>,
 ) -> Result<Json<TransferResponse>, ApiError> {
-    transfers::add_transfer(&state.config, request)
+    let config = state.config.read().await;
+    transfers::add_transfer(&config, request)
         .await
         .map(Json)}
 
@@ -63,7 +62,8 @@ async fn get_transfer(
     State(state): State<AppState>,
     Path(transfer_id): Path<i64>,
 ) -> Result<Json<TransferResponse>, ApiError> {
-    transfers::get_transfer(&state.config, transfer_id)
+    let config = state.config.read().await;
+    transfers::get_transfer(&config, transfer_id)
         .await
         .map(Json)}
 
@@ -74,7 +74,8 @@ async fn remove_transfer(
     State(state): State<AppState>,
     Path(transfer_id): Path<i64>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    transfers::remove_transfer(&state.config, transfer_id)
+    let config = state.config.read().await;
+    transfers::remove_transfer(&config, transfer_id)
         .await
         .map(Json)}
 

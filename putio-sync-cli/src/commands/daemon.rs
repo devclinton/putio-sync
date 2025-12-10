@@ -106,6 +106,7 @@ pub async fn execute_daemon(
         watch_interval,
         parent_id,
         delete_after_upload: config.watch.delete_after_upload,
+        watch_enabled: config.watch.enabled,
         enable_hot_reload: true,
         config_path: Some(config_file_path),
         workers,

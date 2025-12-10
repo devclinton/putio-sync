@@ -135,16 +135,29 @@ async fn trigger_scan(
 async fn start_watcher(
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    let mut config = state.config.write().await;
+    // Update configuration
+    {
+        let mut config = state.config.write().await;
+        config.watch.enabled = true;
+    }
 
-    // Enable watcher in configuration
-    config.watch.enabled = true;
-
-    // TODO: Actually start the file watcher if it's not running
-    // This would send a message to the daemon to start watching
+    // Persist to config file if path is available (for daemon hot-reload)
+    if let Some(ref config_path) = state.config_path {
+        let config = state.config.read().await;
+        if let Err(e) = config.save(config_path.as_ref()) {
+            error!("Failed to persist config change: {}", e);
+            return Err(ApiError::InternalError(format!(
+                "Failed to save config: {}",
+                e
+            )));
+        }
+        info!("File watcher enabled and persisted to config");
+    } else {
+        info!("File watcher enabled (in-memory only, no config file)");
+    }
 
     Ok(Json(SuccessResponse {
-        message: "File watcher started (configuration updated)".to_string(),
+        message: "File watcher started successfully".to_string(),
     }))
 }
 
@@ -154,16 +167,29 @@ async fn start_watcher(
 async fn stop_watcher(
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    let mut config = state.config.write().await;
+    // Update configuration
+    {
+        let mut config = state.config.write().await;
+        config.watch.enabled = false;
+    }
 
-    // Disable watcher in configuration
-    config.watch.enabled = false;
-
-    // TODO: Actually stop the file watcher if it's running
-    // This would send a message to the daemon to stop watching
+    // Persist to config file if path is available (for daemon hot-reload)
+    if let Some(ref config_path) = state.config_path {
+        let config = state.config.read().await;
+        if let Err(e) = config.save(config_path.as_ref()) {
+            error!("Failed to persist config change: {}", e);
+            return Err(ApiError::InternalError(format!(
+                "Failed to save config: {}",
+                e
+            )));
+        }
+        info!("File watcher disabled and persisted to config");
+    } else {
+        info!("File watcher disabled (in-memory only, no config file)");
+    }
 
     Ok(Json(SuccessResponse {
-        message: "File watcher stopped (configuration updated)".to_string(),
+        message: "File watcher stopped successfully".to_string(),
     }))
 }
 

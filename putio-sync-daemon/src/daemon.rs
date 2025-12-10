@@ -37,6 +37,8 @@ pub struct DaemonConfig {
     pub parent_id: Option<i64>,
     /// Delete torrent/magnet files after upload
     pub delete_after_upload: bool,
+    /// Enable file watcher (can be toggled at runtime via API)
+    pub watch_enabled: bool,
     /// Enable config hot-reloading
     pub enable_hot_reload: bool,
     /// Config file path (for hot-reload)
@@ -63,6 +65,7 @@ impl Default for DaemonConfig {
             watch_interval: 60,
             parent_id: None,
             delete_after_upload: false,
+            watch_enabled: true,
             enable_hot_reload: false,
             config_path: None,
             workers: 1,
@@ -267,18 +270,19 @@ impl PutioDaemon {
 
         // Spawn watch task if file watcher is configured
         let watch_task = if self.file_watcher.is_some() && self.client.is_some() && self.database.is_some() {
-            let config = self.config.read().await;
-            let watch_interval = config.watch_interval;
-            let delete_after_upload = config.delete_after_upload;
-            drop(config);
+            let config_guard = self.config.read().await;
+            let watch_interval = config_guard.watch_interval;
+            let delete_after_upload = config_guard.delete_after_upload;
+            drop(config_guard);
 
             // Clone Arc (cheap) - watcher remains accessible for API hot reload
             let watcher = self.file_watcher.clone().unwrap();
             let client = self.client.clone().unwrap();
             let database = self.database.clone().unwrap();
+            let config = self.config.clone();
 
             Some(tokio::spawn(async move {
-                Self::run_watch_loop(watcher, client, database, watch_interval, delete_after_upload).await;
+                Self::run_watch_loop(watcher, client, database, config, watch_interval, delete_after_upload).await;
             }))
         } else {
             info!("File watcher not configured, skipping watch task");
@@ -352,10 +356,13 @@ impl PutioDaemon {
     }
 
     /// Run the watch loop as an independent async task
+    ///
+    /// Checks config.watch_enabled before each scan to support runtime start/stop via API
     async fn run_watch_loop(
         watcher: Arc<TorrentWatcher>,
         client: Arc<PutioApiClient>,
         database: Arc<Database>,
+        config: Arc<RwLock<DaemonConfig>>,
         interval_secs: u64,
         delete_after_upload: bool,
     ) {
@@ -365,6 +372,19 @@ impl PutioDaemon {
 
         loop {
             cycle += 1;
+
+            // Check if watch_enabled in config (supports runtime start/stop via API)
+            let watch_enabled = {
+                let cfg = config.read().await;
+                cfg.watch_enabled
+            };
+
+            if !watch_enabled {
+                debug!("Watch task cycle #{} - watcher disabled, skipping scan", cycle);
+                tokio::time::sleep(interval).await;
+                continue;
+            }
+
             debug!("Watch task cycle #{}", cycle);
 
             // Scan watch directories for new torrent/magnet files
@@ -470,6 +490,23 @@ impl PutioDaemon {
     /// Get the file watcher (for use by API server hot reload)
     pub fn get_file_watcher(&self) -> Option<Arc<TorrentWatcher>> {
         self.file_watcher.clone()
+    }
+
+    /// Update the watch_enabled setting (for use by API server)
+    pub async fn set_watch_enabled(&self, enabled: bool) {
+        let mut config = self.config.write().await;
+        config.watch_enabled = enabled;
+        info!("Watch enabled updated to: {}", enabled);
+    }
+
+    /// Get the current watch_enabled state
+    pub async fn is_watch_enabled(&self) -> bool {
+        self.config.read().await.watch_enabled
+    }
+
+    /// Get the daemon config (for use by API server)
+    pub fn get_daemon_config(&self) -> Arc<RwLock<DaemonConfig>> {
+        self.config.clone()
     }
 
     /// Shutdown the daemon gracefully

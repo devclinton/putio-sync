@@ -42,11 +42,26 @@ pub struct QueueResponse {
     pub total: usize,
 }
 
+/// Queue statistics response
+#[derive(Debug, Serialize)]
+pub struct QueueStatsResponse {
+    pub total: usize,
+    pub pending: usize,
+    pub downloading: usize,
+    pub completed: usize,
+    pub failed: usize,
+    pub paused: usize,
+}
+
 /// Create the queue router
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(get_queue))
         .route("/", put(update_queue))
+        .route("/stats", get(get_stats))
+        .route("/clear", post(clear_completed))
+        .route("/pause", post(pause_all))
+        .route("/resume", post(resume_all))
         .route("/*path/move_up", post(move_up))
         .route("/*path/move_down", post(move_down))
         .route("/*path/move_first", post(move_first))
@@ -124,64 +139,319 @@ async fn update_queue(
 ///
 /// POST /local/queue/*path/move_up
 async fn move_up(
-    State(_state): State<AppState>,
-    Path(_item_path): Path<String>,
+    State(state): State<AppState>,
+    Path(file_id_str): Path<String>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    // TODO: Implement with Database in Task 4
-    Ok(Json(SuccessResponse {
-        message: "Item moved up (not implemented yet)".to_string(),
-    }))
+    let file_id: i64 = file_id_str
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Invalid file ID".to_string()))?;
+
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
+
+    let queue_repo = db.queue();
+
+    // Get all items sorted by priority
+    let mut items = queue_repo.get_all().await.map_err(|e| {
+        ApiError::InternalError(format!("Failed to get queue: {}", e))
+    })?;
+
+    // Sort by priority (lower number = higher priority)
+    items.sort_by_key(|item| item.priority);
+
+    // Find the item and swap with previous
+    if let Some(pos) = items.iter().position(|item| item.file_id == file_id) {
+        if pos == 0 {
+            return Err(ApiError::BadRequest("Item is already first".to_string()));
+        }
+
+        let current_priority = items[pos].priority;
+        let prev_priority = items[pos - 1].priority;
+
+        // Swap priorities
+        queue_repo
+            .update_priority(file_id, prev_priority)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
+
+        queue_repo
+            .update_priority(items[pos - 1].file_id, current_priority)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
+
+        Ok(Json(SuccessResponse {
+            message: "Item moved up in queue".to_string(),
+        }))
+    } else {
+        Err(ApiError::NotFound("Item not found in queue".to_string()))
+    }
 }
 
 /// Move queue item down
 ///
 /// POST /local/queue/*path/move_down
 async fn move_down(
-    State(_state): State<AppState>,
-    Path(_item_path): Path<String>,
+    State(state): State<AppState>,
+    Path(file_id_str): Path<String>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    // TODO: Implement with Database in Task 4
-    Ok(Json(SuccessResponse {
-        message: "Item moved down (not implemented yet)".to_string(),
-    }))
+    let file_id: i64 = file_id_str
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Invalid file ID".to_string()))?;
+
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
+
+    let queue_repo = db.queue();
+
+    // Get all items sorted by priority
+    let mut items = queue_repo.get_all().await.map_err(|e| {
+        ApiError::InternalError(format!("Failed to get queue: {}", e))
+    })?;
+
+    // Sort by priority (lower number = higher priority)
+    items.sort_by_key(|item| item.priority);
+
+    // Find the item and swap with next
+    if let Some(pos) = items.iter().position(|item| item.file_id == file_id) {
+        if pos >= items.len() - 1 {
+            return Err(ApiError::BadRequest("Item is already last".to_string()));
+        }
+
+        let current_priority = items[pos].priority;
+        let next_priority = items[pos + 1].priority;
+
+        // Swap priorities
+        queue_repo
+            .update_priority(file_id, next_priority)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
+
+        queue_repo
+            .update_priority(items[pos + 1].file_id, current_priority)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
+
+        Ok(Json(SuccessResponse {
+            message: "Item moved down in queue".to_string(),
+        }))
+    } else {
+        Err(ApiError::NotFound("Item not found in queue".to_string()))
+    }
 }
 
 /// Move queue item to first position
 ///
 /// POST /local/queue/*path/move_first
 async fn move_first(
-    State(_state): State<AppState>,
-    Path(_item_path): Path<String>,
+    State(state): State<AppState>,
+    Path(file_id_str): Path<String>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    // TODO: Implement with Database in Task 4
-    Ok(Json(SuccessResponse {
-        message: "Item moved to first (not implemented yet)".to_string(),
-    }))
+    let file_id: i64 = file_id_str
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Invalid file ID".to_string()))?;
+
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
+
+    let queue_repo = db.queue();
+
+    // Get all items sorted by priority
+    let mut items = queue_repo.get_all().await.map_err(|e| {
+        ApiError::InternalError(format!("Failed to get queue: {}", e))
+    })?;
+
+    // Sort by priority (lower number = higher priority)
+    items.sort_by_key(|item| item.priority);
+
+    // Find the item
+    if let Some(pos) = items.iter().position(|item| item.file_id == file_id) {
+        if pos == 0 {
+            return Err(ApiError::BadRequest("Item is already first".to_string()));
+        }
+
+        // Get the minimum priority (first item's priority - 1)
+        let new_priority = items[0].priority - 1;
+
+        // Move item to first by giving it lowest priority number
+        queue_repo
+            .update_priority(file_id, new_priority)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
+
+        Ok(Json(SuccessResponse {
+            message: "Item moved to first position in queue".to_string(),
+        }))
+    } else {
+        Err(ApiError::NotFound("Item not found in queue".to_string()))
+    }
 }
 
 /// Move queue item to last position
 ///
 /// POST /local/queue/*path/move_last
 async fn move_last(
-    State(_state): State<AppState>,
-    Path(_item_path): Path<String>,
+    State(state): State<AppState>,
+    Path(file_id_str): Path<String>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    // TODO: Implement with Database in Task 4
-    Ok(Json(SuccessResponse {
-        message: "Item moved to last (not implemented yet)".to_string(),
-    }))
+    let file_id: i64 = file_id_str
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Invalid file ID".to_string()))?;
+
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
+
+    let queue_repo = db.queue();
+
+    // Get all items sorted by priority
+    let mut items = queue_repo.get_all().await.map_err(|e| {
+        ApiError::InternalError(format!("Failed to get queue: {}", e))
+    })?;
+
+    // Sort by priority (lower number = higher priority)
+    items.sort_by_key(|item| item.priority);
+
+    // Find the item
+    if let Some(pos) = items.iter().position(|item| item.file_id == file_id) {
+        if pos >= items.len() - 1 {
+            return Err(ApiError::BadRequest("Item is already last".to_string()));
+        }
+
+        // Get the maximum priority (last item's priority + 1)
+        let new_priority = items.last().unwrap().priority + 1;
+
+        // Move item to last by giving it highest priority number
+        queue_repo
+            .update_priority(file_id, new_priority)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
+
+        Ok(Json(SuccessResponse {
+            message: "Item moved to last position in queue".to_string(),
+        }))
+    } else {
+        Err(ApiError::NotFound("Item not found in queue".to_string()))
+    }
 }
 
 /// Skip queue item
 ///
 /// POST /local/queue/*path/skip
 async fn skip_item(
-    State(_state): State<AppState>,
-    Path(_item_path): Path<String>,
+    State(state): State<AppState>,
+    Path(file_id_str): Path<String>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    // TODO: Implement with Database in Task 4
+    let file_id: i64 = file_id_str
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Invalid file ID".to_string()))?;
+
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
+
+    let queue_repo = db.queue();
+
+    // Remove the item from queue
+    queue_repo
+        .remove(file_id)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to skip item: {}", e)))?;
+
     Ok(Json(SuccessResponse {
-        message: "Item skipped (not implemented yet)".to_string(),
+        message: format!("Item {} skipped and removed from queue", file_id),
+    }))
+}
+
+/// Get queue statistics
+///
+/// GET /local/queue/stats
+async fn get_stats(
+    State(state): State<AppState>,
+) -> Result<Json<QueueStatsResponse>, ApiError> {
+    let db = state.database.as_ref().ok_or_else(|| {
+        ApiError::InternalError("Database not available".to_string())
+    })?;
+
+    let queue_repo = db.queue();
+    let stats = queue_repo.get_stats().await.map_err(|e| {
+        ApiError::InternalError(format!("Failed to get queue stats: {}", e))
+    })?;
+
+    Ok(Json(QueueStatsResponse {
+        total: stats.total as usize,
+        pending: stats.pending as usize,
+        downloading: stats.downloading as usize,
+        completed: stats.completed as usize,
+        failed: stats.failed as usize,
+        paused: stats.paused as usize,
+    }))
+}
+
+/// Clear completed items from queue
+///
+/// POST /local/queue/clear
+async fn clear_completed(
+    State(state): State<AppState>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let db = state.database.as_ref().ok_or_else(|| {
+        ApiError::InternalError("Database not available".to_string())
+    })?;
+
+    let queue_repo = db.queue();
+    let count = queue_repo.clear_completed().await.map_err(|e| {
+        ApiError::InternalError(format!("Failed to clear completed items: {}", e))
+    })?;
+
+    Ok(Json(SuccessResponse {
+        message: format!("Cleared {} completed items from queue", count),
+    }))
+}
+
+/// Pause all active downloads
+///
+/// POST /local/queue/pause
+async fn pause_all(
+    State(state): State<AppState>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let db = state.database.as_ref().ok_or_else(|| {
+        ApiError::InternalError("Database not available".to_string())
+    })?;
+
+    let queue_repo = db.queue();
+    let count = queue_repo.pause_all().await.map_err(|e| {
+        ApiError::InternalError(format!("Failed to pause queue: {}", e))
+    })?;
+
+    Ok(Json(SuccessResponse {
+        message: format!("Paused {} items in queue", count),
+    }))
+}
+
+/// Resume all paused downloads
+///
+/// POST /local/queue/resume
+async fn resume_all(
+    State(state): State<AppState>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let db = state.database.as_ref().ok_or_else(|| {
+        ApiError::InternalError("Database not available".to_string())
+    })?;
+
+    let queue_repo = db.queue();
+    let count = queue_repo.resume_all().await.map_err(|e| {
+        ApiError::InternalError(format!("Failed to resume queue: {}", e))
+    })?;
+
+    Ok(Json(SuccessResponse {
+        message: format!("Resumed {} items in queue", count),
     }))
 }
 

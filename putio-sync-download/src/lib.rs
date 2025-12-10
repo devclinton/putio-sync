@@ -18,7 +18,8 @@ pub use files::{
     check_resume, cleanup_partial, create_temp_path, get_original_path, is_partial_download,
 };
 pub use manager::{
-    DownloadConfig, DownloadFile, DownloadManager, DownloadOperationResult, SyncStats,
+    ActiveDownload, DownloadConfig, DownloadFile, DownloadManager, DownloadOperationResult,
+    SyncStats, WorkerStats,
 };
 pub use progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 pub use rate_limiter::RateLimiter;

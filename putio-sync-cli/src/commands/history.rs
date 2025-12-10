@@ -62,7 +62,7 @@ pub async fn execute_history(
 
     // Get total count for pagination info
     let total_count = history_repo
-        .count(action_filter.clone())
+        .count(action_filter)
         .await
         .context("Failed to count history entries")?;
 

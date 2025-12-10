@@ -13,11 +13,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Application state
-#[derive(Clone)]
-pub struct AppState {
-    pub config: std::sync::Arc<putio_sync_core::config::Config>,
-}
+// Re-export AppState from parent
+pub use crate::AppState;
 
 /// Local file information
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,7 +54,8 @@ pub fn router() -> Router<AppState> {
 async fn list_files(
     State(state): State<AppState>,
 ) -> Result<Json<ListFilesResponse>, ApiError> {
-    let download_dir = &state.config.download.target_directory;
+    let config = state.config.read().await;
+    let download_dir = &config.download.target_directory;
 
     let mut files = Vec::new();
 
@@ -93,7 +91,8 @@ async fn get_file_info(
     State(state): State<AppState>,
     Path(file_path): Path<String>,
 ) -> Result<Json<LocalFileInfo>, ApiError> {
-    let download_dir = &state.config.download.target_directory;
+    let config = state.config.read().await;
+    let download_dir = &config.download.target_directory;
     let full_path = download_dir.join(&file_path);
 
     // Security check: ensure path is within download directory
@@ -127,7 +126,8 @@ async fn delete_file(
     State(state): State<AppState>,
     Path(file_path): Path<String>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    let download_dir = &state.config.download.target_directory;
+    let config = state.config.read().await;
+    let download_dir = &config.download.target_directory;
     let full_path = download_dir.join(&file_path);
 
     // Security check: ensure path is within download directory

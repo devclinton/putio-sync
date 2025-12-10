@@ -184,6 +184,7 @@ pub async fn create_app(
         .nest("/local/queue", create_local_queue_router())
         .nest("/local/downloads", create_local_downloads_router())
         .nest("/local/watcher", create_local_watcher_router())
+        .nest("/local/workers", create_local_workers_router())
         .nest("/settings", create_settings_router())
         .nest("/stats", create_stats_router())
         .nest("/history", create_history_router())
@@ -198,38 +199,31 @@ pub async fn create_app(
 
 // New route constructors with proper state types
 fn create_putio_files_router() -> Router<AppState> {
-    
-    // Map AppState to route-specific state
-    Router::new()
-        .route("/", axum::routing::get(files_placeholder))
-        .route("/:id", axum::routing::get(files_placeholder))
-        .route("/:id", axum::routing::delete(files_placeholder))
-        .route("/:id/download", axum::routing::get(files_placeholder))
+    routes::putio::files::router()
 }
 
 fn create_putio_transfers_router() -> Router<AppState> {
-    Router::new()
-        .route("/", axum::routing::get(transfers_placeholder))
-        .route("/", axum::routing::post(transfers_placeholder))
+    routes::putio::transfers::router()
 }
 
 fn create_local_files_router() -> Router<AppState> {
-    Router::new()
-        .route("/", axum::routing::get(local_files_placeholder))
+    routes::local::files::router()
 }
 
 fn create_local_queue_router() -> Router<AppState> {
-    Router::new()
-        .route("/", axum::routing::get(queue_placeholder))
+    routes::local::queue::router()
 }
 
 fn create_local_downloads_router() -> Router<AppState> {
-    Router::new()
-        .route("/", axum::routing::get(downloads_placeholder))
+    routes::local::downloads::router()
 }
 
 fn create_local_watcher_router() -> Router<AppState> {
     routes::local::watcher::router()
+}
+
+fn create_local_workers_router() -> Router<AppState> {
+    routes::local::workers::router()
 }
 
 fn create_settings_router() -> Router<AppState> {
@@ -237,13 +231,11 @@ fn create_settings_router() -> Router<AppState> {
 }
 
 fn create_stats_router() -> Router<AppState> {
-    Router::new()
-        .route("/downloads", axum::routing::get(stats_placeholder))
+    routes::system::stats::router()
 }
 
 fn create_history_router() -> Router<AppState> {
-    Router::new()
-        .route("/", axum::routing::get(history_placeholder))
+    routes::system::history::router()
 }
 
 fn create_legacy_files_router() -> Router<AppState> {
@@ -268,35 +260,6 @@ async fn legacy_deprecated_placeholder() -> &'static str {
     "Legacy API deprecated - please use /putio/* and /local/* endpoints"
 }
 
-// Placeholder handlers (will be replaced with actual implementations)
-async fn files_placeholder() -> &'static str {
-    "Files endpoint - implementation pending"
-}
-
-async fn transfers_placeholder() -> &'static str {
-    "Transfers endpoint - implementation pending"
-}
-
-async fn local_files_placeholder() -> &'static str {
-    "Local files endpoint - implementation pending"
-}
-
-async fn queue_placeholder() -> &'static str {
-    "Queue endpoint - implementation pending"
-}
-
-async fn downloads_placeholder() -> &'static str {
-    "Downloads endpoint - implementation pending"
-}
-
-async fn stats_placeholder() -> &'static str {
-    "Stats endpoint - implementation pending"
-}
-
-async fn history_placeholder() -> &'static str {
-    "History endpoint - implementation pending"
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,7 +271,7 @@ mod tests {
         // Set up minimal auth config
         config.auth = Some(AuthConfig::with_token("test_token".to_string()));
 
-        let _app = create_app(config, None, None).await;
-        // Test that app can be created without database or config path
+        let _app = create_app(config, None, None, None).await;
+        // Test that app can be created without database, config path, or file watcher
     }
 }
