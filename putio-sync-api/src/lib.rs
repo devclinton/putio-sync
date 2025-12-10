@@ -177,7 +177,7 @@ pub async fn create_app(
     };
 
     Ok(Router::new()
-        // New organized routes
+        // New organized routes (protected by auth middleware)
         .nest("/putio/files", create_putio_files_router())
         .nest("/putio/transfers", create_putio_transfers_router())
         .nest("/local/files", create_local_files_router())
@@ -192,6 +192,11 @@ pub async fn create_app(
         .nest("/api/files", create_legacy_files_router())
         .nest("/api/transfers", create_legacy_transfers_router())
         .nest("/api/queue", create_legacy_queue_router())
+        // Apply authentication middleware to all routes
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::auth::require_auth,
+        ))
         .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http()))

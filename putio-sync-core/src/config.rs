@@ -266,6 +266,11 @@ pub struct ApiConfig {
     /// Required when enabled is true
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// API authentication token for securing REST API endpoints
+    /// When set, all API requests must include this token in the Authorization header
+    /// Format: "Bearer <token>"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
 }
 
 impl Default for SyncConfig {
