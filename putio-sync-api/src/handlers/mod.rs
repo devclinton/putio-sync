@@ -4,5 +4,4 @@
 
 pub mod files;
 pub mod local;
-pub mod queue;
 pub mod transfers;

@@ -21,7 +21,7 @@ pub use crate::AppState;
 #[derive(Debug, Deserialize)]
 pub struct StartDownloadRequest {
     pub file_id: i64,
-    pub filename: String,
+    pub filename: Option<String>,
     pub relative_path: Option<String>,
 }
 
@@ -71,32 +71,56 @@ pub fn router() -> Router<AppState> {
 ///
 /// POST /local/downloads
 ///
-/// Adds a file to the download queue and starts downloading it.
-///
-/// Note: This endpoint currently requires enhancements to DownloadManager
-/// to support starting individual downloads via API (not just batch processing).
+/// Starts downloading a file immediately using the download manager.
 async fn start_download(
     State(state): State<AppState>,
     Json(request): Json<StartDownloadRequest>,
 ) -> Result<Json<StartDownloadResponse>, ApiError> {
-    // TODO: Add DownloadManager method to start individual downloads
-    // For now, we can get file info from Put.io and add to queue
-    // but we need to enhance DownloadManager first
-
     // Validate file exists on Put.io
-    let file = state
+    let file_details = state
         .client
         .get_file_details(request.file_id)
         .await
         .map_err(ApiError::Client)?;
 
-    // TODO: Add file to download queue and start download
-    // This requires adding a method like:
-    // download_manager.start_download(file_id, filename, relative_path).await
+    let file_info = file_details.file;
+
+    // Prepare download file
+    let download_file = putio_sync_download::DownloadFile {
+        file_id: file_info.id,
+        filename: request.filename.unwrap_or(file_info.name.clone()),
+        file_size: file_info.size as u64,
+        download_url: format!("https://api.put.io/v2/files/{}/download", file_info.id),
+        relative_path: request.relative_path.unwrap_or_default(),
+    };
+
+    // Start download in background
+    let download_manager = state.download_manager.clone();
+    let file_id = download_file.file_id;
+    let filename = download_file.filename.clone();
+
+    tokio::spawn(async move {
+        match download_manager.download_file(download_file, None).await {
+            Ok(result) => {
+                if result.success {
+                    tracing::info!("API-initiated download completed: {}", filename);
+                } else {
+                    tracing::error!(
+                        "API-initiated download failed: {} - {:?}",
+                        filename,
+                        result.error
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!("API-initiated download error: {} - {}", filename, e);
+            }
+        }
+    });
 
     Ok(Json(StartDownloadResponse {
-        message: format!("Download queued for file: {}", file.file.name),
-        download_id: Some(request.file_id),
+        message: format!("Download started for file: {}", file_info.name),
+        download_id: Some(file_id),
     }))
 }
 

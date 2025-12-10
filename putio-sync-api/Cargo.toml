@@ -40,6 +40,18 @@ tracing-subscriber = { workspace = true }
 # HTTP client (for testing)
 reqwest = { workspace = true }
 
+# Date/time handling
+chrono = "0.4"
+
+# System information
+sys-info = "0.9"
+
+# Base64 encoding/decoding
+base64 = "0.22"
+
+# UUID generation
+uuid = { version = "1.6", features = ["v4"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.8"

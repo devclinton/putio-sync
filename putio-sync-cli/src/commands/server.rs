@@ -5,9 +5,12 @@
 use anyhow::{anyhow, Context, Result};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthMethod, Config};
+use putio_sync_db::Database;
+use putio_sync_download::{DownloadConfig, DownloadFile, DownloadManager};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::signal;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Execute the server command
 ///
@@ -291,7 +294,7 @@ fn spawn_download_daemon(config: Config) -> std::thread::JoinHandle<()> {
                             return;
                         }
                     };
-                    PutioApiClient::new(token)
+                    Arc::new(PutioApiClient::new(token))
                 }
                 AuthMethod::AppPassword => {
                     let username = match auth_config.username {
@@ -308,9 +311,50 @@ fn spawn_download_daemon(config: Config) -> std::thread::JoinHandle<()> {
                             return;
                         }
                     };
-                    PutioApiClient::with_credentials(username, password)
+                    Arc::new(PutioApiClient::with_credentials(username, password))
                 }
             };
+
+            // Initialize database for download tracking
+            let database_path = std::path::PathBuf::from(".putiosync.db");
+            let database = match Database::new(&database_path).await {
+                Ok(db) => {
+                    info!("Download daemon: Database initialized");
+                    Some(Arc::new(db))
+                }
+                Err(e) => {
+                    warn!("Download daemon: Failed to initialize database: {}", e);
+                    warn!("Continuing without database (download tracking disabled)");
+                    None
+                }
+            };
+
+            // Initialize download manager
+            let download_config = DownloadConfig {
+                target_directory: config.download.target_directory.clone(),
+                skip_existing: config.download.skip_existing,
+                buffer_size_mb: config.download.buffer_size_mb,
+                bandwidth_limit_bytes_per_sec: config.download.bandwidth_limit_bytes_per_sec,
+                max_retries: config.download.max_retries,
+                retry_initial_delay_secs: config.download.retry_initial_delay_secs,
+                workers: config.download.workers,
+                delete_after_download: config.download.delete_after_download,
+            };
+
+            let download_manager = if let Some(ref db) = database {
+                Arc::new(DownloadManager::new(
+                    client.clone(),
+                    db.clone(),
+                    download_config,
+                ))
+            } else {
+                Arc::new(DownloadManager::new_without_database(
+                    client.clone(),
+                    download_config,
+                ))
+            };
+
+            info!("Download daemon: Manager initialized");
 
             // Run download daemon loop
             loop {
@@ -326,11 +370,73 @@ fn spawn_download_daemon(config: Config) -> std::thread::JoinHandle<()> {
                         if !completed.is_empty() {
                             info!("Found {} completed transfer(s)", completed.len());
 
-                            // TODO: Implement automatic download
-                            // This would use the download command logic to download files
-                            // For now, just log the completed transfers
+                            // Download each completed transfer
                             for transfer in completed {
-                                info!("  - {} (file_id: {:?})", transfer.name, transfer.file_id);
+                                let file_id = match transfer.file_id {
+                                    Some(id) => id,
+                                    None => {
+                                        warn!("Transfer {} has no file_id, skipping", transfer.name);
+                                        continue;
+                                    }
+                                };
+
+                                info!("Starting automatic download: {} (file_id: {})", transfer.name, file_id);
+
+                                // Get file details from Put.io
+                                let file_details = match client.get_file_details(file_id).await {
+                                    Ok(details) => details,
+                                    Err(e) => {
+                                        error!("Failed to get file details for {}: {}", file_id, e);
+                                        continue;
+                                    }
+                                };
+
+                                let file_info = file_details.file;
+
+                                // Create download file struct
+                                let download_file = DownloadFile {
+                                    file_id: file_info.id,
+                                    filename: file_info.name.clone(),
+                                    file_size: file_info.size as u64,
+                                    download_url: format!(
+                                        "https://api.put.io/v2/files/{}/download",
+                                        file_info.id
+                                    ),
+                                    relative_path: String::new(),
+                                };
+
+                                // Spawn download task
+                                let download_manager_clone = download_manager.clone();
+                                let filename = download_file.filename.clone();
+
+                                tokio::spawn(async move {
+                                    match download_manager_clone
+                                        .download_file(download_file, None)
+                                        .await
+                                    {
+                                        Ok(result) => {
+                                            if result.success {
+                                                info!(
+                                                    "Daemon-initiated download completed: {}",
+                                                    filename
+                                                );
+                                            } else {
+                                                error!(
+                                                    "Daemon-initiated download failed: {} - {:?}",
+                                                    filename, result.error
+                                                );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "Daemon-initiated download error: {} - {}",
+                                                filename, e
+                                            );
+                                        }
+                                    }
+                                });
+
+                                info!("Download task spawned for: {}", transfer.name);
                             }
                         }
                     }
