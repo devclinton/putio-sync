@@ -12,7 +12,7 @@ use putio_sync_db::Database;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock as StdRwLock};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -565,15 +565,43 @@ pub fn calculate_string_checksum(content: &str) -> String {
 }
 
 /// File watcher for .torrent and .magnet files (continuous daemon mode)
-pub struct TorrentWatcher {
+/// Configuration for file watcher (hot-reloadable)
+#[derive(Debug, Clone)]
+pub struct WatcherConfig {
     /// Directories being watched
-    watch_dirs: Vec<PathBuf>,
+    pub watch_dirs: Vec<PathBuf>,
+    /// Parent folder ID for transfers
+    pub parent_id: Option<i64>,
+    /// Check interval for polling mode
+    pub interval: Duration,
+    /// Archive directory for processed files
+    pub archive_dir: Option<PathBuf>,
+    /// Delete files after upload
+    pub delete_after_upload: bool,
+}
+
+impl WatcherConfig {
+    /// Create new watcher config
+    pub fn new(
+        watch_dirs: Vec<PathBuf>,
+        parent_id: Option<i64>,
+        interval_seconds: u64,
+    ) -> Self {
+        Self {
+            watch_dirs,
+            parent_id,
+            interval: Duration::from_secs(interval_seconds),
+            archive_dir: None,
+            delete_after_upload: false,
+        }
+    }
+}
+
+pub struct TorrentWatcher {
+    /// Shared configuration (hot-reloadable)
+    config: Arc<StdRwLock<WatcherConfig>>,
     /// Core watch functionality
     core: TorrentWatchCore,
-    /// Parent folder ID for transfers
-    parent_id: Option<i64>,
-    /// Check interval for polling mode
-    interval: Duration,
 }
 
 impl TorrentWatcher {
@@ -585,12 +613,47 @@ impl TorrentWatcher {
     /// * `parent_id` - Optional parent folder ID for transfers
     /// * `interval_seconds` - Check interval in seconds
     pub fn new(watch_dirs: Vec<PathBuf>, parent_id: Option<i64>, interval_seconds: u64) -> Self {
+        let config = WatcherConfig::new(watch_dirs, parent_id, interval_seconds);
         Self {
-            watch_dirs,
+            config: Arc::new(StdRwLock::new(config)),
             core: TorrentWatchCore::new(),
-            parent_id,
-            interval: Duration::from_secs(interval_seconds),
         }
+    }
+
+    /// Create watcher from existing config
+    pub fn from_config(config: WatcherConfig) -> Self {
+        Self {
+            config: Arc::new(StdRwLock::new(config)),
+            core: TorrentWatchCore::new(),
+        }
+    }
+
+    /// Update watcher configuration dynamically (hot reload)
+    ///
+    /// This allows changing configuration without restarting the watcher.
+    /// Changes take effect on the next scan cycle:
+    /// - Watch directories (will scan new directories, stop watching removed ones)
+    /// - Parent folder ID (new uploads use new parent)
+    /// - Check interval (next sleep uses new interval)
+    /// - Archive/delete settings (applied to next processed file)
+    ///
+    /// # Arguments
+    ///
+    /// * `new_config` - New configuration to apply
+    pub fn update_config(&self, new_config: WatcherConfig) {
+        let mut config = self.config.write().unwrap();
+        *config = new_config;
+        info!("File watcher configuration updated via hot reload");
+        info!("  Watch directories: {:?}", config.watch_dirs);
+        info!("  Parent folder ID: {:?}", config.parent_id);
+        info!("  Check interval: {:?}", config.interval);
+        info!("  Archive directory: {:?}", config.archive_dir);
+        info!("  Delete after upload: {}", config.delete_after_upload);
+    }
+
+    /// Get current configuration (read-only snapshot)
+    pub fn get_config(&self) -> WatcherConfig {
+        self.config.read().unwrap().clone()
     }
 
     /// Perform a single scan check (for use by unified daemon)
@@ -603,12 +666,15 @@ impl TorrentWatcher {
         delete_after_upload: bool,
         database: Option<&Database>,
     ) -> Result<WatchStats> {
+        // Snapshot config for consistency during scan
+        let config = self.config.read().unwrap().clone();
+
         self.core
             .scan_directories(
-                &self.watch_dirs,
+                &config.watch_dirs,
                 client,
-                self.parent_id,
-                None,
+                config.parent_id,
+                config.archive_dir.as_ref(),
                 delete_after_upload,
                 database,
             )
@@ -620,12 +686,15 @@ impl TorrentWatcher {
     /// Watches directories for new .torrent/.magnet files and automatically uploads them.
     /// Runs until interrupted with Ctrl+C.
     pub async fn run_daemon(&self, client: &PutioApiClient) -> Result<()> {
+        // Read initial config for logging
+        let initial_config = self.config.read().unwrap().clone();
+
         info!("Starting torrent watcher daemon");
-        info!("Watching directories: {:?}", self.watch_dirs);
-        info!("Check interval: {:?}", self.interval);
+        info!("Watching directories: {:?}", initial_config.watch_dirs);
+        info!("Check interval: {:?}", initial_config.interval);
 
         // Validate watch directories
-        for dir in &self.watch_dirs {
+        for dir in &initial_config.watch_dirs {
             if !dir.exists() {
                 warn!("Watch directory does not exist: {}", dir.display());
             } else if !dir.is_dir() {
@@ -650,7 +719,7 @@ impl TorrentWatcher {
         let mut watcher = self.create_watcher(tx)?;
 
         // Watch all directories
-        for dir in &self.watch_dirs {
+        for dir in &initial_config.watch_dirs {
             if dir.exists() && dir.is_dir() {
                 watcher
                     .watch(dir, RecursiveMode::NonRecursive)
@@ -672,8 +741,11 @@ impl TorrentWatcher {
             // Process filesystem events
             self.process_events(&rx, client).await?;
 
+            // Re-read config each cycle to pick up hot reload changes (especially interval)
+            let current_config = self.config.read().unwrap().clone();
+
             // Sleep for the interval, but check running flag every second
-            for _ in 0..self.interval.as_secs() {
+            for _ in 0..current_config.interval.as_secs() {
                 if !*running.lock().unwrap() {
                     break;
                 }
@@ -740,9 +812,19 @@ impl TorrentWatcher {
 
     /// Process existing .torrent and .magnet files in watch directories
     async fn process_existing_files(&self, client: &PutioApiClient) -> Result<()> {
+        // Snapshot config for consistency during initial scan
+        let config = self.config.read().unwrap().clone();
+
         let stats = self
             .core
-            .scan_directories(&self.watch_dirs, client, self.parent_id, None, false, None)
+            .scan_directories(
+                &config.watch_dirs,
+                client,
+                config.parent_id,
+                config.archive_dir.as_ref(),
+                config.delete_after_upload,
+                None,
+            )
             .await?;
 
         info!(
@@ -755,9 +837,12 @@ impl TorrentWatcher {
 
     /// Process a single .torrent or .magnet file
     async fn process_file(&self, path: &Path, client: &PutioApiClient) -> Result<()> {
+        // Snapshot config for parent_id
+        let config = self.config.read().unwrap().clone();
+
         match self
             .core
-            .process_torrent_file(path, client, self.parent_id, None)
+            .process_torrent_file(path, client, config.parent_id, None)
             .await
         {
             Ok(true) => Ok(()),  // Successfully processed
