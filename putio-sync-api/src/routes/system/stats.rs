@@ -116,13 +116,65 @@ async fn download_stats(
 ///
 /// GET /stats/transfers
 async fn transfer_stats(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
 ) -> Result<Json<TransferStats>, ApiError> {
-    // TODO: Implement with Database in Task 4
+    // Fetch current transfers from Put.io
+    let transfers_response = state
+        .client
+        .list_transfers()
+        .await
+        .map_err(|e| {
+            error!("Failed to list transfers: {}", e);
+            ApiError::InternalError(format!("Failed to list transfers: {}", e))
+        })?;
+
+    // Count transfers by status
+    let active_transfers = transfers_response
+        .transfers
+        .iter()
+        .filter(|t| {
+            matches!(
+                t.status.as_str(),
+                "DOWNLOADING" | "SEEDING" | "WAITING" | "IN_QUEUE"
+            )
+        })
+        .count() as u64;
+
+    let queued_transfers = transfers_response
+        .transfers
+        .iter()
+        .filter(|t| t.status == "WAITING" || t.status == "IN_QUEUE")
+        .count() as u64;
+
+    let completed_today = transfers_response
+        .transfers
+        .iter()
+        .filter(|t| {
+            if t.status != "COMPLETED" {
+                return false;
+            }
+
+            // Check if completed today
+            if let Some(finished_at) = &t.finished_at {
+                // Parse RFC3339 timestamp
+                if let Ok(finished_time) = chrono::DateTime::parse_from_rfc3339(finished_at) {
+                    let now = chrono::Utc::now();
+                    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+                    let today_start = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+                        today_start,
+                        chrono::Utc,
+                    );
+                    return finished_time >= today_start;
+                }
+            }
+            false
+        })
+        .count() as u64;
+
     Ok(Json(TransferStats {
-        active_transfers: 0,
-        queued_transfers: 0,
-        completed_today: 0,
+        active_transfers,
+        queued_transfers,
+        completed_today,
     }))
 }
 
@@ -135,32 +187,29 @@ async fn disk_stats(
     let config = state.config.read().await;
     let download_dir = &config.download.target_directory;
 
-    // Try to get disk space info (platform-specific)
-    #[cfg(unix)]
-    {
-        
-        if let Ok(metadata) = std::fs::metadata(download_dir) {
-            // This is a simplified version - real implementation would use statvfs
-            Ok(Json(DiskStats {
-                total_bytes: metadata.len(),
-                used_bytes: 0,
-                available_bytes: 0,
-                usage_percent: 0.0,
-            }))
-        } else {
-            Err(ApiError::InternalError("Failed to get disk stats".to_string()))
-        }
-    }
+    // Get disk info for the download directory
+    match sys_info::disk_info() {
+        Ok(disk) => {
+            let total_bytes = disk.total * 1024; // Convert from KB to bytes
+            let free_bytes = disk.free * 1024;
+            let used_bytes = total_bytes - free_bytes;
+            let usage_percent = if total_bytes > 0 {
+                (used_bytes as f64 / total_bytes as f64) * 100.0
+            } else {
+                0.0
+            };
 
-    #[cfg(not(unix))]
-    {
-        // Platform-specific disk space queries would go here
-        Ok(Json(DiskStats {
-            total_bytes: 0,
-            used_bytes: 0,
-            available_bytes: 0,
-            usage_percent: 0.0,
-        }))
+            Ok(Json(DiskStats {
+                total_bytes,
+                used_bytes,
+                available_bytes: free_bytes,
+                usage_percent,
+            }))
+        }
+        Err(e) => {
+            error!("Failed to get disk stats for {:?}: {}", download_dir, e);
+            Err(ApiError::InternalError(format!("Failed to get disk stats: {}", e)))
+        }
     }
 }
 
