@@ -518,8 +518,8 @@ impl DiagnosticsCollector {
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|_| "unknown".to_string()),
             home_directory: std::env::var("HOME").ok(),
-            disk_space_available_mb: disk_space_mb.map(|s| s as u64),
-            memory_usage_mb: memory_usage_mb.map(|m| m as u64),
+            disk_space_available_mb,
+            memory_usage_mb,
         }
     }
 }

@@ -256,7 +256,7 @@ pub struct NotificationConfig {
 }
 
 /// API/Daemon mode configuration
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ApiConfig {
     /// Enable daemon to communicate with API server for downloads
     /// When true, the daemon will send download requests to an API server
@@ -348,15 +348,6 @@ impl Default for NotificationConfig {
             backend: NotificationBackend::None,
             webhook_url: None,
             email: None,
-        }
-    }
-}
-
-impl Default for ApiConfig {
-    fn default() -> Self {
-        ApiConfig {
-            enabled: false,
-            url: None,
         }
     }
 }
