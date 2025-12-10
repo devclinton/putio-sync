@@ -402,34 +402,23 @@ impl PutioDaemon {
 
     /// Run the download worker loop as an independent async task
     ///
-    /// Continuously processes items from the download queue
-    async fn run_download_loop(download_manager: Arc<DownloadManager>, interval_secs: u64) {
-        info!("Download worker task started with interval: {}s", interval_secs);
-        let interval = tokio::time::Duration::from_secs(interval_secs);
-        let mut cycle = 0;
+    /// Starts persistent workers that continuously process the download queue.
+    /// Workers are dynamically scaled via hot reload when config changes.
+    async fn run_download_loop(download_manager: Arc<DownloadManager>, _interval_secs: u64) {
+        info!("Starting persistent download workers");
 
+        // Start initial workers based on configuration
+        download_manager.start_workers().await;
+
+        // Workers are now persistent and run continuously
+        // They will automatically scale up/down when config changes via update_config()
+        // Just keep the task alive
         loop {
-            cycle += 1;
-            info!("Download worker cycle #{} starting", cycle);
+            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
 
-            // Process download queue
-            match download_manager.run_worker_cycle().await {
-                Ok(processed) => {
-                    if processed > 0 {
-                        info!("Download workers processed {} items", processed);
-                    } else {
-                        info!("Download workers - no items to process");
-                    }
-                }
-                Err(e) => {
-                    error!("Error in download workers: {}", e);
-                }
-            }
-
-            info!("Download worker cycle #{} completed, sleeping for {}s", cycle, interval_secs);
-            // Sleep for the interval
-            tokio::time::sleep(interval).await;
-            info!("Download worker cycle #{} woke up from sleep", cycle);
+            // Log worker status periodically
+            let active_workers = download_manager.active_workers().await;
+            debug!("Download workers: {} active", active_workers);
         }
     }
 
