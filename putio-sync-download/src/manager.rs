@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 /// Configuration for download operations
@@ -105,6 +106,12 @@ pub struct SyncStats {
     pub files_failed: usize,
 }
 
+/// Worker information for tracking
+struct WorkerInfo {
+    handle: JoinHandle<()>,
+    shutdown_tx: broadcast::Sender<()>,
+}
+
 /// Download manager
 #[derive(Clone)]
 pub struct DownloadManager {
@@ -118,6 +125,10 @@ pub struct DownloadManager {
     progress_trackers: Arc<RwLock<HashMap<i64, ProgressTracker>>>,
     /// Overall progress
     overall_progress: Arc<RwLock<OverallProgress>>,
+    /// Active worker pool (for dynamic scaling)
+    workers: Arc<RwLock<HashMap<usize, WorkerInfo>>>,
+    /// Next worker ID counter
+    next_worker_id: Arc<RwLock<usize>>,
 }
 
 impl DownloadManager {
@@ -141,6 +152,8 @@ impl DownloadManager {
             config: Arc::new(RwLock::new(config)),
             progress_trackers: Arc::new(RwLock::new(HashMap::new())),
             overall_progress,
+            workers: Arc::new(RwLock::new(HashMap::new())),
+            next_worker_id: Arc::new(RwLock::new(0)),
         }
     }
 
@@ -161,6 +174,8 @@ impl DownloadManager {
             config: Arc::new(RwLock::new(config)),
             progress_trackers: Arc::new(RwLock::new(HashMap::new())),
             overall_progress,
+            workers: Arc::new(RwLock::new(HashMap::new())),
+            next_worker_id: Arc::new(RwLock::new(0)),
         }
     }
 
@@ -189,17 +204,202 @@ impl DownloadManager {
     /// # }
     /// ```
     pub async fn update_config(&self, new_config: DownloadConfig) {
-        let mut config = self.config.write().await;
-        *config = new_config;
-        info!("Download configuration updated via hot reload");
-        info!("  Workers: {}", config.workers);
-        info!("  Bandwidth limit: {:?}", config.bandwidth_limit_bytes_per_sec);
-        info!("  Buffer size: {} MB", config.buffer_size_mb);
+        // Check if worker count changed for dynamic scaling
+        let old_worker_count = {
+            let config = self.config.read().await;
+            config.workers
+        };
+        let new_worker_count = new_config.workers;
+
+        // Update configuration
+        {
+            let mut config = self.config.write().await;
+            *config = new_config;
+            info!("Download configuration updated via hot reload");
+            info!("  Workers: {}", config.workers);
+            info!("  Bandwidth limit: {:?}", config.bandwidth_limit_bytes_per_sec);
+            info!("  Buffer size: {} MB", config.buffer_size_mb);
+        }
+
+        // Handle worker scaling if count changed
+        if new_worker_count != old_worker_count {
+            info!("Worker count changed: {} -> {}, scaling workers", old_worker_count, new_worker_count);
+            self.scale_workers(new_worker_count).await;
+        }
     }
 
     /// Get current configuration (read-only snapshot)
     pub async fn get_config(&self) -> DownloadConfig {
         self.config.read().await.clone()
+    }
+
+    /// Scale workers to target count (for hot reload)
+    ///
+    /// Dynamically adjusts the number of active workers:
+    /// - If increasing: spawn new workers
+    /// - If decreasing: gracefully shutdown excess workers
+    async fn scale_workers(&self, target_count: usize) {
+        let current_count = {
+            let workers = self.workers.read().await;
+            workers.len()
+        };
+
+        match target_count.cmp(&current_count) {
+            std::cmp::Ordering::Greater => {
+                // Scale up: spawn new workers
+                let to_spawn = target_count - current_count;
+                info!("Scaling up: spawning {} new workers", to_spawn);
+                for _ in 0..to_spawn {
+                    self.spawn_worker().await;
+                }
+            }
+            std::cmp::Ordering::Less => {
+                // Scale down: shutdown excess workers
+                let to_shutdown = current_count - target_count;
+                info!("Scaling down: shutting down {} workers", to_shutdown);
+
+                let worker_ids: Vec<usize> = {
+                    let workers = self.workers.read().await;
+                    workers.keys().take(to_shutdown).copied().collect()
+                };
+
+                for worker_id in worker_ids {
+                    self.shutdown_worker(worker_id).await;
+                }
+            }
+            std::cmp::Ordering::Equal => {
+                // No change needed
+                debug!("Worker count unchanged at {}", target_count);
+            }
+        }
+    }
+
+    /// Spawn a new persistent worker
+    async fn spawn_worker(&self) {
+        let worker_id = {
+            let mut next_id = self.next_worker_id.write().await;
+            let id = *next_id;
+            *next_id += 1;
+            id
+        };
+
+        info!("Spawning worker {}", worker_id);
+
+        // Create shutdown channel for this worker
+        let (shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
+
+        let worker_dm = self.clone();
+        let handle = tokio::spawn(async move {
+            debug!("Worker {} started", worker_id);
+
+            loop {
+                // Check for shutdown signal
+                match shutdown_rx.try_recv() {
+                    Ok(_) | Err(broadcast::error::TryRecvError::Closed) => {
+                        info!("Worker {} received shutdown signal, exiting gracefully", worker_id);
+                        break;
+                    }
+                    Err(broadcast::error::TryRecvError::Empty) | Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                        // No shutdown signal, continue working
+                    }
+                }
+
+                // Try to process one item from queue
+                match worker_dm.process_queue().await {
+                    Ok(true) => {
+                        // Processed an item, continue
+                        debug!("Worker {} processed an item", worker_id);
+                    }
+                    Ok(false) => {
+                        // Queue empty, sleep briefly and retry
+                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    }
+                    Err(e) => {
+                        error!("Worker {} error: {}, sleeping before retry", worker_id, e);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    }
+                }
+            }
+
+            debug!("Worker {} exited", worker_id);
+        });
+
+        // Store worker info
+        let mut workers = self.workers.write().await;
+        workers.insert(worker_id, WorkerInfo { handle, shutdown_tx });
+        info!("Worker {} spawned successfully (total workers: {})", worker_id, workers.len());
+    }
+
+    /// Shutdown a specific worker gracefully
+    async fn shutdown_worker(&self, worker_id: usize) {
+        info!("Shutting down worker {}", worker_id);
+
+        let worker_info = {
+            let mut workers = self.workers.write().await;
+            workers.remove(&worker_id)
+        };
+
+        if let Some(worker) = worker_info {
+            // Send shutdown signal
+            if let Err(e) = worker.shutdown_tx.send(()) {
+                warn!("Failed to send shutdown signal to worker {}: {}", worker_id, e);
+            }
+
+            // Wait for worker to finish (with timeout)
+            match tokio::time::timeout(tokio::time::Duration::from_secs(30), worker.handle).await {
+                Ok(Ok(())) => {
+                    info!("Worker {} shut down gracefully", worker_id);
+                }
+                Ok(Err(e)) => {
+                    warn!("Worker {} panicked during shutdown: {}", worker_id, e);
+                }
+                Err(_) => {
+                    warn!("Worker {} shutdown timed out (may still be processing)", worker_id);
+                }
+            }
+        } else {
+            warn!("Worker {} not found in worker pool", worker_id);
+        }
+
+        let remaining = self.workers.read().await.len();
+        info!("Worker {} removed (remaining workers: {})", worker_id, remaining);
+    }
+
+    /// Get current worker count (for monitoring)
+    pub async fn active_workers(&self) -> usize {
+        self.workers.read().await.len()
+    }
+
+    /// Start persistent worker pool
+    ///
+    /// Spawns initial workers based on configuration.
+    /// Workers run continuously until shutdown.
+    pub async fn start_workers(&self) {
+        let worker_count = {
+            let config = self.config.read().await;
+            config.workers
+        };
+
+        info!("Starting {} persistent workers", worker_count);
+        for _ in 0..worker_count {
+            self.spawn_worker().await;
+        }
+    }
+
+    /// Shutdown all workers gracefully
+    pub async fn shutdown_all_workers(&self) {
+        info!("Shutting down all workers");
+
+        let worker_ids: Vec<usize> = {
+            let workers = self.workers.read().await;
+            workers.keys().copied().collect()
+        };
+
+        for worker_id in worker_ids {
+            self.shutdown_worker(worker_id).await;
+        }
+
+        info!("All workers shut down");
     }
 
     /// Download a single file
