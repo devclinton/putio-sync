@@ -39,17 +39,17 @@ impl ProgressLogger {
     /// Create a new progress logger based on file size
     fn new(file_size: u64, filename: String) -> Self {
         let progress_interval = match file_size {
-            0..SIZE_256MB => 0.0,      // No progress logging for files under 256MB
-            SIZE_256MB..SIZE_512MB => 50.0,  // Log every 50% for files 256MB-512MB
-            SIZE_512MB..SIZE_1GB => 40.0,    // Log every 40% for files 512MB-1GB
-            SIZE_1GB..SIZE_2GB => 35.0,      // Log every 35% for files 1GB-2GB
-            SIZE_2GB..SIZE_4GB => 25.0,      // Log every 25% for files 2GB-4GB
-            SIZE_4GB..SIZE_8GB => 15.0,      // Log every 15% for files 4GB-8GB
-            SIZE_8GB..SIZE_16GB => 7.0,      // Log every 7% for files 8GB-16GB
-            SIZE_16GB..SIZE_30GB => 3.0,     // Log every 3% for files 16GB-30GB
-            SIZE_30GB..SIZE_40GB => 2.0,     // Log every 2% for files 30GB-40GB
-            SIZE_40GB..SIZE_50GB => 1.5,     // Log every 1.5% for files 40GB-50GB
-            SIZE_50GB.. => 1.25,             // Log every 1.25% for files over 50GB
+            0..SIZE_256MB => 0.0,           // No progress logging for files under 256MB
+            SIZE_256MB..SIZE_512MB => 50.0, // Log every 50% for files 256MB-512MB
+            SIZE_512MB..SIZE_1GB => 40.0,   // Log every 40% for files 512MB-1GB
+            SIZE_1GB..SIZE_2GB => 35.0,     // Log every 35% for files 1GB-2GB
+            SIZE_2GB..SIZE_4GB => 25.0,     // Log every 25% for files 2GB-4GB
+            SIZE_4GB..SIZE_8GB => 15.0,     // Log every 15% for files 4GB-8GB
+            SIZE_8GB..SIZE_16GB => 7.0,     // Log every 7% for files 8GB-16GB
+            SIZE_16GB..SIZE_30GB => 3.0,    // Log every 3% for files 16GB-30GB
+            SIZE_30GB..SIZE_40GB => 2.0,    // Log every 2% for files 30GB-40GB
+            SIZE_40GB..SIZE_50GB => 1.5,    // Log every 1.5% for files 40GB-50GB
+            SIZE_50GB.. => 1.25,            // Log every 1.25% for files over 50GB
         };
 
         Self {
@@ -447,7 +447,7 @@ pub async fn stream_download(
                             };
                             logger.maybe_log_progress(total_downloaded, size);
                         }
-                    } else if bytes_downloaded % (10 * 1024 * 1024) == 0 {
+                    } else if bytes_downloaded.is_multiple_of(10 * 1024 * 1024) {
                         // Fallback debug logging for files without expected_size
                         debug!("Downloaded {} bytes so far...", bytes_downloaded);
                     }
@@ -482,10 +482,10 @@ pub async fn stream_download(
 
     // Wait for disk writer to finish and check for errors
     let disk_result = writer_handle.await.map_err(|e| {
-        DownloadError::IoError(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Disk writer task panicked: {}", e),
-        ))
+        DownloadError::IoError(std::io::Error::other(format!(
+            "Disk writer task panicked: {}",
+            e
+        )))
     })?;
 
     // Propagate any network errors

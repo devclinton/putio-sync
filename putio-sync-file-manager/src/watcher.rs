@@ -599,11 +599,7 @@ pub struct WatcherConfig {
 
 impl WatcherConfig {
     /// Create new watcher config
-    pub fn new(
-        watch_dirs: Vec<PathBuf>,
-        parent_id: Option<i64>,
-        interval_seconds: u64,
-    ) -> Self {
+    pub fn new(watch_dirs: Vec<PathBuf>, parent_id: Option<i64>, interval_seconds: u64) -> Self {
         Self {
             watch_dirs,
             parent_id,

@@ -24,9 +24,9 @@ impl PutioApiClient {
     /// # Examples
     ///
     /// ```no_run
-    /// # use putio_sync_client::ApiClient;
+    /// # use putio_sync_client::PutioApiClient;
     /// # async fn example() {
-    /// let client = ApiClient::new("token".to_string());
+    /// let client = PutioApiClient::new("token".to_string());
     /// let folder_id = client.resolve_path("/Movies/Action").await.unwrap();
     /// println!("Folder ID: {}", folder_id);
     /// # }

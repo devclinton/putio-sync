@@ -27,9 +27,9 @@ impl PutioApiClient {
     /// # Examples
     ///
     /// ```no_run
-    /// # use putio_sync_client::ApiClient;
+    /// # use putio_sync_client::PutioApiClient;
     /// # async fn example() {
-    /// let client = ApiClient::new("your_token".to_string());
+    /// let client = PutioApiClient::new("your_token".to_string());
     /// client.delete_files(vec![123, 456, 789]).await.unwrap();
     /// # }
     /// ```
@@ -72,9 +72,9 @@ impl PutioApiClient {
     /// # Examples
     ///
     /// ```no_run
-    /// # use putio_sync_client::ApiClient;
+    /// # use putio_sync_client::PutioApiClient;
     /// # async fn example() {
-    /// let client = ApiClient::new("your_token".to_string());
+    /// let client = PutioApiClient::new("your_token".to_string());
     /// client.delete_folder_recursive(123).await.unwrap();
     /// # }
     /// ```

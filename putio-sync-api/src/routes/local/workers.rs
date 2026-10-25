@@ -46,9 +46,7 @@ pub fn router() -> Router<AppState> {
 /// GET /local/workers
 ///
 /// Returns list of all active workers with their bandwidth usage and limits.
-async fn list_workers(
-    State(state): State<AppState>,
-) -> Result<Json<WorkersResponse>, ApiError> {
+async fn list_workers(State(state): State<AppState>) -> Result<Json<WorkersResponse>, ApiError> {
     let worker_stats = state.download_manager.get_worker_stats().await;
 
     let mut workers = Vec::new();

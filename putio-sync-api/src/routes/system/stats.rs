@@ -6,11 +6,7 @@
 //! - GET  /stats/disk     - Disk space information
 
 use crate::error::ApiError;
-use axum::{
-    extract::State,
-    routing::get,
-    Json, Router,
-};
+use axum::{extract::State, routing::get, Json, Router};
 use putio_sync_db::models::HistoryAction;
 use serde::Serialize;
 use tracing::error;
@@ -55,12 +51,11 @@ pub fn router() -> Router<AppState> {
 /// Get download statistics
 ///
 /// GET /stats/downloads
-async fn download_stats(
-    State(state): State<AppState>,
-) -> Result<Json<DownloadStats>, ApiError> {
-    let db = state.database.as_ref().ok_or_else(|| {
-        ApiError::InternalError("Database not available".to_string())
-    })?;
+async fn download_stats(State(state): State<AppState>) -> Result<Json<DownloadStats>, ApiError> {
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     let history_repo = db.history();
 
@@ -83,15 +78,9 @@ async fn download_stats(
         })?;
 
     let total_bytes: i64 = downloads.iter().map(|d| d.file_size).sum();
-    let total_time_seconds: i64 = downloads
-        .iter()
-        .filter_map(|d| d.duration_seconds)
-        .sum();
+    let total_time_seconds: i64 = downloads.iter().filter_map(|d| d.duration_seconds).sum();
 
-    let total_speed: i64 = downloads
-        .iter()
-        .filter_map(|d| d.average_speed)
-        .sum();
+    let total_speed: i64 = downloads.iter().filter_map(|d| d.average_speed).sum();
 
     let speed_count = downloads
         .iter()
@@ -115,18 +104,12 @@ async fn download_stats(
 /// Get transfer statistics
 ///
 /// GET /stats/transfers
-async fn transfer_stats(
-    State(state): State<AppState>,
-) -> Result<Json<TransferStats>, ApiError> {
+async fn transfer_stats(State(state): State<AppState>) -> Result<Json<TransferStats>, ApiError> {
     // Fetch current transfers from Put.io
-    let transfers_response = state
-        .client
-        .list_transfers()
-        .await
-        .map_err(|e| {
-            error!("Failed to list transfers: {}", e);
-            ApiError::InternalError(format!("Failed to list transfers: {}", e))
-        })?;
+    let transfers_response = state.client.list_transfers().await.map_err(|e| {
+        error!("Failed to list transfers: {}", e);
+        ApiError::InternalError(format!("Failed to list transfers: {}", e))
+    })?;
 
     // Count transfers by status
     let active_transfers = transfers_response
@@ -181,9 +164,7 @@ async fn transfer_stats(
 /// Get disk space statistics
 ///
 /// GET /stats/disk
-async fn disk_stats(
-    State(state): State<AppState>,
-) -> Result<Json<DiskStats>, ApiError> {
+async fn disk_stats(State(state): State<AppState>) -> Result<Json<DiskStats>, ApiError> {
     let config = state.config.read().await;
     let download_dir = &config.download.target_directory;
 
@@ -208,7 +189,10 @@ async fn disk_stats(
         }
         Err(e) => {
             error!("Failed to get disk stats for {:?}: {}", download_dir, e);
-            Err(ApiError::InternalError(format!("Failed to get disk stats: {}", e)))
+            Err(ApiError::InternalError(format!(
+                "Failed to get disk stats: {}",
+                e
+            )))
         }
     }
 }

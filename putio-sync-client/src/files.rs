@@ -27,9 +27,9 @@ impl PutioApiClient {
     /// # Examples
     ///
     /// ```no_run
-    /// # use putio_sync_client::ApiClient;
+    /// # use putio_sync_client::PutioApiClient;
     /// # async fn example() {
-    /// let client = ApiClient::new("my_token".to_string());
+    /// let client = PutioApiClient::new("my_token".to_string());
     /// let files = client.list_files(0).await.unwrap();
     /// println!("Found {} files", files.files.len());
     /// # }
@@ -49,9 +49,9 @@ impl PutioApiClient {
     /// # Examples
     ///
     /// ```no_run
-    /// # use putio_sync_client::ApiClient;
+    /// # use putio_sync_client::PutioApiClient;
     /// # async fn example() {
-    /// let client = ApiClient::new("my_token".to_string());
+    /// let client = PutioApiClient::new("my_token".to_string());
     /// let file = client.get_file_details(12345).await.unwrap();
     /// println!("File name: {}", file.file.name);
     /// # }
@@ -74,9 +74,9 @@ impl PutioApiClient {
     /// # Examples
     ///
     /// ```no_run
-    /// # use putio_sync_client::ApiClient;
+    /// # use putio_sync_client::PutioApiClient;
     /// # async fn example() {
-    /// let client = ApiClient::new("my_token".to_string());
+    /// let client = PutioApiClient::new("my_token".to_string());
     /// let url = client.get_download_url(12345);
     /// println!("Download URL: {}", url);
     /// # }
@@ -99,10 +99,10 @@ impl PutioApiClient {
     /// # Examples
     ///
     /// ```no_run
-    /// # use putio_sync_client::ApiClient;
+    /// # use putio_sync_client::PutioApiClient;
     /// # use std::path::Path;
     /// # async fn example() {
-    /// let client = ApiClient::new("my_token".to_string());
+    /// let client = PutioApiClient::new("my_token".to_string());
     ///
     /// // Upload a torrent file
     /// let file_path = Path::new("/path/to/file.torrent");

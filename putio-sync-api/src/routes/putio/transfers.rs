@@ -39,9 +39,8 @@ async fn list_transfers(
     State(state): State<AppState>,
 ) -> Result<Json<ListResponse<TransferResponse>>, ApiError> {
     let config = state.config.read().await;
-    transfers::list_transfers(&config)
-        .await
-        .map(Json)}
+    transfers::list_transfers(&config).await.map(Json)
+}
 
 /// Add a new transfer
 ///
@@ -51,9 +50,8 @@ async fn add_transfer(
     Json(request): Json<AddTransferRequest>,
 ) -> Result<Json<TransferResponse>, ApiError> {
     let config = state.config.read().await;
-    transfers::add_transfer(&config, request)
-        .await
-        .map(Json)}
+    transfers::add_transfer(&config, request).await.map(Json)
+}
 
 /// Get transfer details
 ///
@@ -65,7 +63,8 @@ async fn get_transfer(
     let config = state.config.read().await;
     transfers::get_transfer(&config, transfer_id)
         .await
-        .map(Json)}
+        .map(Json)
+}
 
 /// Remove a transfer
 ///
@@ -77,7 +76,8 @@ async fn remove_transfer(
     let config = state.config.read().await;
     transfers::remove_transfer(&config, transfer_id)
         .await
-        .map(Json)}
+        .map(Json)
+}
 
 /// Start/resume a transfer
 ///
@@ -89,7 +89,10 @@ async fn start_transfer(
     // Put.io doesn't have explicit start/stop API - transfers start automatically
     // This endpoint is provided for API consistency but is a no-op
     Ok(Json(SuccessResponse {
-        message: format!("Transfer {} is managed automatically by Put.io", transfer_id),
+        message: format!(
+            "Transfer {} is managed automatically by Put.io",
+            transfer_id
+        ),
     }))
 }
 
@@ -103,7 +106,10 @@ async fn stop_transfer(
     // Put.io doesn't have explicit start/stop API
     // Users should delete the transfer to stop it
     Ok(Json(SuccessResponse {
-        message: format!("To stop transfer {}, use DELETE /putio/transfers/{}", transfer_id, transfer_id),
+        message: format!(
+            "To stop transfer {}, use DELETE /putio/transfers/{}",
+            transfer_id, transfer_id
+        ),
     }))
 }
 

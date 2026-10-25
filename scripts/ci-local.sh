@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local CI script - runs the same checks as GitHub Actions CI
+# Local CI gate - the source of truth for merges. GitHub Actions runs this same script.
 
 set -e
 
@@ -35,6 +35,9 @@ fi
 
 # Display Rust version
 print_step "Rust version information"
+if [ -f rust-toolchain.toml ]; then
+    echo "Pinned toolchain: $(grep '^channel' rust-toolchain.toml | cut -d'"' -f2)"
+fi
 rustc --version
 cargo --version
 echo ""

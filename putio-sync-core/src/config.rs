@@ -451,45 +451,10 @@ impl Config {
     /// # Examples
     ///
     /// ```no_run
-    /// use putio_sync_core::config::*;
+    /// use putio_sync_core::config::Config;
     /// use std::path::PathBuf;
     ///
-    /// let config = Config {
-    ///     auth: None,
-    ///     sync: SyncConfig {
-    ///         local_path: PathBuf::from("/tmp/putio"),
-    ///         remote_parent_id: Some(0),
-    ///         delete_after_download: true,
-    ///     },
-    ///     download: DownloadConfig {
-    ///         workers: 3,
-    ///         target_directory: PathBuf::from("/tmp/putio"),
-    ///         max_concurrent: Some(3),
-    ///         buffer_size_mb: 16,
-    ///         chunk_size_mb: None,
-    ///         resume_enabled: true,
-    ///         skip_existing: false,
-    ///         delete_after_download: false,
-    ///         progress_style: ProgressStyle::PerFile,
-    ///         sort_order: SortOrder::ByDate,
-    ///         reverse_sort: false,
-    ///         whitelist_patterns: None,
-    ///         blacklist_patterns: None,
-    ///         bandwidth_limit_bytes_per_sec: None,
-    ///         max_retries: 3,
-    ///         retry_initial_delay_secs: 1,
-    ///         delete_empty_folders: true,
-    ///     },
-    ///     watch: WatchConfig {
-    ///         enabled: false,
-    ///         paths: vec![],
-    ///         refresh_cycle: 60,
-    ///         parent_folder_id: Some(0),
-    ///         archive_directory: None,
-    ///         delete_after_upload: false,
-    ///     },
-    ///     notifications: NotificationConfig::default(),
-    /// };
+    /// let config = Config::default();
     /// config.save(&PathBuf::from("config.toml")).unwrap();
     /// ```
     pub fn save<P: AsRef<Path>>(&self, path: P) -> CoreResult<()> {

@@ -110,10 +110,13 @@ pub async fn execute_server(
 
     info!("✓ HTTP API server started successfully");
     info!("API endpoints available at:");
-    info!("  - Files:     http://{}/api/files", addr);
-    info!("  - Local:     http://{}/api/local", addr);
-    info!("  - Transfers: http://{}/api/transfers", addr);
-    info!("  - Queue:     http://{}/api/queue", addr);
+    info!("  - Health:    http://{}/health", addr);
+    info!("  - Put.io:    http://{}/putio/{{files,transfers}}", addr);
+    info!(
+        "  - Local:     http://{}/local/{{files,queue,downloads,watcher,workers}}",
+        addr
+    );
+    info!("  - System:    http://{}/{{settings,stats,history}}", addr);
     info!("");
     info!("Press Ctrl+C to stop the server");
 
@@ -375,12 +378,18 @@ fn spawn_download_daemon(config: Config) -> std::thread::JoinHandle<()> {
                                 let file_id = match transfer.file_id {
                                     Some(id) => id,
                                     None => {
-                                        warn!("Transfer {} has no file_id, skipping", transfer.name);
+                                        warn!(
+                                            "Transfer {} has no file_id, skipping",
+                                            transfer.name
+                                        );
                                         continue;
                                     }
                                 };
 
-                                info!("Starting automatic download: {} (file_id: {})", transfer.name, file_id);
+                                info!(
+                                    "Starting automatic download: {} (file_id: {})",
+                                    transfer.name, file_id
+                                );
 
                                 // Get file details from Put.io
                                 let file_details = match client.get_file_details(file_id).await {

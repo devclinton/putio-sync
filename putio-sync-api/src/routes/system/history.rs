@@ -73,18 +73,22 @@ async fn get_history(
     let limit = query.limit.unwrap_or(50).min(500) as i64; // Cap at 500
     let offset = query.offset.unwrap_or(0) as i64;
 
-    let db = state.database.as_ref().ok_or_else(|| {
-        ApiError::InternalError("Database not available".to_string())
-    })?;
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     let history_repo = db.history();
 
     // Parse action filter
-    let action = query.action.as_ref().and_then(|a| match a.to_lowercase().as_str() {
-        "downloaded" => Some(HistoryAction::Downloaded),
-        "deleted" => Some(HistoryAction::Deleted),
-        _ => None,
-    });
+    let action = query
+        .action
+        .as_ref()
+        .and_then(|a| match a.to_lowercase().as_str() {
+            "downloaded" => Some(HistoryAction::Downloaded),
+            "deleted" => Some(HistoryAction::Deleted),
+            _ => None,
+        });
 
     // Query history
     let entries_db = history_repo
@@ -130,9 +134,10 @@ async fn get_history(
 async fn get_history_stats(
     State(state): State<AppState>,
 ) -> Result<Json<HistoryStatsResponse>, ApiError> {
-    let db = state.database.as_ref().ok_or_else(|| {
-        ApiError::InternalError("Database not available".to_string())
-    })?;
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     let history_repo = db.history();
 
@@ -154,10 +159,7 @@ async fn get_history_stats(
 
     let total_bytes_downloaded: i64 = downloads.iter().map(|d| d.file_size).sum();
 
-    let total_speed: i64 = downloads
-        .iter()
-        .filter_map(|d| d.average_speed)
-        .sum();
+    let total_speed: i64 = downloads.iter().filter_map(|d| d.average_speed).sum();
 
     let speed_count = downloads
         .iter()

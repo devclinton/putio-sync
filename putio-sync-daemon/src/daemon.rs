@@ -269,25 +269,34 @@ impl PutioDaemon {
         }
 
         // Spawn watch task if file watcher is configured
-        let watch_task = if self.file_watcher.is_some() && self.client.is_some() && self.database.is_some() {
-            let config_guard = self.config.read().await;
-            let watch_interval = config_guard.watch_interval;
-            let delete_after_upload = config_guard.delete_after_upload;
-            drop(config_guard);
+        let watch_task =
+            if self.file_watcher.is_some() && self.client.is_some() && self.database.is_some() {
+                let config_guard = self.config.read().await;
+                let watch_interval = config_guard.watch_interval;
+                let delete_after_upload = config_guard.delete_after_upload;
+                drop(config_guard);
 
-            // Clone Arc (cheap) - watcher remains accessible for API hot reload
-            let watcher = self.file_watcher.clone().unwrap();
-            let client = self.client.clone().unwrap();
-            let database = self.database.clone().unwrap();
-            let config = self.config.clone();
+                // Clone Arc (cheap) - watcher remains accessible for API hot reload
+                let watcher = self.file_watcher.clone().unwrap();
+                let client = self.client.clone().unwrap();
+                let database = self.database.clone().unwrap();
+                let config = self.config.clone();
 
-            Some(tokio::spawn(async move {
-                Self::run_watch_loop(watcher, client, database, config, watch_interval, delete_after_upload).await;
-            }))
-        } else {
-            info!("File watcher not configured, skipping watch task");
-            None
-        };
+                Some(tokio::spawn(async move {
+                    Self::run_watch_loop(
+                        watcher,
+                        client,
+                        database,
+                        config,
+                        watch_interval,
+                        delete_after_upload,
+                    )
+                    .await;
+                }))
+            } else {
+                info!("File watcher not configured, skipping watch task");
+                None
+            };
 
         // Spawn download tasks if in local mode (not API mode)
         let (sync_task, download_task) = match &self.download_mode {
@@ -319,7 +328,10 @@ impl PutioDaemon {
                 }
             }
             Some(DownloadMode::Remote { api_url, .. }) => {
-                info!("Running in API mode - downloads handled by API server at {}", api_url);
+                info!(
+                    "Running in API mode - downloads handled by API server at {}",
+                    api_url
+                );
                 (None, None)
             }
             None => {
@@ -329,14 +341,36 @@ impl PutioDaemon {
         };
 
         info!("Daemon started successfully");
-        info!("  - Watch task: {}", if watch_task.is_some() { "running" } else { "disabled" });
-        info!("  - Sync task: {}", if sync_task.is_some() { "running" } else { "disabled" });
-        info!("  - Download workers task: {}", if download_task.is_some() { "running" } else { "disabled" });
+        info!(
+            "  - Watch task: {}",
+            if watch_task.is_some() {
+                "running"
+            } else {
+                "disabled"
+            }
+        );
+        info!(
+            "  - Sync task: {}",
+            if sync_task.is_some() {
+                "running"
+            } else {
+                "disabled"
+            }
+        );
+        info!(
+            "  - Download workers task: {}",
+            if download_task.is_some() {
+                "running"
+            } else {
+                "disabled"
+            }
+        );
         info!("Press Ctrl+C to stop");
 
         // Wait for shutdown signal
-        tokio::signal::ctrl_c().await
-            .map_err(|e| crate::error::DaemonError::InternalError(format!("Failed to listen for Ctrl+C: {}", e)))?;
+        tokio::signal::ctrl_c().await.map_err(|e| {
+            crate::error::DaemonError::InternalError(format!("Failed to listen for Ctrl+C: {}", e))
+        })?;
 
         info!("Received shutdown signal");
 
@@ -380,7 +414,10 @@ impl PutioDaemon {
             };
 
             if !watch_enabled {
-                debug!("Watch task cycle #{} - watcher disabled, skipping scan", cycle);
+                debug!(
+                    "Watch task cycle #{} - watcher disabled, skipping scan",
+                    cycle
+                );
                 tokio::time::sleep(interval).await;
                 continue;
             }
@@ -388,7 +425,10 @@ impl PutioDaemon {
             debug!("Watch task cycle #{}", cycle);
 
             // Scan watch directories for new torrent/magnet files
-            match watcher.scan_once(&client, delete_after_upload, Some(&database)).await {
+            match watcher
+                .scan_once(&client, delete_after_upload, Some(&database))
+                .await
+            {
                 Ok(stats) => {
                     if stats.files_found > 0 {
                         info!(
