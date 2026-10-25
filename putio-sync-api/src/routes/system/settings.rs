@@ -25,9 +25,9 @@ use putio_sync_core::logging::ConsoleFormat;
 async fn persist_config(state: &AppState) -> Result<(), ApiError> {
     if let Some(ref config_path) = state.config_path {
         let config = state.config.read().await;
-        config.save(config_path.as_ref()).map_err(|e| {
-            ApiError::InternalError(format!("Failed to persist config: {}", e))
-        })?;
+        config
+            .save(config_path.as_ref())
+            .map_err(|e| ApiError::InternalError(format!("Failed to persist config: {}", e)))?;
     }
     Ok(())
 }
@@ -52,9 +52,7 @@ fn parse_sort_order(s: &str) -> Result<SortOrder, ApiError> {
     match s.to_lowercase().as_str() {
         "bydate" | "by-date" | "by_date" | "date" => Ok(SortOrder::ByDate),
         "byname" | "by-name" | "by_name" | "name" => Ok(SortOrder::ByName),
-        "byextension" | "by-extension" | "by_extension" | "extension" => {
-            Ok(SortOrder::ByExtension)
-        }
+        "byextension" | "by-extension" | "by_extension" | "extension" => Ok(SortOrder::ByExtension),
         "bysize" | "by-size" | "by_size" | "size" => Ok(SortOrder::BySize),
         _ => Err(ApiError::BadRequest(format!(
             "Invalid sort_order: '{}'. Valid values: ByDate, ByName, ByExtension, BySize",
@@ -164,7 +162,11 @@ async fn get_download_settings(
 
     Ok(Json(DownloadSettings {
         workers: config.download.workers,
-        target_directory: config.download.target_directory.to_string_lossy().to_string(),
+        target_directory: config
+            .download
+            .target_directory
+            .to_string_lossy()
+            .to_string(),
         buffer_size_mb: config.download.buffer_size_mb,
         skip_existing: config.download.skip_existing,
         delete_after_download: config.download.delete_after_download,

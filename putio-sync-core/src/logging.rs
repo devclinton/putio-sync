@@ -10,9 +10,7 @@
 use crate::error::CoreError;
 use std::path::PathBuf;
 use tracing_appender::{non_blocking, rolling};
-use tracing_subscriber::{
-    fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
-};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 /// Result type for logging operations
 pub type LoggingResult<T> = Result<T, CoreError>;
@@ -147,7 +145,11 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
     let filter = build_filter(config)?;
 
     // Initialize based on enabled outputs and console format
-    match (config.console_enabled, config.file_enabled, &config.console_format) {
+    match (
+        config.console_enabled,
+        config.file_enabled,
+        &config.console_format,
+    ) {
         // Both console and file logging
         (true, true, ConsoleFormat::Compact) => {
             let file_layer = create_file_layer_concrete(&config.file_path)?;
@@ -156,7 +158,9 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
                 .with(filter)
                 .with(fmt::layer().compact())
                 .try_init()
-                .map_err(|e| CoreError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
+                .map_err(|e| {
+                    CoreError::ConfigError(format!("Failed to initialize logging: {}", e))
+                })?;
         }
         (true, true, ConsoleFormat::Pretty) => {
             let file_layer = create_file_layer_concrete(&config.file_path)?;
@@ -165,7 +169,9 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
                 .with(filter)
                 .with(fmt::layer().pretty())
                 .try_init()
-                .map_err(|e| CoreError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
+                .map_err(|e| {
+                    CoreError::ConfigError(format!("Failed to initialize logging: {}", e))
+                })?;
         }
         (true, true, ConsoleFormat::Json) => {
             let file_layer = create_file_layer_concrete(&config.file_path)?;
@@ -174,7 +180,9 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
                 .with(filter)
                 .with(fmt::layer().json())
                 .try_init()
-                .map_err(|e| CoreError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
+                .map_err(|e| {
+                    CoreError::ConfigError(format!("Failed to initialize logging: {}", e))
+                })?;
         }
         // Console only
         (true, false, ConsoleFormat::Compact) => {
@@ -182,21 +190,27 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
                 .with(filter)
                 .with(fmt::layer().compact())
                 .try_init()
-                .map_err(|e| CoreError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
+                .map_err(|e| {
+                    CoreError::ConfigError(format!("Failed to initialize logging: {}", e))
+                })?;
         }
         (true, false, ConsoleFormat::Pretty) => {
             tracing_subscriber::registry()
                 .with(filter)
                 .with(fmt::layer().pretty())
                 .try_init()
-                .map_err(|e| CoreError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
+                .map_err(|e| {
+                    CoreError::ConfigError(format!("Failed to initialize logging: {}", e))
+                })?;
         }
         (true, false, ConsoleFormat::Json) => {
             tracing_subscriber::registry()
                 .with(filter)
                 .with(fmt::layer().json())
                 .try_init()
-                .map_err(|e| CoreError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
+                .map_err(|e| {
+                    CoreError::ConfigError(format!("Failed to initialize logging: {}", e))
+                })?;
         }
         // File only
         (false, true, _) => {
@@ -205,7 +219,9 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
                 .with(file_layer)
                 .with(filter)
                 .try_init()
-                .map_err(|e| CoreError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
+                .map_err(|e| {
+                    CoreError::ConfigError(format!("Failed to initialize logging: {}", e))
+                })?;
         }
         // Neither enabled - use default console
         (false, false, _) => {
@@ -213,7 +229,9 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
                 .with(filter)
                 .with(fmt::layer().compact())
                 .try_init()
-                .map_err(|e| CoreError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
+                .map_err(|e| {
+                    CoreError::ConfigError(format!("Failed to initialize logging: {}", e))
+                })?;
         }
     }
 
@@ -252,9 +270,7 @@ fn create_file_layer_concrete(
     let (non_blocking, _guard) = non_blocking(file_appender);
 
     // Create file layer without ANSI colors
-    let file_layer = fmt::layer()
-        .with_writer(non_blocking)
-        .with_ansi(false);
+    let file_layer = fmt::layer().with_writer(non_blocking).with_ansi(false);
 
     // Note: We're intentionally leaking the guard here because we need it to live
     // for the entire program lifetime. This is the recommended approach for
@@ -266,6 +282,19 @@ fn create_file_layer_concrete(
 
 /// Build the environment filter from configuration
 fn build_filter(config: &LoggingConfig) -> LoggingResult<EnvFilter> {
+    // A bare word is accepted by EnvFilter as a target name, so a typo like "inf" would
+    // silently disable logging. Plain values must be real levels; directive strings
+    // ("info,putio_sync_download=debug") are passed through as-is.
+    let is_directive = config.level.contains('=') || config.level.contains(',');
+    if !is_directive {
+        config
+            .level
+            .parse::<tracing_subscriber::filter::LevelFilter>()
+            .map_err(|e| {
+                CoreError::ConfigError(format!("Invalid log level '{}': {}", config.level, e))
+            })?;
+    }
+
     // Start with the base level
     let mut filter = EnvFilter::try_new(&config.level).map_err(|e| {
         CoreError::ConfigError(format!("Invalid log level '{}': {}", config.level, e))
@@ -351,8 +380,10 @@ mod tests {
 
     #[test]
     fn test_build_filter() {
-        let mut config = LoggingConfig::default();
-        config.level = "debug".to_string();
+        let config = LoggingConfig {
+            level: "debug".to_string(),
+            ..Default::default()
+        };
 
         let filter = build_filter(&config);
         assert!(filter.is_ok());
@@ -360,20 +391,34 @@ mod tests {
 
     #[test]
     fn test_build_filter_with_module_filters() {
-        let mut config = LoggingConfig::default();
-        config.module_filters = vec![
-            "putio_sync_download=trace".to_string(),
-            "putio_sync_client=debug".to_string(),
-        ];
+        let config = LoggingConfig {
+            module_filters: vec![
+                "putio_sync_download=trace".to_string(),
+                "putio_sync_client=debug".to_string(),
+            ],
+            ..Default::default()
+        };
 
         let filter = build_filter(&config);
         assert!(filter.is_ok());
     }
 
     #[test]
+    fn test_directive_log_level() {
+        let config = LoggingConfig {
+            level: "info,putio_sync_download=debug".to_string(),
+            ..Default::default()
+        };
+
+        assert!(build_filter(&config).is_ok());
+    }
+
+    #[test]
     fn test_invalid_log_level() {
-        let mut config = LoggingConfig::default();
-        config.level = "invalid_level".to_string();
+        let config = LoggingConfig {
+            level: "invalid_level".to_string(),
+            ..Default::default()
+        };
 
         let filter = build_filter(&config);
         assert!(filter.is_err());

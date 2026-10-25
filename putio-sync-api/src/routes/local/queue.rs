@@ -3,11 +3,11 @@
 //! Provides REST API endpoints for download queue operations:
 //! - GET  /local/queue               - Get current download queue
 //! - PUT  /local/queue               - Update entire queue
-//! - POST /local/queue/*path/move_up      - Move item up in queue
-//! - POST /local/queue/*path/move_down    - Move item down in queue
-//! - POST /local/queue/*path/move_first   - Move item to first position
-//! - POST /local/queue/*path/move_last    - Move item to last position
-//! - POST /local/queue/*path/skip         - Skip item in queue
+//! - POST /local/queue/<file_id>/move_up    - Move item up in queue
+//! - POST /local/queue/<file_id>/move_down  - Move item down in queue
+//! - POST /local/queue/<file_id>/move_first - Move item to first position
+//! - POST /local/queue/<file_id>/move_last  - Move item to last position
+//! - POST /local/queue/<file_id>/skip       - Skip item in queue
 
 use crate::error::ApiError;
 use crate::models::SuccessResponse;
@@ -62,27 +62,27 @@ pub fn router() -> Router<AppState> {
         .route("/clear", post(clear_completed))
         .route("/pause", post(pause_all))
         .route("/resume", post(resume_all))
-        .route("/*path/move_up", post(move_up))
-        .route("/*path/move_down", post(move_down))
-        .route("/*path/move_first", post(move_first))
-        .route("/*path/move_last", post(move_last))
-        .route("/*path/skip", post(skip_item))
+        .route("/:file_id/move_up", post(move_up))
+        .route("/:file_id/move_down", post(move_down))
+        .route("/:file_id/move_first", post(move_first))
+        .route("/:file_id/move_last", post(move_last))
+        .route("/:file_id/skip", post(skip_item))
 }
 
 /// Get current download queue
 ///
 /// GET /local/queue
-async fn get_queue(
-    State(state): State<AppState>,
-) -> Result<Json<QueueResponse>, ApiError> {
-    let db = state.database.as_ref().ok_or_else(|| {
-        ApiError::InternalError("Database not available".to_string())
-    })?;
+async fn get_queue(State(state): State<AppState>) -> Result<Json<QueueResponse>, ApiError> {
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     let queue_repo = db.queue();
-    let items = queue_repo.get_all().await.map_err(|e| {
-        ApiError::InternalError(format!("Failed to get queue: {}", e))
-    })?;
+    let items = queue_repo
+        .get_all()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get queue: {}", e)))?;
 
     let response_items: Vec<QueueItemResponse> = items
         .into_iter()
@@ -114,9 +114,10 @@ async fn update_queue(
     State(state): State<AppState>,
     Json(items): Json<Vec<QueueItemResponse>>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    let db = state.database.as_ref().ok_or_else(|| {
-        ApiError::InternalError("Database not available".to_string())
-    })?;
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     let queue_repo = db.queue();
 
@@ -125,9 +126,7 @@ async fn update_queue(
         queue_repo
             .update_priority(item.file_id, index as i64)
             .await
-            .map_err(|e| {
-                ApiError::InternalError(format!("Failed to update priority: {}", e))
-            })?;
+            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
     }
 
     Ok(Json(SuccessResponse {
@@ -137,7 +136,7 @@ async fn update_queue(
 
 /// Move queue item up
 ///
-/// POST /local/queue/*path/move_up
+/// POST /local/queue/:file_id/move_up
 async fn move_up(
     State(state): State<AppState>,
     Path(file_id_str): Path<String>,
@@ -154,9 +153,10 @@ async fn move_up(
     let queue_repo = db.queue();
 
     // Get all items sorted by priority
-    let mut items = queue_repo.get_all().await.map_err(|e| {
-        ApiError::InternalError(format!("Failed to get queue: {}", e))
-    })?;
+    let mut items = queue_repo
+        .get_all()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get queue: {}", e)))?;
 
     // Sort by priority (lower number = higher priority)
     items.sort_by_key(|item| item.priority);
@@ -191,7 +191,7 @@ async fn move_up(
 
 /// Move queue item down
 ///
-/// POST /local/queue/*path/move_down
+/// POST /local/queue/:file_id/move_down
 async fn move_down(
     State(state): State<AppState>,
     Path(file_id_str): Path<String>,
@@ -208,9 +208,10 @@ async fn move_down(
     let queue_repo = db.queue();
 
     // Get all items sorted by priority
-    let mut items = queue_repo.get_all().await.map_err(|e| {
-        ApiError::InternalError(format!("Failed to get queue: {}", e))
-    })?;
+    let mut items = queue_repo
+        .get_all()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get queue: {}", e)))?;
 
     // Sort by priority (lower number = higher priority)
     items.sort_by_key(|item| item.priority);
@@ -245,7 +246,7 @@ async fn move_down(
 
 /// Move queue item to first position
 ///
-/// POST /local/queue/*path/move_first
+/// POST /local/queue/:file_id/move_first
 async fn move_first(
     State(state): State<AppState>,
     Path(file_id_str): Path<String>,
@@ -262,9 +263,10 @@ async fn move_first(
     let queue_repo = db.queue();
 
     // Get all items sorted by priority
-    let mut items = queue_repo.get_all().await.map_err(|e| {
-        ApiError::InternalError(format!("Failed to get queue: {}", e))
-    })?;
+    let mut items = queue_repo
+        .get_all()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get queue: {}", e)))?;
 
     // Sort by priority (lower number = higher priority)
     items.sort_by_key(|item| item.priority);
@@ -294,7 +296,7 @@ async fn move_first(
 
 /// Move queue item to last position
 ///
-/// POST /local/queue/*path/move_last
+/// POST /local/queue/:file_id/move_last
 async fn move_last(
     State(state): State<AppState>,
     Path(file_id_str): Path<String>,
@@ -311,9 +313,10 @@ async fn move_last(
     let queue_repo = db.queue();
 
     // Get all items sorted by priority
-    let mut items = queue_repo.get_all().await.map_err(|e| {
-        ApiError::InternalError(format!("Failed to get queue: {}", e))
-    })?;
+    let mut items = queue_repo
+        .get_all()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get queue: {}", e)))?;
 
     // Sort by priority (lower number = higher priority)
     items.sort_by_key(|item| item.priority);
@@ -343,7 +346,7 @@ async fn move_last(
 
 /// Skip queue item
 ///
-/// POST /local/queue/*path/skip
+/// POST /local/queue/:file_id/skip
 async fn skip_item(
     State(state): State<AppState>,
     Path(file_id_str): Path<String>,
@@ -359,6 +362,14 @@ async fn skip_item(
 
     let queue_repo = db.queue();
 
+    let existing = queue_repo
+        .get_by_file_id(file_id)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get queue item: {}", e)))?;
+    if existing.is_none() {
+        return Err(ApiError::NotFound("Item not found in queue".to_string()));
+    }
+
     // Remove the item from queue
     queue_repo
         .remove(file_id)
@@ -373,17 +384,17 @@ async fn skip_item(
 /// Get queue statistics
 ///
 /// GET /local/queue/stats
-async fn get_stats(
-    State(state): State<AppState>,
-) -> Result<Json<QueueStatsResponse>, ApiError> {
-    let db = state.database.as_ref().ok_or_else(|| {
-        ApiError::InternalError("Database not available".to_string())
-    })?;
+async fn get_stats(State(state): State<AppState>) -> Result<Json<QueueStatsResponse>, ApiError> {
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     let queue_repo = db.queue();
-    let stats = queue_repo.get_stats().await.map_err(|e| {
-        ApiError::InternalError(format!("Failed to get queue stats: {}", e))
-    })?;
+    let stats = queue_repo
+        .get_stats()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get queue stats: {}", e)))?;
 
     Ok(Json(QueueStatsResponse {
         total: stats.total as usize,
@@ -398,17 +409,17 @@ async fn get_stats(
 /// Clear completed items from queue
 ///
 /// POST /local/queue/clear
-async fn clear_completed(
-    State(state): State<AppState>,
-) -> Result<Json<SuccessResponse>, ApiError> {
-    let db = state.database.as_ref().ok_or_else(|| {
-        ApiError::InternalError("Database not available".to_string())
-    })?;
+async fn clear_completed(State(state): State<AppState>) -> Result<Json<SuccessResponse>, ApiError> {
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     let queue_repo = db.queue();
-    let count = queue_repo.clear_completed().await.map_err(|e| {
-        ApiError::InternalError(format!("Failed to clear completed items: {}", e))
-    })?;
+    let count = queue_repo
+        .clear_completed()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to clear completed items: {}", e)))?;
 
     Ok(Json(SuccessResponse {
         message: format!("Cleared {} completed items from queue", count),
@@ -418,17 +429,17 @@ async fn clear_completed(
 /// Pause all active downloads
 ///
 /// POST /local/queue/pause
-async fn pause_all(
-    State(state): State<AppState>,
-) -> Result<Json<SuccessResponse>, ApiError> {
-    let db = state.database.as_ref().ok_or_else(|| {
-        ApiError::InternalError("Database not available".to_string())
-    })?;
+async fn pause_all(State(state): State<AppState>) -> Result<Json<SuccessResponse>, ApiError> {
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     let queue_repo = db.queue();
-    let count = queue_repo.pause_all().await.map_err(|e| {
-        ApiError::InternalError(format!("Failed to pause queue: {}", e))
-    })?;
+    let count = queue_repo
+        .pause_all()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to pause queue: {}", e)))?;
 
     Ok(Json(SuccessResponse {
         message: format!("Paused {} items in queue", count),
@@ -438,17 +449,17 @@ async fn pause_all(
 /// Resume all paused downloads
 ///
 /// POST /local/queue/resume
-async fn resume_all(
-    State(state): State<AppState>,
-) -> Result<Json<SuccessResponse>, ApiError> {
-    let db = state.database.as_ref().ok_or_else(|| {
-        ApiError::InternalError("Database not available".to_string())
-    })?;
+async fn resume_all(State(state): State<AppState>) -> Result<Json<SuccessResponse>, ApiError> {
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     let queue_repo = db.queue();
-    let count = queue_repo.resume_all().await.map_err(|e| {
-        ApiError::InternalError(format!("Failed to resume queue: {}", e))
-    })?;
+    let count = queue_repo
+        .resume_all()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to resume queue: {}", e)))?;
 
     Ok(Json(SuccessResponse {
         message: format!("Resumed {} items in queue", count),

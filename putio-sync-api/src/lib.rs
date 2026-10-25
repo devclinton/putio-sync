@@ -19,7 +19,7 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     let config = Config::default();
-//!     let app = create_app(config);
+//!     let app = create_app(config, None, None, None).await.unwrap();
 //!     let listener = tokio::net::TcpListener::bind("0.0.0.0:15432")
 //!         .await
 //!         .unwrap();
@@ -103,7 +103,7 @@ pub struct AppState {
 ///     let config = Config::default();
 ///     let db_path = Some(PathBuf::from("putio-sync.db"));
 ///     let config_path = Some(PathBuf::from("config.toml"));
-///     let app = create_app(config, db_path, config_path).await.unwrap();
+///     let app = create_app(config, db_path, config_path, None).await.unwrap();
 ///     let listener = tokio::net::TcpListener::bind("0.0.0.0:15432")
 ///         .await
 ///         .unwrap();
@@ -120,10 +120,7 @@ pub async fn create_app(
     use tracing::{info, warn};
 
     // Get auth config and create API client
-    let auth = config
-        .auth
-        .as_ref()
-        .ok_or("No authentication configured")?;
+    let auth = config.auth.as_ref().ok_or("No authentication configured")?;
 
     let client = match auth.auth_method {
         AuthMethod::Token => {
@@ -148,7 +145,11 @@ pub async fn create_app(
                 Some(Arc::new(db))
             }
             Err(e) => {
-                warn!("Failed to initialize database at {}: {}", db_path.display(), e);
+                warn!(
+                    "Failed to initialize database at {}: {}",
+                    db_path.display(),
+                    e
+                );
                 warn!("Continuing without database (download tracking disabled)");
                 None
             }
@@ -198,6 +199,8 @@ pub async fn create_app(
             middleware::auth::require_auth,
         ))
         .with_state(state)
+        // Health is mounted after the auth layer so it never requires a token
+        .route("/health", axum::routing::get(health))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http()))
 }
@@ -245,20 +248,27 @@ fn create_history_router() -> Router<AppState> {
 
 fn create_legacy_files_router() -> Router<AppState> {
     // Legacy routes deprecated - use /putio/files and /local/files instead
-    Router::new()
-        .route("/", axum::routing::get(legacy_deprecated_placeholder))
+    Router::new().route("/", axum::routing::get(legacy_deprecated_placeholder))
 }
 
 fn create_legacy_transfers_router() -> Router<AppState> {
     // Legacy routes deprecated - use /putio/transfers instead
-    Router::new()
-        .route("/", axum::routing::get(legacy_deprecated_placeholder))
+    Router::new().route("/", axum::routing::get(legacy_deprecated_placeholder))
 }
 
 fn create_legacy_queue_router() -> Router<AppState> {
     // Legacy routes deprecated - use /local/queue instead
-    Router::new()
-        .route("/", axum::routing::get(legacy_deprecated_placeholder))
+    Router::new().route("/", axum::routing::get(legacy_deprecated_placeholder))
+}
+
+/// Unauthenticated liveness check
+///
+/// GET /health
+async fn health() -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
 }
 
 async fn legacy_deprecated_placeholder() -> &'static str {
@@ -272,9 +282,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_app() {
-        let mut config = Config::default();
         // Set up minimal auth config
-        config.auth = Some(AuthConfig::with_token("test_token".to_string()));
+        let config = Config {
+            auth: Some(AuthConfig::with_token("test_token".to_string())),
+            ..Default::default()
+        };
 
         let _app = create_app(config, None, None, None).await;
         // Test that app can be created without database, config path, or file watcher

@@ -4,6 +4,7 @@ This guide is for maintainers of the putio-sync project, covering release proced
 
 ## Table of Contents
 
+- [Quality Gate](#quality-gate)
 - [Release Process](#release-process)
 - [Package Management](#package-management)
 - [GitHub Secrets](#github-secrets)
@@ -11,6 +12,27 @@ This guide is for maintainers of the putio-sync project, covering release proced
 - [Troubleshooting CI/CD](#troubleshooting-cicd)
 - [Security](#security)
 - [Community Management](#community-management)
+
+---
+
+## Quality Gate
+
+`make ci` is the merge gate. It runs `scripts/ci-local.sh`: format check, clippy with
+`-D warnings`, all tests (including doc tests), and a release build. A change is ready when
+`make ci` passes locally; remote CI is a cheap mirror, not a requirement.
+
+- **Toolchain**: pinned in `rust-toolchain.toml`; rustup installs it automatically. To bump,
+  change `channel`, run `make ci`, fix any new lints, and commit both together.
+- **Lock file**: `Cargo.lock` is committed; update it deliberately with `make update`.
+- **Remote CI**: push/PR runs one Linux job that calls the same script. To also run the
+  macOS/Windows matrix and the beta toolchain:
+
+  ```bash
+  gh workflow run ci.yml -f full=true
+  ```
+
+- **Docker**: pushes to `main` build a `linux/amd64` image tagged `main` (pulled by the NAS);
+  version tags and manual runs (`gh workflow run docker.yml`) build amd64 + arm64.
 
 ---
 

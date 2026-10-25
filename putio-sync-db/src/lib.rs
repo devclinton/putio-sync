@@ -118,27 +118,27 @@ impl Database {
     }
 
     /// Get a download repository
-    pub fn downloads(&self) -> DownloadRepository {
+    pub fn downloads(&self) -> DownloadRepository<'_> {
         DownloadRepository::new(&self.pool)
     }
 
     /// Get a history repository
-    pub fn history(&self) -> HistoryRepository {
+    pub fn history(&self) -> HistoryRepository<'_> {
         HistoryRepository::new(&self.pool)
     }
 
     /// Get a stats repository
-    pub fn stats(&self) -> StatsRepository {
+    pub fn stats(&self) -> StatsRepository<'_> {
         StatsRepository::new(&self.pool)
     }
 
     /// Get a queue repository
-    pub fn queue(&self) -> QueueRepository {
+    pub fn queue(&self) -> QueueRepository<'_> {
         QueueRepository::new(&self.pool)
     }
 
     /// Get a processed torrents repository
-    pub fn processed_torrents(&self) -> ProcessedTorrentsRepository {
+    pub fn processed_torrents(&self) -> ProcessedTorrentsRepository<'_> {
         ProcessedTorrentsRepository::new(&self.pool)
     }
 
@@ -212,7 +212,7 @@ impl Database {
     async fn migrate_add_relative_path_column(&self) -> DbResult<()> {
         // Check if the column already exists
         let result: Result<(i64,), sqlx::Error> = sqlx::query_as(
-            "SELECT COUNT(*) FROM pragma_table_info('download_queue') WHERE name = 'relative_path'"
+            "SELECT COUNT(*) FROM pragma_table_info('download_queue') WHERE name = 'relative_path'",
         )
         .fetch_one(&self.pool)
         .await;
@@ -224,12 +224,14 @@ impl Database {
             }
             _ => {
                 debug!("Adding 'relative_path' column to download_queue table");
-                sqlx::query("ALTER TABLE download_queue ADD COLUMN relative_path TEXT NOT NULL DEFAULT ''")
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|e| {
-                        DbError::DatabaseError(format!("Failed to add relative_path column: {}", e))
-                    })?;
+                sqlx::query(
+                    "ALTER TABLE download_queue ADD COLUMN relative_path TEXT NOT NULL DEFAULT ''",
+                )
+                .execute(&self.pool)
+                .await
+                .map_err(|e| {
+                    DbError::DatabaseError(format!("Failed to add relative_path column: {}", e))
+                })?;
                 info!("Successfully added 'relative_path' column to download_queue table");
                 Ok(())
             }

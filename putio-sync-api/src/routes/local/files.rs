@@ -51,9 +51,7 @@ pub fn router() -> Router<AppState> {
 /// List files in the download directory
 ///
 /// GET /local/files
-async fn list_files(
-    State(state): State<AppState>,
-) -> Result<Json<ListFilesResponse>, ApiError> {
+async fn list_files(State(state): State<AppState>) -> Result<Json<ListFilesResponse>, ApiError> {
     let config = state.config.read().await;
     let download_dir = &config.download.target_directory;
 
@@ -64,9 +62,7 @@ async fn list_files(
             if let Ok(metadata) = entry.metadata() {
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().to_string();
-                let modified = metadata.modified().ok().map(|time| {
-                    format!("{:?}", time)
-                });
+                let modified = metadata.modified().ok().map(|time| format!("{:?}", time));
 
                 files.push(LocalFileInfo {
                     path: path.to_string_lossy().to_string(),
@@ -103,7 +99,8 @@ async fn get_file_info(
     let metadata = std::fs::metadata(&full_path)
         .map_err(|e| ApiError::NotFound(format!("File not found: {}", e)))?;
 
-    let name = full_path.file_name()
+    let name = full_path
+        .file_name()
         .ok_or_else(|| ApiError::BadRequest("Invalid file name".to_string()))?
         .to_string_lossy()
         .to_string();

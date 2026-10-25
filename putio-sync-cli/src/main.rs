@@ -77,11 +77,18 @@ async fn main() {
     let mut config = if let Some(config_path) = args.config.as_ref() {
         match Config::load(config_path) {
             Ok(cfg) => {
-                eprintln!("✅ Configuration loaded successfully from {}", config_path.display());
+                eprintln!(
+                    "✅ Configuration loaded successfully from {}",
+                    config_path.display()
+                );
                 cfg
             }
             Err(e) => {
-                eprintln!("⚠️  Failed to load config from {}: {}", config_path.display(), e);
+                eprintln!(
+                    "⚠️  Failed to load config from {}: {}",
+                    config_path.display(),
+                    e
+                );
                 eprintln!("⚠️  Using defaults");
                 Config::default()
             }

@@ -489,15 +489,13 @@ impl DiagnosticsCollector {
         use sysinfo::{Disks, System};
 
         // Get disk space information for the working directory
-        let disk_space_mb = std::env::current_dir()
-            .ok()
-            .and_then(|cwd| {
-                let disks = Disks::new_with_refreshed_list();
-                disks
-                    .iter()
-                    .find(|disk| cwd.starts_with(disk.mount_point()))
-                    .map(|disk| disk.available_space() / 1024 / 1024) // Convert bytes to MB
-            });
+        let disk_space_mb = std::env::current_dir().ok().and_then(|cwd| {
+            let disks = Disks::new_with_refreshed_list();
+            disks
+                .iter()
+                .find(|disk| cwd.starts_with(disk.mount_point()))
+                .map(|disk| disk.available_space() / 1024 / 1024) // Convert bytes to MB
+        });
 
         // Get current process memory usage
         let memory_usage_mb = {

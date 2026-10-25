@@ -36,9 +36,8 @@ async fn list_files(
     Query(request): Query<ListFilesRequest>,
 ) -> Result<Json<ListResponse<FileResponse>>, ApiError> {
     let config = state.config.read().await;
-    files::list_files(&config, request)
-        .await
-        .map(Json)}
+    files::list_files(&config, request).await.map(Json)
+}
 
 /// Get file details
 ///
@@ -48,9 +47,8 @@ async fn get_file(
     Path(file_id): Path<i64>,
 ) -> Result<Json<FileResponse>, ApiError> {
     let config = state.config.read().await;
-    files::get_file(&config, file_id)
-        .await
-        .map(Json)}
+    files::get_file(&config, file_id).await.map(Json)
+}
 
 /// Delete a file or folder
 ///
@@ -64,9 +62,8 @@ async fn delete_file(
     };
 
     let config = state.config.read().await;
-    files::delete_files(&config, request)
-        .await
-        .map(Json)}
+    files::delete_files(&config, request).await.map(Json)
+}
 
 /// Get download URL for a file
 ///

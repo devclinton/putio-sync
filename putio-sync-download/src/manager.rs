@@ -274,13 +274,19 @@ impl DownloadManager {
             *config = new_config;
             info!("Download configuration updated via hot reload");
             info!("  Workers: {}", config.workers);
-            info!("  Bandwidth limit: {:?}", config.bandwidth_limit_bytes_per_sec);
+            info!(
+                "  Bandwidth limit: {:?}",
+                config.bandwidth_limit_bytes_per_sec
+            );
             info!("  Buffer size: {} MB", config.buffer_size_mb);
         }
 
         // Handle worker scaling if count changed
         if new_worker_count != old_worker_count {
-            info!("Worker count changed: {} -> {}, scaling workers", old_worker_count, new_worker_count);
+            info!(
+                "Worker count changed: {} -> {}, scaling workers",
+                old_worker_count, new_worker_count
+            );
             self.scale_workers(new_worker_count).await;
         }
     }
@@ -367,10 +373,14 @@ impl DownloadManager {
                 // Check for shutdown signal
                 match shutdown_rx.try_recv() {
                     Ok(_) | Err(broadcast::error::TryRecvError::Closed) => {
-                        info!("Worker {} received shutdown signal, exiting gracefully", worker_id);
+                        info!(
+                            "Worker {} received shutdown signal, exiting gracefully",
+                            worker_id
+                        );
                         break;
                     }
-                    Err(broadcast::error::TryRecvError::Empty) | Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                    Err(broadcast::error::TryRecvError::Empty)
+                    | Err(broadcast::error::TryRecvError::Lagged(_)) => {
                         // No shutdown signal, continue working
                     }
                 }
@@ -397,11 +407,14 @@ impl DownloadManager {
 
         // Store worker info
         let mut workers = self.workers.write().await;
-        workers.insert(worker_id, WorkerInfo {
-            handle,
-            shutdown_tx,
-            stats: stats.clone(),
-        });
+        workers.insert(
+            worker_id,
+            WorkerInfo {
+                handle,
+                shutdown_tx,
+                stats: stats.clone(),
+            },
+        );
         info!(
             "Worker {} spawned successfully (total workers: {}, per-worker limit: {:?} bytes/sec)",
             worker_id,
@@ -422,7 +435,10 @@ impl DownloadManager {
         if let Some(worker) = worker_info {
             // Send shutdown signal
             if let Err(e) = worker.shutdown_tx.send(()) {
-                warn!("Failed to send shutdown signal to worker {}: {}", worker_id, e);
+                warn!(
+                    "Failed to send shutdown signal to worker {}: {}",
+                    worker_id, e
+                );
             }
 
             // Wait for worker to finish (with timeout)
@@ -434,7 +450,10 @@ impl DownloadManager {
                     warn!("Worker {} panicked during shutdown: {}", worker_id, e);
                 }
                 Err(_) => {
-                    warn!("Worker {} shutdown timed out (may still be processing)", worker_id);
+                    warn!(
+                        "Worker {} shutdown timed out (may still be processing)",
+                        worker_id
+                    );
                 }
             }
         } else {
@@ -442,7 +461,10 @@ impl DownloadManager {
         }
 
         let remaining = self.workers.read().await.len();
-        info!("Worker {} removed (remaining workers: {})", worker_id, remaining);
+        info!(
+            "Worker {} removed (remaining workers: {})",
+            worker_id, remaining
+        );
     }
 
     /// Get current worker count (for monitoring)
@@ -943,7 +965,10 @@ impl DownloadManager {
             // Check if already downloaded
             match downloads_repo.find_by_file_id(file.id).await {
                 Ok(Some(record)) if record.status == "completed" => {
-                    debug!("Skipping already downloaded file: {} (ID: {})", file.name, file.id);
+                    debug!(
+                        "Skipping already downloaded file: {} (ID: {})",
+                        file.name, file.id
+                    );
                     stats.files_skipped += 1;
                     continue;
                 }
@@ -951,7 +976,10 @@ impl DownloadManager {
                     // Not downloaded or incomplete - continue to queue check
                 }
                 Err(e) => {
-                    warn!("Database error checking downloads for file {}: {}", file.id, e);
+                    warn!(
+                        "Database error checking downloads for file {}: {}",
+                        file.id, e
+                    );
                     // Continue anyway - will try to add to queue
                 }
             }
@@ -977,11 +1005,24 @@ impl DownloadManager {
             }
 
             // Add to queue
-            debug!("Adding to queue: {} ({} bytes) at path '{}'", file.name, file.size, relative_path);
+            debug!(
+                "Adding to queue: {} ({} bytes) at path '{}'",
+                file.name, file.size, relative_path
+            );
 
             let download_url = format!("https://api.put.io/v2/files/{}/download", file.id);
 
-            match queue_repo.add(file.id, &file.name, file.size, &download_url, &relative_path, 0).await {
+            match queue_repo
+                .add(
+                    file.id,
+                    &file.name,
+                    file.size,
+                    &download_url,
+                    &relative_path,
+                    0,
+                )
+                .await
+            {
                 Ok(_) => {
                     stats.files_downloaded += 1; // Renamed but means "added to queue"
                     debug!("Added to queue: {}", file.name);
@@ -1021,8 +1062,9 @@ impl DownloadManager {
         let queue_repo = db.queue();
 
         // Atomically claim next pending item (prevents race conditions between workers)
-        let queue_item = queue_repo.claim_next_pending().await
-            .map_err(|e| DownloadError::InternalError(format!("Failed to claim next pending item: {}", e)))?;
+        let queue_item = queue_repo.claim_next_pending().await.map_err(|e| {
+            DownloadError::InternalError(format!("Failed to claim next pending item: {}", e))
+        })?;
 
         let queue_item = match queue_item {
             Some(item) => item,
@@ -1034,13 +1076,19 @@ impl DownloadManager {
 
         let file_id = queue_item.file_id;
 
-        info!("Processing queue item: {} (ID: {})", queue_item.filename, file_id);
+        info!(
+            "Processing queue item: {} (ID: {})",
+            queue_item.filename, file_id
+        );
 
         // Verify file still exists on Put.io and get current info
         match self.client.get_file_details(file_id).await {
             Ok(file_response) => {
                 let file_info = file_response.file;
-                info!("File verified on Put.io: {} ({} bytes)", file_info.name, file_info.size);
+                info!(
+                    "File verified on Put.io: {} ({} bytes)",
+                    file_info.name, file_info.size
+                );
 
                 // Download the file using the stored relative path
                 let download_file = DownloadFile {
@@ -1057,19 +1105,28 @@ impl DownloadManager {
 
                         // Delete from Put.io if configured
                         if config.delete_after_download {
-                            info!("Deleting file from Put.io: {} (ID: {})", file_info.name, file_id);
+                            info!(
+                                "Deleting file from Put.io: {} (ID: {})",
+                                file_info.name, file_id
+                            );
                             match self.client.delete_files(vec![file_id]).await {
                                 Ok(_) => {
                                     info!("Successfully deleted from Put.io: {}", file_info.name);
                                 }
                                 Err(e) => {
-                                    warn!("Failed to delete file {} from Put.io: {}", file_info.name, e);
+                                    warn!(
+                                        "Failed to delete file {} from Put.io: {}",
+                                        file_info.name, e
+                                    );
                                 }
                             }
                         }
 
                         // Update queue status to completed and remove
-                        if let Err(e) = queue_repo.update_status(file_id, putio_sync_db::models::QueueStatus::Completed).await {
+                        if let Err(e) = queue_repo
+                            .update_status(file_id, putio_sync_db::models::QueueStatus::Completed)
+                            .await
+                        {
                             warn!("Failed to update queue status to completed: {}", e);
                         }
 
@@ -1083,7 +1140,10 @@ impl DownloadManager {
                         error!("Failed to download: {}", file_info.name);
 
                         // Update queue status to failed
-                        if let Err(e) = queue_repo.update_status(file_id, putio_sync_db::models::QueueStatus::Failed).await {
+                        if let Err(e) = queue_repo
+                            .update_status(file_id, putio_sync_db::models::QueueStatus::Failed)
+                            .await
+                        {
                             warn!("Failed to update queue status to failed: {}", e);
                         }
 
@@ -1092,7 +1152,10 @@ impl DownloadManager {
                 }
             }
             Err(e) => {
-                warn!("File {} no longer exists on Put.io or is inaccessible: {}", file_id, e);
+                warn!(
+                    "File {} no longer exists on Put.io or is inaccessible: {}",
+                    file_id, e
+                );
 
                 // Remove from queue since file doesn't exist
                 if let Err(e) = queue_repo.remove(file_id).await {
@@ -1113,7 +1176,10 @@ impl DownloadManager {
     ///
     /// * `interval_secs` - How often to sync in seconds
     pub async fn run_sync_loop(&self, interval_secs: u64) {
-        info!("Starting Put.io sync loop with interval: {}s", interval_secs);
+        info!(
+            "Starting Put.io sync loop with interval: {}s",
+            interval_secs
+        );
         let interval = std::time::Duration::from_secs(interval_secs);
         let mut cycle = 0;
 
@@ -1153,8 +1219,9 @@ impl DownloadManager {
         // Check if there are pending items in queue
         if let Some(db) = &self.database {
             let queue_repo = db.queue();
-            let pending_items = queue_repo.get_pending().await
-                .map_err(|e| DownloadError::InternalError(format!("Failed to check queue: {}", e)))?;
+            let pending_items = queue_repo.get_pending().await.map_err(|e| {
+                DownloadError::InternalError(format!("Failed to check queue: {}", e))
+            })?;
 
             if pending_items.is_empty() {
                 debug!("Queue is empty, nothing to process");
@@ -1215,7 +1282,10 @@ impl DownloadManager {
         }
 
         if total_processed > 0 {
-            info!("Worker cycle completed - {} workers processed {} items total", num_workers, total_processed);
+            info!(
+                "Worker cycle completed - {} workers processed {} items total",
+                num_workers, total_processed
+            );
         }
 
         Ok(total_processed)
@@ -1231,7 +1301,10 @@ impl DownloadManager {
         let mut folder_names = std::collections::HashMap::new();
 
         while let Some((current_folder, current_path)) = folders_to_process.pop() {
-            debug!("Fetching files from folder: {} (path: {})", current_folder, current_path);
+            debug!(
+                "Fetching files from folder: {} (path: {})",
+                current_folder, current_path
+            );
 
             let response = self
                 .client
@@ -1277,8 +1350,9 @@ impl DownloadManager {
         let queue_repo = db.queue();
 
         // Get all items with 'downloading' status
-        let all_items = queue_repo.get_all().await
-            .map_err(|e| DownloadError::InternalError(format!("Failed to get queue items: {}", e)))?;
+        let all_items = queue_repo.get_all().await.map_err(|e| {
+            DownloadError::InternalError(format!("Failed to get queue items: {}", e))
+        })?;
 
         let downloading_items: Vec<_> = all_items
             .into_iter()
@@ -1328,7 +1402,10 @@ impl DownloadManager {
     }
 
     /// Get progress for a specific download by file_id
-    pub async fn get_download_progress(&self, file_id: i64) -> DownloadResult<Option<ActiveDownload>> {
+    pub async fn get_download_progress(
+        &self,
+        file_id: i64,
+    ) -> DownloadResult<Option<ActiveDownload>> {
         let active_downloads = self.get_active_downloads().await?;
         Ok(active_downloads.into_iter().find(|d| d.file_id == file_id))
     }
@@ -1346,9 +1423,12 @@ impl DownloadManager {
         let queue_repo = db.queue();
 
         // Update status to pending (effectively pausing it)
-        queue_repo.update_status(file_id, putio_sync_db::models::QueueStatus::Pending)
+        queue_repo
+            .update_status(file_id, putio_sync_db::models::QueueStatus::Pending)
             .await
-            .map_err(|e| DownloadError::InternalError(format!("Failed to cancel download: {}", e)))?;
+            .map_err(|e| {
+                DownloadError::InternalError(format!("Failed to cancel download: {}", e))
+            })?;
 
         // Remove from progress trackers
         self.progress_trackers.write().await.remove(&file_id);

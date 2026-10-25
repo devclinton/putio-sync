@@ -34,9 +34,9 @@ impl PutioApiClient {
     /// # Examples
     ///
     /// ```no_run
-    /// # use putio_sync_client::ApiClient;
+    /// # use putio_sync_client::PutioApiClient;
     /// # async fn example() {
-    /// let client = ApiClient::new("my_token".to_string());
+    /// let client = PutioApiClient::new("my_token".to_string());
     ///
     /// // Add transfer with magnet link
     /// let magnet = "magnet:?xt=urn:btih:...";
@@ -78,10 +78,10 @@ impl PutioApiClient {
     /// # Examples
     ///
     /// ```no_run
-    /// # use putio_sync_client::ApiClient;
+    /// # use putio_sync_client::PutioApiClient;
     /// # use std::path::Path;
     /// # async fn example() {
-    /// let client = ApiClient::new("my_token".to_string());
+    /// let client = PutioApiClient::new("my_token".to_string());
     ///
     /// // Add transfer from .torrent file
     /// let file_path = Path::new("/path/to/file.torrent");
@@ -117,9 +117,9 @@ impl PutioApiClient {
     /// # Examples
     ///
     /// ```no_run
-    /// # use putio_sync_client::ApiClient;
+    /// # use putio_sync_client::PutioApiClient;
     /// # async fn example() {
-    /// let client = ApiClient::new("my_token".to_string());
+    /// let client = PutioApiClient::new("my_token".to_string());
     /// let transfers = client.list_transfers().await.unwrap();
     ///
     /// for transfer in transfers.transfers {
@@ -142,9 +142,9 @@ impl PutioApiClient {
     /// # Examples
     ///
     /// ```no_run
-    /// # use putio_sync_client::ApiClient;
+    /// # use putio_sync_client::PutioApiClient;
     /// # async fn example() {
-    /// let client = ApiClient::new("my_token".to_string());
+    /// let client = PutioApiClient::new("my_token".to_string());
     /// let transfer = client.get_transfer_info(12345).await.unwrap();
     /// println!("Transfer: {} ({}%)", transfer.transfer.name, transfer.transfer.percent_done.unwrap_or(0));
     /// # }
@@ -166,9 +166,9 @@ impl PutioApiClient {
     /// # Examples
     ///
     /// ```no_run
-    /// # use putio_sync_client::ApiClient;
+    /// # use putio_sync_client::PutioApiClient;
     /// # async fn example() {
-    /// let client = ApiClient::new("my_token".to_string());
+    /// let client = PutioApiClient::new("my_token".to_string());
     /// client.cancel_transfers(vec![12345, 67890]).await.unwrap();
     /// println!("Transfers cancelled");
     /// # }
@@ -205,9 +205,9 @@ impl PutioApiClient {
     /// # Examples
     ///
     /// ```no_run
-    /// # use putio_sync_client::ApiClient;
+    /// # use putio_sync_client::PutioApiClient;
     /// # async fn example() {
-    /// let client = ApiClient::new("my_token".to_string());
+    /// let client = PutioApiClient::new("my_token".to_string());
     /// client.retry_transfer(12345).await.unwrap();
     /// println!("Transfer retried");
     /// # }

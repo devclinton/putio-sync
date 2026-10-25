@@ -77,8 +77,10 @@ impl<'a> QueueRepository<'a> {
     /// Returns None if no pending items are available.
     pub async fn claim_next_pending(&self) -> DbResult<Option<QueueItem>> {
         // Start a transaction to ensure atomicity
-        let mut tx = self.pool.begin().await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to begin transaction: {}", e)))?;
+        let mut tx =
+            self.pool.begin().await.map_err(|e| {
+                DbError::DatabaseError(format!("Failed to begin transaction: {}", e))
+            })?;
 
         // Get the next pending item
         let item = sqlx::query_as::<_, QueueItem>(
@@ -109,7 +111,8 @@ impl<'a> QueueRepository<'a> {
         }
 
         // Commit the transaction
-        tx.commit().await
+        tx.commit()
+            .await
             .map_err(|e| DbError::DatabaseError(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(item)
@@ -141,7 +144,9 @@ impl<'a> QueueRepository<'a> {
         .bind(file_id)
         .fetch_optional(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to get queue item by file_id: {}", e)))?;
+        .map_err(|e| {
+            DbError::DatabaseError(format!("Failed to get queue item by file_id: {}", e))
+        })?;
 
         Ok(item)
     }

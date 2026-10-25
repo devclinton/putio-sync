@@ -90,14 +90,11 @@ async fn get_status(
 /// Manually trigger a scan
 ///
 /// POST /local/watcher/scan
-async fn trigger_scan(
-    State(state): State<AppState>,
-) -> Result<Json<ScanResponse>, ApiError> {
+async fn trigger_scan(State(state): State<AppState>) -> Result<Json<ScanResponse>, ApiError> {
     // Check if watcher is available
-    let watcher = state
-        .file_watcher
-        .as_ref()
-        .ok_or_else(|| ApiError::BadRequest("File watcher not available (daemon mode required)".to_string()))?;
+    let watcher = state.file_watcher.as_ref().ok_or_else(|| {
+        ApiError::BadRequest("File watcher not available (daemon mode required)".to_string())
+    })?;
 
     // Get configuration
     let config = state.config.read().await;
@@ -106,7 +103,14 @@ async fn trigger_scan(
 
     // Trigger scan
     info!("Manual scan triggered via API");
-    match watcher.scan_once(&state.client, delete_after_upload, state.database.as_deref()).await {
+    match watcher
+        .scan_once(
+            &state.client,
+            delete_after_upload,
+            state.database.as_deref(),
+        )
+        .await
+    {
         Ok(stats) => {
             info!(
                 "Manual scan completed: {} found, {} processed, {} skipped, {} failed",
@@ -132,9 +136,7 @@ async fn trigger_scan(
 /// Start file watcher
 ///
 /// POST /local/watcher/start
-async fn start_watcher(
-    State(state): State<AppState>,
-) -> Result<Json<SuccessResponse>, ApiError> {
+async fn start_watcher(State(state): State<AppState>) -> Result<Json<SuccessResponse>, ApiError> {
     // Update configuration
     {
         let mut config = state.config.write().await;
@@ -164,9 +166,7 @@ async fn start_watcher(
 /// Stop file watcher
 ///
 /// POST /local/watcher/stop
-async fn stop_watcher(
-    State(state): State<AppState>,
-) -> Result<Json<SuccessResponse>, ApiError> {
+async fn stop_watcher(State(state): State<AppState>) -> Result<Json<SuccessResponse>, ApiError> {
     // Update configuration
     {
         let mut config = state.config.write().await;
