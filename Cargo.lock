@@ -2243,6 +2243,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2251,6 +2252,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "ctrlc",
+ "mockito",
  "notify",
  "putio-sync-client",
  "putio-sync-db",
@@ -2259,6 +2261,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

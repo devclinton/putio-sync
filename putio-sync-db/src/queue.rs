@@ -76,46 +76,26 @@ impl<'a> QueueRepository<'a> {
     /// This prevents race conditions where multiple workers try to process the same item.
     /// Returns None if no pending items are available.
     pub async fn claim_next_pending(&self) -> DbResult<Option<QueueItem>> {
-        // Start a transaction to ensure atomicity
-        let mut tx =
-            self.pool.begin().await.map_err(|e| {
-                DbError::DatabaseError(format!("Failed to begin transaction: {}", e))
-            })?;
-
-        // Get the next pending item
-        let item = sqlx::query_as::<_, QueueItem>(
+        // A single write statement takes the write lock up front. A deferred transaction
+        // (SELECT then UPDATE) fails with SQLITE_BUSY when two workers upgrade at once,
+        // because SQLite skips the busy handler for read-to-write upgrades.
+        sqlx::query_as::<_, QueueItem>(
             r#"
-            SELECT * FROM download_queue
-            WHERE status = 'pending'
-            ORDER BY priority DESC, created_at ASC
-            LIMIT 1
+            UPDATE download_queue
+            SET status = 'downloading', updated_at = CURRENT_TIMESTAMP
+            WHERE file_id = (
+                SELECT file_id FROM download_queue
+                WHERE status = 'pending'
+                ORDER BY priority DESC, created_at ASC
+                LIMIT 1
+            )
+            AND status = 'pending'
+            RETURNING *
             "#,
         )
-        .fetch_optional(&mut *tx)
+        .fetch_optional(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to get next pending item: {}", e)))?;
-
-        if let Some(ref queue_item) = item {
-            // Update the status to downloading
-            sqlx::query(
-                r#"
-                UPDATE download_queue
-                SET status = 'downloading', updated_at = CURRENT_TIMESTAMP
-                WHERE file_id = ?
-                "#,
-            )
-            .bind(queue_item.file_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to update item status: {}", e)))?;
-        }
-
-        // Commit the transaction
-        tx.commit()
-            .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to commit transaction: {}", e)))?;
-
-        Ok(item)
+        .map_err(|e| DbError::DatabaseError(format!("Failed to claim queue item: {}", e)))
     }
 
     /// Get all queue items

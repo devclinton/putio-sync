@@ -102,6 +102,9 @@ pub struct DownloadSettings {
     pub reverse_sort: bool,
     pub whitelist_patterns: Option<String>,
     pub blacklist_patterns: Option<String>,
+    /// Missing in a PUT body means the default list
+    #[serde(default = "putio_sync_core::config::default_blocked_extensions")]
+    pub blocked_extensions: Vec<String>,
     pub bandwidth_limit_bytes_per_sec: Option<u64>,
     pub max_retries: u32,
     pub retry_initial_delay_secs: u64,
@@ -177,6 +180,7 @@ async fn get_download_settings(
         reverse_sort: config.download.reverse_sort,
         whitelist_patterns: config.download.whitelist_patterns.clone(),
         blacklist_patterns: config.download.blacklist_patterns.clone(),
+        blocked_extensions: config.download.blocked_extensions.clone(),
         bandwidth_limit_bytes_per_sec: config.download.bandwidth_limit_bytes_per_sec,
         max_retries: config.download.max_retries,
         retry_initial_delay_secs: config.download.retry_initial_delay_secs,
@@ -211,6 +215,7 @@ async fn update_download_settings(
         config.download.reverse_sort = settings.reverse_sort;
         config.download.whitelist_patterns = settings.whitelist_patterns;
         config.download.blacklist_patterns = settings.blacklist_patterns;
+        config.download.blocked_extensions = settings.blocked_extensions;
         config.download.bandwidth_limit_bytes_per_sec = settings.bandwidth_limit_bytes_per_sec;
         config.download.max_retries = settings.max_retries;
         config.download.retry_initial_delay_secs = settings.retry_initial_delay_secs;

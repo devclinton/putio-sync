@@ -125,6 +125,11 @@ reverse_sort = false
 # Default: null
 # blacklist_patterns = "*.exe,*.bat,*.msi"
 
+# File extensions (without dot, case-insensitive) that are never downloaded.
+# Omit to use the default list; set [] to disable the guard.
+blocked_extensions = ["exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs",
+                      "js", "jar", "ps1", "lnk", "apk", "dmg", "pkg"]
+
 # Bandwidth limit in bytes per second
 # Limits download speed to prevent overwhelming the network
 # Examples:

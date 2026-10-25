@@ -142,7 +142,7 @@ fn default_max_backups() -> usize {
 /// ```
 pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
     // Build the filter
-    let filter = build_filter(config)?;
+    let (filter, source, directive) = build_filter(config)?;
 
     // Initialize based on enabled outputs and console format
     match (
@@ -235,6 +235,9 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
         }
     }
 
+    // RUST_LOG silently replaced the configured level before; say which one won.
+    tracing::info!(level = %directive, source = ?source, "Log level");
+
     Ok(())
 }
 
@@ -280,8 +283,19 @@ fn create_file_layer_concrete(
     Ok(file_layer)
 }
 
+/// Where the effective log level came from
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LevelSource {
+    /// `[logging]` in the config file
+    Config,
+    /// The `RUST_LOG` environment variable, which overrides the config
+    Env,
+}
+
 /// Build the environment filter from configuration
-fn build_filter(config: &LoggingConfig) -> LoggingResult<EnvFilter> {
+///
+/// Returns the filter, where its level came from, and the effective directive string.
+fn build_filter(config: &LoggingConfig) -> LoggingResult<(EnvFilter, LevelSource, String)> {
     // A bare word is accepted by EnvFilter as a target name, so a typo like "inf" would
     // silently disable logging. Plain values must be real levels; directive strings
     // ("info,putio_sync_download=debug") are passed through as-is.
@@ -309,12 +323,17 @@ fn build_filter(config: &LoggingConfig) -> LoggingResult<EnvFilter> {
 
     // Allow RUST_LOG environment variable to override if set
     if let Ok(env_filter) = std::env::var("RUST_LOG") {
-        filter = EnvFilter::try_new(env_filter).map_err(|e| {
+        let filter = EnvFilter::try_new(&env_filter).map_err(|e| {
             CoreError::ConfigError(format!("Invalid RUST_LOG environment variable: {}", e))
         })?;
+        return Ok((filter, LevelSource::Env, env_filter));
     }
 
-    Ok(filter)
+    let directive = std::iter::once(config.level.as_str())
+        .chain(config.module_filters.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(",");
+    Ok((filter, LevelSource::Config, directive))
 }
 
 /// Legacy initialization function for backward compatibility
@@ -376,6 +395,33 @@ mod tests {
 
         let json: ConsoleFormat = serde_json::from_str("\"json\"").unwrap();
         assert_eq!(json, ConsoleFormat::Json);
+    }
+
+    /// Serialises tests that change RUST_LOG
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn log_level_source_reports_env_override() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var("RUST_LOG").ok();
+        let config = LoggingConfig {
+            level: "debug".to_string(),
+            ..Default::default()
+        };
+
+        std::env::set_var("RUST_LOG", "info");
+        let (_, source, directive) = build_filter(&config).unwrap();
+        assert_eq!(source, LevelSource::Env);
+        assert_eq!(directive, "info");
+
+        std::env::remove_var("RUST_LOG");
+        let (_, source, directive) = build_filter(&config).unwrap();
+        assert_eq!(source, LevelSource::Config);
+        assert!(directive.starts_with("debug"), "{directive}");
+
+        if let Some(v) = previous {
+            std::env::set_var("RUST_LOG", v);
+        }
     }
 
     #[test]

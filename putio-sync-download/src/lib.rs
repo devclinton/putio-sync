@@ -3,6 +3,7 @@
 //! This crate provides download orchestration, streaming downloads,
 //! worker pools, and progress tracking for Put.io file synchronization.
 
+pub mod blocklist;
 pub mod error;
 pub mod files;
 pub mod manager;
@@ -13,6 +14,7 @@ pub mod utils;
 pub mod worker;
 
 // Re-export commonly used types
+pub use blocklist::{blocked_extension, default_blocked_extensions, is_blocked};
 pub use error::{DownloadError, DownloadResult};
 pub use files::{
     check_resume, cleanup_partial, create_temp_path, get_original_path, is_partial_download,

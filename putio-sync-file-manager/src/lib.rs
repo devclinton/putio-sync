@@ -9,6 +9,6 @@ pub mod watcher;
 // Re-export commonly used types
 pub use error::{FileManagerError, FileManagerResult};
 pub use watcher::{
-    calculate_file_checksum, calculate_string_checksum, TorrentWatchCore, TorrentWatcher,
-    WatchStats,
+    calculate_file_checksum, calculate_string_checksum, ProcessOutcome, TorrentWatchCore,
+    TorrentWatcher, WatchStats,
 };

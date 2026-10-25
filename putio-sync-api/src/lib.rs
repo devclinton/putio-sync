@@ -54,6 +54,7 @@ pub fn extract_download_config(config: &Config) -> DownloadConfig {
         retry_initial_delay_secs: config.download.retry_initial_delay_secs,
         workers: config.download.workers,
         delete_after_download: config.download.delete_after_download,
+        blocked_extensions: config.download.blocked_extensions.clone(),
     }
 }
 

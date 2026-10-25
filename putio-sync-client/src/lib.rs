@@ -76,7 +76,7 @@ pub mod transfers;
 
 // Re-export main types at crate root for convenience
 pub use auth::{AuthConfig, AuthMethod};
-pub use client::{PutioApiClient, DEFAULT_BASE_URL};
+pub use client::{error_chain, PutioApiClient, RetryPolicy, DEFAULT_BASE_URL};
 pub use error::{ClientError, ClientResult};
 pub use models::{
     AccountInfo, AccountInfoResponse, ApiError, ApiResponse, DiskInfo, FileEntry, FileResponse,
