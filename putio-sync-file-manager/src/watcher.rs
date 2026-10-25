@@ -29,6 +29,29 @@ pub struct WatchStats {
     pub files_failed: usize,
     /// Number of files skipped (already processed)
     pub files_skipped: usize,
+    /// Number of already-uploaded files removed or archived by this scan
+    pub cleaned_up: usize,
+}
+
+/// What `process_torrent_file` did with a watch file
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessOutcome {
+    /// Uploaded to Put.io now (or Put.io already had the transfer)
+    Uploaded,
+    /// Uploaded by an earlier scan or run; only the post-upload action is left
+    AlreadyUploaded,
+    /// The file disappeared before it could be processed
+    Gone,
+    /// The file content cannot be uploaded
+    Invalid(String),
+    /// Not a .torrent or .magnet file
+    Unsupported,
+}
+
+/// What a post-upload action did
+enum PostUploadAction {
+    Archived(PathBuf),
+    Deleted,
 }
 
 /// Runtime statistics for the file watcher
@@ -56,7 +79,7 @@ impl WatchStats {
 
     /// Get total files encountered
     pub fn total_files(&self) -> usize {
-        self.files_processed + self.files_failed + self.files_skipped
+        self.files_processed + self.files_failed + self.files_skipped + self.cleaned_up
     }
 
     /// Get success rate as percentage
@@ -72,6 +95,8 @@ impl WatchStats {
 pub struct TorrentWatchCore {
     /// Files that have been processed to avoid duplicates
     processed_files: Arc<Mutex<HashSet<PathBuf>>>,
+    /// Paths already warned about, so a stuck file is reported once, not every scan
+    warned: Mutex<HashSet<PathBuf>>,
 }
 
 impl TorrentWatchCore {
@@ -79,12 +104,16 @@ impl TorrentWatchCore {
     pub fn new() -> Self {
         Self {
             processed_files: Arc::new(Mutex::new(HashSet::new())),
+            warned: Mutex::new(HashSet::new()),
         }
     }
 
     /// Create a new torrent watch core with existing processed files
     pub fn with_processed_files(processed_files: Arc<Mutex<HashSet<PathBuf>>>) -> Self {
-        Self { processed_files }
+        Self {
+            processed_files,
+            warned: Mutex::new(HashSet::new()),
+        }
     }
 
     /// Perform a single scan of the specified directories
@@ -123,7 +152,7 @@ impl TorrentWatchCore {
             stats.files_found += torrent_files.len();
 
             if !torrent_files.is_empty() {
-                info!(
+                debug!(
                     "Found {} .torrent/.magnet file(s) in {}",
                     torrent_files.len(),
                     dir.display()
@@ -136,25 +165,62 @@ impl TorrentWatchCore {
                     .process_torrent_file(&file_path, client, parent_id, database)
                     .await
                 {
-                    Ok(true) => {
+                    Ok(ProcessOutcome::Uploaded) => {
                         stats.files_processed += 1;
                         info!("Successfully processed: {}", file_path.display());
 
-                        // Handle post-upload actions
-                        if let Err(e) = self
+                        match self
                             .handle_post_upload_action(&file_path, archive_dir, delete_after_upload)
                             .await
                         {
-                            error!(
-                                "Failed to handle post-upload action for {}: {}",
-                                file_path.display(),
-                                e
-                            );
+                            Ok(Some(PostUploadAction::Archived(to))) => {
+                                info!(path = %file_path.display(), to = %to.display(), "Archived uploaded watch file");
+                            }
+                            Ok(Some(PostUploadAction::Deleted)) => {
+                                info!(path = %file_path.display(), "Deleted uploaded watch file");
+                            }
+                            Ok(None) => {}
+                            Err(e) => self.warn_once(&file_path, |p| {
+                                warn!(path = %p.display(), error = %format!("{:#}", e), "Post-upload action failed");
+                            }),
                         }
                     }
-                    Ok(false) => {
+                    Ok(ProcessOutcome::AlreadyUploaded) => {
+                        if archive_dir.is_none() && !delete_after_upload {
+                            stats.files_skipped += 1;
+                            debug!("Skipped (already processed): {}", file_path.display());
+                            continue;
+                        }
+                        match self
+                            .handle_post_upload_action(&file_path, archive_dir, delete_after_upload)
+                            .await
+                        {
+                            Ok(Some(PostUploadAction::Archived(to))) => {
+                                stats.cleaned_up += 1;
+                                info!(path = %file_path.display(), to = %to.display(), "Archived already-uploaded watch file");
+                            }
+                            Ok(Some(PostUploadAction::Deleted)) => {
+                                stats.cleaned_up += 1;
+                                info!(path = %file_path.display(), "Removed already-uploaded watch file");
+                            }
+                            Ok(None) => stats.files_skipped += 1,
+                            Err(e) => {
+                                stats.files_failed += 1;
+                                self.warn_once(&file_path, |p| {
+                                    warn!(path = %p.display(), error = %format!("{:#}", e), "Failed to clean up already-uploaded watch file");
+                                });
+                            }
+                        }
+                    }
+                    Ok(ProcessOutcome::Gone) | Ok(ProcessOutcome::Unsupported) => {
                         stats.files_skipped += 1;
-                        debug!("Skipped (already processed): {}", file_path.display());
+                        debug!("Skipped: {}", file_path.display());
+                    }
+                    Ok(ProcessOutcome::Invalid(reason)) => {
+                        stats.files_failed += 1;
+                        self.warn_once(&file_path, |p| {
+                            warn!(path = %p.display(), reason = %reason, "Invalid watch file");
+                        });
                     }
                     Err(e) => {
                         stats.files_failed += 1;
@@ -164,29 +230,34 @@ impl TorrentWatchCore {
             }
         }
 
-        info!(
-            "Scan completed - directories: {}, files found: {}, processed: {}, skipped: {}, failed: {}",
+        let summary = format!(
+            "Scan completed - directories: {}, files found: {}, processed: {}, cleaned up: {}, skipped: {}, failed: {}",
             stats.directories_scanned,
             stats.files_found,
             stats.files_processed,
+            stats.cleaned_up,
             stats.files_skipped,
             stats.files_failed
         );
+        if stats.files_processed + stats.cleaned_up + stats.files_failed > 0 {
+            info!("{}", summary);
+        } else {
+            debug!("{}", summary);
+        }
 
         Ok(stats)
     }
 
     /// Process a single .torrent or .magnet file
     ///
-    /// Returns Ok(true) if the file was processed, Ok(false) if skipped (already processed),
-    /// or Err if there was an error.
+    /// Returns what happened to the file, or Err if the upload to Put.io failed.
     pub async fn process_torrent_file(
         &self,
         path: &Path,
         client: &PutioApiClient,
         parent_id: Option<i64>,
         database: Option<&Database>,
-    ) -> Result<bool> {
+    ) -> Result<ProcessOutcome> {
         // Check if already processed using checksum if database is available
         if let Some(db) = database {
             let checksum = if self.is_magnet_file(path) {
@@ -201,12 +272,17 @@ impl TorrentWatchCore {
                                 "Invalid magnet file content in {}: doesn't start with 'magnet:'",
                                 path.display()
                             );
-                            return Ok(false);
+                            return Ok(ProcessOutcome::Invalid(
+                                "magnet file content doesn't start with 'magnet:'".to_string(),
+                            ));
                         }
                     }
                     Err(e) => {
                         debug!("Failed to read magnet file {}: {}", path.display(), e);
-                        return Ok(false);
+                        return Ok(ProcessOutcome::Invalid(format!(
+                            "failed to read magnet file: {}",
+                            e
+                        )));
                     }
                 }
             } else {
@@ -231,7 +307,7 @@ impl TorrentWatchCore {
                     // Also add to in-memory set for consistency
                     let mut processed = self.processed_files.lock().unwrap();
                     processed.insert(path.to_path_buf());
-                    return Ok(false);
+                    return Ok(ProcessOutcome::AlreadyUploaded);
                 }
             }
         }
@@ -241,19 +317,19 @@ impl TorrentWatchCore {
             let processed = self.processed_files.lock().unwrap();
             if processed.contains(path) {
                 debug!("File already processed: {}", path.display());
-                return Ok(false);
+                return Ok(ProcessOutcome::AlreadyUploaded);
             }
         }
 
         // Verify file still exists and is a torrent/magnet
         if !path.exists() {
             debug!("File no longer exists: {}", path.display());
-            return Ok(false);
+            return Ok(ProcessOutcome::Gone);
         }
 
         if !self.is_torrent_file(path) && !self.is_magnet_file(path) {
             debug!("Not a .torrent or .magnet file: {}", path.display());
-            return Ok(false);
+            return Ok(ProcessOutcome::Unsupported);
         }
 
         let file_type = if self.is_magnet_file(path) {
@@ -272,13 +348,16 @@ impl TorrentWatchCore {
                     if magnet_link.starts_with("magnet:") {
                         client.add_transfer_url(magnet_link, parent_id, None).await
                     } else {
-                        return Err(anyhow::anyhow!(
-                            "Invalid magnet file content: doesn't start with 'magnet:'"
+                        return Ok(ProcessOutcome::Invalid(
+                            "magnet file content doesn't start with 'magnet:'".to_string(),
                         ));
                     }
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("Failed to read magnet file: {}", e));
+                    return Ok(ProcessOutcome::Invalid(format!(
+                        "failed to read magnet file: {}",
+                        e
+                    )));
                 }
             }
         } else {
@@ -326,7 +405,7 @@ impl TorrentWatchCore {
                                     "Failed to re-read magnet file for database recording: {}",
                                     e
                                 );
-                                return Ok(true); // Still consider it processed
+                                return Ok(ProcessOutcome::Uploaded); // Still consider it processed
                             }
                         }
                     } else {
@@ -338,7 +417,7 @@ impl TorrentWatchCore {
                                     "Failed to calculate checksum for database recording: {}",
                                     e
                                 );
-                                return Ok(true); // Still consider it processed
+                                return Ok(ProcessOutcome::Uploaded); // Still consider it processed
                             }
                         }
                     };
@@ -364,7 +443,7 @@ impl TorrentWatchCore {
                     }
                 }
 
-                Ok(true)
+                Ok(ProcessOutcome::Uploaded)
             }
             Err(e) => {
                 // Check if this is a "TRANSFER_ALREADY_ADDED" error
@@ -392,7 +471,7 @@ impl TorrentWatchCore {
                                         "Failed to re-read magnet file for database recording: {}",
                                         e
                                     );
-                                    return Ok(true); // Still consider it processed
+                                    return Ok(ProcessOutcome::Uploaded); // Still consider it processed
                                 }
                             }
                         } else {
@@ -403,7 +482,7 @@ impl TorrentWatchCore {
                                         "Failed to calculate checksum for database recording: {}",
                                         e
                                     );
-                                    return Ok(true); // Still consider it processed
+                                    return Ok(ProcessOutcome::Uploaded); // Still consider it processed
                                 }
                             }
                         };
@@ -429,7 +508,7 @@ impl TorrentWatchCore {
                         }
                     }
 
-                    Ok(true) // Treat as success for archive/delete
+                    Ok(ProcessOutcome::Uploaded) // Treat as success for archive/delete
                 } else {
                     error!("❌ Failed to upload {}: {}", path.display(), e);
                     Err(e.into())
@@ -514,43 +593,48 @@ impl TorrentWatchCore {
         }
     }
 
+    /// Run `log` only the first time `path` is reported
+    fn warn_once(&self, path: &Path, log: impl FnOnce(&Path)) {
+        let first = self
+            .warned
+            .lock()
+            .map(|mut warned| warned.insert(path.to_path_buf()))
+            .unwrap_or(true);
+        if first {
+            log(path);
+        }
+    }
+
     /// Handle post-upload actions (archive or delete)
+    ///
+    /// Returns None when neither action is configured.
     async fn handle_post_upload_action(
         &self,
-        file_path: &PathBuf,
+        file_path: &Path,
         archive_dir: Option<&PathBuf>,
         delete_after_upload: bool,
-    ) -> Result<()> {
+    ) -> Result<Option<PostUploadAction>> {
         if let Some(archive_path) = archive_dir {
-            // Archive the file
             let filename = file_path
                 .file_name()
                 .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?;
             let archive_file_path = archive_path.join(filename);
 
-            info!(
-                "📦 Archiving {} to {}",
-                file_path.display(),
-                archive_file_path.display()
-            );
-
-            // Ensure archive directory exists
             if let Some(parent) = archive_file_path.parent() {
-                tokio::fs::create_dir_all(parent).await?;
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .with_context(|| format!("create {}", parent.display()))?;
             }
-
-            // Move file to archive directory
-            tokio::fs::rename(file_path, &archive_file_path).await?;
-            info!("✅ Successfully archived: {}", archive_file_path.display());
+            tokio::fs::rename(file_path, &archive_file_path)
+                .await
+                .with_context(|| format!("move to {}", archive_file_path.display()))?;
+            Ok(Some(PostUploadAction::Archived(archive_file_path)))
         } else if delete_after_upload {
-            // Delete the file
-            info!("🗑️  Deleting processed file: {}", file_path.display());
-            tokio::fs::remove_file(file_path).await?;
-            info!("✅ Successfully deleted: {}", file_path.display());
+            tokio::fs::remove_file(file_path).await.context("delete")?;
+            Ok(Some(PostUploadAction::Deleted))
+        } else {
+            Ok(None)
         }
-        // If neither archive nor delete is enabled, leave file in place
-
-        Ok(())
     }
 }
 
@@ -875,9 +959,14 @@ impl TorrentWatcher {
             .process_torrent_file(path, client, config.parent_id, None)
             .await
         {
-            Ok(true) => Ok(()),  // Successfully processed
-            Ok(false) => Ok(()), // Skipped (already processed)
-            Err(e) => Err(e),    // Error occurred
+            Ok(ProcessOutcome::Invalid(reason)) => {
+                self.core.warn_once(path, |p| {
+                    warn!(path = %p.display(), reason = %reason, "Invalid watch file");
+                });
+                Ok(())
+            }
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
         }
     }
 

@@ -1,16 +1,17 @@
 //! Download manager for orchestrating downloads
 
+use crate::blocklist::{blocked_extension, default_blocked_extensions};
 use crate::error::{DownloadError, DownloadResult};
 use crate::files::{check_resume, cleanup_partial, create_temp_path};
 use crate::progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 use crate::stream::stream_download;
 use crate::utils::retry_with_stall_detection;
-use putio_sync_client::{FileEntry, PutioApiClient};
+use putio_sync_client::{error_chain, FileEntry, PutioApiClient};
 use putio_sync_db::models::DownloadStatus;
 use putio_sync_db::Database;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
@@ -35,6 +36,8 @@ pub struct DownloadConfig {
     pub workers: usize,
     /// Delete files from Put.io after successful download
     pub delete_after_download: bool,
+    /// Lowercase extensions (without the dot) that are never downloaded
+    pub blocked_extensions: Vec<String>,
 }
 
 impl Default for DownloadConfig {
@@ -48,6 +51,7 @@ impl Default for DownloadConfig {
             retry_initial_delay_secs: 2,
             workers: 1,
             delete_after_download: false,
+            blocked_extensions: default_blocked_extensions(),
         }
     }
 }
@@ -125,6 +129,8 @@ pub struct SyncStats {
     pub files_skipped: usize,
     /// Files that failed to download
     pub files_failed: usize,
+    /// Files skipped because their extension is blocked
+    pub files_blocked: usize,
 }
 
 /// Worker statistics for bandwidth tracking
@@ -186,6 +192,8 @@ pub struct DownloadManager {
     workers: Arc<RwLock<HashMap<usize, WorkerInfo>>>,
     /// Next worker ID counter
     next_worker_id: Arc<RwLock<usize>>,
+    /// Blocked file IDs already warned about, so each is logged once per process
+    blocked_warned: Arc<Mutex<HashSet<i64>>>,
 }
 
 impl DownloadManager {
@@ -211,6 +219,7 @@ impl DownloadManager {
             overall_progress,
             workers: Arc::new(RwLock::new(HashMap::new())),
             next_worker_id: Arc::new(RwLock::new(0)),
+            blocked_warned: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -233,6 +242,7 @@ impl DownloadManager {
             overall_progress,
             workers: Arc::new(RwLock::new(HashMap::new())),
             next_worker_id: Arc::new(RwLock::new(0)),
+            blocked_warned: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -937,7 +947,7 @@ impl DownloadManager {
         let files_with_paths = match self.list_all_files(0).await {
             Ok(files) => files,
             Err(e) => {
-                error!("Failed to list files from Put.io: {}", e);
+                error!(error = %error_chain(&e), "Failed to list files from Put.io");
                 return Err(e);
             }
         };
@@ -959,9 +969,28 @@ impl DownloadManager {
 
         let downloads_repo = db.downloads();
         let queue_repo = db.queue();
+        let blocked = self.config.read().await.blocked_extensions.clone();
 
         // Check which files need to be added to queue
         for (file, relative_path) in downloadable_files {
+            if let Some(ext) = blocked_extension(&file.name, &blocked) {
+                stats.files_blocked += 1;
+                let first_time = self
+                    .blocked_warned
+                    .lock()
+                    .map(|mut warned| warned.insert(file.id))
+                    .unwrap_or(true);
+                if first_time {
+                    warn!(
+                        file_id = file.id,
+                        name = %file.name,
+                        extension = %ext,
+                        "Blocked file not downloaded"
+                    );
+                }
+                continue;
+            }
+
             // Check if already downloaded
             match downloads_repo.find_by_file_id(file.id).await {
                 Ok(Some(record)) if record.status == "completed" => {
@@ -1035,8 +1064,8 @@ impl DownloadManager {
         }
 
         info!(
-            "Sync complete - Queued: {}, Skipped: {}, Failed: {}",
-            stats.files_downloaded, stats.files_skipped, stats.files_failed
+            "Sync complete - Queued: {}, Skipped: {}, Blocked: {}, Failed: {}",
+            stats.files_downloaded, stats.files_skipped, stats.files_blocked, stats.files_failed
         );
 
         Ok(stats)
@@ -1191,15 +1220,18 @@ impl DownloadManager {
                 Ok(stats) => {
                     if stats.files_downloaded > 0 {
                         info!(
-                            "Sync completed - Queued: {}, Skipped: {}, Failed: {}",
-                            stats.files_downloaded, stats.files_skipped, stats.files_failed
+                            "Sync completed - Queued: {}, Skipped: {}, Blocked: {}, Failed: {}",
+                            stats.files_downloaded,
+                            stats.files_skipped,
+                            stats.files_blocked,
+                            stats.files_failed
                         );
                     } else {
                         debug!("Sync completed - no new files");
                     }
                 }
                 Err(e) => {
-                    error!("Error syncing from Put.io: {}", e);
+                    error!(error = %error_chain(&e), "Error syncing from Put.io");
                 }
             }
 
@@ -1310,7 +1342,7 @@ impl DownloadManager {
                 .client
                 .list_files(current_folder)
                 .await
-                .map_err(|e| DownloadError::ApiError(e.to_string()))?;
+                .map_err(DownloadError::ClientError)?;
 
             for file in response.files {
                 if file.file_type == "FOLDER" {

@@ -377,21 +377,8 @@ async fn main() {
             archive_dir,
             delete_torrents,
         } => {
+            // The effective settings are logged by execute_daemon once the config is loaded.
             eprintln!("🔄 Entering daemon mode...");
-            eprintln!(
-                "⚙️  Daemon config - download_interval: {}s, watch_interval: {}s",
-                download_interval, watch_interval
-            );
-            eprintln!("⚙️  Watch paths: {:?}", watch);
-            eprintln!("⚙️  Filter: {:?}", filter);
-            eprintln!(
-                "⚙️  Skip existing: {}, Delete after: {}",
-                skip_existing, delete_after
-            );
-            eprintln!(
-                "⚙️  Watch only: {}, Download only: {}",
-                watch_only, download_only
-            );
 
             commands::execute_daemon(
                 download_interval,

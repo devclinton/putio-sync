@@ -33,6 +33,8 @@ pub struct DaemonConfig {
     pub watch_dirs: Vec<PathBuf>,
     /// Watch interval in seconds
     pub watch_interval: u64,
+    /// Put.io sync interval in seconds
+    pub download_interval: u64,
     /// Parent folder ID for transfers
     pub parent_id: Option<i64>,
     /// Delete torrent/magnet files after upload
@@ -53,6 +55,14 @@ pub struct DaemonConfig {
     pub api_enabled: bool,
     /// API server URL (required if api_enabled is true)
     pub api_url: Option<String>,
+    /// Extensions that are never downloaded
+    pub blocked_extensions: Vec<String>,
+}
+
+/// (Put.io sync interval, queue worker interval) in seconds.
+/// The sync loop used to run on `watch_interval`, which made `--download-interval` a no-op.
+fn loop_intervals(config: &DaemonConfig) -> (u64, u64) {
+    (config.download_interval, config.watch_interval)
 }
 
 impl Default for DaemonConfig {
@@ -63,6 +73,7 @@ impl Default for DaemonConfig {
             download_dir: PathBuf::from("."),
             watch_dirs: Vec::new(),
             watch_interval: 60,
+            download_interval: 300,
             parent_id: None,
             delete_after_upload: false,
             watch_enabled: true,
@@ -73,6 +84,7 @@ impl Default for DaemonConfig {
             delete_after_download: false,
             api_enabled: false,
             api_url: None,
+            blocked_extensions: putio_sync_download::default_blocked_extensions(),
         }
     }
 }
@@ -192,6 +204,7 @@ impl PutioDaemon {
                 retry_initial_delay_secs: 2,
                 workers: config.workers,
                 delete_after_download: config.delete_after_download,
+                blocked_extensions: config.blocked_extensions.clone(),
             };
 
             let download_manager = if let Some(ref db) = self.database {
@@ -303,10 +316,8 @@ impl PutioDaemon {
             Some(DownloadMode::Local(_)) => {
                 // Clone Arc (cheap) - download manager remains accessible for API hot reload
                 if let Some(DownloadMode::Local(dm)) = &self.download_mode {
-                    let config = self.config.read().await;
-                    let sync_interval = config.watch_interval; // Interval for syncing from Put.io
-                    let worker_interval = config.watch_interval; // Interval for processing queue
-                    drop(config);
+                    let (sync_interval, worker_interval) =
+                        loop_intervals(&*self.config.read().await);
 
                     // Clone Arc for the two separate tasks (cheap operation)
                     let dm_sync = dm.clone();
@@ -430,16 +441,17 @@ impl PutioDaemon {
                 .await
             {
                 Ok(stats) => {
-                    if stats.files_found > 0 {
+                    if stats.files_processed + stats.cleaned_up + stats.files_failed > 0 {
                         info!(
-                            "Watch scan - found: {}, processed: {}, skipped: {}, failed: {}",
+                            "Watch scan - found: {}, processed: {}, cleaned up: {}, skipped: {}, failed: {}",
                             stats.files_found,
                             stats.files_processed,
+                            stats.cleaned_up,
                             stats.files_skipped,
                             stats.files_failed
                         );
                     } else {
-                        debug!("Watch scan - no new files");
+                        debug!("Watch scan - found: {}, nothing to do", stats.files_found);
                     }
                 }
                 Err(e) => {
@@ -568,6 +580,16 @@ impl PutioDaemon {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sync_loop_uses_download_interval() {
+        let config = DaemonConfig {
+            download_interval: 30,
+            watch_interval: 60,
+            ..Default::default()
+        };
+        assert_eq!(loop_intervals(&config), (30, 60));
+    }
 
     #[test]
     fn test_daemon_config_default() {

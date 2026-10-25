@@ -93,8 +93,8 @@ pub async fn execute_daemon(
     if delete_torrents {
         warn!("--delete-torrents flag not yet supported in daemon mode, ignoring");
     }
-    if download_interval != 300 {
-        warn!("--download-interval flag not yet supported in daemon mode, ignoring");
+    if config.watch.archive_directory.is_some() {
+        warn!("watch.archive_directory is not supported in daemon mode, ignoring");
     }
 
     // Create daemon configuration
@@ -104,6 +104,7 @@ pub async fn execute_daemon(
         download_dir,
         watch_dirs,
         watch_interval,
+        download_interval,
         parent_id,
         delete_after_upload: config.watch.delete_after_upload,
         watch_enabled: config.watch.enabled,
@@ -114,6 +115,7 @@ pub async fn execute_daemon(
         delete_after_download,
         api_enabled: config.api.enabled,
         api_url: config.api.url.clone(),
+        blocked_extensions: config.download.blocked_extensions.clone(),
     };
 
     info!("Daemon configuration:");
@@ -129,10 +131,30 @@ pub async fn execute_daemon(
         info!("    - {}", path.display());
     }
     info!("  Watch interval: {}s", daemon_config.watch_interval);
+    info!(
+        "  Put.io sync interval: {}s",
+        daemon_config.download_interval
+    );
     info!("  Download workers: {}", daemon_config.workers);
     info!("  Buffer size: {}MB", daemon_config.buffer_size_mb);
     info!("  Parent folder ID: {:?}", daemon_config.parent_id);
     info!("  Hot reload: {}", daemon_config.enable_hot_reload);
+    info!(
+        "  Delete after download: {}",
+        daemon_config.delete_after_download
+    );
+    info!(
+        "  Delete after upload: {}",
+        daemon_config.delete_after_upload
+    );
+    info!(
+        "  Blocked extensions: {}",
+        if daemon_config.blocked_extensions.is_empty() {
+            "none".to_string()
+        } else {
+            daemon_config.blocked_extensions.join(", ")
+        }
+    );
 
     // Create and start daemon
     let mut daemon = PutioDaemon::new(daemon_config);

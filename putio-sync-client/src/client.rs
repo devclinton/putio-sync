@@ -11,11 +11,79 @@ use tracing::{debug, trace, warn};
 /// Default base URL for Put.io API
 pub const DEFAULT_BASE_URL: &str = "https://api.put.io/v2";
 
-/// Maximum number of retry attempts
-const MAX_RETRIES: u32 = 3;
+/// Idle pooled connections are dropped before a middlebox can silently kill them.
+/// On the NAS, the first request after a sync interval failed on a dead socket
+/// about 250 times a day with the reqwest default of 90 s.
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// Initial retry delay in milliseconds
-const INITIAL_RETRY_DELAY_MS: u64 = 100;
+/// TCP keepalive interval for API and download connections
+const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
+
+/// Backoff policy for retryable failures (network errors, 5xx and 429)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetryPolicy {
+    /// Total attempts, including the first one
+    pub max_attempts: u32,
+    /// Delay before the first retry; doubled for each further retry
+    pub initial_delay: Duration,
+    /// Upper bound for a single delay
+    pub max_delay: Duration,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            max_attempts: 6,
+            initial_delay: Duration::from_secs(1),
+            max_delay: Duration::from_secs(16),
+        }
+    }
+}
+
+impl RetryPolicy {
+    /// Delay before retry number `retry` (1-based), with ±20% jitter
+    fn delay(&self, retry: u32) -> Duration {
+        let base = self
+            .initial_delay
+            .saturating_mul(1u32 << (retry - 1).min(16))
+            .min(self.max_delay);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        // 0.8..=1.2
+        let factor = 0.8 + f64::from(nanos % 401) / 1000.0;
+        base.mul_f64(factor)
+    }
+}
+
+/// Join an error and all of its sources with `": "`.
+///
+/// reqwest's `Display` hides the cause ("error sending request for url"), so this is what
+/// gets logged.
+pub fn error_chain(err: &dyn std::error::Error) -> String {
+    let mut out = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        // Wrappers like `ClientError::HttpError` already print their source.
+        let text = cause.to_string();
+        if !out.ends_with(&text) {
+            out.push_str(": ");
+            out.push_str(&text);
+        }
+        source = cause.source();
+    }
+    out
+}
+
+fn http_client(pool_idle_timeout: Duration) -> Client {
+    Client::builder()
+        .timeout(Duration::from_secs(30))
+        .pool_idle_timeout(pool_idle_timeout)
+        .tcp_keepalive(TCP_KEEPALIVE)
+        .build()
+        .expect("Failed to create HTTP client")
+}
 
 /// Put.io API client
 ///
@@ -31,6 +99,7 @@ pub struct PutioApiClient {
     token: Option<String>,
     username: Option<String>,
     password: Option<String>,
+    retry_policy: RetryPolicy,
 }
 
 impl PutioApiClient {
@@ -71,10 +140,7 @@ impl PutioApiClient {
     /// );
     /// ```
     pub fn from_auth_config_with_base_url(auth_config: AuthConfig, base_url: String) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .expect("Failed to create HTTP client");
+        let client = http_client(POOL_IDLE_TIMEOUT);
 
         Self {
             client,
@@ -83,6 +149,7 @@ impl PutioApiClient {
             token: auth_config.token,
             username: auth_config.username,
             password: auth_config.password,
+            retry_policy: RetryPolicy::default(),
         }
     }
 
@@ -121,10 +188,7 @@ impl PutioApiClient {
     /// );
     /// ```
     pub fn with_base_url(token: String, base_url: String) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .expect("Failed to create HTTP client");
+        let client = http_client(POOL_IDLE_TIMEOUT);
 
         Self {
             client,
@@ -133,6 +197,7 @@ impl PutioApiClient {
             token: Some(token),
             username: None,
             password: None,
+            retry_policy: RetryPolicy::default(),
         }
     }
 
@@ -181,10 +246,7 @@ impl PutioApiClient {
         password: String,
         base_url: String,
     ) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .expect("Failed to create HTTP client");
+        let client = http_client(POOL_IDLE_TIMEOUT);
 
         Self {
             client,
@@ -193,7 +255,21 @@ impl PutioApiClient {
             token: None,
             username: Some(username),
             password: Some(password),
+            retry_policy: RetryPolicy::default(),
         }
+    }
+
+    /// Override the retry policy (tests use millisecond delays)
+    pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
+        self.retry_policy = policy;
+        self
+    }
+
+    /// Rebuild the HTTP client with a different idle-connection timeout
+    #[doc(hidden)]
+    pub fn with_pool_idle_timeout(mut self, idle: Duration) -> Self {
+        self.client = http_client(idle);
+        self
     }
 
     /// Get a reference to the underlying HTTP client
@@ -252,6 +328,7 @@ impl PutioApiClient {
         // Create a client with extended timeout for downloads (10 minutes)
         let download_client = Client::builder()
             .timeout(Duration::from_secs(600)) // 10 minutes
+            .tcp_keepalive(TCP_KEEPALIVE)
             .build()
             .map_err(ClientError::HttpError)?;
 
@@ -368,60 +445,66 @@ impl PutioApiClient {
 
     /// Execute a request with exponential backoff retry logic
     ///
-    /// Retries on network errors and 5xx server errors.
+    /// Retries on network errors, 5xx and 429 responses. A 429 with `Retry-After`
+    /// waits for that long instead of the backoff delay.
     pub(crate) async fn execute_with_retry<T: DeserializeOwned>(
         &self,
         request: Request,
     ) -> ClientResult<T> {
-        let mut attempts = 0;
-        let mut delay_ms = INITIAL_RETRY_DELAY_MS;
+        let max_attempts = self.retry_policy.max_attempts.max(1);
+        let mut url = request.url().clone();
+        url.set_query(None);
+        let mut attempt = 0;
 
         loop {
-            attempts += 1;
-            trace!("Attempt {} for {}", attempts, request.url());
+            attempt += 1;
+            trace!("Attempt {} for {}", attempt, url);
 
             // Clone the request for retry attempts
             let req = request.try_clone().ok_or_else(|| {
                 ClientError::InternalError("Cannot clone request for retry".to_string())
             })?;
 
-            match self.client.execute(req).await {
+            let (delay, error) = match self.client.execute(req).await {
                 Ok(response) => {
                     let status = response.status();
                     trace!("Response status: {}", status);
 
-                    // Log response details
                     if status.is_success() {
                         return self.handle_success_response(response).await;
-                    } else if status.is_client_error() {
-                        return self.handle_error_response(response).await;
-                    } else if status.is_server_error() && attempts < MAX_RETRIES {
-                        // Retry on server errors
-                        warn!(
-                            "Server error ({}), retrying in {}ms (attempt {}/{})",
-                            status, delay_ms, attempts, MAX_RETRIES
-                        );
-                    } else {
-                        // No more retries
+                    }
+                    let retryable =
+                        status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS;
+                    if !retryable || attempt >= max_attempts {
                         return self.handle_error_response(response).await;
                     }
+                    let retry_after = response
+                        .headers()
+                        .get(header::RETRY_AFTER)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.trim().parse::<u64>().ok())
+                        .map(Duration::from_secs);
+                    let delay = match retry_after {
+                        Some(d) if status == StatusCode::TOO_MANY_REQUESTS => d,
+                        _ => self.retry_policy.delay(attempt),
+                    };
+                    (delay, format!("HTTP {}", status))
                 }
-                Err(e) if attempts < MAX_RETRIES => {
-                    // Retry on network errors
-                    warn!(
-                        "Network error: {}, retrying in {}ms (attempt {}/{})",
-                        e, delay_ms, attempts, MAX_RETRIES
-                    );
+                Err(e) if attempt < max_attempts => {
+                    (self.retry_policy.delay(attempt), error_chain(&e))
                 }
-                Err(e) => {
-                    // No more retries
-                    return Err(ClientError::HttpError(e));
-                }
-            }
+                Err(e) => return Err(ClientError::HttpError(e)),
+            };
 
-            // Wait before retry with exponential backoff
-            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-            delay_ms *= 2; // Exponential backoff
+            warn!(
+                url = %url,
+                attempt,
+                max_attempts,
+                delay_ms = delay.as_millis() as u64,
+                error = %error,
+                "Put.io request failed, retrying"
+            );
+            tokio::time::sleep(delay).await;
         }
     }
 
@@ -641,7 +724,8 @@ mod tests {
             .create_async()
             .await;
 
-        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url());
+        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url())
+            .with_retry_policy(fast_policy(3));
 
         #[derive(Debug, serde::Deserialize)]
         #[allow(dead_code)]
@@ -665,11 +749,12 @@ mod tests {
         let mock = server
             .mock("GET", "/test")
             .with_status(500)
-            .expect(3) // MAX_RETRIES
+            .expect(6) // RetryPolicy::default().max_attempts
             .create_async()
             .await;
 
-        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url());
+        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url())
+            .with_retry_policy(fast_policy(RetryPolicy::default().max_attempts));
 
         #[derive(Debug, serde::Deserialize)]
         #[allow(dead_code)]
@@ -681,6 +766,127 @@ mod tests {
         assert!(response.is_err());
 
         mock.assert_async().await;
+    }
+
+    fn fast_policy(max_attempts: u32) -> RetryPolicy {
+        RetryPolicy {
+            max_attempts,
+            initial_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(5),
+        }
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct StatusResponse {
+        status: String,
+    }
+
+    #[tokio::test]
+    async fn test_five_server_errors_then_success() {
+        let mut server = setup_mock_server().await;
+        let fail = server
+            .mock("GET", "/test")
+            .with_status(503)
+            .expect(4)
+            .create_async()
+            .await;
+        let ok = server
+            .mock("GET", "/test")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status": "ok"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url())
+            .with_retry_policy(fast_policy(RetryPolicy::default().max_attempts));
+
+        let response: ClientResult<StatusResponse> = client.get("/test").await;
+        assert!(response.is_ok(), "{response:?}");
+        fail.assert_async().await;
+        ok.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_429_honours_retry_after() {
+        let mut server = setup_mock_server().await;
+        let limited = server
+            .mock("GET", "/test")
+            .with_status(429)
+            .with_header("retry-after", "1")
+            .expect(1)
+            .create_async()
+            .await;
+        let ok = server
+            .mock("GET", "/test")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status": "ok"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url())
+            .with_retry_policy(fast_policy(3));
+
+        let started = std::time::Instant::now();
+        let response: ClientResult<StatusResponse> = client.get("/test").await;
+        assert!(response.is_ok(), "{response:?}");
+        assert!(started.elapsed() >= Duration::from_secs(1));
+        limited.assert_async().await;
+        ok.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_network_failure_error_chain_has_cause_not_token() {
+        // Bind then drop a listener so the port refuses connections.
+        let addr = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let client = PutioApiClient::with_base_url(
+            "secret_token_value".to_string(),
+            format!("http://{addr}"),
+        )
+        .with_retry_policy(fast_policy(2));
+
+        let err = client.get::<StatusResponse>("/test").await.unwrap_err();
+        let chain = error_chain(&err);
+        assert!(
+            chain.to_lowercase().contains("refused") || chain.contains("connect"),
+            "missing cause: {chain}"
+        );
+        assert!(!chain.contains("secret_token_value"));
+    }
+
+    #[test]
+    fn test_error_chain_joins_sources() {
+        #[derive(Debug)]
+        struct Outer(std::io::Error);
+        impl std::fmt::Display for Outer {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "outer")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let err = Outer(std::io::Error::other("inner"));
+        assert_eq!(error_chain(&err), "outer: inner");
+    }
+
+    #[test]
+    fn test_retry_delay_doubles_with_jitter_and_caps() {
+        let policy = RetryPolicy::default();
+        let first = policy.delay(1);
+        assert!(first >= Duration::from_millis(800) && first <= Duration::from_millis(1200));
+        let third = policy.delay(3);
+        assert!(third >= Duration::from_millis(3200) && third <= Duration::from_millis(4800));
+        assert!(policy.delay(10) <= Duration::from_secs(16).mul_f64(1.2));
     }
 
     #[tokio::test]

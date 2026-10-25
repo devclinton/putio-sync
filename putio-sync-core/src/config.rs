@@ -14,6 +14,21 @@ fn default_delete_empty_folders() -> bool {
     true
 }
 
+/// Extensions that are never downloaded unless `blocked_extensions` overrides them.
+/// Fake releases on the NAS were mostly `.exe` files (133 of 244 downloads).
+pub const DEFAULT_BLOCKED_EXTENSIONS: &[&str] = &[
+    "exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs", "js", "jar", "ps1", "lnk", "apk",
+    "dmg", "pkg",
+];
+
+/// Default value for blocked_extensions
+pub fn default_blocked_extensions() -> Vec<String> {
+    DEFAULT_BLOCKED_EXTENSIONS
+        .iter()
+        .map(|e| e.to_string())
+        .collect()
+}
+
 /// Main configuration structure
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Config {
@@ -204,6 +219,10 @@ pub struct DownloadConfig {
     /// Delete empty folders after downloading all files from them (default: true)
     #[serde(default = "default_delete_empty_folders")]
     pub delete_empty_folders: bool,
+    /// File extensions (without the dot, case-insensitive) that are never downloaded.
+    /// A missing key uses the default list; `[]` disables the guard.
+    #[serde(default = "default_blocked_extensions")]
+    pub blocked_extensions: Vec<String>,
 }
 
 /// Watch configuration
@@ -303,6 +322,7 @@ impl Default for DownloadConfig {
             max_retries: 3,                      // 3 retries by default
             retry_initial_delay_secs: 1,         // Start with 1 second delay
             delete_empty_folders: true,          // Delete empty folders by default
+            blocked_extensions: default_blocked_extensions(),
         }
     }
 }
@@ -866,6 +886,7 @@ mod tests {
                 max_retries: 3,
                 retry_initial_delay_secs: 1,
                 delete_empty_folders: true,
+                blocked_extensions: default_blocked_extensions(),
             },
             watch: WatchConfig {
                 enabled: false,
@@ -1119,6 +1140,44 @@ mod tests {
         assert_eq!(config.bandwidth_limit_bytes_per_sec, None);
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_initial_delay_secs, 1);
+    }
+
+    fn download_toml_without_blocked() -> String {
+        let mut value = toml::Value::try_from(DownloadConfig::default()).unwrap();
+        value.as_table_mut().unwrap().remove("blocked_extensions");
+        toml::to_string(&value).unwrap()
+    }
+
+    #[test]
+    fn test_blocked_extensions_missing_key_uses_default() {
+        let config: DownloadConfig = toml::from_str(&download_toml_without_blocked()).unwrap();
+        assert_eq!(
+            config.blocked_extensions,
+            [
+                "exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs", "js", "jar", "ps1", "lnk",
+                "apk", "dmg", "pkg"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_blocked_extensions_empty_disables() {
+        let toml = format!(
+            "{}blocked_extensions = []\n",
+            download_toml_without_blocked()
+        );
+        let config: DownloadConfig = toml::from_str(&toml).unwrap();
+        assert!(config.blocked_extensions.is_empty());
+    }
+
+    #[test]
+    fn test_blocked_extensions_replaces_default() {
+        let toml = format!(
+            "{}blocked_extensions = [\"iso\"]\n",
+            download_toml_without_blocked()
+        );
+        let config: DownloadConfig = toml::from_str(&toml).unwrap();
+        assert_eq!(config.blocked_extensions, ["iso"]);
     }
 
     #[test]

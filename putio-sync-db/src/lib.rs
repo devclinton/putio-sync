@@ -46,9 +46,12 @@ pub use queue::{QueueRepository, QueueStats};
 pub use stats::{ExtensionStats, StatsRepository};
 pub use torrents::ProcessedTorrentsRepository;
 
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
+};
 use std::path::Path;
 use std::str::FromStr;
+use std::time::Duration;
 use tracing::{debug, info};
 
 /// Database connection pool and management
@@ -93,7 +96,12 @@ impl Database {
         // Create connection options
         let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", path.display()))
             .map_err(|e| DbError::DatabaseError(format!("Invalid database path: {}", e)))?
-            .create_if_missing(true);
+            .create_if_missing(true)
+            // WAL lets readers and the claiming writer run side by side; the busy timeout
+            // makes brief write contention wait instead of failing.
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(Duration::from_secs(10));
 
         // Create connection pool
         let pool = SqlitePoolOptions::new()

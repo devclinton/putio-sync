@@ -10,6 +10,7 @@ A high-performance Rust-based CLI tool for Put.io with support for downloads, tr
 - **Smart Progress Logging**: Size-based progress intervals with single-threshold logging (every 50% for 500MB+, 33% for 1GB+, 20% for 5GB+, 10% for 10GB+, 7% for 15GB+, 5% for 20GB+, 1% for 50GB+)
 - **Empty Directory Cleanup**: Enhanced detection and tracking with 5-scan threshold for automatic deletion of empty folders
 - **Smart Filtering**: Whitelist/blacklist patterns with glob support
+- **Executable Guard**: Executables and installers on Put.io (`.exe`, `.msi`, `.bat`, ...) are never downloaded; configurable with `blocked_extensions`
 - **Transfer Management**: Add torrents from files or magnet links
 - **Watch Mode**: Automatically upload .torrent and .magnet files from watched directories with smart deduplication
 - **Post-Processing**: Archive or delete processed torrent files after upload
@@ -460,7 +461,9 @@ paths = []
 ### Environment Variables
 
 - `PUTIO_SYNC_CONFIG`: Custom config file path
-- `RUST_LOG`: Log level (error, warn, info, debug, trace)
+- `RUST_LOG`: Log level (error, warn, info, debug, trace). When set, it replaces
+  `[logging] level` from the config file. The startup line `Log level level=... source=Env`
+  (or `source=Config`) shows which one is in effect.
 
 ## Advanced Features
 
@@ -489,6 +492,23 @@ putio-sync download --all --filter "*.mkv,*.mp4,*.avi"
 whitelist_patterns = "*.mkv,*.mp4"
 blacklist_patterns = "*.exe,*.bat"
 ```
+
+#### Executable guard
+
+Fake releases are often executables. Files whose final extension is in
+`[download] blocked_extensions` are never queued or downloaded. They stay on Put.io, and
+each one is logged once as `WARN Blocked file not downloaded file_id=... extension=exe`.
+The sync summary counts them as `Blocked: N`.
+
+```toml
+[download]
+# Omit to use the default list; set [] to disable the guard.
+blocked_extensions = ["exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs",
+                      "js", "jar", "ps1", "lnk", "apk", "dmg", "pkg"]
+```
+
+Matching is case-insensitive and uses only the last extension (`a.mkv.exe` is blocked,
+`a.exe.mkv` is not). The setting can also be changed through `PUT /settings/download`.
 
 ### Progress Styles
 
@@ -541,6 +561,18 @@ putio-sync daemon --watch-only --watch ~/Downloads/torrents --archive-dir ~/proc
 putio-sync daemon --watch-only --watch ~/Downloads/torrents --delete-torrents
 ```
 
+> **Daemon flag support:** `--download-interval` sets how often Put.io is synced (default
+> 300 s), and `--watch-interval` sets how often watch folders are scanned and the queue is
+> worked. `--filter`, `--skip-existing`, `--delete-after`, `--delete-empty-folders`,
+> `--watch-only`, `--download-only`, `--archive-dir` and `--delete-torrents` are currently
+> ignored in daemon mode, with a warning at startup; use `config.toml` instead
+> (`watch.delete_after_upload`, `download.delete_after_download`). The effective settings
+> are logged after the config loads, under `Daemon configuration:`.
+>
+> Watch files that were already uploaded (for example after a restart) get the configured
+> post-upload action instead of staying in the watch folder. Scans with nothing to do log
+> at `debug`, so an idle daemon is quiet at `info`.
+
 **Improved Daemon Logging**: The daemon now provides clear, structured logs:
 ```bash
 # Download activity
@@ -555,11 +587,9 @@ putio-sync daemon --watch-only --watch ~/Downloads/torrents --delete-torrents
 🔼 Processing new .magnet file: Movie.magnet
 ✅ Magnet link uploaded successfully: Movie (ID: 1234568)
 
-# Archive/delete activity (works for both .torrent and .magnet files)
-📦 Archiving Movie.torrent to ~/processed/Movie.torrent
-📦 Archiving Series.magnet to ~/processed/Series.magnet
-🗑️  Deleting processed file: Movie.torrent
-🗑️  Deleting processed file: Series.magnet
+# Delete activity (works for both .torrent and .magnet files)
+INFO Deleted uploaded watch file path=/watch/Movie.torrent
+INFO Removed already-uploaded watch file path=/watch/Series.magnet
 
 # Periodic health summaries
 📊 Download sync completed in 2.1s - found: 3, downloaded: 2, failed: 0, total: 2.1 GB
