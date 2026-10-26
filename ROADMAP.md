@@ -48,6 +48,28 @@ in `docs/` and are linked from the UI.
 After an upgrade, the web UI shows the CHANGELOG.md entries since the version
 the user last saw. The changelog is built into the binary.
 
+## Queued: features
+
+### 019 Sign-in options
+
+The web UI and API are protected by one API token today. Add HTTP basic auth
+with a username and password, and sign-in through OAuth providers: Google,
+GitHub, and Discord if its OAuth stays free. Limit who may sign in by account
+or email, and keep the API token for scripts and Radarr/Sonarr.
+
+### 020 Glob filters with AND and OR
+
+Simple glob patterns (`*.mkv`, `Sample/*`, `*[Ss]ample*`) wherever files are
+chosen: folder rules, skip and delete settings, and the Put.io page. Patterns
+combine with AND and OR (for example `*.mkv AND NOT *sample*`), with a preview
+of which files match before saving.
+
+### 021 Keep folders out of empty-folder cleanup
+
+A way to tell the empty-folder cleanup and the doctor to leave a folder
+alone: a "keep" toggle on the Put.io page and in folder rules, plus ignore
+patterns in Settings. Kept folders show in the cleanup preview with the reason.
+
 ## Queued: packaging
 
 - **Minimal runtime image** on Docker Hardened Images (dhi.io), plus a
