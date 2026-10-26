@@ -14,6 +14,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- A Doctor page that checks the Put.io account and the sync setup: sign-in,
+  storage, failed or stalled transfers, empty folders, duplicate files and
+  leftover .torrent files, with one-click fixes (feature 010).
 - Per-folder download rules: a folder and everything below it can use a type
   preset (video, audio, ebooks, no binaries, everything, or your own), extra
   allowed or blocked extensions, skip, and delete settings. Set and preview
