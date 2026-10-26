@@ -112,6 +112,41 @@ CREATE TABLE IF NOT EXISTS transfer_origins (
 )
 "#;
 
+/// SQL to create the arr_items table (feature 011): releases Radarr/Sonarr added
+/// through the Transmission RPC. `id` is the Transmission torrent id.
+pub const CREATE_ARR_ITEMS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS arr_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hash TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    transfer_id INTEGER,
+    file_id INTEGER,
+    output_name TEXT,
+    total_size INTEGER NOT NULL DEFAULT 0,
+    putio_status TEXT,
+    putio_percent INTEGER NOT NULL DEFAULT 0,
+    putio_eta INTEGER,
+    state TEXT NOT NULL CHECK(state IN ('putio', 'local', 'done', 'failed')),
+    error TEXT,
+    blocklist TEXT NOT NULL DEFAULT 'none' CHECK(blocklist IN ('none', 'pending', 'done', 'gave_up')),
+    blocklist_attempts INTEGER NOT NULL DEFAULT 0,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"#;
+
+/// SQL to create the arr_item_files table (feature 011): the Put.io files of an item
+/// that the sync's filters accepted
+pub const CREATE_ARR_ITEM_FILES_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS arr_item_files (
+    hash TEXT NOT NULL,
+    file_id INTEGER NOT NULL,
+    size INTEGER NOT NULL,
+    PRIMARY KEY (hash, file_id)
+)
+"#;
+
 /// SQL to create performance indexes
 /// These indexes optimize common query patterns
 pub const CREATE_INDEXES: &str = r#"
