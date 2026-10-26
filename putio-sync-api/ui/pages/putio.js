@@ -5,7 +5,7 @@
 // download or delete several at once; queued files can't be ticked.
 
 import { del, get, post } from "../api.js";
-import { confirm, h, toast } from "../app.js";
+import { confirm, empty, h, toast } from "../app.js";
 import { bytes, dateTime, utc } from "../format.js";
 import { selection } from "../select.js";
 
@@ -300,7 +300,7 @@ function renderList() {
   // Only rows shown, and not needed by the queue, can stay selected
   sel.reset(shown.filter((f) => !queued.has(f.id)).map((f) => f.id));
   if (shown.length === 0) {
-    els.list.replaceChildren(h("h2", { text: title }), h("p", { class: "muted", text: files.length ? "Nothing matches the filter." : "This folder is empty." }));
+    els.list.replaceChildren(h("h2", { text: title }), files.length ? empty("Nothing matches the filter", "Try a shorter name.") : empty("This folder is empty"));
     sel.update();
     return;
   }

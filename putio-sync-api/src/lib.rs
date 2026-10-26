@@ -93,6 +93,9 @@ pub struct AppState {
     pub stall_tracker: Arc<StallTracker>,
     /// The Put.io doctor (feature 010); under `daemon`, the one its schedule runs
     pub doctor: Arc<Doctor>,
+    /// Radarr/Sonarr download client (feature 011); `None` unless `[arr] enabled` and
+    /// a database exists
+    pub arr: Option<routes::arr::ArrRpc>,
 }
 
 /// The engine behind the API (FR-018: a save says what applies now)
@@ -131,7 +134,9 @@ impl AppState {
             .with_config_path(config_path.clone())
             .with_metrics(),
         );
+        let arr = build_arr(&config, &client, database.as_ref(), &download_manager);
         AppState {
+            arr,
             cleanup,
             doctor,
             engine: Engine::Server,
@@ -177,6 +182,35 @@ impl AppState {
     }
 }
 
+/// The download client when `[arr]` enables it. It needs the database to track items.
+fn build_arr(
+    config: &Config,
+    client: &Arc<PutioApiClient>,
+    database: Option<&Arc<Database>>,
+    download_manager: &Arc<DownloadManager>,
+) -> Option<routes::arr::ArrRpc> {
+    let settings = match config.resolve_arr() {
+        Ok(settings) if settings.enabled => settings,
+        Ok(_) => return None,
+        Err(e) => {
+            tracing::warn!(error = %e, "Radarr/Sonarr download client disabled");
+            return None;
+        }
+    };
+    let Some(database) = database else {
+        tracing::warn!("Radarr/Sonarr download client disabled: it needs the database");
+        return None;
+    };
+    let service = putio_sync_arr::ArrService::new(
+        client.clone(),
+        database.clone(),
+        download_manager.clone(),
+        settings,
+        config.download.target_directory.clone(),
+    );
+    Some(routes::arr::ArrRpc::new(Arc::new(service)))
+}
+
 /// Build the router for `state`: protected routes behind the auth middleware, plus the
 /// public routes, which never require a token.
 ///
@@ -200,6 +234,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/stats", create_stats_router())
         .nest("/history", create_history_router())
         .nest("/doctor", routes::system::doctor::router())
+        .nest("/arr", routes::arr::router())
         .route(
             "/status",
             axum::routing::get(routes::system::status::get_status),
@@ -231,6 +266,11 @@ fn public_routes(state: AppState) -> Router {
         )
         .route("/", axum::routing::get(ui::index))
         .route("/assets/*path", axum::routing::get(ui::asset))
+        // Radarr/Sonarr's Transmission client; Basic auth of its own (feature 011)
+        .route(
+            "/transmission/rpc",
+            axum::routing::any(routes::arr::transmission_rpc),
+        )
         .with_state(state)
 }
 

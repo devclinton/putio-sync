@@ -2107,6 +2107,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "mockito",
+ "putio-sync-arr",
  "putio-sync-client",
  "putio-sync-core",
  "putio-sync-db",
@@ -2125,6 +2126,28 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "putio-sync-arr"
+version = "0.1.1"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "mockito",
+ "putio-sync-client",
+ "putio-sync-core",
+ "putio-sync-db",
+ "putio-sync-download",
+ "putio-sync-telemetry",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha1",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

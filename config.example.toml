@@ -378,6 +378,53 @@ bind = "0.0.0.0:15432"
 # url = "http://host:15432"
 
 # ============================================================================
+# Radarr / Sonarr download client
+# ============================================================================
+# putio-sync answers the Transmission RPC, so Radarr and Sonarr can use it as a
+# download client. They send magnets and .torrent files; putio-sync adds them to
+# Put.io in a folder named after the category, downloads the result to
+# <target_directory>/<category>/, and reports progress, completion and failures.
+# Needs the API listener ([api] listen) and the database. Restart to change.
+#
+# In Radarr or Sonarr: Settings > Download Clients > + > Transmission
+#   Host: this machine   Port: 15432 (the API port)   URL Base: /transmission/
+#   Username: putio-sync (or `username` below)   Password: `password` below
+#   Category: e.g. radarr / sonarr. Its folder is <target_directory>/<category>.
+# Remote Path Mappings are only needed when Radarr/Sonarr see the download folder
+# under another path (e.g. a different container mount).
+#
+# The torrent watcher ([watch]) keeps working, so a Torrent Blackhole client can
+# stay as a fallback at a lower priority.
+[arr]
+# Answer /transmission/rpc. Default: false
+enabled = false
+
+# Basic auth username the *arr apps send. Default: "putio-sync"
+# username = "putio-sync"
+
+# Basic auth password. REQUIRED when enabled: without it every request gets 503.
+# Prefer the env variable so it stays out of this file.
+# Env: PUTIO_SYNC_ARR_PASSWORD
+# password = "change-me"
+
+# Optional: let putio-sync call Radarr/Sonarr back. With a server listed, a
+# release that fails (Put.io error, or only blocked files) is removed from that
+# app's queue and blocklisted, so it searches again. The category must match the
+# one set on the download client. Settings in the web UI can test each server.
+# API keys: Settings > General in each app. Env PUTIO_SYNC_RADARR_API_KEY and
+# PUTIO_SYNC_SONARR_API_KEY set the key of the first server of that kind.
+# [[arr.servers]]
+# kind = "radarr"
+# url = "http://192.168.1.10:7878"
+# category = "radarr"
+# api_key = "..."
+#
+# [[arr.servers]]
+# kind = "sonarr"
+# url = "http://192.168.1.10:8989"
+# category = "sonarr"
+
+# ============================================================================
 # Database Configuration (Advanced)
 # ============================================================================
 # Database location (SQLite)

@@ -1,0 +1,6 @@
+#!/bin/sh
+# The `putio-sync` command: same config as the daemon, created on first use
+set -eu
+
+"$SNAP/bin/ensure-config"
+exec "$SNAP/bin/putio-sync" "$@"

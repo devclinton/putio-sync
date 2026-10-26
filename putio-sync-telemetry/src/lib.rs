@@ -16,6 +16,7 @@ use prometheus::{
 };
 
 pub mod api;
+pub mod arr;
 pub mod cleanup;
 pub mod db;
 pub mod doctor;
@@ -80,6 +81,9 @@ pub struct Telemetry {
     pub(crate) doctor_check_items: IntGaugeVec,
     pub(crate) doctor_last_run: GaugeVec,
     pub(crate) doctor_last_duration: GaugeVec,
+    pub(crate) arr_rpc_requests: IntCounterVec,
+    pub(crate) arr_items: IntGaugeVec,
+    pub(crate) arr_blocklist: IntCounterVec,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -318,6 +322,28 @@ impl Telemetry {
             )
             .unwrap(),
 
+            arr_rpc_requests: IntCounterVec::new(
+                opts(
+                    "arr_rpc_requests_total",
+                    "Transmission RPC requests from Radarr/Sonarr, by method and outcome.",
+                ),
+                &["method", "outcome"],
+            )
+            .unwrap(),
+            arr_items: IntGaugeVec::new(
+                opts("arr_items", "Radarr/Sonarr items tracked, by state."),
+                &["state"],
+            )
+            .unwrap(),
+            arr_blocklist: IntCounterVec::new(
+                opts(
+                    "arr_blocklist_total",
+                    "Calls asking Radarr/Sonarr to blocklist a failed release.",
+                ),
+                &["outcome"],
+            )
+            .unwrap(),
+
             db_errors: IntCounterVec::new(
                 opts("db_errors_total", "Database errors."),
                 &["operation"],
@@ -388,6 +414,9 @@ impl Telemetry {
             Box::new(self.doctor_check_items.clone()),
             Box::new(self.doctor_last_run.clone()),
             Box::new(self.doctor_last_duration.clone()),
+            Box::new(self.arr_rpc_requests.clone()),
+            Box::new(self.arr_items.clone()),
+            Box::new(self.arr_blocklist.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
             Box::new(self.disk_total.clone()),
@@ -426,6 +455,18 @@ impl Telemetry {
                 self.empty_folder_runs
                     .with_label_values(&[t.as_str(), r.as_str()]);
             }
+        }
+        for m in ArrMethod::ALL {
+            for o in ArrOutcome::ALL {
+                self.arr_rpc_requests
+                    .with_label_values(&[m.as_str(), o.as_str()]);
+            }
+        }
+        for s in ArrItemState::ALL {
+            self.arr_items.with_label_values(&[s.as_str()]);
+        }
+        for o in BlocklistOutcome::ALL {
+            self.arr_blocklist.with_label_values(&[o.as_str()]);
         }
         for op in DbOp::ALL {
             self.db_errors.with_label_values(&[op.as_str()]);

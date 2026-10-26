@@ -3,7 +3,7 @@
 
 use putio_sync_client::PutioApiClient;
 use putio_sync_db::Database;
-use putio_sync_download::{DownloadConfig, DownloadManager};
+use putio_sync_download::{DownloadConfig, DownloadManager, TreeDecision};
 use std::sync::Arc;
 
 const FOLDER_ID: i64 = 50;
@@ -117,4 +117,43 @@ async fn single_file_is_queued_under_its_folder() {
 
     let item = db.queue().get_by_file_id(1).await.unwrap().unwrap();
     assert_eq!(item.relative_path, "Show");
+}
+
+/// Feature 011: the report says what happened to each file and names the root
+#[tokio::test]
+async fn report_lists_each_decision() {
+    let (_server, _dir, db, manager) = setup().await;
+    db.downloads()
+        .insert(
+            1,
+            "a.mkv",
+            100,
+            "/x/a.mkv",
+            putio_sync_db::models::DownloadStatus::Completed,
+        )
+        .await
+        .unwrap();
+
+    let report = manager.enqueue_tree_report(FOLDER_ID).await.unwrap();
+    assert_eq!(report.root_name.as_deref(), Some("Show"));
+    let mut decisions: Vec<_> = report
+        .files
+        .iter()
+        .map(|f| (f.file_id, f.relative_path.as_str(), f.decision.clone()))
+        .collect();
+    decisions.sort_by_key(|d| d.0);
+    assert_eq!(
+        decisions,
+        vec![
+            (1, "Show", TreeDecision::Known),
+            (2, "Show", TreeDecision::Blocked("exe".to_string())),
+            (3, "Show", TreeDecision::Known),
+        ]
+    );
+    assert!(report.files[0].decision.accepted());
+    assert_eq!(report.stats.files_skipped, 2);
+
+    let single = manager.enqueue_tree_report(1).await.unwrap();
+    assert_eq!(single.root_name.as_deref(), Some("a.mkv"));
+    assert_eq!(single.files.len(), 1);
 }

@@ -31,6 +31,7 @@
 //! ```
 
 pub mod analytics;
+pub mod arr;
 pub mod downloads;
 pub mod error;
 pub mod history;
@@ -41,6 +42,7 @@ pub mod sources;
 pub mod stats;
 pub mod torrents;
 
+pub use arr::{ArrItem, ArrRepository, ArrState, BlocklistState, NewArrItem, PutioProgress};
 pub use downloads::DownloadRepository;
 pub use error::{DbError, DbResult};
 pub use history::HistoryRepository;
@@ -156,6 +158,11 @@ impl Database {
         SourcesRepository::new(&self.pool)
     }
 
+    /// Get the Radarr/Sonarr items repository (feature 011)
+    pub fn arr(&self) -> ArrRepository<'_> {
+        ArrRepository::new(&self.pool)
+    }
+
     /// Get a processed torrents repository
     pub fn processed_torrents(&self) -> ProcessedTorrentsRepository<'_> {
         ProcessedTorrentsRepository::new(&self.pool)
@@ -235,6 +242,15 @@ impl Database {
             (
                 schema::CREATE_TRANSFER_ORIGINS_TABLE,
                 "Failed to create transfer_origins table",
+            ),
+            // Radarr/Sonarr items (feature 011)
+            (
+                schema::CREATE_ARR_ITEMS_TABLE,
+                "Failed to create arr_items table",
+            ),
+            (
+                schema::CREATE_ARR_ITEM_FILES_TABLE,
+                "Failed to create arr_item_files table",
             ),
         ] {
             sqlx::query(sql)
