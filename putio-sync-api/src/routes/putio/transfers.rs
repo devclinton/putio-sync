@@ -4,9 +4,11 @@
 //! - GET  /putio/transfers        - List all transfers
 //! - POST /putio/transfers        - Add transfer (multipart for .torrent, JSON for magnet)
 //! - GET  /putio/transfers/:id    - Get specific transfer stats
-//! - DELETE /putio/transfers/:id  - Remove transfer
-//! - POST /putio/transfers/:id/start - Start/resume transfer
-//! - POST /putio/transfers/:id/stop  - Stop transfer
+//! - DELETE /putio/transfers/:id  - Remove transfer (Put.io cancel)
+//! - POST /putio/transfers/:id/retry - Retry a failed transfer
+//!
+//! Put.io has no pause or resume for transfers, so there are no start/stop routes:
+//! retry restarts a failed one, remove stops and deletes one.
 
 use crate::error::ApiError;
 use crate::handlers::transfers;
@@ -28,8 +30,7 @@ pub fn router() -> Router<AppState> {
         .route("/", post(add_transfer))
         .route("/:id", get(get_transfer))
         .route("/:id", delete(remove_transfer))
-        .route("/:id/start", post(start_transfer))
-        .route("/:id/stop", post(stop_transfer))
+        .route("/:id/retry", post(retry_transfer))
 }
 
 /// List all transfers
@@ -77,38 +78,16 @@ async fn remove_transfer(
         .map(Json)
 }
 
-/// Start/resume a transfer
+/// Retry a failed transfer; answers with the transfer as Put.io reports it afterwards
 ///
-/// POST /putio/transfers/:id/start
-async fn start_transfer(
-    State(_state): State<AppState>,
+/// POST /putio/transfers/:id/retry
+async fn retry_transfer(
+    State(state): State<AppState>,
     Path(transfer_id): Path<i64>,
-) -> Result<Json<SuccessResponse>, ApiError> {
-    // Put.io doesn't have explicit start/stop API - transfers start automatically
-    // This endpoint is provided for API consistency but is a no-op
-    Ok(Json(SuccessResponse {
-        message: format!(
-            "Transfer {} is managed automatically by Put.io",
-            transfer_id
-        ),
-    }))
-}
-
-/// Stop a transfer
-///
-/// POST /putio/transfers/:id/stop
-async fn stop_transfer(
-    State(_state): State<AppState>,
-    Path(transfer_id): Path<i64>,
-) -> Result<Json<SuccessResponse>, ApiError> {
-    // Put.io doesn't have explicit start/stop API
-    // Users should delete the transfer to stop it
-    Ok(Json(SuccessResponse {
-        message: format!(
-            "To stop transfer {}, use DELETE /putio/transfers/{}",
-            transfer_id, transfer_id
-        ),
-    }))
+) -> Result<Json<TransferResponse>, ApiError> {
+    transfers::retry_transfer(&state.client, transfer_id)
+        .await
+        .map(Json)
 }
 
 #[cfg(test)]

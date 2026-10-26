@@ -15,7 +15,10 @@
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let config = DaemonConfig {
 //!         oauth_token: "your-token".to_string(),
-//!         download_dir: PathBuf::from("/downloads"),
+//!         download: putio_sync_download::DownloadConfig {
+//!             target_directory: PathBuf::from("/downloads"),
+//!             ..Default::default()
+//!         },
 //!         watch_dirs: vec![PathBuf::from("/watch")],
 //!         ..Default::default()
 //!     };

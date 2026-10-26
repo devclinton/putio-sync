@@ -1,12 +1,15 @@
 // Transfers page: Put.io transfers polled every 5 s, an add form (magnet/URL or a
-// .torrent file), start/stop, and remove with confirmation.
+// .torrent file), retry for a failed transfer, and remove with confirmation. Put.io has
+// no pause or resume, so there is no start/stop.
 
 import { del, get, post } from "../api.js";
 import { confirm, h, poll, toast } from "../app.js";
 import { bytes, percent, speed } from "../format.js";
 
 const REFRESH_MS = 5000;
-const BADGE = { DOWNLOADING: "active", COMPLETED: "ok", SEEDING: "ok", ERROR: "bad", WAITING: "warn", IN_QUEUE: "warn" };
+const BADGE = { DOWNLOADING: "active", COMPLETED: "ok", SEEDING: "ok", ERROR: "bad", FAILED: "bad", WAITING: "warn", IN_QUEUE: "warn" };
+// States Put.io can retry (`POST /transfers/retry`)
+const RETRYABLE = new Set(["ERROR", "FAILED"]);
 
 let timer = null;
 let seq = 0;
@@ -117,6 +120,13 @@ async function onAdd(ev) {
   refresh();
 }
 
+function onRetry(button, t) {
+  return act(button, `retry ${t.name}`, async () => {
+    await post(`/putio/transfers/${t.id}/retry`);
+    return { message: `Retrying ${t.name}` };
+  });
+}
+
 async function onRemove(button, t) {
   const ok = await confirm({ title: "Remove transfer", text: `Remove transfer ${t.name}?`, verb: "Remove" });
   if (ok) await act(button, `remove ${t.name}`, () => del(`/putio/transfers/${t.id}`));
@@ -150,8 +160,6 @@ function render(list) {
 function row(t) {
   const s = String(t.status || "").toUpperCase();
   const pct = Math.max(0, Math.min(100, Number(t.percent_done) || 0));
-  const button = (label, verb) =>
-    h("button", { type: "button", class: "btn btn-small", "aria-label": `${label} ${t.name}`, onclick: (ev) => act(ev.currentTarget, `${verb} ${t.name}`, () => post(`/putio/transfers/${t.id}/${verb}`)) }, label);
   return h(
     "tr",
     {},
@@ -166,8 +174,7 @@ function row(t) {
       h(
         "div",
         { class: "row-actions" },
-        button("Start", "start"),
-        button("Stop", "stop"),
+        RETRYABLE.has(s) ? h("button", { type: "button", class: "btn btn-small", "aria-label": `Retry ${t.name}`, onclick: (ev) => onRetry(ev.currentTarget, t) }, "Retry") : null,
         h("button", { type: "button", class: "btn btn-small", "aria-label": `Remove ${t.name}`, onclick: (ev) => onRemove(ev.currentTarget, t) }, "Remove"),
       ),
     ),

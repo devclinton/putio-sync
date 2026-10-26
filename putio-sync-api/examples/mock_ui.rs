@@ -27,6 +27,8 @@ const PUTIO_TOKEN: &str = "mock-putio-token";
 
 const MOVIES: i64 = 100;
 const SHOWS: i64 = 200;
+/// Inside Movies: open `#/putio/110` directly to see the breadcrumb walk up
+const EXTRAS: i64 = 110;
 
 fn file(id: i64, name: &str, size: i64, file_type: &str, parent_id: i64) -> Value {
     json!({
@@ -86,6 +88,7 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         MOVIES,
     );
     let setup = file(102, "setup.exe", 52_428_800, "FILE", MOVIES);
+    let extras = file(EXTRAS, "Extras", 0, "FOLDER", MOVIES);
     // Not queued, so "Download" on Movies toasts found 3, queued 1, skipped 1, blocked 1
     let sintel = file(103, "Sintel.2010.1080p.mkv", 1_288_490_189, "VIDEO", MOVIES);
     let episode = file(
@@ -96,6 +99,10 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         SHOWS,
     );
 
+    // Only a failed transfer offers Retry
+    let mut failed = transfer(4, "Broken.Torrent.2009", "ERROR", 12);
+    failed["error_message"] = json!("Tracker unreachable");
+
     let mut json_mock = |method: &str, path: String, body: String| {
         server
             .mock(method, path.as_str())
@@ -105,7 +112,8 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
             .expect_at_least(0)
     };
 
-    let mut mocks = vec![
+    let mut mocks =
+        vec![
         json_mock(
             "GET",
             "/files/list?parent_id=0".into(),
@@ -114,13 +122,30 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         json_mock(
             "GET",
             format!("/files/list?parent_id={MOVIES}"),
-            listing(movies.clone(), vec![big.clone(), setup.clone(), sintel.clone()]),
+            listing(
+                movies.clone(),
+                vec![extras.clone(), big.clone(), setup.clone(), sintel.clone()],
+            ),
+        ),
+        json_mock(
+            "GET",
+            format!("/files/list?parent_id={EXTRAS}"),
+            listing(extras.clone(), vec![]),
         ),
         json_mock(
             "GET",
             "/transfers/list".into(),
-            json!({ "status": "OK", "transfers": [transfer(1, "Sintel.2010.1080p", "DOWNLOADING", 42)] })
-                .to_string(),
+            json!({ "status": "OK", "transfers": [
+                transfer(1, "Sintel.2010.1080p", "DOWNLOADING", 42),
+                failed.clone(),
+            ] })
+            .to_string(),
+        ),
+        // Retry answers with the transfer as Put.io reports it afterwards
+        json_mock(
+            "GET",
+            "/transfers/4".into(),
+            json!({ "status": "OK", "transfer": failed }).to_string(),
         ),
         json_mock(
             "POST",
@@ -136,11 +161,13 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
                 .to_string(),
         ),
         json_mock("POST", "/files/delete".into(), json!({ "status": "OK" }).to_string()),
-        // Remove; start and stop answer from the API without calling Put.io
+        // Remove and retry
         json_mock("POST", "/transfers/cancel".into(), json!({ "status": "OK" }).to_string()),
         json_mock("POST", "/transfers/retry".into(), json!({ "status": "OK" }).to_string()),
     ];
-    for f in [&movies, &shows, &readme, &big, &setup, &sintel, &episode] {
+    for f in [
+        &movies, &shows, &extras, &readme, &big, &setup, &sintel, &episode,
+    ] {
         mocks.push(json_mock(
             "GET",
             format!("/files/{}", f["id"]),

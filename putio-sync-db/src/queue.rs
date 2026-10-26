@@ -99,6 +99,29 @@ impl<'a> QueueRepository<'a> {
         .map_err(tracked(DbOp::Queue, "Failed to claim queue item"))
     }
 
+    /// Put rows left in `downloading` back to `pending`
+    ///
+    /// Only `pending` rows are claimed, so a row a crash left in `downloading` would
+    /// otherwise never run again. Call once at startup, before any worker starts; it
+    /// keeps priority and `created_at`, so queue order is unchanged. Returns the count.
+    pub async fn requeue_interrupted(&self) -> DbResult<usize> {
+        let result = sqlx::query(
+            r#"
+            UPDATE download_queue
+            SET status = 'pending', updated_at = CURRENT_TIMESTAMP
+            WHERE status = 'downloading'
+            "#,
+        )
+        .execute(self.pool)
+        .await
+        .map_err(tracked(
+            DbOp::Queue,
+            "Failed to requeue interrupted downloads",
+        ))?;
+
+        Ok(result.rows_affected() as usize)
+    }
+
     /// Get all queue items
     pub async fn get_all(&self) -> DbResult<Vec<QueueItem>> {
         let items = sqlx::query_as::<_, QueueItem>(

@@ -78,10 +78,10 @@ buffer_size_mb = 16
 # Default: true
 resume_enabled = true
 
-# Skip files that have already been downloaded (based on database)
-# Useful for avoiding duplicate downloads
-# Default: false
-skip_existing = false
+# Skip files that already exist in target_directory. false re-downloads and
+# overwrites them, including files the queue database doesn't know about.
+# Default: true
+skip_existing = true
 
 # Delete files from Put.io after successful download
 # Note: This is specific to the download command

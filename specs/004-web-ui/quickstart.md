@@ -38,7 +38,7 @@ cargo run -p putio-sync-api --example mock_ui
 ```
 
 It prints `http://127.0.0.1:<port>/` and a test token, serves the UI with a mockito Put.io
-(two folders, three files, one transfer) and a seeded temp database. Check:
+(three folders, three files, a running and a failed transfer) and a seeded temp database. Check:
 
 1. Opening the URL shows the sign-in page. A wrong token says "Token not accepted"; six wrong
    tokens show the rate-limit message with a countdown.
@@ -49,9 +49,10 @@ It prints `http://127.0.0.1:<port>/` and a test token, serves the UI with a mock
    is already running.
 4. Put.io browses the mocked folders; the filter box narrows the list; "Download" on a
    folder toasts found/queued/skipped; the delete button is absent on a queued file and
-   asks for confirmation on another.
-5. Transfers lists the mocked transfer; add a magnet link; start/stop/remove with
-   confirmation.
+   asks for confirmation on another. Opening `#/putio/110` directly shows the breadcrumb
+   "Put.io / Movies / Extras".
+5. Transfers lists the mocked transfers; add a magnet link; Retry shows only on the failed
+   one; remove asks for confirmation.
 6. History pages and filters by action and name; Settings loads all four groups, a save
    shows the API's message, an invalid value shows the validation error.
 7. Sign out returns to the sign-in page and `localStorage` holds no token.

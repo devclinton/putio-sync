@@ -22,7 +22,7 @@ export function mount(el, { path = [] } = {}) {
   const at = crumbs.findIndex((c) => c.id === folder);
   if (folder === 0) crumbs = [ROOT];
   else if (at >= 0) crumbs = crumbs.slice(0, at + 1);
-  else crumbs = [ROOT, { id: null, name: "…" }, { id: folder, name: String(folder) }]; // a direct link
+  else crumbs = [ROOT, { id: null, name: "…" }, { id: folder, name: String(folder) }]; // a direct link, until walkUp names it
 
   files = [];
   els = {
@@ -32,6 +32,7 @@ export function mount(el, { path = [] } = {}) {
     list: h("section", { class: "card wide" }, h("p", { class: "muted", text: "Loading…" })),
   };
   renderCrumbs();
+  if (crumbs[1] && crumbs[1].id == null) walkUp(folder);
   el.append(
     h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Put.io" }), els.crumbs), h("div", { class: "toolbar" }, els.filter)),
     h("div", { class: "stack" }, els.details, els.list),
@@ -61,6 +62,29 @@ async function load() {
   }
   files = listing.items || [];
   renderList();
+}
+
+const MAX_DEPTH = 32;
+
+/** Build the breadcrumb of a directly opened folder from each folder's `parent_id`. */
+async function walkUp(id) {
+  const page = els; // a new mount (or unmount) replaces it
+  const chain = [];
+  const seen = new Set();
+  try {
+    while (id > 0 && !seen.has(id) && chain.length < MAX_DEPTH) {
+      seen.add(id);
+      const f = await get(`/putio/files/${id}`);
+      if (els !== page) return;
+      chain.unshift({ id: f.id, name: f.name });
+      id = f.parent_id;
+    }
+  } catch {
+    return; // keep the placeholder; the listing shows any error
+  }
+  if (id > 0 || els !== page) return; // too deep or a loop: keep the placeholder
+  crumbs = [ROOT, ...chain];
+  renderCrumbs();
 }
 
 function retry() {

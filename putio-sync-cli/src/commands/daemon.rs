@@ -5,6 +5,7 @@
 use anyhow::{anyhow, Context, Result};
 use putio_sync_core::config::{AuthMethod, Config};
 use putio_sync_daemon::{DaemonConfig, PutioDaemon};
+use putio_sync_download::DownloadConfig;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use tracing::{info, warn};
@@ -63,12 +64,6 @@ pub async fn execute_daemon(
         watch_paths
     };
 
-    // Determine download directory, workers, buffer size, and delete_after_download
-    let download_dir = config.download.target_directory.clone();
-    let workers = config.download.workers;
-    let buffer_size_mb = config.download.buffer_size_mb;
-    let delete_after_download = config.download.delete_after_download;
-
     // Warn about unsupported CLI flags
     if filter.is_some() {
         warn!("--filter flag not yet supported in daemon mode, ignoring");
@@ -96,31 +91,21 @@ pub async fn execute_daemon(
     }
 
     // Create daemon configuration
-    let daemon_config = DaemonConfig {
+    let daemon_config = daemon_config(
+        &config,
         oauth_token,
-        database_path: Some(download_dir.join(".putiosync.db")),
-        download_dir,
         watch_dirs,
         watch_interval,
         download_interval,
         parent_id,
-        delete_after_upload: config.watch.delete_after_upload,
-        archive_dir: config.watch.archive_directory.clone(),
-        watch_enabled: config.watch.enabled,
-        workers,
-        buffer_size_mb,
-        delete_after_download,
-        api_enabled: config.api.enabled,
-        api_url: config.api.url.clone(),
-        blocked_extensions: config.download.blocked_extensions.clone(),
-    };
+    );
 
     let queue_db = Arc::new(OnceLock::new());
     crate::telemetry::start(
         &config,
         queue_db.clone(),
-        daemon_config.workers,
-        daemon_config.download_dir.clone(),
+        daemon_config.download.workers,
+        daemon_config.download.target_directory.clone(),
     )
     .await?;
 
@@ -134,9 +119,10 @@ pub async fn execute_daemon(
     );
 
     info!("Daemon configuration:");
+    let download = &daemon_config.download;
     info!(
         "  Download directory: {}",
-        daemon_config.download_dir.display()
+        download.target_directory.display()
     );
     info!(
         "  Watch directories: {} paths",
@@ -150,12 +136,23 @@ pub async fn execute_daemon(
         "  Put.io sync interval: {}s",
         daemon_config.download_interval
     );
-    info!("  Download workers: {}", daemon_config.workers);
-    info!("  Buffer size: {}MB", daemon_config.buffer_size_mb);
+    info!("  Download workers: {}", download.workers);
+    info!("  Buffer size: {}MB", download.buffer_size_mb);
+    info!(
+        "  Bandwidth limit: {}",
+        download
+            .bandwidth_limit_bytes_per_sec
+            .map_or("unlimited".to_string(), |b| format!("{} bytes/s", b))
+    );
+    info!(
+        "  Retries: {} (initial delay {}s)",
+        download.max_retries, download.retry_initial_delay_secs
+    );
+    info!("  Skip existing: {}", download.skip_existing);
     info!("  Parent folder ID: {:?}", daemon_config.parent_id);
     info!(
         "  Delete after download: {}",
-        daemon_config.delete_after_download
+        download.delete_after_download
     );
     info!(
         "  Delete after upload: {}",
@@ -164,10 +161,10 @@ pub async fn execute_daemon(
     info!("  Archive directory: {:?}", daemon_config.archive_dir);
     info!(
         "  Blocked extensions: {}",
-        if daemon_config.blocked_extensions.is_empty() {
+        if download.blocked_extensions.is_empty() {
             "none".to_string()
         } else {
-            daemon_config.blocked_extensions.join(", ")
+            download.blocked_extensions.join(", ")
         }
     );
 
@@ -210,4 +207,71 @@ pub async fn execute_daemon(
 
     info!("👋 Daemon stopped gracefully");
     Ok(())
+}
+
+/// The daemon's configuration from `config.toml` and the CLI arguments. Every
+/// `[download]` setting goes through the shared `DownloadConfig::from` conversion.
+fn daemon_config(
+    config: &Config,
+    oauth_token: String,
+    watch_dirs: Vec<PathBuf>,
+    watch_interval: u64,
+    download_interval: u64,
+    parent_id: Option<i64>,
+) -> DaemonConfig {
+    DaemonConfig {
+        oauth_token,
+        database_path: Some(config.download.target_directory.join(".putiosync.db")),
+        download: DownloadConfig::from(&config.download),
+        watch_dirs,
+        watch_interval,
+        download_interval,
+        parent_id,
+        delete_after_upload: config.watch.delete_after_upload,
+        archive_dir: config.watch.archive_directory.clone(),
+        watch_enabled: config.watch.enabled,
+        api_enabled: config.api.enabled,
+        api_url: config.api.url.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every `[download]` setting the manager has reaches the daemon, not only the
+    /// target directory, workers, buffer, delete-after and blocklist it used to copy
+    #[test]
+    fn daemon_config_takes_every_download_setting() {
+        let mut config = Config::default();
+        config.download.target_directory = PathBuf::from("/srv/putio");
+        config.download.workers = 5;
+        config.download.buffer_size_mb = 48;
+        config.download.skip_existing = true;
+        config.download.delete_after_download = true;
+        config.download.bandwidth_limit_bytes_per_sec = Some(2_097_152);
+        config.download.max_retries = 8;
+        config.download.retry_initial_delay_secs = 6;
+        config.download.blocked_extensions = vec!["iso".to_string()];
+
+        let daemon = daemon_config(&config, "t".to_string(), vec![], 60, 300, None);
+        assert_eq!(
+            daemon.download,
+            DownloadConfig {
+                target_directory: PathBuf::from("/srv/putio"),
+                skip_existing: true,
+                buffer_size_mb: 48,
+                bandwidth_limit_bytes_per_sec: Some(2_097_152),
+                max_retries: 8,
+                retry_initial_delay_secs: 6,
+                workers: 5,
+                delete_after_download: true,
+                blocked_extensions: vec!["iso".to_string()],
+            }
+        );
+        assert_eq!(
+            daemon.database_path,
+            Some(PathBuf::from("/srv/putio/.putiosync.db"))
+        );
+    }
 }

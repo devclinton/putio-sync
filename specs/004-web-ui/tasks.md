@@ -918,19 +918,54 @@ Polish (T056–T059):
   - The breadcrumb shows "Put.io / … / 100" when a folder URL is opened directly
     (cosmetic).
 
+Post-review fixes:
+
+- Crash recovery: rows left in `downloading` were never claimed again (the claim takes
+  only `pending`) until a pause all/resume all. `QueueRepository::requeue_interrupted`
+  sets them back to `pending` without touching `priority` or `created_at`, called via
+  `DownloadManager::recover_interrupted` from `PutioDaemon::initialize` (before
+  `start_workers`) and from `create_app` (`server`); one INFO line with the count when
+  non-zero. It is not in `Database::new`, because CLI commands open the same database
+  while the daemon runs. Paused and failed rows are untouched; the partial file resumes
+  with a Range request as before. Tests: `putio-sync-download/tests/interrupted_resume.rs`
+  (mockito 206 for `bytes=4096-8191`), `daemon::tests::initialize_requeues_interrupted_downloads`,
+  `server_bind.rs::create_app_requeues_interrupted_downloads`.
+- Startup download settings: `daemon` built its manager config by hand with
+  `skip_existing: true`, no bandwidth limit and fixed retries (3, 2 s). There is now one
+  `From<&putio_sync_core::config::DownloadConfig> for putio_sync_download::DownloadConfig`
+  (download crate, which now depends on core). `DaemonConfig` carries a `download:
+  DownloadConfig` instead of five copied fields; the CLI daemon, `server`'s `--download`
+  thread and `extract_download_config` (API, settings save) all use it. Behaviour
+  change: the daemon now follows `skip_existing`. Its default became `true` (also when
+  the key is missing) so the old skipping is kept; an explicit `false` now re-downloads
+  and overwrites files already on disk. The README "Settings from the UI" table is unchanged (it
+  already described the live path, which used the full mapping). Tests:
+  `putio-sync-download/tests/config_from_settings.rs`,
+  `daemon::tests::download_settings_reach_the_manager`,
+  `commands::daemon::tests::daemon_config_takes_every_download_setting`.
+- `putio-sync-telemetry/tests/server.rs::scrape_is_fast_while_recording` failed at
+  ~1.1 s under load average 11–30. It now takes the best of five scrapes, all while the
+  2000 writers record, against a 2 s bound (comment in the test explains why).
+- The stray `.putiosync.db` in the repo root: no test or example opens a database in
+  the working directory (all use temp dirs). `server` opens `.putiosync.db` relative to
+  its working directory, so a `cargo run -- server` from the repo root creates it.
+
 Operator steps still pending on the NAS (004, plus the open 003 steps):
 
 1. In the Unraid template, publish container port 15432 (and 9742 if the 003 metrics
    port was never published).
-2. Set `PUTIO_SYNC_API_TOKEN` in the template to a new random token
+2. Before the new image starts: the NAS `config.toml` has `skip_existing = false`, which
+   the daemon now honours (re-download and overwrite). Change it to `true` or delete the
+   line to keep today's behaviour.
+3. Set `PUTIO_SYNC_API_TOKEN` in the template to a new random token
    (`openssl rand -hex 24`); don't put it in config.toml.
-3. Pull the new image and restart; expect `API listener enabled bind=0.0.0.0:15432
+4. Pull the new image and restart; expect `API listener enabled bind=0.0.0.0:15432
    token=set`.
-4. Run quickstart §5–§6 (desktop and phone sign-in, live status, sync now, token grep
+5. Run quickstart §5–§6 (desktop and phone sign-in, live status, sync now, token grep
    of the container log = 0).
-5. Still pending from 003: `deploy-monitoring.yml --limit monitoring_server` and 003
+6. Still pending from 003: `deploy-monitoring.yml --limit monitoring_server` and 003
    quickstart §6.
-6. Before the first UI settings save on the NAS, check that config.toml has no
+7. Before the first UI settings save on the NAS, check that config.toml has no
    `auth_token` line unless you put one there (the pre-deploy fix below keeps env-only
    tokens out of the file from now on).
 
@@ -954,3 +989,26 @@ Pre-deploy review (2026-10-26):
   `Config::load` expands `~` in it like the other paths. `--archive-dir` is still ignored
   in daemon mode. Tests: daemon `watcher_starts_with_archive_directory`, core
   `archive_directory_is_expanded_on_load`.
+
+Post-review fixes:
+
+- Transfers (FR-016): Put.io has no pause or resume, so the no-op `start`/`stop` routes
+  and buttons are gone (the paths now 404). A failed (`ERROR`) transfer shows **Retry**,
+  `POST /putio/transfers/{id}/retry` → Put.io `POST /transfers/retry` (`id`), answering
+  with the refreshed transfer; Remove stays Put.io's cancel. The secrets sweep lists
+  `/retry` instead. Tests: API `transfer_actions.rs`, client `test_retry_transfer`,
+  `test_cancel_transfers`.
+- Settings saves keep `config.toml` comments: `save_keeping_file_credentials` diffs the
+  file as loaded (paths expanded, defaults filled) against memory, both without
+  credentials, and edits only the differing keys in a `toml_edit` document (0.22, the
+  version `toml` already pulls in). Comments, blank lines, ordering and unknown keys
+  stay; a key the config stops writing is removed; an unchanged `~` path keeps its `~`.
+  `[auth]` and `api.auth_token` are never touched (inline `api = {...}` is edited key by
+  key). The write is a temp file plus rename, keeping the file's mode (0600 when new).
+  Tests: core `only_changed_keys_are_edited`, `unchanged_config_leaves_the_file_identical`,
+  `cleared_and_new_keys`, `unexpanded_paths_are_not_rewritten`,
+  `write_is_atomic_and_keeps_mode`; API `settings.rs::save_keeps_comments_and_unknown_keys`.
+- Put.io breadcrumb: a folder opened by URL showed "… / 100". `putio.js` now walks
+  `parent_id` up with `GET /putio/files/{id}` (no API change; test `putio_file_details.rs`; capped at 32 levels, loop
+  safe, placeholder kept on error). `mock_ui` gains `Movies/Extras` (`#/putio/110`) and
+  a failed transfer for checking both.

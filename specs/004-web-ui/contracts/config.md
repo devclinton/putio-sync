@@ -30,9 +30,12 @@ bind = "0.0.0.0:15432"      # all interfaces; exposure = which port the containe
 the three variables is set, else `Config`, mirroring `resolve_metrics()`.
 
 The resolved token lives in memory only. A settings save from the UI
-(`PUT /settings/*`, `POST /local/watcher/start|stop`) rewrites `config.toml` with
-`Config::save_keeping_file_credentials`, which writes `[auth]` and `api.auth_token` as
-they are in the file (or leaves them out), never the env value.
+(`PUT /settings/*`, `POST /local/watcher/start|stop`) edits `config.toml` with
+`Config::save_keeping_file_credentials`: only the keys whose value changed are rewritten
+(`toml_edit`), so comments, blank lines, ordering and unknown keys survive. `[auth]` and
+`api.auth_token` stay exactly as they are in the file (or absent), never the env value.
+A file that doesn't parse is left untouched and the error quotes none of it; the write
+is a temp file renamed over the original, keeping its mode (0600 for a new file).
 
 ## Startup log lines (INFO unless noted)
 
