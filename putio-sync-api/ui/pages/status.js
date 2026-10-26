@@ -1,7 +1,7 @@
 // Status page: one GET /status every 3 s, answering "is it working?".
 
 import { get, syncNow } from "../api.js";
-import { h, poll, toast, toastError } from "../app.js";
+import { empty, h, poll, toast, toastError } from "../app.js";
 import { bytes, duration, percent, relative, speed } from "../format.js";
 
 const REFRESH_MS = 3000;
@@ -168,7 +168,7 @@ function downloadsCard(list, reason) {
     return c;
   }
   if (list.length === 0) {
-    return h("section", { class: "card wide" }, h("h2", { text: "Active downloads" }), h("p", { class: "muted", text: "Nothing is downloading." }));
+    return h("section", { class: "card wide" }, h("h2", { text: "Active downloads" }), empty("Nothing is downloading", "Queued files start here when a download slot is free."));
   }
   const rows = list.map((d) =>
     h(

@@ -7,6 +7,8 @@
   <title>putio-sync</title>
   <!-- An empty icon stops the browser asking for /favicon.ico, which is not public -->
   <link rel="icon" href="data:,">
+  <!-- Applies the saved appearance before first paint -->
+  <script src="/assets/theme.js"></script>
   <link rel="stylesheet" href="/assets/app.css">
   <script type="module" src="/assets/app.js"></script>
 </head>
@@ -23,6 +25,7 @@
       <a href="#/settings" data-page="settings">Settings</a>
     </nav>
     <div class="topbar-end">
+      <button id="mode" class="btn btn-quiet mode" type="button" aria-label="Appearance: System"><span>System</span></button>
       <a id="metrics-link" class="muted" hidden>Metrics</a>
       <button id="signout" class="btn btn-quiet" type="button" hidden>Sign out</button>
     </div>
