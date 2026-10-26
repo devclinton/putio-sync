@@ -32,6 +32,7 @@
 
 pub mod analytics;
 pub mod arr;
+pub mod decisions;
 pub mod downloads;
 pub mod error;
 pub mod history;
@@ -43,6 +44,7 @@ pub mod stats;
 pub mod torrents;
 
 pub use arr::{ArrItem, ArrRepository, ArrState, BlocklistState, NewArrItem, PutioProgress};
+pub use decisions::{RuleDecisionRecord, RuleDecisionsRepository};
 pub use downloads::DownloadRepository;
 pub use error::{DbError, DbResult};
 pub use history::HistoryRepository;
@@ -163,6 +165,11 @@ impl Database {
         ArrRepository::new(&self.pool)
     }
 
+    /// Get a rule decisions repository (feature 009)
+    pub fn rule_decisions(&self) -> RuleDecisionsRepository<'_> {
+        RuleDecisionsRepository::new(&self.pool)
+    }
+
     /// Get a processed torrents repository
     pub fn processed_torrents(&self) -> ProcessedTorrentsRepository<'_> {
         ProcessedTorrentsRepository::new(&self.pool)
@@ -243,6 +250,10 @@ impl Database {
             (
                 schema::CREATE_ARR_ITEM_FILES_TABLE,
                 "Failed to create arr_item_files table",
+            ),
+            (
+                schema::CREATE_RULE_DECISIONS_TABLE,
+                "Failed to create rule_decisions table",
             ),
         ] {
             sqlx::query(sql)

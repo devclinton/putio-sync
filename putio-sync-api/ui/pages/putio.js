@@ -2,11 +2,13 @@
 // folder for download, delete from Put.io (confirmed; hidden for files the queue still
 // needs, and the server refuses those too), and remove empty folders account-wide (a dry
 // run first, then a confirm with the count). Feature 008: tick rows (or Select all) to
-// download or delete several at once; queued files can't be ticked.
+// download or delete several at once; queued files can't be ticked. Feature 009: the
+// folder's rule card, and "blocked" / "skipped" badges on files its rule won't download.
 
 import { del, get, post } from "../api.js";
 import { confirm, empty, h, toast } from "../app.js";
 import { bytes, dateTime, utc } from "../format.js";
+import { ruleCard } from "../rules.js";
 import { selection } from "../select.js";
 
 const ROOT = { id: 0, name: "Put.io" };
@@ -20,6 +22,7 @@ let queued = new Set();
 let seq = 0;
 let els = null;
 let sel = null;
+let rule = null;
 
 export function mount(el, { path = [] } = {}) {
   folder = Number.parseInt(path[0], 10) || 0;
@@ -42,11 +45,12 @@ export function mount(el, { path = [] } = {}) {
       h("button", { type: "button", class: "btn btn-small", onclick: onDeleteSelected }, "Delete"),
     ],
   });
+  rule = ruleCard(folder, renderList);
   renderCrumbs();
   if (crumbs[1] && crumbs[1].id == null) walkUp(folder);
   el.append(
     h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Put.io" }), els.crumbs), h("div", { class: "toolbar" }, els.filter, els.clean)),
-    h("div", { class: "stack" }, els.details, els.list),
+    h("div", { class: "stack" }, rule.el, els.details, els.list),
   );
   load();
 }
@@ -54,6 +58,7 @@ export function mount(el, { path = [] } = {}) {
 export function unmount() {
   els = null;
   sel = null;
+  rule = null;
   seq += 1;
 }
 
@@ -322,12 +327,17 @@ function fileRow(f) {
     ? h("a", { href: `#/putio/${f.id}`, onclick: () => crumbs.push({ id: f.id, name: f.name }), text: `${f.name}/` })
     : h("button", { type: "button", class: "link", onclick: () => onDetails(f), text: f.name });
   const keep = queued.has(f.id);
+  const verdict = !isFolder(f) && rule && rule.badge(f.name);
   return h(
     "tr",
     {},
     sel.box(f.id, { label: `Select ${f.name}`, disabled: keep, title: keep ? "In the queue; skip or cancel it to delete" : null }),
     h("td", { class: "name-cell name", "data-label": "Name" }, name),
-    h("td", { "data-label": "Type" }, h("span", { class: "badge", text: isFolder(f) ? "folder" : (f.file_type || "file").toLowerCase() })),
+    h(
+      "td",
+      { "data-label": "Type" },
+      h("span", { class: "badges" }, h("span", { class: "badge", text: isFolder(f) ? "folder" : (f.file_type || "file").toLowerCase() }), verdict ? h("span", { class: "badge warn", title: verdict.why, text: verdict.badge }) : null),
+    ),
     h("td", { class: "num right", "data-label": "Size", text: bytes(f.size) }),
     h("td", { "data-label": "Date", text: dateTime(utc(f.created_at)) }),
     h(

@@ -51,6 +51,7 @@ pub struct Telemetry {
     pub(crate) last_success: GaugeVec,
     pub(crate) last_sync_files: IntGaugeVec,
     pub(crate) files_blocked: IntCounter,
+    pub(crate) rule_decisions: IntCounterVec,
 
     pub(crate) queue_items: IntGaugeVec,
     pub(crate) downloads_active: IntGauge,
@@ -172,8 +173,16 @@ impl Telemetry {
             .unwrap(),
             files_blocked: IntCounter::with_opts(opts(
                 "files_blocked_total",
-                "Files skipped by the blocked-extension list, once per file id.",
+                "Files blocked or skipped by a folder rule or the blocked-extension list, once per file id.",
             ))
+            .unwrap(),
+            rule_decisions: IntCounterVec::new(
+                opts(
+                    "rule_decisions_total",
+                    "Folder rule decisions: files blocked, skipped or deleted from Put.io.",
+                ),
+                &["decision"],
+            )
             .unwrap(),
 
             queue_items: IntGaugeVec::new(
@@ -353,6 +362,7 @@ impl Telemetry {
             Box::new(self.last_success.clone()),
             Box::new(self.last_sync_files.clone()),
             Box::new(self.files_blocked.clone()),
+            Box::new(self.rule_decisions.clone()),
             Box::new(self.queue_items.clone()),
             Box::new(self.downloads_active.clone()),
             Box::new(self.download_workers.clone()),
@@ -401,6 +411,9 @@ impl Telemetry {
         }
         for k in SyncKind::ALL {
             self.last_sync_files.with_label_values(&[k.as_str()]);
+        }
+        for d in RuleDecision::ALL {
+            self.rule_decisions.with_label_values(&[d.as_str()]);
         }
         for s in QueueState::ALL {
             self.queue_items.with_label_values(&[s.as_str()]);

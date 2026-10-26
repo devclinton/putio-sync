@@ -449,7 +449,7 @@ impl ArrService {
                 .files
                 .iter()
                 .filter_map(|f| match &f.decision {
-                    TreeDecision::Blocked(ext) => Some(format!(".{}", ext)),
+                    TreeDecision::Blocked(ext) if !ext.is_empty() => Some(format!(".{}", ext)),
                     _ => None,
                 })
                 .collect();
