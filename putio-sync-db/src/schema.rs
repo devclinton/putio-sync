@@ -147,6 +147,20 @@ CREATE TABLE IF NOT EXISTS arr_item_files (
 )
 "#;
 
+/// SQL to create the rule_decisions table (feature 009): the latest folder rule
+/// decision per Put.io file not downloaded. `rule_path` NULL means the global settings.
+pub const CREATE_RULE_DECISIONS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS rule_decisions (
+    file_id INTEGER PRIMARY KEY,
+    filename TEXT NOT NULL,
+    folder_path TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK(decision IN ('blocked', 'skipped', 'deleted')),
+    reason TEXT NOT NULL,
+    rule_path TEXT,
+    decided_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"#;
+
 /// SQL to create performance indexes
 /// These indexes optimize common query patterns
 pub const CREATE_INDEXES: &str = r#"
@@ -173,6 +187,9 @@ CREATE INDEX IF NOT EXISTS idx_processed_torrents_checksum ON processed_torrents
 
 -- Index for processed torrents by timestamp
 CREATE INDEX IF NOT EXISTS idx_processed_torrents_timestamp ON processed_torrents(processed_at);
+
+-- Index for the newest rule decisions
+CREATE INDEX IF NOT EXISTS idx_rule_decisions_decided_at ON rule_decisions(decided_at);
 "#;
 
 #[cfg(test)]
@@ -186,6 +203,7 @@ mod tests {
         assert!(CREATE_DOWNLOAD_STATS_TABLE.contains("CREATE TABLE"));
         assert!(CREATE_DOWNLOAD_SOURCES_TABLE.contains("CREATE TABLE"));
         assert!(CREATE_TRANSFER_ORIGINS_TABLE.contains("CREATE TABLE"));
+        assert!(CREATE_RULE_DECISIONS_TABLE.contains("CREATE TABLE"));
     }
 
     #[test]
