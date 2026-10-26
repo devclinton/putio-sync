@@ -10,6 +10,7 @@ pub mod manager;
 pub mod progress;
 pub mod rate_limiter;
 pub mod stream;
+pub mod sync_status;
 pub mod utils;
 pub mod worker;
 
@@ -26,5 +27,6 @@ pub use manager::{
 pub use progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 pub use rate_limiter::RateLimiter;
 pub use stream::{stream_download, StreamDownloadResult, DEFAULT_BUFFER_SIZE};
+pub use sync_status::{SyncOutcome, SyncRequestError, SyncStatus};
 pub use utils::{retry_with_stall_detection, RetryResult};
 pub use worker::{DownloadJob, DownloadWorkerPool, WorkerResult};

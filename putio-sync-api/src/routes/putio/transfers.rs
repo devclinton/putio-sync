@@ -38,8 +38,7 @@ pub fn router() -> Router<AppState> {
 async fn list_transfers(
     State(state): State<AppState>,
 ) -> Result<Json<ListResponse<TransferResponse>>, ApiError> {
-    let config = state.config.read().await;
-    transfers::list_transfers(&config).await.map(Json)
+    transfers::list_transfers(&state.client).await.map(Json)
 }
 
 /// Add a new transfer
@@ -49,8 +48,9 @@ async fn add_transfer(
     State(state): State<AppState>,
     Json(request): Json<AddTransferRequest>,
 ) -> Result<Json<TransferResponse>, ApiError> {
-    let config = state.config.read().await;
-    transfers::add_transfer(&config, request).await.map(Json)
+    transfers::add_transfer(&state.client, request)
+        .await
+        .map(Json)
 }
 
 /// Get transfer details
@@ -60,8 +60,7 @@ async fn get_transfer(
     State(state): State<AppState>,
     Path(transfer_id): Path<i64>,
 ) -> Result<Json<TransferResponse>, ApiError> {
-    let config = state.config.read().await;
-    transfers::get_transfer(&config, transfer_id)
+    transfers::get_transfer(&state.client, transfer_id)
         .await
         .map(Json)
 }
@@ -73,8 +72,7 @@ async fn remove_transfer(
     State(state): State<AppState>,
     Path(transfer_id): Path<i64>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    let config = state.config.read().await;
-    transfers::remove_transfer(&config, transfer_id)
+    transfers::remove_transfer(&state.client, transfer_id)
         .await
         .map(Json)
 }

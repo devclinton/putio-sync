@@ -5,6 +5,7 @@ use crate::error::{DownloadError, DownloadResult};
 use crate::files::{check_resume, cleanup_partial, create_temp_path};
 use crate::progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 use crate::stream::stream_download;
+use crate::sync_status::{SyncOutcome, SyncRequestError, SyncStatus};
 use crate::utils::retry_with_stall_detection;
 use putio_sync_client::{error_chain, FileEntry, PutioApiClient};
 use putio_sync_db::models::DownloadStatus;
@@ -14,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Notify, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
@@ -97,6 +98,15 @@ fn sanitize_filename(filename: &str) -> String {
             c => c,
         })
         .collect()
+}
+
+/// Join a relative folder path and a name; an empty folder path is the root
+fn join_path(folder: &str, name: &str) -> String {
+    if folder.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}/{}", folder, name)
+    }
 }
 
 /// File information for download
@@ -226,6 +236,10 @@ pub struct DownloadManager {
     next_worker_id: Arc<RwLock<usize>>,
     /// Blocked file IDs already warned about, so each is logged once per process
     blocked_warned: Arc<Mutex<HashSet<i64>>>,
+    /// State of the folder sync, for the status page
+    sync_status: Arc<RwLock<SyncStatus>>,
+    /// Wakes `run_sync_loop` for "sync now"
+    sync_notify: Arc<Notify>,
 }
 
 impl DownloadManager {
@@ -252,6 +266,8 @@ impl DownloadManager {
             workers: Arc::new(RwLock::new(HashMap::new())),
             next_worker_id: Arc::new(RwLock::new(0)),
             blocked_warned: Arc::new(Mutex::new(HashSet::new())),
+            sync_status: Arc::new(RwLock::new(SyncStatus::default())),
+            sync_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -275,6 +291,8 @@ impl DownloadManager {
             workers: Arc::new(RwLock::new(HashMap::new())),
             next_worker_id: Arc::new(RwLock::new(0)),
             blocked_warned: Arc::new(Mutex::new(HashSet::new())),
+            sync_status: Arc::new(RwLock::new(SyncStatus::default())),
+            sync_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -977,7 +995,14 @@ impl DownloadManager {
     /// Statistics about the sync operation
     pub async fn sync_downloads(&self) -> DownloadResult<SyncStats> {
         let started = Instant::now();
+        self.sync_status.write().await.begin();
         let result = self.sync_downloads_inner().await;
+        self.sync_status.write().await.finish(match &result {
+            Ok(stats) => SyncOutcome::from(stats),
+            Err(e) => SyncOutcome::Failure {
+                error: error_chain(e),
+            },
+        });
         let (outcome, stats) = match &result {
             Ok(stats) => (SyncResult::Success, stats.clone()),
             Err(_) => (SyncResult::Failure, SyncStats::default()),
@@ -997,20 +1022,29 @@ impl DownloadManager {
     }
 
     async fn sync_downloads_inner(&self) -> DownloadResult<SyncStats> {
-        let mut stats = SyncStats::default();
-
         info!("Starting download sync...");
+        self.enqueue_tree(0).await
+    }
+
+    /// Queue every file under a Put.io folder, or a single file, through the same
+    /// filters and dedupe as the folder sync. `0` is the Put.io root, which is what the
+    /// sync uses.
+    ///
+    /// Files keep their Put.io path relative to the root, so a folder queued from the UI
+    /// lands where the sync would put it.
+    pub async fn enqueue_tree(&self, root_id: i64) -> DownloadResult<SyncStats> {
+        let mut stats = SyncStats::default();
 
         // Require database for queue-based downloads
         let db = self.database.as_ref().ok_or_else(|| {
             DownloadError::InternalError("Database required for sync downloads".to_string())
         })?;
 
-        // List all files from Put.io (starting from root folder 0)
-        let files_with_paths = match self.list_all_files(0).await {
+        // List the tree from Put.io (root folder 0 for the sync)
+        let files_with_paths = match self.list_tree(root_id).await {
             Ok(files) => files,
             Err(e) => {
-                error!(error = %error_chain(&e), "Failed to list files from Put.io");
+                error!(root_id, error = %error_chain(&e), "Failed to list files from Put.io");
                 return Err(e);
             }
         };
@@ -1275,6 +1309,7 @@ impl DownloadManager {
             interval_secs
         );
         let interval = std::time::Duration::from_secs(interval_secs);
+        self.sync_status.write().await.schedule(interval);
         let mut cycle = 0;
 
         loop {
@@ -1300,8 +1335,48 @@ impl DownloadManager {
                 }
             }
 
-            tokio::time::sleep(interval).await;
+            // "Sync now" wakes the loop early; request_sync refuses while a sync runs,
+            // so no wake-up is stored during one
+            tokio::select! {
+                _ = tokio::time::sleep(interval) => {}
+                _ = self.sync_notify.notified() => {
+                    debug!("Sync requested");
+                }
+            }
         }
+    }
+
+    /// Start a folder sync now ("sync now").
+    ///
+    /// Refused while a sync runs. Wakes `run_sync_loop` when one is running, otherwise
+    /// runs the sync on a spawned task. Marks the sync in progress before returning, so
+    /// a second request is refused straight away.
+    pub async fn request_sync(&self) -> Result<(), SyncRequestError> {
+        let has_loop = {
+            let mut status = self.sync_status.write().await;
+            if status.in_progress {
+                return Err(SyncRequestError::InProgress);
+            }
+            status.begin();
+            status.interval.is_some()
+        };
+
+        if has_loop {
+            self.sync_notify.notify_one();
+        } else {
+            let manager = self.clone();
+            tokio::spawn(async move {
+                if let Err(e) = manager.sync_downloads().await {
+                    error!(error = %error_chain(&e), "Error syncing from Put.io");
+                }
+            });
+        }
+        Ok(())
+    }
+
+    /// Current state of the folder sync
+    pub async fn sync_status(&self) -> SyncStatus {
+        self.sync_status.read().await.clone()
     }
 
     /// Run download worker loop
@@ -1388,12 +1463,59 @@ impl DownloadManager {
         Ok(total_processed)
     }
 
+    /// List `root_id` for `enqueue_tree`: everything under a folder, or a one-element
+    /// list for a file. Paths are relative to the Put.io root.
+    async fn list_tree(&self, root_id: i64) -> DownloadResult<Vec<(FileEntry, String)>> {
+        if root_id == 0 {
+            return self.list_all_files(0, String::new()).await;
+        }
+
+        let root = self
+            .client
+            .get_file_details(root_id)
+            .await
+            .map_err(DownloadError::ClientError)?
+            .file;
+        let parent_path = self.folder_path(root.parent_id).await?;
+        if root.file_type == "FOLDER" {
+            let path = join_path(&parent_path, &sanitize_filename(&root.name));
+            self.list_all_files(root.id, path).await
+        } else {
+            Ok(vec![(root, parent_path)])
+        }
+    }
+
+    /// Relative path of a Put.io folder from the root, built the way `list_all_files`
+    /// builds it while descending
+    async fn folder_path(&self, folder_id: Option<i64>) -> DownloadResult<String> {
+        // Guards against a parent cycle in a malformed response
+        const MAX_DEPTH: usize = 64;
+        let mut names = Vec::new();
+        let mut current = folder_id.unwrap_or(0);
+        while current != 0 && names.len() < MAX_DEPTH {
+            let folder = self
+                .client
+                .get_file_details(current)
+                .await
+                .map_err(DownloadError::ClientError)?
+                .file;
+            names.push(sanitize_filename(&folder.name));
+            current = folder.parent_id.unwrap_or(0);
+        }
+        names.reverse();
+        Ok(names.join("/"))
+    }
+
     /// List all files recursively from Put.io
-    /// Returns a list of (FileEntry, relative_path) tuples
-    async fn list_all_files(&self, parent_id: i64) -> DownloadResult<Vec<(FileEntry, String)>> {
+    /// Returns a list of (FileEntry, relative_path) tuples, with paths under `base_path`
+    async fn list_all_files(
+        &self,
+        parent_id: i64,
+        base_path: String,
+    ) -> DownloadResult<Vec<(FileEntry, String)>> {
         let mut all_files = Vec::new();
         // Track (folder_id, relative_path) for each folder to process
-        let mut folders_to_process = vec![(parent_id, String::new())];
+        let mut folders_to_process = vec![(parent_id, base_path)];
         // Map folder_id -> folder_name for building paths
         let mut folder_names = std::collections::HashMap::new();
 
@@ -1412,11 +1534,7 @@ impl DownloadManager {
             for file in response.files {
                 if file.file_type == "FOLDER" {
                     // Build the folder's relative path
-                    let folder_path = if current_path.is_empty() {
-                        sanitize_filename(&file.name)
-                    } else {
-                        format!("{}/{}", current_path, sanitize_filename(&file.name))
-                    };
+                    let folder_path = join_path(&current_path, &sanitize_filename(&file.name));
 
                     folder_names.insert(file.id, file.name.clone());
                     folders_to_process.push((file.id, folder_path));

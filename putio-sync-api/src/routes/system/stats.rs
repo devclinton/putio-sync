@@ -161,19 +161,16 @@ async fn transfer_stats(State(state): State<AppState>) -> Result<Json<TransferSt
     }))
 }
 
-/// Get disk space statistics
+/// Get disk space statistics for the download folder's filesystem
 ///
 /// GET /stats/disk
 async fn disk_stats(State(state): State<AppState>) -> Result<Json<DiskStats>, ApiError> {
     let config = state.config.read().await;
     let download_dir = &config.download.target_directory;
 
-    // Get disk info for the download directory
-    match sys_info::disk_info() {
-        Ok(disk) => {
-            let total_bytes = disk.total * 1024; // Convert from KB to bytes
-            let free_bytes = disk.free * 1024;
-            let used_bytes = total_bytes - free_bytes;
+    match putio_sync_telemetry::gauges::disk_usage(download_dir) {
+        Ok((free_bytes, total_bytes)) => {
+            let used_bytes = total_bytes.saturating_sub(free_bytes);
             let usage_percent = if total_bytes > 0 {
                 (used_bytes as f64 / total_bytes as f64) * 100.0
             } else {

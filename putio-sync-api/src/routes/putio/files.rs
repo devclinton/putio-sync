@@ -35,8 +35,7 @@ async fn list_files(
     State(state): State<AppState>,
     Query(request): Query<ListFilesRequest>,
 ) -> Result<Json<ListResponse<FileResponse>>, ApiError> {
-    let config = state.config.read().await;
-    files::list_files(&config, request).await.map(Json)
+    files::list_files(&state.client, request).await.map(Json)
 }
 
 /// Get file details
@@ -46,8 +45,7 @@ async fn get_file(
     State(state): State<AppState>,
     Path(file_id): Path<i64>,
 ) -> Result<Json<FileResponse>, ApiError> {
-    let config = state.config.read().await;
-    files::get_file(&config, file_id).await.map(Json)
+    files::get_file(&state.client, file_id).await.map(Json)
 }
 
 /// Delete a file or folder
@@ -61,19 +59,18 @@ async fn delete_file(
         file_ids: vec![file_id],
     };
 
-    let config = state.config.read().await;
-    files::delete_files(&config, request).await.map(Json)
+    files::delete_files(&state.client, request).await.map(Json)
 }
 
 /// Get download URL for a file
 ///
 /// GET /putio/files/:id/download
 async fn get_download_url(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(file_id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Return the Put.io download URL
-    let url = format!("https://api.put.io/v2/files/{}/download", file_id);
+    // Return the Put.io download URL (from the shared client, so it follows its base URL)
+    let url = state.client.get_download_url(file_id);
     Ok(Json(serde_json::json!({
         "download_url": url,
         "file_id": file_id
