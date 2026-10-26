@@ -58,6 +58,11 @@
 - [X] T019 [P] `README.md`: feature description, CLI usage, API endpoint, settings, metrics table rows, TZ note
 - [X] T020 Run `TMPDIR=<scratchpad> make ci` and fix findings
 
+## Phase 9: Follow-up — nested setting
+
+- [X] T021 `[cleanup] nested` (bool, default `true`) in `putio-sync-core/src/config.rs`, passed as `EmptyFolderOptions.nested` by `putio-sync-core/src/cleanup.rs`; with it off, `settle` in `putio-sync-client/src/cleanup.rs` keeps any folder with entries (its empty sub-folders still go); client test for the off case
+- [X] T022 `nested` in `GET/PUT /settings/cleanup` (missing in a PUT body means `true`) in `putio-sync-api/src/routes/system/settings.rs`, a checkbox in `putio-sync-api/ui/pages/settings.js`, tests in `putio-sync-api/tests/cleanup.rs`; `config.example.toml`, README, spec, data model and contracts updated
+
 ## Dependencies
 
 - T001 → everything. T002–T004 before US phases (T003 after T002).

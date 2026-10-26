@@ -52,6 +52,7 @@ const GROUPS = [
       ["run_at", "Daily run at", "24-hour local time, HH:MM", "s"],
       ["min_age_hours", "Minimum age (hours)", "Keep empty folders newer than this; 0 to 8760", "n", 0, 8760],
       ["enabled", "Daily run", "Remove empty Put.io folders once a day (daemon only)", "b"],
+      ["nested", "Nested empty folders", "Also remove folders whose sub-folders are all empty", "b"],
     ],
   },
   {

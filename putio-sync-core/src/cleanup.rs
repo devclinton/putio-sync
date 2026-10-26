@@ -105,11 +105,13 @@ impl EmptyFolderCleanup {
             min_age: Duration::from_secs(settings.config.min_age_hours.saturating_mul(3600)),
             protected: settings.protected,
             now: chrono::Utc::now(),
+            nested: settings.config.nested,
         };
         info!(
             trigger = trigger.as_str(),
             dry_run,
             min_age_hours = settings.config.min_age_hours,
+            nested = settings.config.nested,
             "Empty-folder cleanup started"
         );
 

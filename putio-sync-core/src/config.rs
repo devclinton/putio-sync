@@ -1045,6 +1045,9 @@ pub struct CleanupConfig {
     pub run_at: String,
     /// Folders created less than this many hours ago are kept
     pub min_age_hours: u64,
+    /// Also remove folders whose sub-folders are all empty, in the same run. Off: only
+    /// folders with nothing in them go (their parents on a later run).
+    pub nested: bool,
 }
 
 impl Default for CleanupConfig {
@@ -1053,6 +1056,7 @@ impl Default for CleanupConfig {
             enabled: false,
             run_at: "03:00".to_string(),
             min_age_hours: 24,
+            nested: true,
         }
     }
 }
@@ -2355,6 +2359,7 @@ mod save_keeping_file_credentials_tests {
         assert!(!config.cleanup.enabled);
         assert_eq!(config.cleanup.run_at, "03:00");
         assert_eq!(config.cleanup.min_age_hours, 24);
+        assert!(config.cleanup.nested);
         assert_eq!(
             config.cleanup.run_time().unwrap(),
             chrono::NaiveTime::from_hms_opt(3, 0, 0).unwrap()
@@ -2363,6 +2368,10 @@ mod save_keeping_file_credentials_tests {
         let partial: Config = toml::from_str("[cleanup]\nenabled = true\n").unwrap();
         assert!(partial.cleanup.enabled);
         assert_eq!(partial.cleanup.run_at, "03:00");
+        assert!(partial.cleanup.nested);
+
+        let flat: Config = toml::from_str("[cleanup]\nnested = false\n").unwrap();
+        assert!(!flat.cleanup.nested);
     }
 
     #[test]

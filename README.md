@@ -716,14 +716,14 @@ daemon's download manager and watcher:
 | Logging | `level`, `module_filters`, within 10 s (ignored while `RUST_LOG` is set) | `console_format`, `console_enabled`, `file_*` |
 | Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `skip_existing`, `delete_after_download`, `blocked_extensions`, for the next download | `target_directory` (new downloads go there at once, but the queue database and disk figures stay on the startup folder), and the rest of the group |
 | Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
-| Cleanup | `enabled`, `run_at`, `min_age_hours`, from the next run or schedule check | — |
+| Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Notifications | — | everything |
 
 Under `server`, the logging rows are the same (when the config file existed at
 startup). Download changes reach only the API's own download manager, not the
 `--download` background thread, and watcher and notification changes need a restart.
-The daily cleanup runs only under `daemon`; under `server`, `min_age_hours` applies to
-manual runs.
+The daily cleanup runs only under `daemon`; under `server`, `min_age_hours` and `nested`
+apply to manual runs.
 
 Invalid values are refused with 400 and a JSON `error`, and nothing is saved. A
 watch folder must exist before the watcher can be enabled.
@@ -765,7 +765,8 @@ UI is served from the same origin, and non-browser clients are unaffected.
 
 Removes empty folders from your Put.io account. A folder counts as empty when it holds
 nothing, or only folders that are themselves empty, so a whole empty tree goes in one run
-(deepest first). It never removes:
+(deepest first). Set `nested = false` to remove only folders with nothing at all in
+them; their parents then go on later runs. It never removes:
 
 - the root;
 - `watch.parent_folder_id` and `sync.remote_parent_id`;
@@ -784,6 +785,7 @@ before deleting. Turn on the daily run in `[cleanup]` or on the Settings page:
 enabled = true      # daily run; daemon only, off by default
 run_at = "03:00"    # local time, 24-hour HH:MM
 min_age_hours = 24
+nested = true       # also remove folders whose sub-folders are all empty
 ```
 
 The daily run deletes (it has no dry run) and is not caught up if the daemon was down at

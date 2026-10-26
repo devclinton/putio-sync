@@ -8,6 +8,9 @@ enabled = false
 run_at = "03:00"
 # Keep empty folders younger than this, so new transfer folders are not removed.
 min_age_hours = 24
+# Also remove folders whose sub-folders are all empty, in the same run. With false,
+# only folders with nothing in them are removed; their parents go on a later run.
+nested = true
 ```
 
 - Missing section or keys use the defaults above.

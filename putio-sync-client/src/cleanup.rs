@@ -2,7 +2,7 @@
 //!
 //! One walk from the root lists every folder, decides bottom-up which hold no files, and
 //! deletes the top-most deletable folder of each empty subtree; Put.io removes its empty
-//! sub-folders with it. Anything not fully seen (a listing error, a further page, the depth
+//! sub-folders with it. With `nested` off, only folders with nothing in them are deleted. Anything not fully seen (a listing error, a further page, the depth
 //! limit) counts as not empty, so nothing that could hold a file is ever deleted.
 
 use crate::client::PutioApiClient;
@@ -33,6 +33,9 @@ pub struct EmptyFolderOptions {
     pub protected: HashSet<i64>,
     /// The time ages are measured from
     pub now: DateTime<Utc>,
+    /// Also delete folders whose sub-folders are all deletable. Off: a folder with any
+    /// entry is kept, though its empty sub-folders are still deleted.
+    pub nested: bool,
 }
 
 /// A folder removed by the run, or that a dry run would remove
@@ -108,6 +111,7 @@ struct Walk {
     dry_run: bool,
     min_age: Duration,
     now: DateTime<Utc>,
+    nested: bool,
     protected: HashSet<i64>,
     report: EmptyFolderReport,
 }
@@ -147,7 +151,8 @@ impl PutioApiClient {
     /// report them).
     ///
     /// A folder is deleted when it holds no files, directly or below, every sub-folder is
-    /// deletable too, and it is neither protected (`options.protected`, the root, shared,
+    /// deletable too (with `options.nested`; without it, when it holds nothing), and it is
+    /// neither protected (`options.protected`, the root, shared,
     /// the save folder of an unfinished transfer) nor younger than `options.min_age`.
     /// Errors listing or deleting one folder are recorded in the report and keep its
     /// parents; the run goes on. Failing to read the transfer list or the root ends the
@@ -172,6 +177,7 @@ impl PutioApiClient {
             dry_run: options.dry_run,
             min_age: options.min_age,
             now: options.now,
+            nested: options.nested,
             protected,
             report: EmptyFolderReport {
                 dry_run: options.dry_run,
@@ -234,8 +240,9 @@ impl PutioApiClient {
     {
         Box::pin(async move {
             walk.report.scanned += 1;
-            // A further page was not read, so the folder is not known to be empty
-            let mut empty = listing.cursor.is_none();
+            // A further page was not read, so the folder is not known to be empty. Without
+            // `nested`, a folder holding even empty folders is kept (they still go).
+            let mut empty = listing.cursor.is_none() && (walk.nested || listing.files.is_empty());
             let mut deletable = Vec::new();
             for entry in &listing.files {
                 // Shared folders belong to someone else's share: not descended into
@@ -315,6 +322,7 @@ mod tests {
             min_age: Duration::from_secs(24 * 3600),
             protected: HashSet::new(),
             now: now(),
+            nested: true,
         }
     }
 
@@ -451,6 +459,25 @@ mod tests {
         assert_eq!(report.scanned, 5);
         assert!(report.failures.is_empty());
         assert!(!report.dry_run);
+    }
+
+    #[tokio::test]
+    async fn without_nested_only_folders_with_nothing_in_them_go() {
+        let mut server = Server::new_async().await;
+        let _tree = nested_tree(&mut server).await;
+        let del_a = delete(&mut server, 10).await;
+        let del_c = delete(&mut server, 21).await;
+
+        let mut opts = options(false);
+        opts.nested = false;
+        let report = client(&server).remove_empty_folders(&opts).await.unwrap();
+
+        del_a.assert_async().await;
+        del_c.assert_async().await;
+        // B held C when listed, so it stays until a later run. C goes while B is settled,
+        // A when the root is.
+        assert_eq!(ids(&report), vec![21, 10]);
+        assert!(report.failures.is_empty());
     }
 
     #[tokio::test]

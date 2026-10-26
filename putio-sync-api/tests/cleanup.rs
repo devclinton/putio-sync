@@ -164,7 +164,7 @@ async fn settings_default() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         body_json(response).await,
-        json!({"enabled": false, "run_at": "03:00", "min_age_hours": 24})
+        json!({"enabled": false, "run_at": "03:00", "min_age_hours": 24, "nested": true})
     );
 }
 
@@ -178,7 +178,7 @@ async fn settings_save_keeps_comments_and_reach_the_service() {
     );
     std::fs::write(&path, &edited).unwrap();
 
-    let body = json!({"enabled": true, "run_at": "04:15", "min_age_hours": 48});
+    let body = json!({"enabled": true, "run_at": "04:15", "min_age_hours": 48, "nested": false});
     let (status, response) = put_settings(&app, body.clone()).await;
     assert_eq!(status, StatusCode::OK, "{response}");
     let message = response["message"].as_str().unwrap();
@@ -194,6 +194,21 @@ async fn settings_save_keeps_comments_and_reach_the_service() {
     assert!(service.enabled);
     assert_eq!(service.run_at, "04:15");
     assert_eq!(service.min_age_hours, 48);
+    assert!(!service.nested);
+    assert!(text.contains("nested = false"), "{text}");
+}
+
+/// A body from before `nested` existed keeps the default (on)
+#[tokio::test]
+async fn settings_without_nested_default_to_on() {
+    let app = test_app().await;
+    let (status, response) = put_settings(
+        &app,
+        json!({"enabled": false, "run_at": "03:00", "min_age_hours": 12}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert!(app.state.cleanup.config().nested);
 }
 
 #[tokio::test]
