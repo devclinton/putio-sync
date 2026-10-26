@@ -161,7 +161,7 @@ than the root filesystem. Shape unchanged.
 | `GET /assets/app.css`, `/assets/app.js`, `/assets/api.js`, `/assets/format.js`, `/assets/pages/<page>.js` | 200 with `text/css` or `text/javascript; charset=utf-8` |
 | unknown asset | 404 (plain) |
 
-Headers on every asset: `Cache-Control: no-cache`, `ETag: "<crate version>"`; a request
+Headers on every asset: `Cache-Control: no-cache`, `ETag: "<hash of the file's content>"`; a request
 with a matching `If-None-Match` gets 304. The assets never include the token. The index
 page does not use inline scripts, so a later CSP can be strict.
 

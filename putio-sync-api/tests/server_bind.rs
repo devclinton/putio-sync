@@ -22,7 +22,8 @@ fn test_config() -> Config {
 
 async fn seeded_app(db_path: &Path) -> axum::Router {
     let db = Database::new(db_path).await.unwrap();
-    for (file_id, priority) in [(101, 0), (102, 1), (103, 2)] {
+    // Listed highest priority first: 101, 102, 103
+    for (file_id, priority) in [(101, 2), (102, 1), (103, 0)] {
         db.queue()
             .add(
                 file_id,

@@ -137,59 +137,43 @@ async fn trigger_scan(State(state): State<AppState>) -> Result<Json<ScanResponse
 ///
 /// POST /local/watcher/start
 async fn start_watcher(State(state): State<AppState>) -> Result<Json<SuccessResponse>, ApiError> {
-    // Update configuration
-    {
-        let mut config = state.config.write().await;
-        config.watch.enabled = true;
-    }
-
-    // Persist to config file if path is available (for daemon hot-reload)
-    if let Some(ref config_path) = state.config_path {
-        let config = state.config.read().await;
-        if let Err(e) = config.save(config_path.as_ref()) {
-            error!("Failed to persist config change: {}", e);
-            return Err(ApiError::InternalError(format!(
-                "Failed to save config: {}",
-                e
-            )));
-        }
-        info!("File watcher enabled and persisted to config");
-    } else {
-        info!("File watcher enabled (in-memory only, no config file)");
-    }
-
-    Ok(Json(SuccessResponse {
-        message: "File watcher started successfully".to_string(),
-    }))
+    set_enabled(&state, true).await
 }
 
 /// Stop file watcher
 ///
 /// POST /local/watcher/stop
 async fn stop_watcher(State(state): State<AppState>) -> Result<Json<SuccessResponse>, ApiError> {
-    // Update configuration
-    {
-        let mut config = state.config.write().await;
-        config.watch.enabled = false;
-    }
+    set_enabled(&state, false).await
+}
 
-    // Persist to config file if path is available (for daemon hot-reload)
+/// Save `watch.enabled`. Neither engine reads it after startup (the daemon's watch loop
+/// and `server --watch` both take it once), so the change applies after a restart. The
+/// file keeps its own credentials, never an env-only API token.
+async fn set_enabled(state: &AppState, enabled: bool) -> Result<Json<SuccessResponse>, ApiError> {
+    let mut config = state.config.write().await;
+    let mut candidate = config.clone();
+    candidate.watch.enabled = enabled;
     if let Some(ref config_path) = state.config_path {
-        let config = state.config.read().await;
-        if let Err(e) = config.save(config_path.as_ref()) {
+        if let Err(e) = candidate.save_keeping_file_credentials(config_path.as_ref()) {
             error!("Failed to persist config change: {}", e);
             return Err(ApiError::InternalError(format!(
                 "Failed to save config: {}",
                 e
             )));
         }
-        info!("File watcher disabled and persisted to config");
-    } else {
-        info!("File watcher disabled (in-memory only, no config file)");
     }
+    *config = candidate;
+    let verb = if enabled { "enabled" } else { "disabled" };
+    let persisted = if state.config_path.is_some() {
+        "saved to the config file"
+    } else {
+        "kept in memory only"
+    };
+    info!("File watcher {verb} ({persisted})");
 
     Ok(Json(SuccessResponse {
-        message: "File watcher stopped successfully".to_string(),
+        message: format!("File watcher {verb} and {persisted}; takes effect after a restart."),
     }))
 }
 

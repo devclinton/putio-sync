@@ -19,6 +19,9 @@ use axum::{
 // Re-export AppState from parent
 pub use crate::AppState;
 
+/// Queue states that still need the file on Put.io
+const QUEUED: [&str; 3] = ["pending", "downloading", "paused"];
+
 /// Create the Put.io files router
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -51,10 +54,26 @@ async fn get_file(
 /// Delete a file or folder
 ///
 /// DELETE /putio/files/:id?recursive=true
+///
+/// Refuses (409) a file the queue still needs: pending, downloading or paused (R11).
+/// Without a database (dev mode) there is no queue to check.
 async fn delete_file(
     State(state): State<AppState>,
     Path(file_id): Path<i64>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
+    if let Some(db) = &state.database {
+        let row =
+            db.queue().get_by_file_id(file_id).await.map_err(|e| {
+                ApiError::InternalError(format!("Failed to check the queue: {}", e))
+            })?;
+        if row.is_some_and(|r| QUEUED.contains(&r.status.as_str())) {
+            return Err(
+                ApiError::Conflict("File is queued or downloading".to_string())
+                    .with_details("Skip or cancel it first"),
+            );
+        }
+    }
+
     let request = DeleteFilesRequest {
         file_ids: vec![file_id],
     };

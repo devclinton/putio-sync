@@ -61,7 +61,7 @@ async fn download_stats(State(state): State<AppState>) -> Result<Json<DownloadSt
 
     // Get total download count
     let total_downloads = history_repo
-        .count(Some(HistoryAction::Downloaded))
+        .count(Some(HistoryAction::Downloaded), None)
         .await
         .map_err(|e| {
             error!("Failed to count downloads: {}", e);
@@ -70,7 +70,7 @@ async fn download_stats(State(state): State<AppState>) -> Result<Json<DownloadSt
 
     // Get all downloaded entries to calculate totals
     let downloads = history_repo
-        .query(Some(HistoryAction::Downloaded), 10000, 0)
+        .query(Some(HistoryAction::Downloaded), 10000, 0, None)
         .await
         .map_err(|e| {
             error!("Failed to query downloads: {}", e);

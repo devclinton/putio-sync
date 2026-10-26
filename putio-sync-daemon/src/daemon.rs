@@ -9,6 +9,7 @@ use crate::error::DaemonResult;
 use putio_sync_client::PutioApiClient;
 use putio_sync_db::Database;
 use putio_sync_download::DownloadManager;
+use putio_sync_file_manager::watcher::WatcherConfig;
 use putio_sync_file_manager::TorrentWatcher;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -37,6 +38,9 @@ pub struct DaemonConfig {
     pub parent_id: Option<i64>,
     /// Delete torrent/magnet files after upload
     pub delete_after_upload: bool,
+    /// Move uploaded torrent/magnet files here (`watch.archive_directory`); wins over
+    /// `delete_after_upload`
+    pub archive_dir: Option<PathBuf>,
     /// Enable file watcher (can be toggled at runtime via API)
     pub watch_enabled: bool,
     /// Number of concurrent download workers
@@ -70,6 +74,7 @@ impl Default for DaemonConfig {
             download_interval: 300,
             parent_id: None,
             delete_after_upload: false,
+            archive_dir: None,
             watch_enabled: true,
             workers: 1,
             buffer_size_mb: 64,
@@ -209,11 +214,15 @@ impl PutioDaemon {
 
         // Initialize file watcher (shared Arc for hot reload via API)
         if !config.watch_dirs.is_empty() {
-            let file_watcher = Arc::new(TorrentWatcher::new(
-                config.watch_dirs.clone(),
-                config.parent_id,
-                config.watch_interval,
-            ));
+            let file_watcher = Arc::new(TorrentWatcher::from_config(WatcherConfig {
+                archive_dir: config.archive_dir.clone(),
+                delete_after_upload: config.delete_after_upload,
+                ..WatcherConfig::new(
+                    config.watch_dirs.clone(),
+                    config.parent_id,
+                    config.watch_interval,
+                )
+            }));
             self.file_watcher = Some(file_watcher);
             info!(
                 "File watcher initialized for {} directories",
@@ -558,6 +567,28 @@ mod tests {
         let config = DaemonConfig::default();
         assert_eq!(config.watch_interval, 60);
         assert!(config.watch_dirs.is_empty());
+    }
+
+    /// `watch.archive_directory` reaches the watcher at startup, as a live settings save
+    /// already does (no network: the client is only constructed)
+    #[tokio::test]
+    async fn watcher_starts_with_archive_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("processed");
+        let config = DaemonConfig {
+            watch_dirs: vec![dir.path().to_path_buf()],
+            archive_dir: Some(archive.clone()),
+            parent_id: Some(9),
+            ..Default::default()
+        };
+        let mut daemon = PutioDaemon::new(config);
+        daemon.initialize().await.unwrap();
+
+        let watcher = daemon.get_file_watcher().expect("a watcher");
+        let started = watcher.get_config();
+        assert_eq!(started.archive_dir, Some(archive));
+        assert_eq!(started.parent_id, Some(9));
+        assert_eq!(started.watch_dirs, vec![dir.path().to_path_buf()]);
     }
 
     #[test]

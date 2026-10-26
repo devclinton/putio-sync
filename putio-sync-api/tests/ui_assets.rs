@@ -122,10 +122,13 @@ async fn etag_304() {
     for path in ["/", "/assets/app.js"] {
         let first = public_get(&app, path).await;
         let etag = first.headers()[header::ETAG].clone();
-        assert_eq!(
-            etag.to_str().unwrap(),
-            format!("\"{}\"", env!("CARGO_PKG_VERSION"))
+        let text = etag.to_str().unwrap();
+        let hex = text.trim_matches('"');
+        assert!(
+            text.len() == hex.len() + 2 && hex.len() == 16,
+            "{path}: {text}"
         );
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()), "{path}: {text}");
 
         let request = Request::builder()
             .uri(path)
@@ -137,6 +140,25 @@ async fn etag_304() {
         assert_eq!(second.headers()[header::ETAG], etag);
         assert!(body_text(second).await.is_empty());
     }
+}
+
+/// The ETag is a hash of each asset's content, not the crate version, so a rebuild
+/// with changed files is never served stale
+#[tokio::test]
+async fn etag_follows_content() {
+    let app = test_app().await;
+    let mut tags = BTreeSet::new();
+    let mut paths = all_assets(&app).await;
+    paths.insert("/".to_string());
+    for path in &paths {
+        let first = public_get(&app, path).await;
+        let second = public_get(&app, path).await;
+        let tag = first.headers()[header::ETAG].to_str().unwrap().to_string();
+        assert_eq!(second.headers()[header::ETAG], tag.as_str(), "{path}");
+        assert_ne!(tag, format!("\"{}\"", env!("CARGO_PKG_VERSION")), "{path}");
+        tags.insert(tag);
+    }
+    assert_eq!(tags.len(), paths.len(), "every asset has its own ETag");
 }
 
 #[tokio::test]

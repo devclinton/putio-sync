@@ -46,3 +46,8 @@
   interfaces by default; "open mode" removed; Put.io delete offered with confirmation and
   a queued/downloading guard; local-file delete, log viewing, charts and TLS out of scope;
   UI ships inside the binary and image.
+- Implementation follow-up (2026-10-26, Polish): two behaviours sit short of the spec
+  text and are recorded in tasks.md Implementation Notes rather than changed here.
+  Transfer start/stop (FR-016) exist but are no-ops, since Put.io has no such call. The
+  settings save messages don't name every setting that needs a restart (US6 scenario 3);
+  the README "Settings from the UI" table is the accurate reference.

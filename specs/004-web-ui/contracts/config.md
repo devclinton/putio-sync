@@ -6,8 +6,9 @@
 [api]
 listen = true               # daemon: open the API + web UI listener; restart to change
 bind = "0.0.0.0:15432"      # all interfaces; exposure = which port the container publishes
-auth_token = ""             # REQUIRED for the UI and every API call except /health;
-                            # leave unset here and use PUTIO_SYNC_API_TOKEN if you prefer
+# auth_token = "change-me"  # REQUIRED for the UI and every API call except /health;
+                            # leave unset here and use PUTIO_SYNC_API_TOKEN if you prefer.
+                            # An empty string fails startup (see Errors).
 # enabled = false           # existing, unrelated: daemon delegates downloads to a remote API
 # url = "http://host:15432" # existing, used with enabled = true
 ```
@@ -27,6 +28,11 @@ auth_token = ""             # REQUIRED for the UI and every API call except /hea
 
 `Config::resolve_api()` returns `Resolved<ApiSettings>` with `source` = `Env` when any of
 the three variables is set, else `Config`, mirroring `resolve_metrics()`.
+
+The resolved token lives in memory only. A settings save from the UI
+(`PUT /settings/*`, `POST /local/watcher/start|stop`) rewrites `config.toml` with
+`Config::save_keeping_file_credentials`, which writes `[auth]` and `api.auth_token` as
+they are in the file (or leaves them out), never the env value.
 
 ## Startup log lines (INFO unless noted)
 

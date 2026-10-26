@@ -16,6 +16,7 @@ A high-performance Rust-based CLI tool for Put.io with support for downloads, tr
 - **Post-Processing**: Archive or delete processed torrent files after upload
 - **Advanced Daemon**: Unified daemon with live log-level changes and intelligent worker scaling
 - **Prometheus Metrics**: Sync, download, watch-folder, API and database metrics on `:9742/metrics`
+- **Web UI**: status, queue, Put.io browser, transfers, history and settings in the browser on `:15432`, behind a token ([Web UI](#web-ui))
 - **Statistics & History**: Track download stats and view history
 - **File Management**: List, download, and delete files on Put.io
 - **SQLite Database**: Local state tracking for downloads and history
@@ -72,10 +73,11 @@ This project is organized as a Cargo workspace with specialized crates following
   - `stat`: View download statistics
   - `history`: View download and delete history
 
-- **putio-sync-api**: Web API server
-  - REST API for file and transfer management
-  - JSON response format
-  - Authentication middleware
+- **putio-sync-api**: Web API and web UI
+  - REST API for status, queue, file, transfer, history and settings management
+  - Embedded browser UI (plain HTML, CSS and ES modules, no build step)
+  - Required bearer token, with a failed-attempt lockout
+  - Served by `daemon` (on `[api] bind`) and by `server`
 
 ## Installation
 
@@ -465,6 +467,8 @@ paths = []
 - `RUST_LOG`: Log level (error, warn, info, debug, trace). When set, it replaces
   `[logging] level` from the config file. The startup line `Log level level=... source=Env`
   (or `source=Config`) shows which one is in effect.
+- `PUTIO_SYNC_API_TOKEN`, `PUTIO_SYNC_API_LISTEN`, `PUTIO_SYNC_API_BIND`: web UI and API
+  listener, see [Web UI](#web-ui).
 
 ## Metrics
 
@@ -564,6 +568,133 @@ Label values are fixed sets, listed in
 | Executables blocked | `increase(putio_sync_files_blocked_total[7d])` |
 | Watch cleanups | `increase(putio_sync_watch_cleanups_total[7d])` |
 | DB errors | `increase(putio_sync_db_errors_total[1d])` |
+
+## Web UI
+
+`daemon` serves a browser UI and the JSON API on one port, by default
+`http://<nas>:15432/` (for example `http://192.168.1.34:15432/`). It works on a phone
+as well as a desktop. The pages:
+
+- **Status**: version, uptime, last and next sync, queue counts, active downloads,
+  workers, watch folders, disk space and Put.io reachability. **Sync now** starts a
+  folder sync at once; a second click while one runs says it is already in progress.
+- **Queue**: pause, resume, skip, reorder (up, down, first, last), clear completed,
+  cancel a running download. Higher priority downloads first; a move renumbers the
+  whole queue.
+- **Put.io**: browse folders, filter by name, queue a file or a whole folder
+  ("found, queued, skipped, blocked"), delete from Put.io with confirmation. Delete is
+  refused for files that are queued, downloading or paused.
+- **Transfers**: add a magnet link, URL or `.torrent` file; remove a transfer.
+  Put.io starts and stops transfers itself, so Start and Stop only show its message.
+- **History**: downloads and deletions, filtered by action and by name.
+- **Settings**: download, watcher, logging and notification settings (see
+  [Settings from the UI](#settings-from-the-ui)). The API token and Put.io
+  credentials are never shown.
+
+The UI is built into the binary and the Docker image; there is nothing else to install
+or mount.
+
+### Token (required)
+
+> **Breaking change.** The API no longer has an open mode. Without a token every request
+> except `/health` is refused with 401 `API token not configured`, and the UI shows a
+> "set a token and restart" notice instead of the sign-in form.
+
+Set a token in `config.toml` or, preferably, in the environment:
+
+```toml
+[api]
+auth_token = "a-long-random-string"   # or PUTIO_SYNC_API_TOKEN
+```
+
+The token must be non-empty and contain no whitespace; `auth_token = ""` stops
+putio-sync at startup. Sign in with it once per browser; the browser keeps it until
+you sign out. API clients send
+`Authorization: Bearer <token>`. The token is never logged or returned; startup logs
+only `token=set` or `token=unset`.
+
+Five wrong tokens from one IP within 60 s lock that IP out until 60 s after its first
+failure: further requests get 429 with `Retry-After`, even with the right token. Requests with
+no token at all are refused but not counted.
+
+> **Plain HTTP.** The UI and API have no TLS. The token crosses the network in clear
+> text, so keep the port on a trusted LAN and don't forward it to the internet.
+
+### Settings
+
+| Variable | Setting | Allowed | Default |
+|---|---|---|---|
+| `PUTIO_SYNC_API_TOKEN` | `api.auth_token` | non-empty, no whitespace | unset (everything refused) |
+| `PUTIO_SYNC_API_LISTEN` | `api.listen` | `true`, `false`, `1`, `0` | `true` |
+| `PUTIO_SYNC_API_BIND` | `api.bind` | `host:port` | `0.0.0.0:15432` |
+
+The variable wins over `config.toml`. All three need a restart. `listen` and `bind` are
+read by `daemon` only; `server` keeps its `--bind`/`--port` flags (default
+`0.0.0.0:15432`) and reads only the token. Set `PUTIO_SYNC_API_LISTEN=0` to turn the
+listener off. If the port can't be bound, the daemon logs one
+`API listener failed to start` error and keeps syncing. With `[api] enabled = true`
+(downloads delegated to a remote API server) the daemon doesn't start its own listener.
+
+Startup lines:
+
+```text
+API listener enabled bind=0.0.0.0:15432 token=set source=Config
+API token not configured (set [api] auth_token or PUTIO_SYNC_API_TOKEN); all API and UI requests will be refused
+```
+
+In Docker, publish the port: `-p 15432:15432`, or add a port mapping for container
+port 15432 in the Unraid template.
+
+### Settings from the UI
+
+A save writes the whole `config.toml` back (comments in the file are not kept), except
+the credentials: `[auth]` and `api.auth_token` are written as they already are in the
+file, so a token set only through `PUTIO_SYNC_API_TOKEN` never reaches it. The response
+names each changed setting as applying now or needing a restart; the UI shows it as is,
+and a save that changed nothing says so. Under `daemon`, the UI and API share the
+daemon's download manager and watcher:
+
+| Group | Applies live | Needs a restart |
+|---|---|---|
+| Logging | `level`, `module_filters`, within 10 s (ignored while `RUST_LOG` is set) | `console_format`, `console_enabled`, `file_*` |
+| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `skip_existing`, `delete_after_download`, `blocked_extensions`, for the next download | `target_directory` (new downloads go there at once, but the queue database and disk figures stay on the startup folder), and the rest of the group |
+| Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
+| Notifications | — | everything |
+
+Under `server`, the logging rows are the same (when the config file existed at
+startup). Download changes reach only the API's own download manager, not the
+`--download` background thread, and watcher and notification changes need a restart.
+
+Invalid values are refused with 400 and a JSON `error`, and nothing is saved. A
+watch folder must exist before the watcher can be enabled.
+
+### HTTP API
+
+All routes except `/health`, `/`, `/assets/*`, `/auth/status` and `/auth/login` need
+the token. Errors are `{"error": "...", "details": "..."}`.
+
+| Route | Purpose |
+|---|---|
+| `GET /health` | Liveness, no token |
+| `GET /auth/status` | `{"token_configured": true}`, no token |
+| `POST /auth/login` | `{"token": "..."}` → 204, 401 or 429; counted by the lockout |
+| `GET /status` | Everything on the status page in one response |
+| `POST /local/sync` | Start a folder sync now: 202, 409 while one runs, 503 without a database |
+| `GET /local/queue`, `/local/queue/stats` | Queue rows and counts |
+| `POST /local/queue` | `{"file_id": 123}`: queue a file or every file under a folder → 202 with found/queued/skipped/blocked/failed, 404 if unknown |
+| `POST /local/queue/{pause,resume,clear}` | Pause all, resume all, remove completed |
+| `POST /local/queue/{file_id}/{move_up,move_down,move_first,move_last,skip}` | Reorder or skip one item |
+| `GET /local/downloads`, `DELETE /local/downloads/{id}` | Active downloads; cancel one (404 if unknown) |
+| `GET /putio/files?parent_id=`, `GET /putio/files/{id}` | Browse Put.io |
+| `DELETE /putio/files/{id}` | Delete from Put.io; 409 when the file is queued, downloading or paused |
+| `GET`/`POST /putio/transfers`, `DELETE /putio/transfers/{id}` | List, add (`{"url"}` or `{"file_data"}`), remove transfers |
+| `GET /history?action=&name=&limit=&offset=` | History; `name` is a case-insensitive substring |
+| `GET /history/stats`, `GET /stats/{downloads,transfers,disk}` | Totals |
+| `GET`/`PUT /settings/{download,watcher,logging,notifications}` | Settings (see above) |
+| `GET /local/watcher/status`, `GET /local/workers` | Watcher and worker state |
+
+The legacy `/api/*` placeholder routes are removed, and no CORS headers are sent: the
+UI is served from the same origin, and non-browser clients are unaffected.
 
 ## Advanced Features
 
@@ -666,7 +797,7 @@ putio-sync daemon --watch-only --watch ~/Downloads/torrents --delete-torrents
 > worked. `--filter`, `--skip-existing`, `--delete-after`, `--delete-empty-folders`,
 > `--watch-only`, `--download-only`, `--archive-dir` and `--delete-torrents` are currently
 > ignored in daemon mode, with a warning at startup; use `config.toml` instead
-> (`watch.delete_after_upload`, `download.delete_after_download`). The effective settings
+> (`watch.archive_directory`, `watch.delete_after_upload`, `download.delete_after_download`). The effective settings
 > are logged after the config loads, under `Daemon configuration:`.
 >
 > Watch files that were already uploaded (for example after a restart) get the configured
@@ -702,10 +833,12 @@ INFO Removed already-uploaded watch file path=/watch/Series.magnet
 #### Live configuration changes
 
 Only `[logging] level` and `module_filters` are re-read from `config.toml` while running
-(see [Verbosity](#verbosity)). Everything else in the file needs a restart. Download and
-watch settings can also be changed at runtime through the API (`PUT /settings/download`,
-`PUT /settings/watcher`); a new `workers` value there scales the pool as described below.
-`PUT /settings/logging` saves to `config.toml`, so its level change is picked up the same way.
+(see [Verbosity](#verbosity)). Everything else in the file needs a restart. Some download
+and watcher settings can also be changed at runtime from the web UI or the API
+(`PUT /settings/download`, `PUT /settings/watcher`); a new `workers` value there scales
+the pool as described below. `PUT /settings/logging` saves to `config.toml`, so its level
+change is picked up the same way. [Settings from the UI](#settings-from-the-ui) lists what
+applies live and what needs a restart.
 
 #### Worker Scaling Intelligence
 
@@ -1129,6 +1262,30 @@ The Docker image uses the following directories:
 ### Environment Variables
 
 - `RUST_LOG` - Set log level (error, warn, info, debug, trace)
+- `PUTIO_SYNC_API_TOKEN` - Token for the web UI and API (required to use them)
+- `PUTIO_SYNC_API_LISTEN`, `PUTIO_SYNC_API_BIND` - see [Web UI](#web-ui)
+- `PUTIO_SYNC_METRICS_*` - see [Verbosity](#verbosity)
+
+### Ports
+
+The image exposes 9742 (Prometheus metrics) and 15432 (web UI and API). Publish the ones
+you use, for example `-p 15432:15432 -p 9742:9742`, or add the port mappings in the
+Unraid template. The UI is embedded in the binary; no extra volume or file is needed.
+
+```bash
+# The image's default command runs `daemon`, which serves the UI on 15432
+export PUTIO_SYNC_API_TOKEN="$(openssl rand -hex 24)"   # save it: you sign in with it
+docker run -d \
+  --name putio-sync \
+  --restart unless-stopped \
+  -p 15432:15432 -p 9742:9742 \
+  -e PUTIO_SYNC_API_TOKEN \
+  -v ~/.putiosync:/config \
+  -v ~/Downloads/putio:/downloads \
+  ghcr.io/clintoncollins/putio-sync:latest
+```
+
+On Unraid, put the token in the template's `PUTIO_SYNC_API_TOKEN` variable instead.
 
 ### Example: Download Daemon
 

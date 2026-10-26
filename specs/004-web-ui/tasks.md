@@ -494,11 +494,11 @@ in; no response or log contains the token.
 
 ### Tests for User Story 3 ⚠️ write first
 
-- [ ] T035 [US3] Add to `putio-sync-api/tests/status_sync.rs` (same file as T017):
+- [X] T035 [US3] Add to `putio-sync-api/tests/status_sync.rs` (same file as T017):
   `sync_now_202_then_409` (mockito listing delayed 500 ms: first `POST /local/sync` → 202
   with `in_progress == true`; immediate second → 409 `"A sync is already in progress"`;
   after completion `/status` shows the outcome), `sync_now_503_without_db`.
-- [ ] T036 [P] [US3] Create `putio-sync-api/tests/queue_actions.rs`: seed three pending
+- [X] T036 [P] [US3] Create `putio-sync-api/tests/queue_actions.rs`: seed three pending
   rows with priorities 0,1,2 and one completed; assert each of `move_up`, `move_down`,
   `move_first`, `move_last`, `skip`, `pause` (pending → paused, counts via
   `/local/queue/stats`), `resume` (paused → pending), `clear` (completed row gone) and
@@ -508,14 +508,14 @@ in; no response or log contains the token.
 
 ### Implementation for User Story 3
 
-- [ ] T037 [US3] Create `putio-sync-api/src/routes/local/sync.rs`, add to
+- [X] T037 [US3] Create `putio-sync-api/src/routes/local/sync.rs`, add to
   `routes/local/mod.rs`, mount `POST /local/sync` in `putio-sync-api/src/lib.rs` (after
   T032, same file): no database → `ServiceUnavailable("Database unavailable")`;
   `download_manager.request_sync()` → `Err(InProgress)` → `Conflict("A sync is already
   in progress")`; `Ok` → 202 with the `sync` object (reuse the serializer from
   `status.rs`; move it to a `pub(crate) fn sync_json(&SyncStatus)` in `status.rs`).
   Make T035 pass.
-- [ ] T038 [US3] Write `putio-sync-api/ui/pages/queue.js`
+- [X] T038 [US3] Write `putio-sync-api/ui/pages/queue.js`
   ([contracts/ui.md](contracts/ui.md#pages) Queue row):
   - Poll `GET /local/queue` and `GET /local/downloads` every 3 000 ms (two requests per
     3 s is within FR-011's one per second).
@@ -527,7 +527,7 @@ in; no response or log contains the token.
     (confirm "Remove N completed items from the queue?" with N from the current list),
     Sync now (same handler as the status page; factor it into `api.js` as `syncNow()`).
   - After every action, refresh immediately; toast the server's message.
-- [ ] T039 [US3] Run `make ci`, quickstart §2 step 3; make T036 green.
+- [X] T039 [US3] Run `make ci`, quickstart §2 step 3; make T036 green.
 
 ---
 
@@ -541,12 +541,12 @@ confirmed for another; add/start/stop/remove a transfer.
 
 ### Tests for User Story 4 ⚠️ write first
 
-- [ ] T040 [P] [US4] Create `putio-sync-api/tests/queue_enqueue.rs`: mock a folder with
+- [X] T040 [P] [US4] Create `putio-sync-api/tests/queue_enqueue.rs`: mock a folder with
   `a.mkv`, `b.exe` (config `blocked_extensions = ["exe"]`) and `c.mkv` already queued;
   `POST /local/queue {file_id: folder}` → 202 `{found 3, queued 1, skipped 1, blocked 1,
   failed 0}`; `POST` with an unknown id (mockito 404) → 404; without db → 503; a single
   file id → `{found 1, queued 1, ...}`.
-- [ ] T041 [P] [US4] Create `putio-sync-api/tests/putio_delete_guard.rs`: seed file 7
+- [X] T041 [P] [US4] Create `putio-sync-api/tests/putio_delete_guard.rs`: seed file 7
   as `pending` and file 8 as `completed`; mock `/v2/files/delete` to succeed;
   `DELETE /putio/files/7` → 409 `"File is queued or downloading"` and the mock was not
   hit (`expect(0)` + `assert_async`); `DELETE /putio/files/8` → 200. Also `paused` → 409
@@ -554,17 +554,17 @@ confirmed for another; add/start/stop/remove a transfer.
 
 ### Implementation for User Story 4
 
-- [ ] T042 [US4] Add `POST /` to `putio-sync-api/src/routes/local/queue.rs` (R12): body
+- [X] T042 [US4] Add `POST /` to `putio-sync-api/src/routes/local/queue.rs` (R12): body
   `{ file_id: i64 }`; no db → 503; `download_manager.enqueue_tree(file_id)` →
   `Err` whose chain contains a client 404 → `NotFound("File not found")`, other errors →
   500; `Ok(stats)` → 202 `{found: total_files, queued: files_downloaded, skipped:
   files_skipped, blocked: files_blocked, failed: files_failed}`. Make T040 pass.
-- [ ] T043 [P] [US4] Guard `DELETE /putio/files/{id}` in
+- [X] T043 [P] [US4] Guard `DELETE /putio/files/{id}` in
   `putio-sync-api/src/routes/putio/files.rs` (R11): when `state.database` is `Some`,
   `queue().get_by_file_id(id)`; status `pending`, `downloading` or `paused` →
   `Conflict("File is queued or downloading").with_details("Skip or cancel it first")`.
   Make T041 pass.
-- [ ] T044 [P] [US4] Write `putio-sync-api/ui/pages/putio.js`
+- [X] T044 [P] [US4] Write `putio-sync-api/ui/pages/putio.js`
   ([contracts/ui.md](contracts/ui.md#pages) Put.io row): route param = folder id
   (default 0); `GET /putio/files?parent_id=<id>`; breadcrumb built while descending
   (keep a stack in module state; a direct link to `#/putio/<id>` shows `… / <id>`);
@@ -577,7 +577,7 @@ confirmed for another; add/start/stop/remove a transfer.
   `DELETE /putio/files/{id}`; a 409 from the server is toasted. When a Put.io request
   fails, render the error text with a Retry button in place of the listing (spec edge
   case "Put.io unreachable").
-- [ ] T045 [P] [US4] Write `putio-sync-api/ui/pages/transfers.js`
+- [X] T045 [P] [US4] Write `putio-sync-api/ui/pages/transfers.js`
   ([contracts/ui.md](contracts/ui.md#pages) Transfers row): poll `GET /putio/transfers`
   every 5 000 ms; table name, status, %, size, speed; add form with a text field
   (magnet or URL → `POST /putio/transfers {url}`) and a file input (`.torrent` read with
@@ -585,7 +585,7 @@ confirmed for another; add/start/stop/remove a transfer.
   Stop buttons → `POST /putio/transfers/{id}/start|stop`; Remove → confirm "Remove
   transfer <name>?" → `DELETE /putio/transfers/{id}`. A failed list shows the error and
   a Retry button; polling continues.
-- [ ] T046 [US4] Extend `putio-sync-api/examples/mock_ui.rs` (same file as T028) so the
+- [X] T046 [US4] Extend `putio-sync-api/examples/mock_ui.rs` (same file as T028) so the
   transfer mocks cover add/start/stop/cancel, then run `make ci` and quickstart §2 steps
   4–5.
 
@@ -600,32 +600,32 @@ matching rows and the total updates; paging works.
 
 ### Tests for User Story 5 ⚠️ write first
 
-- [ ] T047 [P] [US5] Add tests in `putio-sync-db/src/history.rs` `mod tests` (or
+- [X] T047 [P] [US5] Add tests in `putio-sync-db/src/history.rs` `mod tests` (or
   `putio-sync-db/tests/history_filter.rs`): insert `Ubuntu.iso`, `debian.iso`,
   `100%_done.mkv`; `query(None, 10, 0, Some("ubuntu"))` returns one row;
   `Some("%")` returns only `100%_done.mkv`; `Some("_done")` returns one row (underscore
   literal); `count(None, Some("iso"))` is 2.
-- [ ] T048 [P] [US5] Create `putio-sync-api/tests/history_filter.rs`: seed history via
+- [X] T048 [P] [US5] Create `putio-sync-api/tests/history_filter.rs`: seed history via
   `db.history().add(...)` (check the method name), `GET /history?name=ubu` → one entry,
   `total == 1`; `?action=deleted&name=x` combine; `?name=` (empty) behaves as no filter.
 
 ### Implementation for User Story 5
 
-- [ ] T049 [US5] Add `name: Option<&str>` to `query` and `count` in
+- [X] T049 [US5] Add `name: Option<&str>` to `query` and `count` in
   `putio-sync-db/src/history.rs` (R7): when `Some` and non-empty, append
   `AND LOWER(filename) LIKE ? ESCAPE '\'` with the fragment escaped (`\` → `\\`, `%` →
   `\%`, `_` → `\_`), lower-cased and wrapped in `%…%`. Update every caller in the
   workspace (`grep -rn "history().query\|history().count"`), passing `None`. Make T047
   pass.
-- [ ] T050 [US5] Add `name: Option<String>` to `HistoryQuery` in
+- [X] T050 [US5] Add `name: Option<String>` to `HistoryQuery` in
   `putio-sync-api/src/routes/system/history.rs` and pass it to `query` and `count`
   (empty string → `None`). Make T048 pass.
-- [ ] T051 [P] [US5] Write `putio-sync-api/ui/pages/history.js`
+- [X] T051 [P] [US5] Write `putio-sync-api/ui/pages/history.js`
   ([contracts/ui.md](contracts/ui.md#pages) History row): filters (action select
   all/downloaded/deleted, name text with 300 ms debounce), page size 50 with Prev/Next
   and "x–y of total", totals line from `GET /history/stats`; rows: time
   (`dateTime`), action badge, name, size, path. No polling.
-- [ ] T052 [US5] Seed history rows in `putio-sync-api/examples/mock_ui.rs` (same file as
+- [X] T052 [US5] Seed history rows in `putio-sync-api/examples/mock_ui.rs` (same file as
   T046), run `make ci` and quickstart §2 step 6 (history half).
 
 ---
@@ -640,7 +640,7 @@ file.
 
 ### Tests for User Story 6 ⚠️ write first
 
-- [ ] T053 [P] [US6] Create `putio-sync-api/tests/settings.rs`: for each of
+- [X] T053 [P] [US6] Create `putio-sync-api/tests/settings.rs`: for each of
   `/settings/download`, `/settings/watcher`, `/settings/logging`,
   `/settings/notifications`: `GET` → 200 with the documented fields; `PUT` with the same
   body and one changed field → 200 with a `message`, then `GET` shows the change and the
@@ -650,7 +650,7 @@ file.
 
 ### Implementation for User Story 6
 
-- [ ] T054 [US6] Write `putio-sync-api/ui/pages/settings.js`
+- [X] T054 [US6] Write `putio-sync-api/ui/pages/settings.js`
   ([contracts/ui.md](contracts/ui.md#pages) Settings row): four `<form>`s built from
   the `GET` bodies (booleans → checkbox, numbers → `type=number`, arrays of strings →
   textarea one per line, `Option` → empty allowed, `progress_style`/`sort_order`/
@@ -658,26 +658,26 @@ file.
   read them from `putio-sync-core/src/config.rs` validation); Save per group → `PUT`
   → toast the `message` verbatim (it says whether a restart is needed); 400 → show
   `error` under the form. Never render the `[api]` or Put.io auth settings.
-- [ ] T055 [US6] Run `make ci` and quickstart §2 step 6 (settings half); make T053
+- [X] T055 [US6] Run `make ci` and quickstart §2 step 6 (settings half); make T053
   green.
 
 ---
 
 ## Phase 9: Polish & Cross-Cutting Concerns
 
-- [ ] T056 [P] Update `config.example.toml`: add the `[api]` block from
+- [X] T056 [P] Update `config.example.toml`: add the `[api]` block from
   [contracts/config.md](contracts/config.md#toml) with comments, `auth_token` commented out
   (`# auth_token = "change-me"`) with the "required for the UI" note; an empty string fails
   startup per contracts/config.md, `enabled`/`url` commented out.
-- [ ] T057 [P] Update `README.md` (FR-022): a "Web UI" section: URL
+- [X] T057 [P] Update `README.md` (FR-022): a "Web UI" section: URL
   (`http://<nas>:15432/`), that `[api] auth_token` or `PUTIO_SYNC_API_TOKEN` is required
   and open mode is gone (breaking change note), the port to publish, the plain-HTTP LAN
   warning, the env table from contracts/config.md, `PUTIO_SYNC_API_LISTEN=0` to turn it
   off, the "sync now" and name-filter additions, and that the legacy `/api/*` routes are
   removed. Keep the existing API docs accurate: add `GET /status`, `POST /local/sync`,
   `POST /local/queue`, `GET /history?name=`, `/auth/*`.
-- [ ] T058 [P] Add `EXPOSE 15432` to `Dockerfile` next to the metrics `EXPOSE`.
-- [ ] T059 Final gate: `make ci`; `cargo build --release` and confirm the binary serves
+- [X] T058 [P] Add `EXPOSE 15432` to `Dockerfile` next to the metrics `EXPOSE`.
+- [X] T059 Final gate: `make ci`; `cargo build --release` and confirm the binary serves
   `/` (assets embedded); run quickstart §2–§4 end to end; measure the `ui/` total
   (`du -ck putio-sync-api/ui`) and record it in research.md R1 if it moved.
 
@@ -789,3 +789,168 @@ Each step leaves `make ci` green and can ship on its own.
 - When a task finds that an existing route returns 500 for an expected client error
   (bad input, unknown id), fix it to the right 4xx as part of that task and add the
   case to the test; that is within FR-021's "each queue action".
+
+Phase notes, recorded at the end of the feature (T059). Each records what differs from
+the task text above.
+
+Setup and Foundational (T001–T016):
+
+- The `/putio/*` route handlers use the shared `AppState` client instead of building
+  their own, so `mock_ui` and the tests can point them at mockito.
+- The limiter counts only real failures: a protected request that presents a non-empty,
+  wrong token, or a wrong `POST /auth/login`. A request with no token is refused (401)
+  but not counted, and nothing is counted while no token is configured, so stray
+  browser requests (`/robots.txt`, touch icons) can't lock the operator out.
+  contracts/api.md says so.
+- The 429 check runs before the token compare, so a locked-out IP is refused even with
+  the right token until 60 s after its first failure.
+- Removed as planned: legacy `/api/*` routes, open mode, the permissive `CorsLayer`.
+
+US1 and US2 (T017–T034):
+
+- Committed at 73f9001. No deviations beyond the Foundational ones above.
+
+US3 (T035–T039):
+
+- Queue order is `priority DESC, created_at ASC`: higher priority downloads first.
+  The folder sync queues every file at the same priority, so swapping two rows did
+  nothing. Every move (`move_up/down/first/last`) now renumbers the whole queue in one
+  transaction (`QueueRepository::set_order`, N down to 1). Order rule (pre-deploy
+  review): a move keeps everyone's relative order, so a row that sorts first stays ahead
+  of everything nobody moved above it, and only the operator's explicit move above it
+  wins; rows the sync adds later (priority 0) queue behind every renumbered row. There
+  is no +1000 resume boost in the current code to lose: it belonged to the old job-based
+  pool and went with 8440a79. Today a worker told to stop (fewer `workers`) finishes its
+  current file first, and a partial `.<name>.downloading` file resumes from its bytes
+  whenever its row is next claimed, whatever its priority. Test:
+  `queue_actions.rs::moves_keep_a_raised_row_ahead_unless_moved_above`. The README
+  "Worker Scaling Intelligence" list and the spec's "Worker count lowered" edge case
+  still describe the old 75 % / re-queue-first rule; left for the operator to decide.
+- Fixed while testing: `GET /local/queue` returned `status` as a quoted string
+  (`"\"pending\""`); it is now plain. `DELETE /local/downloads/{id}` for an id not in
+  the queue is 404, not a success.
+
+US4 (T040–T046):
+
+- `ClientError::is_not_found()` identifies a Put.io 404, so `POST /local/queue` maps it
+  to 404 `File not found` instead of matching message text in the API.
+- `.torrent` uploads go to `<base_url>/files/upload` when the client has a custom base
+  URL (`DEFAULT_UPLOAD_URL` otherwise), so the mock and tests receive them instead of
+  the real upload host. Production behaviour is unchanged.
+- Transfers Start/Stop: Put.io has no start/stop call, so both routes are server-side
+  no-ops that return "Transfer N is managed automatically by Put.io"; the page toasts it.
+  FR-016's start/stop are therefore present but do nothing on Put.io.
+
+US5 (T047–T052):
+
+- The db tests live in `putio-sync-db/src/history.rs` `mod tests`; the API test is
+  `putio-sync-api/tests/history_filter.rs`. `mock_ui` seeds 64 rows (two pages).
+
+US6 (T053–T055):
+
+- Settings PUTs validate a copy of the whole config and keep it only if it passes, so a
+  refused PUT changes nothing in memory or on disk. Invalid values are 400 with a JSON
+  `error`; a malformed or mistyped body is also 400 (axum's default was 422).
+- `logging::validate_filters` refuses a bad level or module filter before it is saved,
+  instead of the reload poller rejecting it later.
+- Enabling the watcher requires every watch folder to exist (existing `validate`).
+- What a save applies live was checked in the code (README "Settings from the UI"):
+  - `daemon`: logging `level`/`module_filters` within 10 s via the 003 poller; download
+    `workers` (pool scales), bandwidth, buffer, retries, `skip_existing`,
+    `delete_after_download`, `blocked_extensions` and `target_directory` on the next
+    download (the daemon's queue database and disk figures stay on the startup folder);
+    watcher `paths`, `parent_folder_id`, `archive_directory` at the next scan, only if
+    the daemon started with a watch folder. Restart: other logging and download fields,
+    watcher `enabled` (also `POST /local/watcher/start|stop`, which only save the flag),
+    `delete_after_upload`, and all notifications. `refresh_cycle` is unused by the
+    daemon, which scans on `--watch-interval`.
+  - `server`: logging as above if the config file existed at startup; download changes
+    reach only the API's own download manager, not the `--download` thread; watcher and
+    notifications need a restart.
+  - Closed in the pre-deploy review: each PUT diffs the group's GET body before and
+    after and names the changed fields as "Applies …" or "Needs a restart", for the
+    engine (`AppState::engine`, set to `Daemon` by `AppState::on_daemon` in the daemon
+    command) and for whether a reload poller runs (`AppState::logging_reload`, true when
+    the config file existed at startup). A save that changed nothing says so;
+    `target_directory`, `refresh_cycle` under `daemon` and `level` while `RUST_LOG` is
+    set get a sentence of their own. `POST /local/watcher/start|stop` now say the flag
+    applies after a restart. The UI shows the message as is; the static "Applies within
+    10 s" hint on the level field is gone.
+
+Polish (T056–T059):
+
+- T056: `config.example.toml` gains an `[api]` section with `# auth_token = "change-me"`
+  commented out and the "required for the UI" note (an empty string fails startup),
+  `listen`/`bind` at their defaults, and `enabled`/`url` commented out. The TOML block in
+  contracts/config.md showed `auth_token = ""`, which contradicts its own Errors table;
+  it now shows the commented line.
+- T057: README gains a "Web UI" section (pages, token and breaking change, lockout,
+  plain-HTTP warning, env table, `PUTIO_SYNC_API_LISTEN=0`, port, live vs restart
+  table, route table, `/api/*` and CORS removal), plus Features, Architecture, "Live
+  configuration changes" and Docker env/ports updates. The README had no API route
+  docs before, so the route table is new rather than an update.
+- T058: the Dockerfile had no metrics `EXPOSE` either, so it now has `EXPOSE 9742 15432`.
+  Nothing else is needed: the UI is embedded with `include_bytes!` and `ui/` is copied
+  with the crate (`.dockerignore` doesn't exclude it).
+- T059: UI total 82,206 bytes (about 82 KB, 12 files) against the 150 KB budget;
+  recorded in research.md R1.
+- The `AppState` doc comment no longer says logging changes need a restart.
+- Gate (2026-10-26): `make ci` passes (469 tests passed, 0 failed, 2 ignored);
+  `docker build` succeeds and the image exposes 9742/tcp and 15432/tcp. The release
+  binary (`server --port 15498`, no token) serves `/` and `/assets/*` (content-hash
+  ETag), logs one WARN "API token not configured", and answers `/status` with 401 "API
+  token not configured".
+- Quickstart run locally (2026-10-26, mock_ui on port 15499 since 15432 is taken here):
+  - §2: all seven steps pass. Wrong token, then lockout message after the fifth failure;
+    status; queue move, resume all, sync now (second click "already running"); Put.io
+    browse, name filter, download, delete confirmation (cancelled); transfers add,
+    remove with confirmation (stop toasts the DELETE hint, since start/stop are no-ops);
+    history action filter and paging (50 + 14); settings load, browser-side validation
+    of `workers = 0`, a valid save message; reload keeps the session; sign out clears
+    the token from `localStorage`.
+  - §3: at 375 px every page has `scrollWidth` 375 (no horizontal scroll) and table
+    rows render as cards.
+  - §4: `/health` 200; `/status` and an unknown path 401 without a token; wrong token
+    401 ×5 then 429, also with the right token; the token appears 0 times in `/status`
+    and `/settings`; `PUT /settings/download` with `workers: 0` or a malformed body 400;
+    `/api/status` 404. The daemon variant of the no-token and port-taken checks was not
+    run (it would call the real Put.io); `tests/server_bind.rs` covers the bind failure.
+  - The breadcrumb shows "Put.io / … / 100" when a folder URL is opened directly
+    (cosmetic).
+
+Operator steps still pending on the NAS (004, plus the open 003 steps):
+
+1. In the Unraid template, publish container port 15432 (and 9742 if the 003 metrics
+   port was never published).
+2. Set `PUTIO_SYNC_API_TOKEN` in the template to a new random token
+   (`openssl rand -hex 24`); don't put it in config.toml.
+3. Pull the new image and restart; expect `API listener enabled bind=0.0.0.0:15432
+   token=set`.
+4. Run quickstart §5–§6 (desktop and phone sign-in, live status, sync now, token grep
+   of the container log = 0).
+5. Still pending from 003: `deploy-monitoring.yml --limit monitoring_server` and 003
+   quickstart §6.
+6. Before the first UI settings save on the NAS, check that config.toml has no
+   `auth_token` line unless you put one there (the pre-deploy fix below keeps env-only
+   tokens out of the file from now on).
+
+Pre-deploy review (2026-10-26):
+
+- Env-only token: settings PUTs and `POST /local/watcher/start|stop` write with
+  `Config::save_keeping_file_credentials`, which re-reads the file and writes `[auth]`
+  and `api.auth_token` as they are there (absent stays absent). Memory keeps the
+  resolved token for the auth middleware. A file that no longer parses is left alone
+  and the 500 names no content. The save happens before the in-memory swap, so a failed
+  write changes nothing. No Put.io token has an env override; `[auth]` is kept from disk
+  so a `login` run while the daemon runs isn't reverted. Tests: core
+  `save_keeping_file_credentials_tests`, API `settings.rs::env_only_api_token_is_not_written`,
+  `file_tokens_are_kept`, `watcher_start_stop_keep_tokens_and_say_restart`.
+- Save messages: see US6 above. Tests: `settings.rs` `*_messages`, `unchanged_save_says_so`.
+- Queue order: see US3 above.
+- `archive_directory`: the daemon ignored it at startup (with a warning) while a live
+  save applied it. The README's config-file setup and `example-config.toml` document it,
+  so the daemon now honours it at startup: `DaemonConfig::archive_dir` reaches the
+  `TorrentWatcher` (`WatcherConfig::archive_dir`), the startup log prints it, and
+  `Config::load` expands `~` in it like the other paths. `--archive-dir` is still ignored
+  in daemon mode. Tests: daemon `watcher_starts_with_archive_directory`, core
+  `archive_directory_is_expanded_on_load`.

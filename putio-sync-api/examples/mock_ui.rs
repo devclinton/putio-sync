@@ -7,11 +7,12 @@
 //!
 //! Prints the URL and the API token to sign in with, then runs until Ctrl+C. The port
 //! defaults to a free one. Nothing reaches the real Put.io through `state.client`.
+//! The history holds 64 rows (two pages); 7 of them match `ubuntu`.
 
 use putio_sync_api::{extract_download_config, router, AppState};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthConfig, Config};
-use putio_sync_db::models::QueueStatus;
+use putio_sync_db::models::{HistoryAction, QueueStatus};
 use putio_sync_db::Database;
 use putio_sync_download::DownloadManager;
 use serde_json::{json, Value};
@@ -85,6 +86,8 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         MOVIES,
     );
     let setup = file(102, "setup.exe", 52_428_800, "FILE", MOVIES);
+    // Not queued, so "Download" on Movies toasts found 3, queued 1, skipped 1, blocked 1
+    let sintel = file(103, "Sintel.2010.1080p.mkv", 1_288_490_189, "VIDEO", MOVIES);
     let episode = file(
         201,
         "Example.Show.S01E01.1080p.mkv",
@@ -111,12 +114,7 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         json_mock(
             "GET",
             format!("/files/list?parent_id={MOVIES}"),
-            listing(movies.clone(), vec![big.clone(), setup.clone()]),
-        ),
-        json_mock(
-            "GET",
-            format!("/files/list?parent_id={SHOWS}"),
-            listing(shows.clone(), vec![episode.clone()]),
+            listing(movies.clone(), vec![big.clone(), setup.clone(), sintel.clone()]),
         ),
         json_mock(
             "GET",
@@ -130,11 +128,19 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
             json!({ "status": "OK", "transfer": transfer(2, "New transfer", "WAITING", 0) })
                 .to_string(),
         ),
+        // A `.torrent` file goes through the upload endpoint, which follows the base URL
+        json_mock(
+            "POST",
+            "/files/upload".into(),
+            json!({ "status": "OK", "transfer": transfer(3, "Uploaded torrent", "WAITING", 0) })
+                .to_string(),
+        ),
         json_mock("POST", "/files/delete".into(), json!({ "status": "OK" }).to_string()),
+        // Remove; start and stop answer from the API without calling Put.io
         json_mock("POST", "/transfers/cancel".into(), json!({ "status": "OK" }).to_string()),
         json_mock("POST", "/transfers/retry".into(), json!({ "status": "OK" }).to_string()),
     ];
-    for f in [&movies, &shows, &readme, &big, &setup, &episode] {
+    for f in [&movies, &shows, &readme, &big, &setup, &sintel, &episode] {
         mocks.push(json_mock(
             "GET",
             format!("/files/{}", f["id"]),
@@ -142,11 +148,75 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         ));
     }
 
+    // The Shows listing answers after 3 s, so a "sync now" (which walks every folder)
+    // stays in progress long enough to see it and to try a second one
+    let shows_listing = listing(shows.clone(), vec![episode.clone()]);
+    mocks.push(
+        server
+            .mock("GET", format!("/files/list?parent_id={SHOWS}").as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_chunked_body(move |w| {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                w.write_all(shows_listing.as_bytes())
+            })
+            .expect_at_least(0),
+    );
+
+    // `#/putio/999` is a folder that no longer exists: the page shows the error and Retry
+    mocks.push(
+        server
+            .mock("GET", "/files/list?parent_id=999")
+            .with_status(404)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status":"ERROR","error_type":"NotFound"}"#)
+            .expect_at_least(0),
+    );
+
     let mut created = Vec::with_capacity(mocks.len());
     for mock in mocks {
         created.push(mock.create_async().await);
     }
     created
+}
+
+/// 64 history rows, two pages of 50: every fourth one a deletion, every tenth one an
+/// `ubuntu` image, so the name filter has something to find
+async fn seed_history(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
+    const NAMES: [&str; 5] = [
+        "Big.Buck.Bunny.2008.1080p.mkv",
+        "Sintel.2010.720p.mkv",
+        "debian-12.7.0-amd64-netinst.iso",
+        "Cosmos.Laundromat.2015.mkv",
+        "Spring.2019.2160p.mkv",
+    ];
+    let history = db.history();
+    for i in 0..64_i64 {
+        let name = if i % 10 == 3 {
+            format!("Ubuntu-24.04.{i}-desktop-amd64.iso")
+        } else {
+            format!("{:02}.{}", i, NAMES[i as usize % NAMES.len()])
+        };
+        let size = 104_857_600 * (i % 7 + 1);
+        if i % 4 == 0 {
+            history
+                .insert(500 + i, &name, size, HistoryAction::Deleted, None, None)
+                .await?;
+        } else {
+            let seconds = 30 + i * 5;
+            history
+                .insert(
+                    500 + i,
+                    &name,
+                    size,
+                    HistoryAction::Downloaded,
+                    Some(seconds),
+                    Some(size / seconds),
+                )
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -205,14 +275,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             QueueStatus::Paused,
         ),
     ];
-    for (priority, (file_id, name, size, status)) in rows.into_iter().enumerate() {
+    // Listed (and downloaded) highest priority first, so the first row gets the highest
+    let top = rows.len() as i64;
+    for (index, (file_id, name, size, status)) in rows.into_iter().enumerate() {
         queue
-            .add(file_id, name, size, "http://unused", "", priority as i64)
+            .add(file_id, name, size, "http://unused", "", top - index as i64)
             .await?;
         if status != QueueStatus::Pending {
             queue.update_status(file_id, status).await?;
         }
     }
+
+    seed_history(&db).await?;
 
     let client = Arc::new(PutioApiClient::with_base_url(
         PUTIO_TOKEN.to_string(),

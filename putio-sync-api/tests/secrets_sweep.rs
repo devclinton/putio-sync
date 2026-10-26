@@ -76,6 +76,7 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         post("/local/queue/1/move_first"),
         post("/local/queue/1/move_last"),
         post("/local/queue/1/skip"),
+        post("/local/sync"),
         (
             Method::POST,
             "/local/downloads",

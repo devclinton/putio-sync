@@ -23,6 +23,8 @@ pub struct HistoryQuery {
     pub limit: Option<usize>,
     pub offset: Option<usize>,
     pub action: Option<String>, // "downloaded" or "deleted"
+    /// Case-insensitive filename fragment; empty means no filter
+    pub name: Option<String>,
 }
 
 /// History entry
@@ -65,7 +67,7 @@ pub fn router() -> Router<AppState> {
 
 /// Get download history
 ///
-/// GET /history?limit=50&offset=0&action=downloaded
+/// GET /history?limit=50&offset=0&action=downloaded&name=ubuntu
 async fn get_history(
     State(state): State<AppState>,
     Query(query): Query<HistoryQuery>,
@@ -90,9 +92,11 @@ async fn get_history(
             _ => None,
         });
 
+    let name = query.name.as_deref().filter(|n| !n.is_empty());
+
     // Query history
     let entries_db = history_repo
-        .query(action, limit, offset)
+        .query(action, limit, offset, name)
         .await
         .map_err(|e| {
             error!("Failed to query history: {}", e);
@@ -100,7 +104,7 @@ async fn get_history(
         })?;
 
     // Get total count
-    let total = history_repo.count(action).await.map_err(|e| {
+    let total = history_repo.count(action, name).await.map_err(|e| {
         error!("Failed to count history: {}", e);
         ApiError::InternalError(format!("Failed to count history: {}", e))
     })? as usize;
@@ -142,18 +146,18 @@ async fn get_history_stats(
     let history_repo = db.history();
 
     let total_downloads = history_repo
-        .count(Some(HistoryAction::Downloaded))
+        .count(Some(HistoryAction::Downloaded), None)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to count downloads: {}", e)))?;
 
     let total_deletes = history_repo
-        .count(Some(HistoryAction::Deleted))
+        .count(Some(HistoryAction::Deleted), None)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to count deletes: {}", e)))?;
 
     // Get all downloaded entries to calculate totals
     let downloads = history_repo
-        .query(Some(HistoryAction::Downloaded), 10000, 0)
+        .query(Some(HistoryAction::Downloaded), 10000, 0, None)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to query downloads: {}", e)))?;
 

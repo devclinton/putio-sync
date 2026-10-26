@@ -166,6 +166,34 @@ impl<'a> QueueRepository<'a> {
         Ok(())
     }
 
+    /// Give the rows in `file_ids` strictly decreasing priorities, so `get_all` and the
+    /// workers list them in that order (first = highest priority). One transaction.
+    pub async fn set_order(&self, file_ids: &[i64]) -> DbResult<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(tracked(DbOp::Queue, "Failed to reorder queue"))?;
+        let top = file_ids.len() as i64;
+        for (index, file_id) in file_ids.iter().enumerate() {
+            sqlx::query(
+                r#"
+                UPDATE download_queue
+                SET priority = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE file_id = ?
+                "#,
+            )
+            .bind(top - index as i64)
+            .bind(file_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(tracked(DbOp::Queue, "Failed to reorder queue"))?;
+        }
+        tx.commit()
+            .await
+            .map_err(tracked(DbOp::Queue, "Failed to reorder queue"))
+    }
+
     /// Pause all items in the queue
     pub async fn pause_all(&self) -> DbResult<usize> {
         let result = sqlx::query(

@@ -570,6 +570,51 @@ impl Config {
         Ok(())
     }
 
+    /// Save to `path` like [`Config::save`], but write the credentials the file already
+    /// holds instead of the ones in memory: `[auth]` and `api.auth_token` are kept as
+    /// they are on disk, or left out when the file has none.
+    ///
+    /// Used by the settings routes. In memory, `api.auth_token` may hold the
+    /// `PUTIO_SYNC_API_TOKEN` override, which must never be written, and `[auth]` may be
+    /// older than a `login` run since startup. A file that can't be read or parsed is
+    /// left alone; the error names no file content, so no secret leaks into it.
+    pub fn save_keeping_file_credentials<P: AsRef<Path>>(&self, path: P) -> CoreResult<()> {
+        let path = path.as_ref();
+        let (auth, api_token) = if path.exists() {
+            let unreadable = |what: &str| {
+                CoreError::ConfigError(format!(
+                    "Failed to {what} {}; settings not saved",
+                    path.display()
+                ))
+            };
+            let contents = fs::read_to_string(path).map_err(|_| unreadable("read"))?;
+            let on_disk: toml::Value =
+                toml::from_str(&contents).map_err(|_| unreadable("parse"))?;
+            let auth = match on_disk.get("auth") {
+                Some(value) => Some(
+                    value
+                        .clone()
+                        .try_into::<AuthConfig>()
+                        .map_err(|_| unreadable("parse [auth] in"))?,
+                ),
+                None => None,
+            };
+            let api_token = on_disk
+                .get("api")
+                .and_then(|api| api.get("auth_token"))
+                .and_then(|token| token.as_str())
+                .map(str::to_string);
+            (auth, api_token)
+        } else {
+            (None, None)
+        };
+
+        let mut config = self.clone();
+        config.auth = auth;
+        config.api.auth_token = api_token;
+        config.save(path)
+    }
+
     /// Validate the configuration
     ///
     /// Checks that all required fields are present and valid.
@@ -595,6 +640,11 @@ impl Config {
             expanded_watch_paths.push(expand_path(path)?);
         }
         self.watch.paths = expanded_watch_paths;
+
+        // The daemon moves uploaded watch files here (`~/processed` in the README)
+        if let Some(archive) = &self.watch.archive_directory {
+            self.watch.archive_directory = Some(expand_path(archive)?);
+        }
 
         Ok(())
     }
@@ -1774,5 +1824,112 @@ mod metrics_tests {
         let debug = format!("{:?}", settings);
         assert!(!debug.contains("super-secret-value"));
         assert!(debug.contains("<set>"));
+    }
+}
+
+#[cfg(test)]
+mod save_keeping_file_credentials_tests {
+    use super::*;
+
+    fn written(path: &Path) -> Config {
+        toml::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    /// In memory the API token may be the `PUTIO_SYNC_API_TOKEN` override; it must not
+    /// reach a file that had none
+    #[test]
+    fn env_only_api_token_is_not_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let on_disk = Config {
+            auth: Some(AuthConfig::with_token("file-putio".to_string())),
+            ..Default::default()
+        };
+        on_disk.save(&path).unwrap();
+
+        let mut memory = on_disk.clone();
+        memory.api.auth_token = Some("env-api".to_string());
+        memory.download.workers = 7;
+        memory.save_keeping_file_credentials(&path).unwrap();
+
+        let saved = written(&path);
+        assert_eq!(saved.download.workers, 7);
+        assert_eq!(saved.api.auth_token, None);
+        assert!(!fs::read_to_string(&path).unwrap().contains("env-api"));
+    }
+
+    #[test]
+    fn file_tokens_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut on_disk = Config {
+            auth: Some(AuthConfig::with_token("rotated-putio".to_string())),
+            ..Default::default()
+        };
+        on_disk.api.auth_token = Some("file-api".to_string());
+        on_disk.save(&path).unwrap();
+
+        // Memory holds the env override and a Put.io token from before a re-login
+        let mut memory = on_disk.clone();
+        memory.api.auth_token = Some("env-api".to_string());
+        memory.auth = Some(AuthConfig::with_token("old-putio".to_string()));
+        memory.save_keeping_file_credentials(&path).unwrap();
+
+        let saved = written(&path);
+        assert_eq!(saved.api.auth_token.as_deref(), Some("file-api"));
+        assert_eq!(
+            saved.auth.and_then(|a| a.token).as_deref(),
+            Some("rotated-putio")
+        );
+    }
+
+    #[test]
+    fn new_file_gets_no_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut memory = Config {
+            auth: Some(AuthConfig::with_token("memory-putio".to_string())),
+            ..Default::default()
+        };
+        memory.api.auth_token = Some("env-api".to_string());
+        memory.save_keeping_file_credentials(&path).unwrap();
+
+        let saved = written(&path);
+        assert_eq!(saved.api.auth_token, None);
+        assert!(saved.auth.is_none());
+    }
+
+    #[test]
+    fn archive_directory_is_expanded_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = Config::default();
+        config.watch.archive_directory = Some(PathBuf::from("~/processed"));
+        config.save(&path).unwrap();
+        let archive = Config::load(&path)
+            .unwrap()
+            .watch
+            .archive_directory
+            .unwrap();
+        assert!(!archive.starts_with("~"), "{}", archive.display());
+        assert!(archive.ends_with("processed"));
+    }
+
+    /// A file that no longer parses is not overwritten, and the error shows no content
+    #[test]
+    fn unreadable_file_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[api]\nauth_token = \"secret-value\n").unwrap();
+
+        let err = Config::default()
+            .save_keeping_file_credentials(&path)
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains("secret-value"), "{err}");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[api]\nauth_token = \"secret-value\n"
+        );
     }
 }

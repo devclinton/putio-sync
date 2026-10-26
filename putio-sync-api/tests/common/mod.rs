@@ -16,6 +16,7 @@ use putio_sync_core::config::{AuthConfig, Config};
 use putio_sync_db::models::QueueStatus;
 use putio_sync_db::Database;
 use putio_sync_download::DownloadManager;
+use putio_sync_file_manager::watcher::TorrentWatcher;
 use serde_json::Value;
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -47,7 +48,22 @@ pub fn test_config(dir: &tempfile::TempDir, api_token: Option<&str>) -> Config {
     config
 }
 
+/// Which engine the test app stands in for
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    /// `server`: the API has its own download manager and no watcher
+    Server,
+    /// `daemon`, started without a watch folder
+    Daemon,
+    /// `daemon`, started with a watch folder (the API shares its watcher)
+    DaemonWithWatcher,
+}
+
 async fn build(api_token: Option<&str>, with_db: bool) -> TestApp {
+    build_with(api_token, with_db, Mode::Server).await
+}
+
+async fn build_with(api_token: Option<&str>, with_db: bool, mode: Mode) -> TestApp {
     let putio = mockito::Server::new_async().await;
     let dir = tempfile::tempdir().unwrap();
     let config = test_config(&dir, api_token);
@@ -72,14 +88,24 @@ async fn build(api_token: Option<&str>, with_db: bool) -> TestApp {
         (None, manager)
     };
 
-    let state = AppState::new(
+    let watcher = (mode == Mode::DaemonWithWatcher).then(|| {
+        Arc::new(TorrentWatcher::new(
+            vec![dir.path().to_path_buf()],
+            None,
+            60,
+        ))
+    });
+    let mut state = AppState::new(
         config,
         Some(config_path),
         client,
         db.clone(),
         Arc::new(manager),
-        None,
+        watcher,
     );
+    if mode != Mode::Server {
+        state = state.on_daemon();
+    }
     TestApp {
         router: router(state.clone()),
         state,
@@ -93,6 +119,17 @@ async fn build(api_token: Option<&str>, with_db: bool) -> TestApp {
 /// App with a token, a database and a mocked Put.io
 pub async fn test_app() -> TestApp {
     build(Some(API_TOKEN), true).await
+}
+
+/// App standing in for the daemon's listener; `with_watcher` when the daemon started
+/// with a watch folder
+pub async fn test_daemon_app(with_watcher: bool) -> TestApp {
+    let mode = if with_watcher {
+        Mode::DaemonWithWatcher
+    } else {
+        Mode::Daemon
+    };
+    build_with(Some(API_TOKEN), true, mode).await
 }
 
 /// App with no API token configured

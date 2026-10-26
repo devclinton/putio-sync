@@ -2,6 +2,7 @@
 //!
 //! Provides REST API endpoints for download queue operations:
 //! - GET  /local/queue               - Get current download queue
+//! - POST /local/queue               - Queue a Put.io file or folder (`{file_id}`)
 //! - PUT  /local/queue               - Update entire queue
 //! - POST /local/queue/<file_id>/move_up    - Move item up in queue
 //! - POST /local/queue/<file_id>/move_down  - Move item down in queue
@@ -13,9 +14,11 @@ use crate::error::ApiError;
 use crate::models::SuccessResponse;
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     routing::{get, post, put},
     Json, Router,
 };
+use putio_sync_download::DownloadError;
 use serde::{Deserialize, Serialize};
 
 // Re-export AppState from parent
@@ -53,10 +56,28 @@ pub struct QueueStatsResponse {
     pub paused: usize,
 }
 
+/// Body of `POST /local/queue`
+#[derive(Debug, Deserialize)]
+pub struct EnqueueRequest {
+    /// Put.io file or folder id
+    pub file_id: i64,
+}
+
+/// Counts from queueing a file or folder, named as the sync outcome names them
+#[derive(Debug, Serialize)]
+pub struct EnqueueResponse {
+    pub found: usize,
+    pub queued: usize,
+    pub skipped: usize,
+    pub blocked: usize,
+    pub failed: usize,
+}
+
 /// Create the queue router
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(get_queue))
+        .route("/", post(enqueue))
         .route("/", put(update_queue))
         .route("/stats", get(get_stats))
         .route("/clear", post(clear_completed))
@@ -93,7 +114,7 @@ async fn get_queue(State(state): State<AppState>) -> Result<Json<QueueResponse>,
             file_size: item.file_size,
             relative_path: item.relative_path,
             priority: item.priority,
-            status: format!("{:?}", item.status),
+            status: item.status,
             created_at: item.created_at.to_string(),
             updated_at: item.updated_at.to_string(),
         })
@@ -103,6 +124,42 @@ async fn get_queue(State(state): State<AppState>) -> Result<Json<QueueResponse>,
         total: response_items.len(),
         items: response_items,
     }))
+}
+
+/// Queue a Put.io file, or every file under a Put.io folder, through the folder sync's
+/// filters and dedupe (R12)
+///
+/// POST /local/queue
+async fn enqueue(
+    State(state): State<AppState>,
+    Json(request): Json<EnqueueRequest>,
+) -> Result<(StatusCode, Json<EnqueueResponse>), ApiError> {
+    if state.database.is_none() {
+        return Err(ApiError::ServiceUnavailable(
+            "Database unavailable".to_string(),
+        ));
+    }
+    let stats = state
+        .download_manager
+        .enqueue_tree(request.file_id)
+        .await
+        .map_err(|e| match e {
+            DownloadError::ClientError(ref c) if c.is_not_found() => {
+                ApiError::NotFound("File not found".to_string())
+            }
+            other => ApiError::InternalError(format!("Failed to queue file: {}", other)),
+        })?;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(EnqueueResponse {
+            found: stats.total_files,
+            queued: stats.files_downloaded,
+            skipped: stats.files_skipped,
+            blocked: stats.files_blocked,
+            failed: stats.files_failed,
+        }),
+    ))
 }
 
 /// Update entire queue
@@ -119,19 +176,25 @@ async fn update_queue(
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
-    let queue_repo = db.queue();
-
-    // Update each item's priority based on its position in the list
-    for (index, item) in items.iter().enumerate() {
-        queue_repo
-            .update_priority(item.file_id, index as i64)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
-    }
+    // The first item in the list gets the highest priority, as `GET` lists them
+    let order: Vec<i64> = items.iter().map(|item| item.file_id).collect();
+    db.queue()
+        .set_order(&order)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
 
     Ok(Json(SuccessResponse {
         message: format!("Updated priorities for {} items", items.len()),
     }))
+}
+
+/// Where a move sends a queue item
+#[derive(Clone, Copy)]
+enum Move {
+    Up,
+    Down,
+    First,
+    Last,
 }
 
 /// Move queue item up
@@ -139,54 +202,9 @@ async fn update_queue(
 /// POST /local/queue/:file_id/move_up
 async fn move_up(
     State(state): State<AppState>,
-    Path(file_id_str): Path<String>,
+    Path(file_id): Path<String>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    let file_id: i64 = file_id_str
-        .parse()
-        .map_err(|_| ApiError::BadRequest("Invalid file ID".to_string()))?;
-
-    let db = state
-        .database
-        .as_ref()
-        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
-
-    let queue_repo = db.queue();
-
-    // Get all items sorted by priority
-    let mut items = queue_repo
-        .get_all()
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get queue: {}", e)))?;
-
-    // Sort by priority (lower number = higher priority)
-    items.sort_by_key(|item| item.priority);
-
-    // Find the item and swap with previous
-    if let Some(pos) = items.iter().position(|item| item.file_id == file_id) {
-        if pos == 0 {
-            return Err(ApiError::BadRequest("Item is already first".to_string()));
-        }
-
-        let current_priority = items[pos].priority;
-        let prev_priority = items[pos - 1].priority;
-
-        // Swap priorities
-        queue_repo
-            .update_priority(file_id, prev_priority)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
-
-        queue_repo
-            .update_priority(items[pos - 1].file_id, current_priority)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
-
-        Ok(Json(SuccessResponse {
-            message: "Item moved up in queue".to_string(),
-        }))
-    } else {
-        Err(ApiError::NotFound("Item not found in queue".to_string()))
-    }
+    move_item(&state, &file_id, Move::Up).await
 }
 
 /// Move queue item down
@@ -194,54 +212,9 @@ async fn move_up(
 /// POST /local/queue/:file_id/move_down
 async fn move_down(
     State(state): State<AppState>,
-    Path(file_id_str): Path<String>,
+    Path(file_id): Path<String>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    let file_id: i64 = file_id_str
-        .parse()
-        .map_err(|_| ApiError::BadRequest("Invalid file ID".to_string()))?;
-
-    let db = state
-        .database
-        .as_ref()
-        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
-
-    let queue_repo = db.queue();
-
-    // Get all items sorted by priority
-    let mut items = queue_repo
-        .get_all()
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get queue: {}", e)))?;
-
-    // Sort by priority (lower number = higher priority)
-    items.sort_by_key(|item| item.priority);
-
-    // Find the item and swap with next
-    if let Some(pos) = items.iter().position(|item| item.file_id == file_id) {
-        if pos >= items.len() - 1 {
-            return Err(ApiError::BadRequest("Item is already last".to_string()));
-        }
-
-        let current_priority = items[pos].priority;
-        let next_priority = items[pos + 1].priority;
-
-        // Swap priorities
-        queue_repo
-            .update_priority(file_id, next_priority)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
-
-        queue_repo
-            .update_priority(items[pos + 1].file_id, current_priority)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
-
-        Ok(Json(SuccessResponse {
-            message: "Item moved down in queue".to_string(),
-        }))
-    } else {
-        Err(ApiError::NotFound("Item not found in queue".to_string()))
-    }
+    move_item(&state, &file_id, Move::Down).await
 }
 
 /// Move queue item to first position
@@ -249,49 +222,9 @@ async fn move_down(
 /// POST /local/queue/:file_id/move_first
 async fn move_first(
     State(state): State<AppState>,
-    Path(file_id_str): Path<String>,
+    Path(file_id): Path<String>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    let file_id: i64 = file_id_str
-        .parse()
-        .map_err(|_| ApiError::BadRequest("Invalid file ID".to_string()))?;
-
-    let db = state
-        .database
-        .as_ref()
-        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
-
-    let queue_repo = db.queue();
-
-    // Get all items sorted by priority
-    let mut items = queue_repo
-        .get_all()
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get queue: {}", e)))?;
-
-    // Sort by priority (lower number = higher priority)
-    items.sort_by_key(|item| item.priority);
-
-    // Find the item
-    if let Some(pos) = items.iter().position(|item| item.file_id == file_id) {
-        if pos == 0 {
-            return Err(ApiError::BadRequest("Item is already first".to_string()));
-        }
-
-        // Get the minimum priority (first item's priority - 1)
-        let new_priority = items[0].priority - 1;
-
-        // Move item to first by giving it lowest priority number
-        queue_repo
-            .update_priority(file_id, new_priority)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
-
-        Ok(Json(SuccessResponse {
-            message: "Item moved to first position in queue".to_string(),
-        }))
-    } else {
-        Err(ApiError::NotFound("Item not found in queue".to_string()))
-    }
+    move_item(&state, &file_id, Move::First).await
 }
 
 /// Move queue item to last position
@@ -299,7 +232,20 @@ async fn move_first(
 /// POST /local/queue/:file_id/move_last
 async fn move_last(
     State(state): State<AppState>,
-    Path(file_id_str): Path<String>,
+    Path(file_id): Path<String>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    move_item(&state, &file_id, Move::Last).await
+}
+
+/// Move an item within the order `GET /local/queue` lists, which is the order the
+/// workers claim pending rows in (highest priority first, then oldest).
+///
+/// The whole queue is renumbered, because the folder sync queues every file with the
+/// same priority and swapping equal priorities would change nothing.
+async fn move_item(
+    state: &AppState,
+    file_id_str: &str,
+    to: Move,
 ) -> Result<Json<SuccessResponse>, ApiError> {
     let file_id: i64 = file_id_str
         .parse()
@@ -311,37 +257,55 @@ async fn move_last(
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     let queue_repo = db.queue();
-
-    // Get all items sorted by priority
-    let mut items = queue_repo
+    let mut order: Vec<i64> = queue_repo
         .get_all()
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get queue: {}", e)))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get queue: {}", e)))?
+        .into_iter()
+        .map(|item| item.file_id)
+        .collect();
 
-    // Sort by priority (lower number = higher priority)
-    items.sort_by_key(|item| item.priority);
+    let pos = order
+        .iter()
+        .position(|id| *id == file_id)
+        .ok_or_else(|| ApiError::NotFound("Item not found in queue".to_string()))?;
+    let last = order.len() - 1;
 
-    // Find the item
-    if let Some(pos) = items.iter().position(|item| item.file_id == file_id) {
-        if pos >= items.len() - 1 {
-            return Err(ApiError::BadRequest("Item is already last".to_string()));
+    let message = match to {
+        Move::Up | Move::First if pos == 0 => {
+            return Err(ApiError::BadRequest("Item is already first".to_string()))
         }
+        Move::Down | Move::Last if pos == last => {
+            return Err(ApiError::BadRequest("Item is already last".to_string()))
+        }
+        Move::Up => {
+            order.swap(pos, pos - 1);
+            "Item moved up in queue"
+        }
+        Move::Down => {
+            order.swap(pos, pos + 1);
+            "Item moved down in queue"
+        }
+        Move::First => {
+            let id = order.remove(pos);
+            order.insert(0, id);
+            "Item moved to first position in queue"
+        }
+        Move::Last => {
+            let id = order.remove(pos);
+            order.push(id);
+            "Item moved to last position in queue"
+        }
+    };
 
-        // Get the maximum priority (last item's priority + 1)
-        let new_priority = items.last().unwrap().priority + 1;
+    queue_repo
+        .set_order(&order)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
 
-        // Move item to last by giving it highest priority number
-        queue_repo
-            .update_priority(file_id, new_priority)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to update priority: {}", e)))?;
-
-        Ok(Json(SuccessResponse {
-            message: "Item moved to last position in queue".to_string(),
-        }))
-    } else {
-        Err(ApiError::NotFound("Item not found in queue".to_string()))
-    }
+    Ok(Json(SuccessResponse {
+        message: message.to_string(),
+    }))
 }
 
 /// Skip queue item

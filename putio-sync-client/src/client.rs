@@ -12,6 +12,19 @@ use tracing::{debug, trace, warn};
 /// Default base URL for Put.io API
 pub const DEFAULT_BASE_URL: &str = "https://api.put.io/v2";
 
+/// Put.io takes file uploads on a separate host
+pub const DEFAULT_UPLOAD_URL: &str = "https://upload.put.io/v2/files/upload";
+
+/// The upload endpoint for `base_url`: the real upload host for the real API, otherwise
+/// `<base_url>/files/upload`, so a mock or test server receives uploads too
+fn upload_url_for(base_url: &str) -> String {
+    if base_url.trim_end_matches('/') == DEFAULT_BASE_URL {
+        DEFAULT_UPLOAD_URL.to_string()
+    } else {
+        format!("{base_url}/files/upload")
+    }
+}
+
 /// Idle pooled connections are dropped before a middlebox can silently kill them.
 /// On the NAS, the first request after a sync interval failed on a dead socket
 /// about 250 times a day with the reqwest default of 90 s.
@@ -106,6 +119,7 @@ fn http_client(pool_idle_timeout: Duration) -> Client {
 pub struct PutioApiClient {
     pub(crate) client: Client,
     pub(crate) base_url: String,
+    pub(crate) upload_url: String,
     auth_method: AuthMethod,
     token: Option<String>,
     username: Option<String>,
@@ -155,6 +169,7 @@ impl PutioApiClient {
 
         Self {
             client,
+            upload_url: upload_url_for(&base_url),
             base_url,
             auth_method: auth_config.auth_method,
             token: auth_config.token,
@@ -203,6 +218,7 @@ impl PutioApiClient {
 
         Self {
             client,
+            upload_url: upload_url_for(&base_url),
             base_url,
             auth_method: AuthMethod::Token,
             token: Some(token),
@@ -261,6 +277,7 @@ impl PutioApiClient {
 
         Self {
             client,
+            upload_url: upload_url_for(&base_url),
             base_url,
             auth_method: AuthMethod::AppPassword,
             token: None,
@@ -564,7 +581,7 @@ impl PutioApiClient {
                 "Authentication failed. Invalid or expired token.".to_string()
             }
             StatusCode::FORBIDDEN => "Access forbidden. Check your permissions.".to_string(),
-            StatusCode::NOT_FOUND => "Resource not found.".to_string(),
+            StatusCode::NOT_FOUND => crate::error::NOT_FOUND_MESSAGE.to_string(),
             StatusCode::TOO_MANY_REQUESTS => {
                 "Rate limit exceeded. Please try again later.".to_string()
             }
@@ -593,6 +610,47 @@ mod tests {
         assert_eq!(client.token.as_ref().unwrap(), "test_token");
         assert!(client.username.is_none());
         assert!(client.password.is_none());
+    }
+
+    /// Production clients upload to upload.put.io; custom base URLs upload there instead
+    #[test]
+    fn test_upload_url() {
+        let token = || "test_token".to_string();
+        let creds = || ("u".to_string(), "p".to_string());
+        assert_eq!(PutioApiClient::new(token()).upload_url, DEFAULT_UPLOAD_URL);
+        assert_eq!(
+            PutioApiClient::with_credentials(creds().0, creds().1).upload_url,
+            DEFAULT_UPLOAD_URL
+        );
+        assert_eq!(
+            PutioApiClient::from_auth_config(AuthConfig::with_token(token())).upload_url,
+            DEFAULT_UPLOAD_URL
+        );
+        assert_eq!(
+            PutioApiClient::with_base_url(token(), DEFAULT_BASE_URL.to_string()).upload_url,
+            DEFAULT_UPLOAD_URL
+        );
+        assert_eq!(
+            PutioApiClient::with_base_url(token(), "http://127.0.0.1:9".to_string()).upload_url,
+            "http://127.0.0.1:9/files/upload"
+        );
+        assert_eq!(
+            PutioApiClient::with_credentials_and_base_url(
+                creds().0,
+                creds().1,
+                "http://127.0.0.1:9".to_string()
+            )
+            .upload_url,
+            "http://127.0.0.1:9/files/upload"
+        );
+        assert_eq!(
+            PutioApiClient::from_auth_config_with_base_url(
+                AuthConfig::with_token(token()),
+                "http://127.0.0.1:9".to_string()
+            )
+            .upload_url,
+            "http://127.0.0.1:9/files/upload"
+        );
     }
 
     #[tokio::test]

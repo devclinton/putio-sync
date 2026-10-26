@@ -49,6 +49,12 @@ export function percent(x) {
   return `${Number(x).toFixed(1)}%`;
 }
 
+/** SQLite and Put.io times are UTC without a zone ("2026-10-25 10:00:00"): mark them UTC. */
+export function utc(t) {
+  if (!t || /[zZ]|[+-]\d\d:?\d\d$/.test(t)) return t;
+  return `${t.replace(" ", "T")}Z`;
+}
+
 /** An ISO time as local date and time. */
 export function dateTime(iso) {
   if (!iso) return DASH;
