@@ -824,8 +824,8 @@ US3 (T035–T039):
   current file first, and a partial `.<name>.downloading` file resumes from its bytes
   whenever its row is next claimed, whatever its priority. Test:
   `queue_actions.rs::moves_keep_a_raised_row_ahead_unless_moved_above`. The README
-  "Worker Scaling Intelligence" list and the spec's "Worker count lowered" edge case
-  still describe the old 75 % / re-queue-first rule; left for the operator to decide.
+  "Worker Scaling" section and the spec's "Worker count lowered" edge case were
+  rewritten to this behaviour; the old 75 % / re-queue-first rule is gone.
 - Fixed while testing: `GET /local/queue` returned `status` as a quoted string
   (`"\"pending\""`); it is now plain. `DELETE /local/downloads/{id}` for an id not in
   the queue is 404, not a success.

@@ -245,9 +245,10 @@ the auth token fields show "set" or "not set" and can't be read.
 - **Destructive actions** (delete on Put.io, delete a local file, remove a transfer, clear
   completed, cancel a download): each needs a confirmation naming what will be removed.
   Deleting from Put.io is never offered for a file that is still queued or downloading.
-- **Worker count lowered while downloads run**: today's rule applies (downloads at or over
-  75% finish; others are interrupted and re-queued first). The UI shows the interrupted
-  items as re-queued.
+- **Worker count lowered while downloads run**: today's rule applies: each busy worker
+  finishes its current file and then exits, so no download is interrupted. The UI shows
+  the worker count falling as those files finish. A partial file resumes from its bytes on
+  disk whenever it is picked, with no priority boost.
 - **Browser without scripting or an old browser**: the sign-in page explains that a current
   browser is required; nothing else is served.
 - **Bound to all interfaces**: that is the default in Docker. The README says that the UI
