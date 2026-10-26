@@ -3,7 +3,7 @@
 //! This crate sits below every engine crate. It owns the registry, every metric family
 //! (see `specs/003-telemetry-prometheus/contracts/metrics.md`), the closed label sets and
 //! the metrics listener. Engine crates record through the free functions in [`api`],
-//! [`sync`], [`download`], [`watch`] and [`db`], which use the process-wide [`global`]
+//! [`sync`], [`download`], [`watch`], [`cleanup`] and [`db`], which use the process-wide [`global`]
 //! instance. Tests build their own instance with [`Telemetry::new`].
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +16,7 @@ use prometheus::{
 };
 
 pub mod api;
+pub mod cleanup;
 pub mod db;
 pub mod download;
 pub mod gauges;
@@ -64,6 +65,12 @@ pub struct Telemetry {
     pub(crate) watch_cleanups: IntCounter,
     pub(crate) watch_invalid: IntCounter,
     pub(crate) watch_cleanup_failures: IntCounter,
+
+    pub(crate) empty_folder_runs: IntCounterVec,
+    pub(crate) empty_folders_deleted: IntCounter,
+    pub(crate) empty_folder_delete_failures: IntCounter,
+    // Label-less vec: absent until the first successful run
+    pub(crate) empty_folder_last_success: GaugeVec,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -238,6 +245,33 @@ impl Telemetry {
             ))
             .unwrap(),
 
+            empty_folder_runs: IntCounterVec::new(
+                opts(
+                    "empty_folder_runs_total",
+                    "Finished empty-folder cleanup runs (dry runs not counted).",
+                ),
+                &["trigger", "result"],
+            )
+            .unwrap(),
+            empty_folders_deleted: IntCounter::with_opts(opts(
+                "empty_folders_deleted_total",
+                "Empty folders removed from Put.io, nested ones included.",
+            ))
+            .unwrap(),
+            empty_folder_delete_failures: IntCounter::with_opts(opts(
+                "empty_folder_delete_failures_total",
+                "Empty-folder deletes that failed.",
+            ))
+            .unwrap(),
+            empty_folder_last_success: GaugeVec::new(
+                opts(
+                    "empty_folder_last_success_timestamp_seconds",
+                    "Unix time the last successful empty-folder cleanup finished.",
+                ),
+                &[],
+            )
+            .unwrap(),
+
             db_errors: IntCounterVec::new(
                 opts("db_errors_total", "Database errors."),
                 &["operation"],
@@ -299,6 +333,10 @@ impl Telemetry {
             Box::new(self.watch_cleanups.clone()),
             Box::new(self.watch_invalid.clone()),
             Box::new(self.watch_cleanup_failures.clone()),
+            Box::new(self.empty_folder_runs.clone()),
+            Box::new(self.empty_folders_deleted.clone()),
+            Box::new(self.empty_folder_delete_failures.clone()),
+            Box::new(self.empty_folder_last_success.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
             Box::new(self.disk_total.clone()),
@@ -331,6 +369,12 @@ impl Telemetry {
         }
         for r in FailReason::ALL {
             self.downloads_failed.with_label_values(&[r.as_str()]);
+        }
+        for t in CleanupTrigger::ALL {
+            for r in SyncResult::ALL {
+                self.empty_folder_runs
+                    .with_label_values(&[t.as_str(), r.as_str()]);
+            }
         }
         for op in DbOp::ALL {
             self.db_errors.with_label_values(&[op.as_str()]);

@@ -33,6 +33,7 @@
 
 pub mod daemon;
 pub mod error;
+pub mod schedule;
 
 // Re-export commonly used types
 pub use daemon::{DaemonConfig, PutioDaemon};

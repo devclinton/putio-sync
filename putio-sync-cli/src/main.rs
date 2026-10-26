@@ -195,6 +195,9 @@ async fn main() {
                 )
                 .await
             }
+            cli::FilesCommands::CleanEmpty { dry_run, yes } => {
+                commands::execute_clean_empty(dry_run, yes, args.config).await
+            }
         },
         Commands::List {
             path,

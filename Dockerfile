@@ -93,7 +93,8 @@ FROM alpine:3.19
 # Install runtime dependencies
 RUN apk add --no-cache \
     ca-certificates \
-    libgcc
+    libgcc \
+    tzdata
 
 # Create non-root user
 RUN adduser -D -u 98 -G users others

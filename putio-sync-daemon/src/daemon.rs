@@ -7,6 +7,7 @@
 
 use crate::error::DaemonResult;
 use putio_sync_client::PutioApiClient;
+use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_db::Database;
 use putio_sync_download::{DownloadConfig, DownloadManager};
 use putio_sync_file_manager::watcher::WatcherConfig;
@@ -110,6 +111,8 @@ pub struct PutioDaemon {
     download_mode: Option<DownloadMode>,
     /// File watcher for torrents/magnets (shared with API for hot reload)
     file_watcher: Option<Arc<TorrentWatcher>>,
+    /// Empty-folder cleanup run daily (shared with the API)
+    cleanup: Option<Arc<EmptyFolderCleanup>>,
 }
 
 impl PutioDaemon {
@@ -121,7 +124,15 @@ impl PutioDaemon {
             database: None,
             download_mode: None,
             file_watcher: None,
+            cleanup: None,
         }
+    }
+
+    /// Run `cleanup` once a day while its `[cleanup] enabled` is on. The same service
+    /// should be given to the API so manual and daily runs never overlap.
+    pub fn with_cleanup(mut self, cleanup: Arc<EmptyFolderCleanup>) -> Self {
+        self.cleanup = Some(cleanup);
+        self
     }
 
     /// Initialize all daemon components
@@ -306,6 +317,11 @@ impl PutioDaemon {
             }
         };
 
+        let cleanup_task = self
+            .cleanup
+            .clone()
+            .map(|cleanup| tokio::spawn(crate::schedule::run_daily(cleanup)));
+
         info!("Daemon started successfully");
         info!(
             "  - Watch task: {}",
@@ -331,6 +347,21 @@ impl PutioDaemon {
                 "disabled"
             }
         );
+        match (&cleanup_task, &self.cleanup) {
+            (Some(_), Some(cleanup)) => {
+                let config = cleanup.config();
+                info!(
+                    "  - Empty-folder cleanup task: running (daily at {}, {})",
+                    config.run_at,
+                    if config.enabled {
+                        "enabled"
+                    } else {
+                        "currently disabled"
+                    }
+                );
+            }
+            _ => info!("  - Empty-folder cleanup task: disabled"),
+        }
         info!("Press Ctrl+C to stop");
 
         // Wait for shutdown signal
@@ -348,6 +379,9 @@ impl PutioDaemon {
             task.abort();
         }
         if let Some(task) = download_task {
+            task.abort();
+        }
+        if let Some(task) = cleanup_task {
             task.abort();
         }
 

@@ -13,6 +13,7 @@ putio-sync-client = { path = "../putio-sync-client" }
 putio-sync-db = { path = "../putio-sync-db" }
 putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-file-manager = { path = "../putio-sync-file-manager" }
+putio-sync-core = { path = "../putio-sync-core" }
 
 # Async runtime
 tokio = { workspace = true }
@@ -32,6 +33,7 @@ tracing = { workspace = true }
 # Serialization (for config)
 serde = { workspace = true }
 toml = { workspace = true }
+chrono = "0.4"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

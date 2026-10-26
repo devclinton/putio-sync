@@ -66,6 +66,7 @@
 
 pub mod account;
 pub mod auth;
+pub mod cleanup;
 pub mod client;
 pub mod delete;
 pub mod error;
@@ -76,6 +77,9 @@ pub mod transfers;
 
 // Re-export main types at crate root for convenience
 pub use auth::{AuthConfig, AuthMethod};
+pub use cleanup::{
+    CleanupFailure, EmptyFolderOptions, EmptyFolderReport, FailedStep, RemovedFolder,
+};
 pub use client::{error_chain, PutioApiClient, RetryPolicy, DEFAULT_BASE_URL, DEFAULT_UPLOAD_URL};
 pub use error::{ClientError, ClientResult};
 pub use models::{

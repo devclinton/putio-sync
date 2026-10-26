@@ -63,6 +63,9 @@ pub struct Config {
     /// Prometheus metrics configuration
     #[serde(default)]
     pub metrics: MetricsConfig,
+    /// Put.io empty-folder cleanup
+    #[serde(default)]
+    pub cleanup: CleanupConfig,
 }
 
 /// Authentication method
@@ -738,6 +741,8 @@ impl Config {
             }
         }
 
+        self.cleanup.validate()?;
+
         Ok(())
     }
 
@@ -970,6 +975,7 @@ impl ConfigBuilder {
             api: ApiConfig::default(),
             logging: crate::logging::LoggingConfig::default(),
             metrics: MetricsConfig::default(),
+            cleanup: CleanupConfig::default(),
         }
     }
 }
@@ -1000,6 +1006,68 @@ impl Default for MetricsConfig {
             detail: d.detail.as_str().to_string(),
         }
     }
+}
+
+/// Largest `min_age_hours` accepted: one year
+pub const MAX_CLEANUP_MIN_AGE_HOURS: u64 = 8760;
+
+/// `[cleanup]`: removing empty folders from the Put.io account. The daemon runs it once
+/// a day at `run_at` (local time) when `enabled`; manual runs ignore `enabled`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct CleanupConfig {
+    /// Run the cleanup once a day in the daemon
+    pub enabled: bool,
+    /// Daily run time, 24h `HH:MM` local time
+    pub run_at: String,
+    /// Folders created less than this many hours ago are kept
+    pub min_age_hours: u64,
+}
+
+impl Default for CleanupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            run_at: "03:00".to_string(),
+            min_age_hours: 24,
+        }
+    }
+}
+
+impl CleanupConfig {
+    /// `run_at` as a time of day; an error names the bad value
+    pub fn run_time(&self) -> CoreResult<chrono::NaiveTime> {
+        parse_run_at(&self.run_at)
+    }
+
+    /// Check `run_at` and `min_age_hours`
+    pub fn validate(&self) -> CoreResult<()> {
+        self.run_time()?;
+        if self.min_age_hours > MAX_CLEANUP_MIN_AGE_HOURS {
+            return Err(CoreError::ConfigError(format!(
+                "cleanup min_age_hours must not exceed {}",
+                MAX_CLEANUP_MIN_AGE_HOURS
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Parse a 24h `HH:MM` time, two digits each
+fn parse_run_at(value: &str) -> CoreResult<chrono::NaiveTime> {
+    let bad = || {
+        CoreError::ConfigError(format!(
+            "invalid cleanup run_at '{}': expected 24h HH:MM, e.g. 03:00",
+            value
+        ))
+    };
+    let (h, m) = value.split_once(':').ok_or_else(bad)?;
+    if h.len() != 2 || m.len() != 2 {
+        return Err(bad());
+    }
+    let h: u32 = h.parse().map_err(|_| bad())?;
+    let m: u32 = m.parse().map_err(|_| bad())?;
+    chrono::NaiveTime::from_hms_opt(h, m, 0).ok_or_else(bad)
 }
 
 /// A resolved setting and where it came from. `source` is `Env` when any environment
@@ -1373,6 +1441,7 @@ mod tests {
             api: ApiConfig::default(),
             logging: crate::logging::LoggingConfig::default(),
             metrics: MetricsConfig::default(),
+            cleanup: CleanupConfig::default(),
         }
     }
 
@@ -2240,5 +2309,76 @@ mod save_keeping_file_credentials_tests {
             fs::read_to_string(&path).unwrap(),
             "[api]\nauth_token = \"secret-value\n"
         );
+    }
+
+    #[test]
+    fn cleanup_defaults_when_section_missing() {
+        let config: Config = toml::from_str("[api]\nport = 9000\n").unwrap();
+        assert_eq!(config.cleanup, CleanupConfig::default());
+        assert!(!config.cleanup.enabled);
+        assert_eq!(config.cleanup.run_at, "03:00");
+        assert_eq!(config.cleanup.min_age_hours, 24);
+        assert_eq!(
+            config.cleanup.run_time().unwrap(),
+            chrono::NaiveTime::from_hms_opt(3, 0, 0).unwrap()
+        );
+
+        let partial: Config = toml::from_str("[cleanup]\nenabled = true\n").unwrap();
+        assert!(partial.cleanup.enabled);
+        assert_eq!(partial.cleanup.run_at, "03:00");
+    }
+
+    #[test]
+    fn cleanup_run_at_is_validated() {
+        for good in ["00:00", "03:00", "23:59", "04:30"] {
+            let mut config = Config::default();
+            config.cleanup.run_at = good.to_string();
+            assert!(config.validate().is_ok(), "{good}");
+        }
+        for bad in [
+            "25:00", "3:00", "03:60", "0300", "", "ab:cd", "03:00:00", "-1:00",
+        ] {
+            let mut config = Config::default();
+            config.cleanup.run_at = bad.to_string();
+            let err = config.validate().unwrap_err().to_string();
+            assert!(err.contains("run_at"), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn cleanup_min_age_is_bounded() {
+        let mut config = Config::default();
+        config.cleanup.min_age_hours = 0;
+        assert!(config.validate().is_ok());
+        config.cleanup.min_age_hours = MAX_CLEANUP_MIN_AGE_HOURS;
+        assert!(config.validate().is_ok());
+        config.cleanup.min_age_hours = MAX_CLEANUP_MIN_AGE_HOURS + 1;
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("min_age_hours"), "{err}");
+    }
+
+    /// A file without `[cleanup]` gains the section on save; comments elsewhere stay
+    #[test]
+    fn cleanup_save_adds_section_and_keeps_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "# my settings\n[api]\n# not the default\nport = 9000\n",
+        )
+        .unwrap();
+
+        let mut memory: Config = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        memory.cleanup.enabled = true;
+        memory.cleanup.run_at = "04:30".to_string();
+        memory.save_keeping_file_credentials(&path).unwrap();
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# my settings"), "{text}");
+        assert!(text.contains("# not the default"), "{text}");
+        let saved = written(&path);
+        assert!(saved.cleanup.enabled);
+        assert_eq!(saved.cleanup.run_at, "04:30");
+        assert_eq!(saved.cleanup.min_age_hours, 24);
     }
 }

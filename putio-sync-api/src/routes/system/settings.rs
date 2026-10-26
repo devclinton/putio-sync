@@ -5,6 +5,8 @@
 //! - PUT  /settings - Update settings
 //! - GET  /settings/watcher - Get file watcher configuration
 //! - PUT  /settings/watcher - Update file watcher configuration
+//! - GET  /settings/cleanup - Get the Put.io empty-folder cleanup settings
+//! - PUT  /settings/cleanup - Update the Put.io empty-folder cleanup settings
 
 use crate::error::ApiError;
 use crate::models::SuccessResponse;
@@ -19,7 +21,9 @@ use std::path::PathBuf;
 // Re-export AppState from parent
 pub use crate::AppState;
 use crate::Engine;
-use putio_sync_core::config::{Config, NotificationBackend, ProgressStyle, SortOrder};
+use putio_sync_core::config::{
+    CleanupConfig, Config, NotificationBackend, ProgressStyle, SortOrder,
+};
 use putio_sync_core::error::CoreError;
 use putio_sync_core::logging::ConsoleFormat;
 
@@ -224,6 +228,14 @@ pub struct NotificationSettings {
     pub email: Option<String>,
 }
 
+/// Put.io empty-folder cleanup settings (`[cleanup]`)
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CleanupSettings {
+    pub enabled: bool,
+    pub run_at: String,
+    pub min_age_hours: u64,
+}
+
 /// Create the settings router
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -235,6 +247,8 @@ pub fn router() -> Router<AppState> {
         .route("/logging", put(update_logging_settings))
         .route("/notifications", get(get_notification_settings))
         .route("/notifications", put(update_notification_settings))
+        .route("/cleanup", get(get_cleanup_settings))
+        .route("/cleanup", put(update_cleanup_settings))
 }
 
 /// Download fields the engine's download manager picks up for the next download
@@ -310,6 +324,14 @@ fn logging_view(config: &Config) -> LoggingSettings {
         console_enabled: config.logging.console_enabled,
         console_format: format!("{:?}", config.logging.console_format),
         module_filters: config.logging.module_filters.clone(),
+    }
+}
+
+fn cleanup_view(config: &Config) -> CleanupSettings {
+    CleanupSettings {
+        enabled: config.cleanup.enabled,
+        run_at: config.cleanup.run_at.clone(),
+        min_age_hours: config.cleanup.min_age_hours,
     }
 }
 
@@ -449,6 +471,8 @@ async fn update_watcher_config(
 
         file_watcher.update_config(new_watcher_config);
     }
+    // parent_folder_id is protected from the empty-folder cleanup
+    state.cleanup.configure(&*state.config.read().await);
 
     let mut notes = Vec::new();
     let live = match (state.engine, state.file_watcher.is_some()) {
@@ -574,6 +598,63 @@ async fn update_notification_settings(
 
     Ok(Json(SuccessResponse {
         message: saved_message("Notification", &changed, &[], "", &[]),
+    }))
+}
+
+/// Get the empty-folder cleanup settings
+///
+/// GET /settings/cleanup
+async fn get_cleanup_settings(
+    State(state): State<AppState>,
+) -> Result<Json<CleanupSettings>, ApiError> {
+    Ok(Json(cleanup_view(&*state.config.read().await)))
+}
+
+/// Update the empty-folder cleanup settings
+///
+/// PUT /settings/cleanup
+async fn update_cleanup_settings(
+    State(state): State<AppState>,
+    settings: Result<Json<CleanupSettings>, JsonRejection>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let settings = body(settings)?;
+
+    let changed = update(&state, cleanup_view, |config| {
+        config.cleanup = CleanupConfig {
+            enabled: settings.enabled,
+            run_at: settings.run_at,
+            min_age_hours: settings.min_age_hours,
+        };
+        Ok(())
+    })
+    .await?;
+
+    // The cleanup service reads its settings on every run, and the daemon's schedule on
+    // every check
+    state.cleanup.configure(&*state.config.read().await);
+
+    let mut notes = Vec::new();
+    let live: &[&str] = match state.engine {
+        Engine::Daemon => &["enabled", "run_at", "min_age_hours"],
+        Engine::Server => {
+            if !changed.is_empty() {
+                notes.push(
+                    "The daily run happens only under `daemon`; manual runs use min_age_hours now."
+                        .to_string(),
+                );
+            }
+            &["min_age_hours"]
+        }
+    };
+
+    Ok(Json(SuccessResponse {
+        message: saved_message(
+            "Cleanup",
+            &changed,
+            live,
+            "Applies from the next run",
+            &notes,
+        ),
     }))
 }
 

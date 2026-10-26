@@ -81,6 +81,14 @@ label_enum!(
 );
 
 label_enum!(
+    /// What started an empty-folder cleanup run.
+    CleanupTrigger {
+        Schedule => "schedule",
+        Manual => "manual",
+    }
+);
+
+label_enum!(
     /// File counts reported for the latest sync run.
     SyncKind {
         Found => "found",

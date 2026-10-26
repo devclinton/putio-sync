@@ -9,6 +9,7 @@ A high-performance Rust-based CLI tool for Put.io with support for downloads, tr
 - **Streaming Downloads**: Efficient buffered streaming with minimal memory usage
 - **Smart Progress Logging**: Size-based progress intervals with single-threshold logging (every 50% for 500MB+, 33% for 1GB+, 20% for 5GB+, 10% for 10GB+, 7% for 15GB+, 5% for 20GB+, 1% for 50GB+)
 - **Empty Directory Cleanup**: Enhanced detection and tracking with 5-scan threshold for automatic deletion of empty folders
+- **Put.io Empty-Folder Cleanup**: Remove empty folders from your Put.io account once a day or on demand, from the CLI, API or web UI ([details](#putio-empty-folder-cleanup))
 - **Smart Filtering**: Whitelist/blacklist patterns with glob support
 - **Executable Guard**: Executables and installers on Put.io (`.exe`, `.msi`, `.bat`, ...) are never downloaded; configurable with `blocked_extensions`
 - **Transfer Management**: Add torrents from files or magnet links
@@ -295,6 +296,24 @@ putio-sync delete --all --before "2024-01-01" --yes
 putio-sync delete --all --filter "*.log" --dry-run
 ```
 
+### `files clean-empty`
+
+Remove empty folders from your Put.io account. See
+[Put.io Empty-Folder Cleanup](#putio-empty-folder-cleanup) for what counts as empty and
+what is never removed.
+
+```bash
+putio-sync files clean-empty [OPTIONS]
+
+Options:
+  --dry-run                 List the folders that would be removed; delete nothing
+  -y, --yes                 Skip the confirmation prompt
+```
+
+It prints each folder (id, path, age) and a summary line, and asks before deleting unless
+`--yes`. It talks to Put.io directly, so the daemon need not be running. The exit code is
+non-zero when the run fails or any delete fails.
+
 ### `create`
 
 Add torrents to Put.io from files or magnet links.
@@ -549,6 +568,10 @@ H = histogram.
 | `putio_sync_watch_cleanups_total` | counter | — | Already-uploaded files cleaned up |
 | `putio_sync_watch_invalid_total` | counter | — | Invalid files (warned once) |
 | `putio_sync_watch_cleanup_failures_total` | counter | — | Cleanup (delete/archive) failures |
+| `putio_sync_empty_folder_runs_total` | counter | `trigger`, `result` | Finished Put.io empty-folder cleanup runs; dry runs not counted |
+| `putio_sync_empty_folders_deleted_total` | counter | — | Empty folders removed from Put.io, nested ones included |
+| `putio_sync_empty_folder_delete_failures_total` | counter | — | Empty-folder deletes that failed |
+| `putio_sync_empty_folder_last_success_timestamp_seconds` | gauge | — | Unix time of the last successful cleanup run; absent until the first |
 | `putio_sync_db_errors_total` | counter | `operation` | Database errors |
 | `putio_sync_disk_free_bytes` | gauge | — | Free space for the download folder; absent if unreadable |
 | `putio_sync_disk_total_bytes` | gauge | — | Size of the download folder's filesystem; absent if unreadable |
@@ -661,11 +684,14 @@ daemon's download manager and watcher:
 | Logging | `level`, `module_filters`, within 10 s (ignored while `RUST_LOG` is set) | `console_format`, `console_enabled`, `file_*` |
 | Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `skip_existing`, `delete_after_download`, `blocked_extensions`, for the next download | `target_directory` (new downloads go there at once, but the queue database and disk figures stay on the startup folder), and the rest of the group |
 | Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
+| Cleanup | `enabled`, `run_at`, `min_age_hours`, from the next run or schedule check | — |
 | Notifications | — | everything |
 
 Under `server`, the logging rows are the same (when the config file existed at
 startup). Download changes reach only the API's own download manager, not the
 `--download` background thread, and watcher and notification changes need a restart.
+The daily cleanup runs only under `daemon`; under `server`, `min_age_hours` applies to
+manual runs.
 
 Invalid values are refused with 400 and a JSON `error`, and nothing is saved. A
 watch folder must exist before the watcher can be enabled.
@@ -691,15 +717,46 @@ the token. Errors are `{"error": "...", "details": "..."}`.
 | `DELETE /putio/files/{id}` | Delete from Put.io; 409 when the file is queued, downloading or paused |
 | `GET`/`POST /putio/transfers`, `DELETE /putio/transfers/{id}` | List, add (`{"url"}` or `{"file_data"}`), remove transfers |
 | `POST /putio/transfers/{id}/retry` | Retry a failed transfer; answers with the transfer |
+| `POST /putio/cleanup/empty-folders` | `{"dry_run": true}`: find (or, with `false`, remove) empty Put.io folders → report with `removed`, `removed_count`, `kept_protected`, `kept_too_new`, `failures`; 409 while a run is going |
 | `GET /history?action=&name=&limit=&offset=` | History; `name` is a case-insensitive substring |
 | `GET /history/stats`, `GET /stats/{downloads,transfers,disk}` | Totals |
-| `GET`/`PUT /settings/{download,watcher,logging,notifications}` | Settings (see above) |
+| `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications}` | Settings (see above) |
 | `GET /local/watcher/status`, `GET /local/workers` | Watcher and worker state |
 
 The legacy `/api/*` placeholder routes are removed, and no CORS headers are sent: the
 UI is served from the same origin, and non-browser clients are unaffected.
 
 ## Advanced Features
+
+### Put.io Empty-Folder Cleanup
+
+Removes empty folders from your Put.io account. A folder counts as empty when it holds
+nothing, or only folders that are themselves empty, so a whole empty tree goes in one run
+(deepest first). It never removes:
+
+- the root;
+- `watch.parent_folder_id` and `sync.remote_parent_id`;
+- shared folders (they also keep their parent);
+- folders that unfinished transfers save to;
+- folders younger than `min_age_hours` (default 24), so a folder a new transfer just
+  created survives.
+
+A folder that is kept for any reason keeps its parents too. Run it by hand with
+`putio-sync files clean-empty` (`--dry-run` to preview), `POST /putio/cleanup/empty-folders`,
+or **Remove empty folders** on the web UI's Put.io page, which previews the list and asks
+before deleting. Turn on the daily run in `[cleanup]` or on the Settings page:
+
+```toml
+[cleanup]
+enabled = true      # daily run; daemon only, off by default
+run_at = "03:00"    # local time, 24-hour HH:MM
+min_age_hours = 24
+```
+
+The daily run deletes (it has no dry run) and is not caught up if the daemon was down at
+`run_at`. "Local" is the process's time zone: in Docker set `TZ` (e.g.
+`TZ=Europe/London`), otherwise it is UTC. Only one run happens at a time; each removed
+folder is logged with its id, path and age.
 
 ### Streaming Downloads
 
@@ -1292,6 +1349,7 @@ The Docker image uses the following directories:
 - `PUTIO_SYNC_API_TOKEN` - Token for the web UI and API (required to use them)
 - `PUTIO_SYNC_API_LISTEN`, `PUTIO_SYNC_API_BIND` - see [Web UI](#web-ui)
 - `PUTIO_SYNC_METRICS_*` - see [Verbosity](#verbosity)
+- `TZ` - Time zone for the daily empty-folder cleanup's `run_at` (UTC if unset)
 
 ### Ports
 

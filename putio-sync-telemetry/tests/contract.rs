@@ -30,6 +30,10 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_watch_cleanups_total",
     "putio_sync_watch_invalid_total",
     "putio_sync_watch_cleanup_failures_total",
+    "putio_sync_empty_folder_runs_total",
+    "putio_sync_empty_folders_deleted_total",
+    "putio_sync_empty_folder_delete_failures_total",
+    "putio_sync_empty_folder_last_success_timestamp_seconds",
     "putio_sync_db_errors_total",
     "putio_sync_disk_free_bytes",
     "putio_sync_disk_total_bytes",
@@ -136,6 +140,9 @@ fn record_everything(t: &Telemetry) {
     t.watch_cleaned_up();
     t.watch_invalid_file();
     t.watch_cleanup_failed();
+    t.empty_folder_run(CleanupTrigger::Schedule, SyncResult::Success);
+    t.empty_folders_deleted(3);
+    t.empty_folder_delete_failed();
     t.db_error(DbOp::Queue);
     t.set_queue_counts(&[(QueueState::Pending, 2)]);
     let dir = tempfile::tempdir().unwrap();
@@ -161,6 +168,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
         "result" => strs(SyncResult::ALL, SyncResult::as_str),
         "kind" => strs(SyncKind::ALL, SyncKind::as_str),
         "state" => strs(QueueState::ALL, QueueState::as_str),
+        "trigger" => strs(CleanupTrigger::ALL, CleanupTrigger::as_str),
         other => panic!("unexpected label {}", other),
     }
 }
@@ -175,6 +183,7 @@ fn basic_output_meets_the_contract() {
     let before = t.encode();
     for name in [
         "putio_sync_last_success_timestamp_seconds",
+        "putio_sync_empty_folder_last_success_timestamp_seconds",
         "putio_sync_disk_free_bytes",
         "putio_sync_disk_total_bytes",
     ] {
@@ -290,6 +299,57 @@ fn detailed_creates_one_series_per_worker_and_feeds_operation_latency() {
     );
     assert_eq!(
         t.sample("putio_sync_api_operation_duration_seconds", &op),
+        Some(1.0)
+    );
+}
+
+#[test]
+fn empty_folder_cleanup_metrics() {
+    let t = Telemetry::new();
+    let runs = |trigger, result| {
+        t.sample(
+            "putio_sync_empty_folder_runs_total",
+            &[("trigger", trigger), ("result", result)],
+        )
+    };
+    // Every trigger × result series exists before the first run
+    assert_eq!(runs("manual", "failure"), Some(0.0));
+    assert_eq!(
+        t.sample(
+            "putio_sync_empty_folder_last_success_timestamp_seconds",
+            &[]
+        ),
+        None
+    );
+
+    t.empty_folder_run(CleanupTrigger::Manual, SyncResult::Failure);
+    assert_eq!(runs("manual", "failure"), Some(1.0));
+    assert_eq!(
+        t.sample(
+            "putio_sync_empty_folder_last_success_timestamp_seconds",
+            &[]
+        ),
+        None
+    );
+
+    t.empty_folder_run(CleanupTrigger::Schedule, SyncResult::Success);
+    t.empty_folders_deleted(4);
+    t.empty_folder_delete_failed();
+    assert_eq!(runs("schedule", "success"), Some(1.0));
+    assert!(
+        t.sample(
+            "putio_sync_empty_folder_last_success_timestamp_seconds",
+            &[]
+        )
+        .unwrap()
+            > 0.0
+    );
+    assert_eq!(
+        t.sample("putio_sync_empty_folders_deleted_total", &[]),
+        Some(4.0)
+    );
+    assert_eq!(
+        t.sample("putio_sync_empty_folder_delete_failures_total", &[]),
         Some(1.0)
     );
 }
