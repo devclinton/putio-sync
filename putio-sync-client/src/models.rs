@@ -27,6 +27,7 @@ pub struct ApiError {
 
 /// File or folder entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "FileEntryWire")]
 pub struct FileEntry {
     /// Unique file ID
     pub id: i64,
@@ -44,7 +45,8 @@ pub struct FileEntry {
     pub created_at: Option<String>,
     /// First accessed timestamp
     pub first_accessed_at: Option<String>,
-    /// Whether this is a folder
+    /// Whether this is a folder. Put.io marks folders only by `file_type`,
+    /// so this is derived from it when parsing.
     #[serde(default)]
     pub is_folder: bool,
     /// Whether this is a shared file
@@ -60,6 +62,50 @@ pub struct FileEntry {
     pub extension: Option<String>,
     /// Sort order for folders
     pub sort_by: Option<String>,
+}
+
+/// `FileEntry` as Put.io sends it, before `is_folder` is derived
+#[derive(Deserialize)]
+struct FileEntryWire {
+    id: i64,
+    name: String,
+    size: i64,
+    file_type: String,
+    parent_id: Option<i64>,
+    content_type: Option<String>,
+    created_at: Option<String>,
+    first_accessed_at: Option<String>,
+    #[serde(default)]
+    is_folder: bool,
+    #[serde(default)]
+    is_shared: bool,
+    screenshot: Option<String>,
+    opensubtitles_hash: Option<String>,
+    crc32: Option<String>,
+    extension: Option<String>,
+    sort_by: Option<String>,
+}
+
+impl From<FileEntryWire> for FileEntry {
+    fn from(w: FileEntryWire) -> Self {
+        Self {
+            is_folder: w.is_folder || w.file_type == "FOLDER",
+            id: w.id,
+            name: w.name,
+            size: w.size,
+            file_type: w.file_type,
+            parent_id: w.parent_id,
+            content_type: w.content_type,
+            created_at: w.created_at,
+            first_accessed_at: w.first_accessed_at,
+            is_shared: w.is_shared,
+            screenshot: w.screenshot,
+            opensubtitles_hash: w.opensubtitles_hash,
+            crc32: w.crc32,
+            extension: w.extension,
+            sort_by: w.sort_by,
+        }
+    }
 }
 
 /// Response for file listing
@@ -340,6 +386,21 @@ mod tests {
         assert_eq!(file.file_type, "VIDEO");
         assert_eq!(file.parent_id, Some(0));
         assert!(!file.is_folder);
+    }
+
+    #[test]
+    fn folders_are_detected_from_file_type() {
+        // Put.io sends no `is_folder`; folders are marked only by `file_type`
+        let folder: FileEntry = serde_json::from_str(
+            r#"{"id": 1, "name": "Movies", "size": 0, "file_type": "FOLDER", "parent_id": 0}"#,
+        )
+        .unwrap();
+        let video: FileEntry = serde_json::from_str(
+            r#"{"id": 2, "name": "a.mkv", "size": 9, "file_type": "VIDEO", "parent_id": 1}"#,
+        )
+        .unwrap();
+        assert!(folder.is_folder);
+        assert!(!video.is_folder);
     }
 
     #[test]
