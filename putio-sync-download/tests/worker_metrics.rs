@@ -46,6 +46,14 @@ async fn worker_is_busy_with_inflight_bytes_then_idle() {
         .with_body(format!(r#"{{"file":{ENTRY},"status":"OK"}}"#))
         .create_async()
         .await;
+    // Queueing looks up the file's transfer (feature 006)
+    let _transfers = server
+        .mock("GET", "/transfers/list")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"transfers":[],"status":"OK"}"#)
+        .create_async()
+        .await;
     // Half the file, a pause long enough to observe the busy worker, then the rest.
     let _download = server
         .mock("GET", "/files/1/download")

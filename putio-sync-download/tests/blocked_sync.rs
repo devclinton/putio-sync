@@ -63,6 +63,14 @@ async fn blocked_files_are_never_queued_and_warned_once() {
         .expect(2)
         .create_async()
         .await;
+    // Queueing looks up the file's transfer (feature 006)
+    let _transfers = server
+        .mock("GET", "/transfers/list")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"transfers":[],"status":"OK"}"#)
+        .create_async()
+        .await;
 
     let dir = tempfile::tempdir().unwrap();
     let db = Arc::new(

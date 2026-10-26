@@ -52,6 +52,13 @@ async fn setup() -> (
         ))
         .create_async()
         .await;
+    server
+        .mock("GET", "/transfers/list")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"transfers":[],"status":"OK"}"#)
+        .create_async()
+        .await;
 
     let dir = tempfile::tempdir().unwrap();
     let db = Arc::new(

@@ -119,3 +119,41 @@ async fn start_and_stop_are_gone() {
     }
     any.assert_async().await;
 }
+
+/// A transfer added through the UI is remembered as added by hand, for the Stats page's
+/// origin breakdown (feature 006, R11)
+#[tokio::test]
+async fn add_records_manual_origin() {
+    let mut app = test_app().await;
+    let mock = app
+        .putio
+        .mock("POST", "/transfers/add")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"status":"OK","transfer":{"id":88,"name":"x","status":"IN_QUEUE","created_at":"2026-10-20T09:30:00","save_parent_id":0,"type":"URL"}}"#,
+        )
+        .expect(1)
+        .create_async()
+        .await;
+
+    let response = app
+        .post_json(
+            "/putio/transfers",
+            json!({ "url": "https://example.com/file.iso" }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await["transfer_type"], "URL");
+    mock.assert_async().await;
+
+    let origin = app
+        .db()
+        .sources()
+        .transfer_origin(88)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(origin.origin, putio_sync_db::models::Origin::Manual);
+    assert_eq!(origin.watch_folder, None);
+}

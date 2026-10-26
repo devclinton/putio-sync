@@ -7,8 +7,9 @@ use crate::progress::{DownloadProgress, OverallProgress, ProgressCallback, Progr
 use crate::stream::stream_download;
 use crate::sync_status::{SyncOutcome, SyncRequestError, SyncStatus};
 use crate::utils::retry_with_stall_detection;
+use putio_sync_client::models::Transfer;
 use putio_sync_client::{error_chain, FileEntry, PutioApiClient};
-use putio_sync_db::models::DownloadStatus;
+use putio_sync_db::models::{DownloadSource, DownloadStatus, Origin, SourceType};
 use putio_sync_db::Database;
 use putio_sync_telemetry::{self as telemetry, SyncKind, SyncResult};
 use std::collections::{HashMap, HashSet};
@@ -1091,6 +1092,14 @@ impl DownloadManager {
             }
         };
 
+        // Parent of every listed item, to match files to the transfer that made them
+        let parents: HashMap<i64, Option<i64>> = files_with_paths
+            .iter()
+            .map(|(f, _)| (f.id, f.parent_id))
+            .collect();
+        // Fetched the first time a file is queued, so a sync with nothing new costs no call
+        let mut transfers: Option<HashMap<i64, Transfer>> = None;
+
         // Filter to only actual files (not folders)
         let downloadable_files: Vec<_> = files_with_paths
             .into_iter()
@@ -1195,6 +1204,15 @@ impl DownloadManager {
                 Ok(_) => {
                     stats.files_downloaded += 1; // Renamed but means "added to queue"
                     debug!("Added to queue: {}", file.name);
+                    if transfers.is_none() {
+                        transfers = Some(self.transfers_by_file().await);
+                    }
+                    let transfer =
+                        matching_transfer(file.id, &parents, transfers.as_ref().unwrap());
+                    let source = download_source(db, transfer, &relative_path).await;
+                    if let Err(e) = db.sources().record(file.id, &source).await {
+                        warn!(file_id = file.id, error = %e, "Failed to record download source");
+                    }
                 }
                 Err(e) => {
                     stats.files_failed += 1;
@@ -1505,6 +1523,22 @@ impl DownloadManager {
         Ok(total_processed)
     }
 
+    /// Put.io transfers keyed by the file or folder they produced (feature 006, R4).
+    /// A failed listing leaves every source unknown rather than failing the sync.
+    async fn transfers_by_file(&self) -> HashMap<i64, Transfer> {
+        match self.client.list_transfers().await {
+            Ok(response) => response
+                .transfers
+                .into_iter()
+                .filter_map(|t| Some((t.file_id?, t)))
+                .collect(),
+            Err(e) => {
+                warn!(error = %error_chain(&e), "Failed to list transfers; download sources unknown");
+                HashMap::new()
+            }
+        }
+    }
+
     /// List `root_id` for `enqueue_tree`: everything under a folder, or a one-element
     /// list for a file. Paths are relative to the Put.io root.
     async fn list_tree(&self, root_id: i64) -> DownloadResult<Vec<(FileEntry, String)>> {
@@ -1706,6 +1740,73 @@ impl DownloadManager {
     pub async fn get_worker_stat(&self, worker_id: usize) -> Option<WorkerStats> {
         let workers = self.workers.read().await;
         workers.get(&worker_id).map(|w| w.stats.clone())
+    }
+}
+
+/// The transfer whose file or folder holds `file_id`, walking up the listed parents
+fn matching_transfer<'t>(
+    file_id: i64,
+    parents: &HashMap<i64, Option<i64>>,
+    transfers: &'t HashMap<i64, Transfer>,
+) -> Option<&'t Transfer> {
+    // Guards against a parent cycle in a malformed listing
+    const MAX_DEPTH: usize = 64;
+    let mut current = Some(file_id);
+    for _ in 0..MAX_DEPTH {
+        let id = current?;
+        if let Some(transfer) = transfers.get(&id) {
+            return Some(transfer);
+        }
+        current = parents.get(&id).copied().flatten();
+    }
+    None
+}
+
+/// Where a queued file came from: its transfer's type, tracker host and privacy, how
+/// the transfer was created, and the top-level Put.io folder (feature 006, R11)
+async fn download_source(
+    db: &Database,
+    transfer: Option<&Transfer>,
+    relative_path: &str,
+) -> DownloadSource {
+    let putio_folder = relative_path
+        .split('/')
+        .next()
+        .filter(|segment| !segment.is_empty())
+        .unwrap_or("(root)")
+        .to_string();
+    let Some(transfer) = transfer else {
+        return DownloadSource {
+            transfer_id: None,
+            source_type: None,
+            tracker_host: None,
+            is_private: false,
+            origin: Origin::Unknown,
+            watch_folder: None,
+            putio_folder: Some(putio_folder),
+        };
+    };
+
+    let created = match db.sources().transfer_origin(transfer.id).await {
+        Ok(created) => created,
+        Err(e) => {
+            warn!(transfer_id = transfer.id, error = %e, "Failed to read transfer origin");
+            None
+        }
+    };
+    let source_type = SourceType::from_putio(transfer.transfer_type.as_deref());
+    let torrent = source_type == SourceType::Torrent;
+    DownloadSource {
+        transfer_id: Some(transfer.id),
+        source_type: Some(source_type),
+        tracker_host: transfer
+            .any_tracker_host()
+            .filter(|_| torrent)
+            .map(str::to_string),
+        is_private: torrent && transfer.is_private,
+        origin: created.as_ref().map_or(Origin::Putio, |c| c.origin),
+        watch_folder: created.and_then(|c| c.watch_folder),
+        putio_folder: Some(putio_folder),
     }
 }
 
