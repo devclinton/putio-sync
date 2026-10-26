@@ -1,21 +1,40 @@
 //! Transfer handler implementations
 
 use crate::error::{ApiError, ApiResult};
-use crate::models::transfers::{AddTransferRequest, CancelTransfersRequest, TransferResponse};
+use crate::models::transfers::{
+    AddTransferRequest, CancelTransfersRequest, ReaddResponse, StallInfo, TransferResponse,
+};
 use crate::models::{ListResponse, SuccessResponse};
 use base64::Engine;
 use putio_sync_client::PutioApiClient;
+use putio_sync_core::stall::StallTracker;
+use std::time::SystemTime;
+
+/// A transfer for the API, with the tracker's stall verdict attached
+fn with_stall(transfer: putio_sync_client::Transfer, tracker: &StallTracker) -> TransferResponse {
+    let stall = tracker
+        .get(transfer.id)
+        .map(|stall| StallInfo::new(&stall, SystemTime::now()));
+    TransferResponse {
+        stall,
+        ..TransferResponse::from(transfer)
+    }
+}
 
 /// List transfers from Put.io
 ///
 /// # Arguments
 ///
 /// * `client` - The shared Put.io client from `AppState`
+/// * `tracker` - Stall verdicts from `AppState`
 ///
 /// # Returns
 ///
 /// List of active transfers
-pub async fn list_transfers(client: &PutioApiClient) -> ApiResult<ListResponse<TransferResponse>> {
+pub async fn list_transfers(
+    client: &PutioApiClient,
+    tracker: &StallTracker,
+) -> ApiResult<ListResponse<TransferResponse>> {
     // List transfers
     let transfers_response = client.list_transfers().await?;
 
@@ -23,7 +42,7 @@ pub async fn list_transfers(client: &PutioApiClient) -> ApiResult<ListResponse<T
     let transfer_responses: Vec<TransferResponse> = transfers_response
         .transfers
         .into_iter()
-        .map(TransferResponse::from)
+        .map(|transfer| with_stall(transfer, tracker))
         .collect();
 
     Ok(ListResponse::new(transfer_responses))
@@ -86,6 +105,7 @@ pub async fn add_transfer(
 /// # Arguments
 ///
 /// * `client` - The shared Put.io client from `AppState`
+/// * `tracker` - Stall verdicts from `AppState`
 /// * `transfer_id` - Transfer ID to retrieve
 ///
 /// # Returns
@@ -93,14 +113,68 @@ pub async fn add_transfer(
 /// Transfer information
 pub async fn get_transfer(
     client: &PutioApiClient,
+    tracker: &StallTracker,
     transfer_id: i64,
 ) -> ApiResult<TransferResponse> {
     // Get transfer
     let transfer_response = client.get_transfer_info(transfer_id).await?;
 
-    Ok(crate::models::transfers::TransferResponse::from(
-        transfer_response.transfer,
-    ))
+    Ok(with_stall(transfer_response.transfer, tracker))
+}
+
+/// Cancel a transfer and add its magnet again to the same folder (feature 007)
+///
+/// Put.io refuses a second transfer for a torrent it already has, so the cancel comes
+/// first. If the add then fails the error says the old transfer is gone and carries the
+/// magnet in `details`, so the operator can add it by hand.
+///
+/// # Arguments
+///
+/// * `client` - The shared Put.io client from `AppState`
+/// * `transfer_id` - Transfer ID to re-add
+///
+/// # Returns
+///
+/// The cancelled ID and the new transfer
+pub async fn readd_transfer(client: &PutioApiClient, transfer_id: i64) -> ApiResult<ReaddResponse> {
+    let old = client.get_transfer_info(transfer_id).await?.transfer;
+    let magnet = old.magnet().map(str::to_string).ok_or_else(|| {
+        ApiError::BadRequest(format!(
+            "Transfer {} has no magnet link to re-add",
+            transfer_id
+        ))
+    })?;
+
+    client.cancel_transfers(vec![transfer_id]).await?;
+
+    let added = client
+        .add_transfer_url(&magnet, Some(old.save_parent_id), None)
+        .await
+        .map_err(|e| {
+            tracing::warn!(
+                transfer_id,
+                name = %old.name,
+                error = %e,
+                "Re-add: cancelled but couldn't add again"
+            );
+            ApiError::Internal(format!(
+                "Cancelled transfer {} ({}) but couldn't add it again: {}",
+                transfer_id, old.name, e
+            ))
+            .with_details(magnet.clone())
+        })?;
+
+    tracing::info!(
+        transfer_id,
+        name = %old.name,
+        new_transfer_id = added.id,
+        save_parent_id = old.save_parent_id,
+        "Re-added transfer"
+    );
+    Ok(ReaddResponse {
+        cancelled_id: transfer_id,
+        transfer: TransferResponse::from(added),
+    })
 }
 
 /// Cancel transfers

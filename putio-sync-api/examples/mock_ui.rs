@@ -7,17 +7,21 @@
 //!
 //! Prints the URL and the API token to sign in with, then runs until Ctrl+C. The port
 //! defaults to a free one. Nothing reaches the real Put.io through `state.client`.
-//! The history holds 64 rows (two pages); 7 of them match `ubuntu`.
+//! The history holds 64 rows (two pages); 7 of them match `ubuntu`. On `#/transfers`,
+//! transfer 5 is stalled at 97% (feature 007), transfer 1 downloads normally and the
+//! failed transfer 4 has no magnet link.
 
 use putio_sync_api::{extract_download_config, router, AppState};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthConfig, Config};
+use putio_sync_core::stall::StallTracker;
 use putio_sync_db::models::{HistoryAction, QueueStatus};
 use putio_sync_db::Database;
 use putio_sync_download::DownloadManager;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 /// The API token to sign in with; a fixed test value, not a secret
 const API_TOKEN: &str = "mock-ui-token";
@@ -74,6 +78,25 @@ fn transfer(id: i64, name: &str, status: &str, percent: i64) -> Value {
     })
 }
 
+/// Stuck at 97% with no complete copy in the swarm; seeded as stalled for 7 hours
+const STALLED: i64 = 5;
+
+/// What `/transfers/list` answers: one downloading, one stalled, one failed without magnet
+fn transfers() -> Vec<Value> {
+    let mut sintel = transfer(1, "Sintel.2010.1080p", "DOWNLOADING", 42);
+    sintel["magneturi"] = json!("magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10");
+    let mut stalled = transfer(STALLED, "Ubuntu.24.04.Desktop.iso", "DOWNLOADING", 97);
+    stalled["down_speed"] = json!(0);
+    stalled["availability"] = json!(92);
+    stalled["peers_sending_to_us"] = json!(0);
+    stalled["save_parent_id"] = json!(MOVIES);
+    stalled["magneturi"] = json!("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567");
+    // Only a failed transfer offers Retry
+    let mut failed = transfer(4, "Broken.Torrent.2009", "ERROR", 12);
+    failed["error_message"] = json!("Tracker unreachable");
+    vec![sintel, stalled, failed]
+}
+
 /// Persistent mocks for every Put.io call the UI can trigger
 async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
     let root = file(0, "Your Files", 0, "FOLDER", 0);
@@ -99,9 +122,7 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         SHOWS,
     );
 
-    // Only a failed transfer offers Retry
-    let mut failed = transfer(4, "Broken.Torrent.2009", "ERROR", 12);
-    failed["error_message"] = json!("Tracker unreachable");
+    let transfers = transfers();
 
     let mut json_mock = |method: &str, path: String, body: String| {
         server
@@ -135,17 +156,19 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         json_mock(
             "GET",
             "/transfers/list".into(),
-            json!({ "status": "OK", "transfers": [
-                transfer(1, "Sintel.2010.1080p", "DOWNLOADING", 42),
-                failed.clone(),
-            ] })
-            .to_string(),
+            json!({ "status": "OK", "transfers": transfers }).to_string(),
         ),
         // Retry answers with the transfer as Put.io reports it afterwards
         json_mock(
             "GET",
             "/transfers/4".into(),
-            json!({ "status": "OK", "transfer": failed }).to_string(),
+            json!({ "status": "OK", "transfer": transfers[2] }).to_string(),
+        ),
+        // Re-add reads the transfer for its magnet and folder, then cancels and adds
+        json_mock(
+            "GET",
+            format!("/transfers/{STALLED}"),
+            json!({ "status": "OK", "transfer": transfers[1] }).to_string(),
         ),
         json_mock(
             "POST",
@@ -328,7 +351,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(db),
         Arc::new(manager),
         None,
-    );
+    )
+    .with_stall_tracker(seeded_tracker());
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     let addr = listener.local_addr()?;
@@ -344,4 +368,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await?;
     Ok(())
+}
+
+/// A tracker that saw the transfer list 7 hours ago and now, so transfer 5 shows as
+/// stalled without waiting for the daemon's check
+fn seeded_tracker() -> Arc<StallTracker> {
+    let seen: Vec<putio_sync_client::Transfer> = transfers()
+        .into_iter()
+        .map(|t| serde_json::from_value(t).expect("mock transfer parses"))
+        .collect();
+    let tracker = StallTracker::default();
+    let now = SystemTime::now();
+    // Sintel had fewer bytes then, so only transfer 5 stood still
+    let mut earlier = seen.clone();
+    earlier[0].downloaded = earlier[0].downloaded.map(|bytes| bytes - 1_000_000);
+    tracker.observe(&earlier, now - Duration::from_secs(7 * 3600));
+    tracker.observe(&seen, now);
+    Arc::new(tracker)
 }

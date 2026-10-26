@@ -1,10 +1,12 @@
 // Transfers page: Put.io transfers polled every 5 s, an add form (magnet/URL or a
 // .torrent file), retry for a failed transfer, and remove with confirmation. Put.io has
-// no pause or resume, so there is no start/stop.
+// no pause or resume, so there is no start/stop. Feature 007: a Stalled badge on
+// transfers the daemon saw stop making progress, Copy magnet, and Re-add (cancel, then
+// add the same magnet again) for stalled ones.
 
 import { del, get, post } from "../api.js";
 import { confirm, h, poll, toast } from "../app.js";
-import { bytes, percent, speed } from "../format.js";
+import { bytes, duration, percent, speed } from "../format.js";
 
 const REFRESH_MS = 5000;
 const BADGE = { DOWNLOADING: "active", COMPLETED: "ok", SEEDING: "ok", ERROR: "bad", FAILED: "bad", WAITING: "warn", IN_QUEUE: "warn" };
@@ -127,6 +129,48 @@ function onRetry(button, t) {
   });
 }
 
+/** Copy `text`; falls back to a hidden textarea where the Clipboard API is missing
+ * (it needs HTTPS, and the NAS serves plain HTTP) or refused. */
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Permission refused: try the hidden textarea
+    }
+  }
+  const area = h("textarea", { readonly: true, style: "position:fixed;top:0;left:0;opacity:0" });
+  area.value = text;
+  document.body.append(area);
+  area.select();
+  const ok = document.execCommand("copy");
+  area.remove();
+  if (!ok) throw new Error("copy refused");
+}
+
+async function onCopyMagnet(t) {
+  try {
+    await copyText(t.magnet);
+    toast("Magnet link copied");
+  } catch {
+    toast("Couldn't copy; here is the magnet link", "error", t.magnet);
+  }
+}
+
+async function onReadd(button, t) {
+  const ok = await confirm({
+    title: "Re-add transfer",
+    text: `Re-add ${t.name}? Put.io will cancel it and start it again from the same magnet link, usually from 0%.`,
+    verb: "Re-add",
+  });
+  if (!ok) return;
+  await act(button, `re-add ${t.name}`, async () => {
+    const res = await post(`/putio/transfers/${t.id}/readd`);
+    return { message: `Re-added ${(res && res.transfer && res.transfer.name) || t.name}` };
+  });
+}
+
 async function onRemove(button, t) {
   const ok = await confirm({ title: "Remove transfer", text: `Remove transfer ${t.name}?`, verb: "Remove" });
   if (ok) await act(button, `remove ${t.name}`, () => del(`/putio/transfers/${t.id}`));
@@ -160,11 +204,27 @@ function render(list) {
 function row(t) {
   const s = String(t.status || "").toUpperCase();
   const pct = Math.max(0, Math.min(100, Number(t.percent_done) || 0));
+  const stall = t.stall;
   return h(
     "tr",
     {},
-    h("td", { class: "name-cell name", "data-label": "Name" }, t.name, t.error_message ? h("small", { class: "error-text block", text: t.error_message }) : null),
-    h("td", { "data-label": "Status" }, h("span", { class: `badge ${BADGE[s] || ""}`, text: s.toLowerCase().replace(/_/g, " ") || "—" })),
+    h(
+      "td",
+      { class: "name-cell name", "data-label": "Name" },
+      t.name,
+      t.error_message ? h("small", { class: "error-text block", text: t.error_message }) : null,
+      stall ? h("small", { class: "warn-text block", text: `No progress for ${duration(stall.seconds)}: ${stall.reason}` }) : null,
+    ),
+    h(
+      "td",
+      { "data-label": "Status" },
+      h(
+        "div",
+        { class: "badges" },
+        h("span", { class: `badge ${BADGE[s] || ""}`, text: s.toLowerCase().replace(/_/g, " ") || "—" }),
+        stall ? h("span", { class: "badge warn", title: stall.reason, text: `stalled ${duration(stall.seconds)}` }) : null,
+      ),
+    ),
     h("td", { class: "num", "data-label": "Progress" }, h("div", {}, percent(pct), h("div", { class: "bar" }, h("span", { style: `width:${pct}%` })))),
     h("td", { class: "num right", "data-label": "Size", text: bytes(t.size) }),
     h("td", { class: "num right", "data-label": "Speed", text: t.down_speed ? speed(t.down_speed) : "—" }),
@@ -175,6 +235,8 @@ function row(t) {
         "div",
         { class: "row-actions" },
         RETRYABLE.has(s) ? h("button", { type: "button", class: "btn btn-small", "aria-label": `Retry ${t.name}`, onclick: (ev) => onRetry(ev.currentTarget, t) }, "Retry") : null,
+        stall && t.magnet ? h("button", { type: "button", class: "btn btn-small", "aria-label": `Re-add ${t.name}`, onclick: (ev) => onReadd(ev.currentTarget, t) }, "Re-add") : null,
+        t.magnet ? h("button", { type: "button", class: "btn btn-small", "aria-label": `Copy magnet link of ${t.name}`, onclick: () => onCopyMagnet(t) }, "Copy magnet") : null,
         h("button", { type: "button", class: "btn btn-small", "aria-label": `Remove ${t.name}`, onclick: (ev) => onRemove(ev.currentTarget, t) }, "Remove"),
       ),
     ),

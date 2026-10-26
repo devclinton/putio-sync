@@ -48,6 +48,7 @@ buckets (s): 1, 5, 15, 60, 300, 900, 1800, 3600, 7200. Sync buckets (s): 1, 5, 1
 | `putio_sync_downloads_failed_total` | counter | `reason` | Downloads that ended in failure |
 | `putio_sync_downloaded_bytes_total` | counter | — | Bytes written to disk; `rate()` gives throughput |
 | `putio_sync_download_duration_seconds` | H | — | Time per completed download |
+| `putio_sync_transfers_stalled` | gauge | — | Put.io transfers stalled at the last check (feature 007) |
 | `putio_sync_worker_state` | gauge | `worker` | **detailed only.** 0 idle, 1 downloading |
 | `putio_sync_worker_inflight_bytes` | gauge | `worker` | **detailed only.** Bytes written so far for the current file |
 

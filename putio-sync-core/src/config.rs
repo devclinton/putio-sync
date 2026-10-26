@@ -63,6 +63,28 @@ pub struct Config {
     /// Prometheus metrics configuration
     #[serde(default)]
     pub metrics: MetricsConfig,
+    /// Put.io transfer monitoring (stall detection)
+    #[serde(default)]
+    pub transfers: TransfersConfig,
+}
+
+/// `[transfers]`: when a Put.io transfer counts as stalled (feature 007)
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct TransfersConfig {
+    /// Hours without new bytes before a downloading transfer is stalled
+    pub stall_threshold_hours: u64,
+    /// Seconds between checks of the Put.io transfer list
+    pub stall_check_interval_secs: u64,
+}
+
+impl Default for TransfersConfig {
+    fn default() -> Self {
+        Self {
+            stall_threshold_hours: 6,
+            stall_check_interval_secs: 600,
+        }
+    }
 }
 
 /// Authentication method
@@ -970,6 +992,7 @@ impl ConfigBuilder {
             api: ApiConfig::default(),
             logging: crate::logging::LoggingConfig::default(),
             metrics: MetricsConfig::default(),
+            transfers: TransfersConfig::default(),
         }
     }
 }
@@ -1330,6 +1353,19 @@ fn write_atomically(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn transfers_section_defaults_and_overrides() {
+        let config: super::Config = toml::from_str("").unwrap();
+        assert_eq!(config.transfers, super::TransfersConfig::default());
+        assert_eq!(config.transfers.stall_threshold_hours, 6);
+        assert_eq!(config.transfers.stall_check_interval_secs, 600);
+
+        let config: super::Config =
+            toml::from_str("[transfers]\nstall_threshold_hours = 12\n").unwrap();
+        assert_eq!(config.transfers.stall_threshold_hours, 12);
+        assert_eq!(config.transfers.stall_check_interval_secs, 600);
+    }
+
     use super::*;
     use tempfile::TempDir;
 
@@ -1373,6 +1409,7 @@ mod tests {
             api: ApiConfig::default(),
             logging: crate::logging::LoggingConfig::default(),
             metrics: MetricsConfig::default(),
+            transfers: TransfersConfig::default(),
         }
     }
 
