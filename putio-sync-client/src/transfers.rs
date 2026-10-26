@@ -448,4 +448,45 @@ mod tests {
 
         mock.assert_async().await;
     }
+
+    #[tokio::test]
+    async fn test_retry_transfer() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("POST", "/transfers/retry")
+            .match_header("authorization", "Bearer test_token")
+            .match_body(mockito::Matcher::JsonString(r#"{"id":42}"#.to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status": "OK", "transfer": {"id": 42}}"#)
+            .create_async()
+            .await;
+
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        client.retry_transfer(42).await.unwrap();
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_cancel_transfers() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("POST", "/transfers/cancel")
+            .match_body(mockito::Matcher::JsonString(
+                r#"{"transfer_ids":"1,2"}"#.to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status": "OK"}"#)
+            .create_async()
+            .await;
+
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        client.cancel_transfers(vec![1, 2]).await.unwrap();
+
+        mock.assert_async().await;
+    }
 }

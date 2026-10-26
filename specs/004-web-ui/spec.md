@@ -15,7 +15,8 @@
   reading logs and, since feature 003, metrics. Nothing lets them see or act on it from a
   browser.
 - The `putio-sync-api` crate already serves JSON over HTTP: Put.io files and transfers
-  (list, details, delete, add, start, stop), the download queue (list, reorder, skip, pause
+  (list, details, delete, add, start, stop; start and stop were no-ops, since replaced
+  by retry, see FR-016), the download queue (list, reorder, skip, pause
   and resume all, clear completed), active downloads (start one for a Put.io file, list,
   progress, cancel), workers, the watcher (status, scan, start, stop), local files, history,
   stats (downloads, transfers, disk) and settings (download, watcher, logging,
@@ -151,14 +152,14 @@ another, pause all, resume all, clear completed, cancel an active download and p
 ### User Story 4 - Browse Put.io and manage transfers (Priority: P2)
 
 As the operator, I want to browse my Put.io folders, queue a file for download, and see
-and manage transfers (add a magnet or .torrent, start, stop, remove), so that the
+and manage transfers (add a magnet or .torrent, retry a failed one, remove), so that the
 occasional manual grab doesn't need the Put.io site and then a CLI command.
 
 **Why this priority**: Useful, but the daemon already handles the common path
 automatically. A manual queue action is what today's `download` command does.
 
 **Independent Test**: Against a mocked Put.io with a two-level folder tree and a few
-transfers, browse into a folder, queue one file, add a magnet link, stop and start a
+transfers, browse into a folder, queue one file, add a magnet link, retry a failed
 transfer, remove one. Each shows the result in the UI and the mock sees the expected calls.
 
 **Acceptance Scenarios**:
@@ -169,7 +170,7 @@ transfer, remove one. Each shows the result in the UI and the mock sees the expe
 2. **Given** a file or folder on Put.io, **When** the operator chooses "download", **Then**
    it is added to the queue (a folder adds its files) and the queue page shows it.
 3. **Given** the transfers page, **When** it opens, **Then** it lists transfers with name,
-   state, progress and size, and offers start, stop and remove for each.
+   state, progress and size, and offers remove for each and retry for a failed one.
 4. **Given** the transfers page, **When** the operator pastes a magnet link or picks a
    .torrent file, **Then** the transfer is added and appears in the list.
 5. **Given** a large folder (hundreds of entries), **When** it is opened, **Then** the list
@@ -326,7 +327,10 @@ the auth token fields show "set" or "not set" and can't be read.
   file details, filter the current folder by name, and offer download, and delete with
   confirmation.
 - **FR-016**: The UI MUST list transfers with name, state, progress and size, and offer add
-  (magnet link or .torrent upload), start, stop, and remove with confirmation.
+  (magnet link or .torrent upload), retry for a failed transfer (Put.io
+  `POST /transfers/retry`), and remove with confirmation (Put.io `POST /transfers/cancel`,
+  which stops and deletes it). Put.io has no pause or resume for transfers, so the UI
+  offers no start or stop.
 
 **History and settings**
 

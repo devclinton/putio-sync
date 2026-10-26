@@ -8,7 +8,7 @@
 use crate::error::DaemonResult;
 use putio_sync_client::PutioApiClient;
 use putio_sync_db::Database;
-use putio_sync_download::DownloadManager;
+use putio_sync_download::{DownloadConfig, DownloadManager};
 use putio_sync_file_manager::watcher::WatcherConfig;
 use putio_sync_file_manager::TorrentWatcher;
 use std::path::PathBuf;
@@ -26,8 +26,10 @@ pub struct DaemonConfig {
     pub oauth_token: String,
     /// Database path
     pub database_path: Option<PathBuf>,
-    /// Download target directory
-    pub download_dir: PathBuf,
+    /// Download settings for the local download manager, from `[download]` via
+    /// `DownloadConfig::from(&config.download)` (target directory, workers, retries,
+    /// bandwidth limit, `skip_existing`, ...)
+    pub download: DownloadConfig,
     /// Directories to watch for torrents/magnets
     pub watch_dirs: Vec<PathBuf>,
     /// Watch interval in seconds
@@ -43,18 +45,10 @@ pub struct DaemonConfig {
     pub archive_dir: Option<PathBuf>,
     /// Enable file watcher (can be toggled at runtime via API)
     pub watch_enabled: bool,
-    /// Number of concurrent download workers
-    pub workers: usize,
-    /// Buffer size for streaming downloads in megabytes
-    pub buffer_size_mb: usize,
-    /// Delete files from Put.io after successful download
-    pub delete_after_download: bool,
     /// Enable API mode (use API server for downloads instead of local manager)
     pub api_enabled: bool,
     /// API server URL (required if api_enabled is true)
     pub api_url: Option<String>,
-    /// Extensions that are never downloaded
-    pub blocked_extensions: Vec<String>,
 }
 
 /// (Put.io sync interval, queue worker interval) in seconds.
@@ -68,7 +62,7 @@ impl Default for DaemonConfig {
         Self {
             oauth_token: String::new(),
             database_path: None,
-            download_dir: PathBuf::from("."),
+            download: DownloadConfig::default(),
             watch_dirs: Vec::new(),
             watch_interval: 60,
             download_interval: 300,
@@ -76,12 +70,8 @@ impl Default for DaemonConfig {
             delete_after_upload: false,
             archive_dir: None,
             watch_enabled: true,
-            workers: 1,
-            buffer_size_mb: 64,
-            delete_after_download: false,
             api_enabled: false,
             api_url: None,
-            blocked_extensions: putio_sync_download::default_blocked_extensions(),
         }
     }
 }
@@ -189,23 +179,18 @@ impl PutioDaemon {
             info!("Download mode: Remote API ({})", api_url);
         } else {
             // Local mode - create own download manager
-            let download_config = putio_sync_download::DownloadConfig {
-                target_directory: config.download_dir.clone(),
-                skip_existing: true,
-                buffer_size_mb: config.buffer_size_mb,
-                bandwidth_limit_bytes_per_sec: None,
-                max_retries: 3,
-                retry_initial_delay_secs: 2,
-                workers: config.workers,
-                delete_after_download: config.delete_after_download,
-                blocked_extensions: config.blocked_extensions.clone(),
-            };
+            let download_config = config.download.clone();
 
             let download_manager = if let Some(ref db) = self.database {
                 DownloadManager::new(client.clone(), db.clone(), download_config)
             } else {
                 DownloadManager::new_without_database(client.clone(), download_config)
             };
+            // Before any worker starts: a crash leaves rows in `downloading`, which no
+            // worker claims again
+            if let Err(e) = download_manager.recover_interrupted().await {
+                warn!("{}", e);
+            }
 
             // Wrap in Arc for sharing with API (hot reload support via internal config RwLock)
             self.download_mode = Some(DownloadMode::Local(Arc::new(download_manager)));
@@ -589,6 +574,79 @@ mod tests {
         assert_eq!(started.archive_dir, Some(archive));
         assert_eq!(started.parent_id, Some(9));
         assert_eq!(started.watch_dirs, vec![dir.path().to_path_buf()]);
+    }
+
+    /// Every download setting reaches the local download manager, not only the few the
+    /// daemon used to copy (no network: the client is only constructed)
+    #[tokio::test]
+    async fn download_settings_reach_the_manager() {
+        let dir = tempfile::tempdir().unwrap();
+        let download = putio_sync_download::DownloadConfig {
+            target_directory: dir.path().to_path_buf(),
+            skip_existing: false,
+            buffer_size_mb: 48,
+            bandwidth_limit_bytes_per_sec: Some(1_048_576),
+            max_retries: 9,
+            retry_initial_delay_secs: 11,
+            workers: 3,
+            delete_after_download: true,
+            blocked_extensions: vec!["iso".to_string()],
+        };
+        let config = DaemonConfig {
+            database_path: Some(dir.path().join(".putiosync.db")),
+            download: download.clone(),
+            ..Default::default()
+        };
+        let mut daemon = PutioDaemon::new(config);
+        daemon.initialize().await.unwrap();
+
+        let manager = daemon.get_download_manager().expect("local mode");
+        assert_eq!(manager.get_config().await, download);
+    }
+
+    /// A row a crash left in `downloading` is pending again once the daemon has
+    /// initialised, before any worker starts
+    #[tokio::test]
+    async fn initialize_requeues_interrupted_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join(".putiosync.db");
+        {
+            let db = Database::new(&db_path).await.unwrap();
+            db.queue().add(1, "a.mkv", 10, "", "", 4).await.unwrap();
+            db.queue()
+                .update_status(1, putio_sync_db::models::QueueStatus::Downloading)
+                .await
+                .unwrap();
+        }
+        let config = DaemonConfig {
+            database_path: Some(db_path),
+            download: putio_sync_download::DownloadConfig {
+                target_directory: dir.path().to_path_buf(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut daemon = PutioDaemon::new(config);
+        daemon.initialize().await.unwrap();
+
+        let rows = daemon
+            .get_database()
+            .unwrap()
+            .queue()
+            .get_all()
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, "pending");
+        assert_eq!(rows[0].priority, 4);
+        assert_eq!(
+            daemon
+                .get_download_manager()
+                .unwrap()
+                .active_workers()
+                .await,
+            0
+        );
     }
 
     #[test]

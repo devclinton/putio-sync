@@ -18,6 +18,10 @@ fn default_delete_empty_folders() -> bool {
     true
 }
 
+fn default_skip_existing() -> bool {
+    true
+}
+
 /// Extensions that are never downloaded unless `blocked_extensions` overrides them.
 /// Fake releases on the NAS were mostly `.exe` files (133 of 244 downloads).
 pub const DEFAULT_BLOCKED_EXTENSIONS: &[&str] = &[
@@ -200,7 +204,9 @@ pub struct DownloadConfig {
     pub chunk_size_mb: Option<usize>,
     /// Enable resume support for interrupted downloads
     pub resume_enabled: bool,
-    /// Skip files that have already been downloaded
+    /// Skip files that already exist in the target directory (default true; false
+    /// re-downloads and overwrites them)
+    #[serde(default = "default_skip_existing")]
     pub skip_existing: bool,
     /// Delete files from Put.io after successful download
     pub delete_after_download: bool,
@@ -371,7 +377,7 @@ impl Default for DownloadConfig {
             buffer_size_mb: 16,
             chunk_size_mb: None, // Disabled - Put.io doesn't support range requests
             resume_enabled: true,
-            skip_existing: false,
+            skip_existing: true,
             delete_after_download: false,
             progress_style: ProgressStyle::PerFile,
             sort_order: SortOrder::ByDate,
@@ -570,49 +576,51 @@ impl Config {
         Ok(())
     }
 
-    /// Save to `path` like [`Config::save`], but write the credentials the file already
-    /// holds instead of the ones in memory: `[auth]` and `api.auth_token` are kept as
-    /// they are on disk, or left out when the file has none.
+    /// Save the settings to `path`, editing only the keys whose value changed. Comments,
+    /// blank lines, ordering and keys this version doesn't know stay as they are.
     ///
-    /// Used by the settings routes. In memory, `api.auth_token` may hold the
-    /// `PUTIO_SYNC_API_TOKEN` override, which must never be written, and `[auth]` may be
-    /// older than a `login` run since startup. A file that can't be read or parsed is
-    /// left alone; the error names no file content, so no secret leaks into it.
+    /// The credentials are never written from memory: `[auth]` and `api.auth_token` stay
+    /// exactly as they are on disk, or absent when the file has none. Used by the settings
+    /// routes. In memory, `api.auth_token` may hold the `PUTIO_SYNC_API_TOKEN` override,
+    /// which must never be written, and `[auth]` may be older than a `login` run since
+    /// startup.
+    ///
+    /// A key changed when its value differs from what the file holds once loaded (paths
+    /// expanded, defaults filled in), so an unchanged `~/...` path keeps its `~`. A key
+    /// the config no longer writes (an option set back to none) is removed.
+    ///
+    /// A file that can't be read or parsed is left alone; the error names no file content,
+    /// so no secret leaks into it. The write goes to a temp file renamed over the
+    /// original, which keeps its mode (a new file is 0600).
     pub fn save_keeping_file_credentials<P: AsRef<Path>>(&self, path: P) -> CoreResult<()> {
         let path = path.as_ref();
-        let (auth, api_token) = if path.exists() {
-            let unreadable = |what: &str| {
-                CoreError::ConfigError(format!(
-                    "Failed to {what} {}; settings not saved",
-                    path.display()
-                ))
-            };
-            let contents = fs::read_to_string(path).map_err(|_| unreadable("read"))?;
-            let on_disk: toml::Value =
-                toml::from_str(&contents).map_err(|_| unreadable("parse"))?;
-            let auth = match on_disk.get("auth") {
-                Some(value) => Some(
-                    value
-                        .clone()
-                        .try_into::<AuthConfig>()
-                        .map_err(|_| unreadable("parse [auth] in"))?,
-                ),
-                None => None,
-            };
-            let api_token = on_disk
-                .get("api")
-                .and_then(|api| api.get("auth_token"))
-                .and_then(|token| token.as_str())
-                .map(str::to_string);
-            (auth, api_token)
-        } else {
-            (None, None)
+        let unreadable = |what: &str| {
+            CoreError::ConfigError(format!(
+                "Failed to {what} {}; settings not saved",
+                path.display()
+            ))
         };
+        let after = settings_table(self)?;
 
-        let mut config = self.clone();
-        config.auth = auth;
-        config.api.auth_token = api_token;
-        config.save(path)
+        if !path.exists() {
+            let contents = toml::to_string_pretty(&after).map_err(|e| {
+                CoreError::ConfigError(format!("Failed to serialize config: {}", e))
+            })?;
+            return write_atomically(path, &contents, None);
+        }
+
+        // Write through a symlink to the file it points at
+        let path = fs::canonicalize(path).map_err(|_| unreadable("read"))?;
+        let contents = fs::read_to_string(&path).map_err(|_| unreadable("read"))?;
+        let mut document: toml_edit::DocumentMut =
+            contents.parse().map_err(|_| unreadable("parse"))?;
+        let mut on_disk: Config = toml::from_str(&contents).map_err(|_| unreadable("parse"))?;
+        on_disk.expand_paths().map_err(|_| unreadable("parse"))?;
+        let before = settings_table(&on_disk)?;
+
+        edit_table(document.as_table_mut(), &before, &after);
+        let permissions = fs::metadata(&path).ok().map(|m| m.permissions());
+        write_atomically(&path, &document.to_string(), permissions)
     }
 
     /// Validate the configuration
@@ -1175,6 +1183,151 @@ pub fn spawn_reload_poller(
     })
 }
 
+/// `config` as a TOML table without the credentials (`[auth]`, `api.auth_token`), which
+/// the settings save never writes
+fn settings_table(config: &Config) -> CoreResult<toml::Table> {
+    let mut table = toml::Table::try_from(config)
+        .map_err(|e| CoreError::ConfigError(format!("Failed to serialize config: {}", e)))?;
+    table.remove("auth");
+    if let Some(toml::Value::Table(api)) = table.get_mut("api") {
+        api.remove("auth_token");
+    }
+    Ok(table)
+}
+
+/// Bring `document` from `before` to `after`, touching only the keys that differ. Keys
+/// in neither (unknown to this version) are left alone.
+fn edit_table(document: &mut toml_edit::Table, before: &toml::Table, after: &toml::Table) {
+    let empty = toml::Table::new();
+    for (key, new) in after {
+        let old = before.get(key);
+        if old == Some(new) {
+            continue;
+        }
+        if let toml::Value::Table(new_table) = new {
+            let old_table = match old {
+                Some(toml::Value::Table(table)) => table,
+                _ => &empty,
+            };
+            match document.get_mut(key) {
+                Some(toml_edit::Item::Table(table)) => {
+                    edit_table(table, old_table, new_table);
+                    continue;
+                }
+                None => {
+                    let mut table = toml_edit::Table::new();
+                    edit_table(&mut table, &empty, new_table);
+                    document.insert(key, toml_edit::Item::Table(table));
+                    continue;
+                }
+                // `api = { ... }`: edited key by key too, so its token stays
+                Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(inline))) => {
+                    let mut table = inline.clone().into_table();
+                    edit_table(&mut table, old_table, new_table);
+                    let mut edited = table.into_inline_table();
+                    *edited.decor_mut() = inline.decor().clone();
+                    *inline = edited;
+                    continue;
+                }
+                // Any other value: replaced whole below
+                Some(_) => {}
+            }
+        }
+        let mut value = edit_value(new);
+        match document.get_mut(key) {
+            Some(toml_edit::Item::Value(existing)) => {
+                // Keep the spacing and any trailing comment
+                *value.decor_mut() = existing.decor().clone();
+                *existing = value;
+            }
+            _ => {
+                document.insert(key, toml_edit::Item::Value(value));
+            }
+        }
+    }
+    for key in before.keys() {
+        if !after.contains_key(key) {
+            document.remove(key);
+        }
+    }
+}
+
+/// A `toml` value as a `toml_edit` one (tables become inline tables)
+fn edit_value(value: &toml::Value) -> toml_edit::Value {
+    match value {
+        toml::Value::String(s) => s.as_str().into(),
+        toml::Value::Integer(i) => (*i).into(),
+        toml::Value::Float(f) => (*f).into(),
+        toml::Value::Boolean(b) => (*b).into(),
+        toml::Value::Datetime(d) => (*d).into(),
+        toml::Value::Array(items) => {
+            toml_edit::Value::Array(items.iter().map(edit_value).collect())
+        }
+        toml::Value::Table(table) => toml_edit::Value::InlineTable(
+            table
+                .iter()
+                .map(|(k, v)| (k.as_str(), edit_value(v)))
+                .collect(),
+        ),
+    }
+}
+
+/// Write `contents` to a temp file next to `path` and rename it over `path`, so a reader
+/// never sees half a file. The file gets `permissions`, or 0600 on Unix when `None`.
+fn write_atomically(
+    path: &Path,
+    contents: &str,
+    permissions: Option<fs::Permissions>,
+) -> CoreResult<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    let failed =
+        |e: std::io::Error| CoreError::ConfigError(format!("Failed to write config file: {}", e));
+    let dir = match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    fs::create_dir_all(dir)
+        .map_err(|e| CoreError::ConfigError(format!("Failed to create config directory: {}", e)))?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "config.toml".to_string());
+    let temp = dir.join(format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    let write = || -> std::io::Result<()> {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp)?;
+        #[cfg(unix)]
+        let permissions = permissions.or_else(|| {
+            use std::os::unix::fs::PermissionsExt;
+            Some(fs::Permissions::from_mode(0o600))
+        });
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions)?;
+        }
+        file.write_all(contents.as_bytes())?;
+        file.sync_all()?;
+        fs::rename(&temp, path)
+    };
+    write().map_err(|e| {
+        let _ = fs::remove_file(&temp);
+        failed(e)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1332,7 +1485,7 @@ mod tests {
         assert_eq!(config.download.buffer_size_mb, 16);
         assert_eq!(config.download.chunk_size_mb, None);
         assert!(config.download.resume_enabled);
-        assert!(!config.download.skip_existing);
+        assert!(config.download.skip_existing);
         assert!(!config.download.delete_after_download);
         assert_eq!(config.download.progress_style, ProgressStyle::PerFile);
         assert_eq!(config.download.sort_order, SortOrder::ByDate);
@@ -1451,7 +1604,7 @@ mod tests {
         assert_eq!(config.buffer_size_mb, 16);
         assert_eq!(config.chunk_size_mb, None);
         assert!(config.resume_enabled);
-        assert!(!config.skip_existing);
+        assert!(config.skip_existing);
         assert!(!config.delete_after_download);
         assert_eq!(config.progress_style, ProgressStyle::PerFile);
         assert_eq!(config.sort_order, SortOrder::ByDate);
@@ -1479,6 +1632,18 @@ mod tests {
                 "apk", "dmg", "pkg"
             ]
         );
+    }
+
+    #[test]
+    fn test_skip_existing_missing_key_defaults_to_true() {
+        let mut value = toml::Value::try_from(DownloadConfig {
+            skip_existing: false,
+            ..DownloadConfig::default()
+        })
+        .unwrap();
+        value.as_table_mut().unwrap().remove("skip_existing");
+        let config: DownloadConfig = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
+        assert!(config.skip_existing);
     }
 
     #[test]
@@ -1913,6 +2078,150 @@ mod save_keeping_file_credentials_tests {
             .unwrap();
         assert!(!archive.starts_with("~"), "{}", archive.display());
         assert!(archive.ends_with("processed"));
+    }
+
+    /// `Config::default()` as written by `save`, with comments, blank lines, odd
+    /// spacing on the credentials, an unknown key and an unknown table added by hand
+    fn hand_edited() -> String {
+        let mut config = Config {
+            auth: Some(AuthConfig::with_token("file-putio".to_string())),
+            ..Default::default()
+        };
+        config.api.auth_token = Some("file-api".to_string());
+        config.watch.archive_directory = Some(PathBuf::from("/srv/processed"));
+        let text = toml::to_string_pretty(&config).unwrap();
+        let text = text
+            .replace(
+                "token = \"file-putio\"",
+                "token   =   \"file-putio\"   # from `login`",
+            )
+            .replace("[download]\n", "[download]\n# How many at once\n\n")
+            .replace(
+                "\nworkers = ",
+                "\nfuture_knob = \"keep me\" # not known yet\nworkers = ",
+            );
+        format!("# My putio-sync config\n\n{text}\n# Trailing notes\n[extra]\nnote = \"unknown table\"\n")
+    }
+
+    /// `text` as `Config::load` gives it: paths expanded
+    fn loaded(text: &str) -> Config {
+        let mut config: Config = toml::from_str(text).unwrap();
+        config.expand_paths().unwrap();
+        config
+    }
+
+    fn write_hand_edited(path: &Path) -> String {
+        let text = hand_edited();
+        fs::write(path, &text).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        text
+    }
+
+    /// Only the changed key is rewritten: comments, blank lines, ordering, unknown keys
+    /// and the credentials stay byte for byte
+    #[test]
+    fn only_changed_keys_are_edited() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let before = write_hand_edited(&path);
+        assert!(before.contains("\nworkers = 2\n"), "{before}");
+
+        let mut memory = loaded(&before);
+        memory.api.auth_token = Some("env-api".to_string());
+        memory.auth = Some(AuthConfig::with_token("old-putio".to_string()));
+        memory.download.workers = 7;
+        memory.save_keeping_file_credentials(&path).unwrap();
+
+        let after = fs::read_to_string(&path).unwrap();
+        assert_eq!(after, before.replace("\nworkers = 2\n", "\nworkers = 7\n"));
+    }
+
+    #[test]
+    fn unchanged_config_leaves_the_file_identical() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let before = write_hand_edited(&path);
+        let memory = loaded(&before);
+        memory.save_keeping_file_credentials(&path).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    /// A key the config no longer serialises (an option set back to none) is removed,
+    /// and a key new to the file is added to its table
+    #[test]
+    fn cleared_and_new_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let before = write_hand_edited(&path);
+        let mut memory = loaded(&before);
+        memory.watch.archive_directory = None;
+        memory.notifications.webhook_url = Some("http://hook.local/x".to_string());
+        memory.save_keeping_file_credentials(&path).unwrap();
+
+        let after = fs::read_to_string(&path).unwrap();
+        assert!(!after.contains("archive_directory"), "{after}");
+        assert!(after.contains("# How many at once"), "{after}");
+        let saved = written(&path);
+        assert_eq!(
+            saved.notifications.webhook_url.as_deref(),
+            Some("http://hook.local/x")
+        );
+        assert_eq!(saved.watch.archive_directory, None);
+    }
+
+    /// `~` paths are expanded in memory; an unchanged one stays as written
+    #[test]
+    fn unexpanded_paths_are_not_rewritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = Config::default();
+        config.download.target_directory = PathBuf::from("~/Downloads/putio");
+        config.save(&path).unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+
+        let mut memory = Config::load(&path).unwrap();
+        memory.download.workers = 9;
+        memory.save_keeping_file_credentials(&path).unwrap();
+
+        let after = fs::read_to_string(&path).unwrap();
+        assert!(after.contains("\"~/Downloads/putio\""), "{after}");
+        assert_eq!(written(&path).download.workers, 9);
+        assert_eq!(
+            after.lines().count(),
+            before.lines().count(),
+            "{before}\n---\n{after}"
+        );
+    }
+
+    /// The write goes through a temp file and a rename: no leftovers, mode kept
+    #[cfg(unix)]
+    #[test]
+    fn write_is_atomic_and_keeps_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let before = write_hand_edited(&path);
+        let mut memory = loaded(&before);
+        memory.download.workers = 3;
+        memory.save_keeping_file_credentials(&path).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("config.toml")]);
+
+        // A new file is created 0600 too
+        let fresh = dir.path().join("sub").join("config.toml");
+        memory.save_keeping_file_credentials(&fresh).unwrap();
+        let mode = fs::metadata(&fresh).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     /// A file that no longer parses is not overwritten, and the error shows no content

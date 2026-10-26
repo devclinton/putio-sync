@@ -13,6 +13,7 @@ putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 
 # Internal dependencies
 putio-sync-client = { path = "../putio-sync-client" }
+putio-sync-core = { path = "../putio-sync-core" }
 putio-sync-db = { path = "../putio-sync-db" }
 
 # Async runtime

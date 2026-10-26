@@ -374,17 +374,7 @@ fn spawn_download_daemon(
             };
 
             // Initialize download manager
-            let download_config = DownloadConfig {
-                target_directory: config.download.target_directory.clone(),
-                skip_existing: config.download.skip_existing,
-                buffer_size_mb: config.download.buffer_size_mb,
-                bandwidth_limit_bytes_per_sec: config.download.bandwidth_limit_bytes_per_sec,
-                max_retries: config.download.max_retries,
-                retry_initial_delay_secs: config.download.retry_initial_delay_secs,
-                workers: config.download.workers,
-                delete_after_download: config.download.delete_after_download,
-                blocked_extensions: config.download.blocked_extensions.clone(),
-            };
+            let download_config = DownloadConfig::from(&config.download);
 
             let download_manager = if let Some(ref db) = database {
                 Arc::new(DownloadManager::new(

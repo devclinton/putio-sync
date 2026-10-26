@@ -434,7 +434,7 @@ Configure download behavior including streaming buffer size and resume support:
 [download]
 buffer_size_mb = 16        # Stream buffer size for downloads
 resume_enabled = true      # Enable automatic resume
-skip_existing = false      # Skip files that already exist locally
+skip_existing = true       # Skip files that already exist locally
 ```
 
 ### Basic Configuration
@@ -449,7 +449,7 @@ workers = 2
 target_directory = "~/Downloads/putio"  # Supports ~, absolute, and relative paths
 buffer_size_mb = 16                     # Stream buffer size for downloads
 resume_enabled = true                   # Enable automatic resume
-skip_existing = false                   # Skip files that already exist
+skip_existing = true                    # Skip files that already exist
 delete_after_download = true            # Clean up Put.io after successful downloads
 progress_style = "per-file"             # Progress bar style
 sort_order = "by-date"                  # File sorting order
@@ -584,8 +584,8 @@ as well as a desktop. The pages:
 - **Put.io**: browse folders, filter by name, queue a file or a whole folder
   ("found, queued, skipped, blocked"), delete from Put.io with confirmation. Delete is
   refused for files that are queued, downloading or paused.
-- **Transfers**: add a magnet link, URL or `.torrent` file; remove a transfer.
-  Put.io starts and stops transfers itself, so Start and Stop only show its message.
+- **Transfers**: add a magnet link, URL or `.torrent` file; retry a failed transfer;
+  remove a transfer (Put.io cancels it). Put.io has no pause or resume for transfers.
 - **History**: downloads and deletions, filtered by action and by name.
 - **Settings**: download, watcher, logging and notification settings (see
   [Settings from the UI](#settings-from-the-ui)). The API token and Put.io
@@ -647,9 +647,11 @@ port 15432 in the Unraid template.
 
 ### Settings from the UI
 
-A save writes the whole `config.toml` back (comments in the file are not kept), except
-the credentials: `[auth]` and `api.auth_token` are written as they already are in the
-file, so a token set only through `PUTIO_SYNC_API_TOKEN` never reaches it. The response
+A save edits only the settings that changed in `config.toml`; comments, blank lines,
+ordering and keys it doesn't know stay as they are. The credentials are never written:
+`[auth]` and `api.auth_token` stay as they are in the file, so a token set only through
+`PUTIO_SYNC_API_TOKEN` never reaches it. The file is replaced atomically and keeps its
+mode; a file that doesn't parse is left alone and the save fails. The response
 names each changed setting as applying now or needing a restart; the UI shows it as is,
 and a save that changed nothing says so. Under `daemon`, the UI and API share the
 daemon's download manager and watcher:
@@ -688,6 +690,7 @@ the token. Errors are `{"error": "...", "details": "..."}`.
 | `GET /putio/files?parent_id=`, `GET /putio/files/{id}` | Browse Put.io |
 | `DELETE /putio/files/{id}` | Delete from Put.io; 409 when the file is queued, downloading or paused |
 | `GET`/`POST /putio/transfers`, `DELETE /putio/transfers/{id}` | List, add (`{"url"}` or `{"file_data"}`), remove transfers |
+| `POST /putio/transfers/{id}/retry` | Retry a failed transfer; answers with the transfer |
 | `GET /history?action=&name=&limit=&offset=` | History; `name` is a case-insensitive substring |
 | `GET /history/stats`, `GET /stats/{downloads,transfers,disk}` | Totals |
 | `GET`/`PUT /settings/{download,watcher,logging,notifications}` | Settings (see above) |
@@ -840,6 +843,18 @@ the pool as described below. `PUT /settings/logging` saves to `config.toml`, so 
 change is picked up the same way. [Settings from the UI](#settings-from-the-ui) lists what
 applies live and what needs a restart.
 
+At startup, `daemon` and `server` (its API and its `--download` thread) give the download
+manager every `[download]` setting it has: `target_directory`, `workers`,
+`buffer_size_mb`, `bandwidth_limit_bytes_per_sec`, `max_retries`,
+`retry_initial_delay_secs`, `skip_existing`, `delete_after_download` and
+`blocked_extensions`. The other `[download]` keys (`resume_enabled`, `chunk_size_mb`,
+`progress_style`, sorting, glob patterns, `delete_empty_folders`) are read by the
+one-off `download` command only. Before this, `daemon` ignored the bandwidth limit and
+retry settings and always skipped files that already existed; it now follows
+`skip_existing`, which defaults to `true` (the old behaviour). An explicit
+`skip_existing = false` now really re-downloads and overwrites existing files, so remove
+that line or set it to `true` unless you want that.
+
 #### Worker Scaling
 
 When `workers` is raised through the API, new workers start straight away. When it is
@@ -853,6 +868,12 @@ lowered, the excess workers are told to stop:
 A partial file, for example one left by a restart, resumes from the bytes already on
 disk whenever a worker picks it. It gets no priority boost; move it up the queue to
 resume it sooner.
+
+If the process stops mid-download (crash, kill, container restart), its queue row stays
+`downloading`. At startup, before any worker starts, `daemon` and `server` put such rows
+back to `pending` with their priority and position unchanged, and log
+`Requeued interrupted downloads left in downloading state count=N` when there were any.
+Paused and failed rows are left alone.
 
 #### Smart Torrent Processing & Deduplication
 

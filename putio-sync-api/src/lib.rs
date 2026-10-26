@@ -47,19 +47,9 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
 
-/// Extract DownloadConfig from Config
+/// Extract DownloadConfig from Config (the shared `From<&[download]>` conversion)
 pub fn extract_download_config(config: &Config) -> DownloadConfig {
-    DownloadConfig {
-        target_directory: config.download.target_directory.clone(),
-        skip_existing: config.download.skip_existing,
-        buffer_size_mb: config.download.buffer_size_mb,
-        bandwidth_limit_bytes_per_sec: config.download.bandwidth_limit_bytes_per_sec,
-        max_retries: config.download.max_retries,
-        retry_initial_delay_secs: config.download.retry_initial_delay_secs,
-        workers: config.download.workers,
-        delete_after_download: config.download.delete_after_download,
-        blocked_extensions: config.download.blocked_extensions.clone(),
-    }
+    DownloadConfig::from(&config.download)
 }
 
 /// Global application state
@@ -286,6 +276,10 @@ pub async fn create_app(
     } else {
         DownloadManager::new_without_database(client.clone(), download_config)
     };
+    // Before anything can claim a row: a crash leaves rows in `downloading`
+    if let Err(e) = download_manager.recover_interrupted().await {
+        warn!("{}", e);
+    }
 
     Ok(router(AppState::new(
         config,

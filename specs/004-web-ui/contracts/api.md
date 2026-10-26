@@ -148,6 +148,14 @@ Before calling Put.io, the handler looks the id up in the queue. If the row's st
 Other statuses, or no row, proceed as today. When the state has no database the guard is
 skipped (dev mode).
 
+## `POST /putio/transfers/{id}/retry` (new, protected)
+
+Retries a failed transfer through Put.io's `POST /transfers/retry` (`id`) and answers 200
+with the transfer as `GET /putio/transfers/{id}` reports it afterwards. Put.io refusing
+the retry (for example, the transfer hasn't failed) is an error with its message.
+`DELETE /putio/transfers/{id}` (unchanged) is Put.io's cancel, which stops and removes a
+transfer. Put.io has no pause or resume (FR-016).
+
 ## `GET /stats/disk` (changed, protected)
 
 Reports the download folder's filesystem (statvfs through `putio-sync-telemetry`) rather
@@ -168,4 +176,7 @@ page does not use inline scripts, so a later CSP can be strict.
 ## Removed
 
 - `/api/*` legacy placeholder routes.
+- `POST /putio/transfers/{id}/start` and `/stop`: they answered 200 without calling
+  Put.io, which has no pause or resume. They now fall through to 404; use `/retry` or
+  `DELETE`.
 - Open mode (requests allowed when no token is configured).

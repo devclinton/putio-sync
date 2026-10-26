@@ -5,6 +5,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use putio_sync_api::create_app;
 use putio_sync_core::config::{AuthConfig, Config};
+use putio_sync_db::models::QueueStatus;
 use putio_sync_db::Database;
 use std::path::Path;
 use tower::ServiceExt;
@@ -118,4 +119,37 @@ async fn queue_actions_reject_bad_and_unknown_ids() {
             "{action} on unknown id"
         );
     }
+}
+
+/// `server` startup puts rows a crash left in `downloading` back to `pending`, with
+/// their priority, so the next run claims them again
+#[tokio::test]
+async fn create_app_requeues_interrupted_downloads() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    {
+        let db = Database::new(&db_path).await.unwrap();
+        db.queue()
+            .add(201, "crashed.mkv", 1024, "http://unused", "", 3)
+            .await
+            .unwrap();
+        db.queue()
+            .update_status(201, QueueStatus::Downloading)
+            .await
+            .unwrap();
+    }
+    let _app = create_app(test_config(), Some(db_path.clone()), None, None)
+        .await
+        .unwrap();
+
+    let rows = Database::new(&db_path)
+        .await
+        .unwrap()
+        .queue()
+        .get_all()
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, "pending");
+    assert_eq!(rows[0].priority, 3);
 }

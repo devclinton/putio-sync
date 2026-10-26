@@ -20,7 +20,9 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 /// Configuration for download operations
-#[derive(Debug, Clone)]
+///
+/// Build it from `config.toml` with `DownloadConfig::from(&config.download)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownloadConfig {
     /// Target directory for downloads
     pub target_directory: PathBuf,
@@ -46,7 +48,7 @@ impl Default for DownloadConfig {
     fn default() -> Self {
         Self {
             target_directory: PathBuf::from("."),
-            skip_existing: false,
+            skip_existing: true,
             buffer_size_mb: 64,
             bandwidth_limit_bytes_per_sec: None,
             max_retries: 3,
@@ -54,6 +56,26 @@ impl Default for DownloadConfig {
             workers: 1,
             delete_after_download: false,
             blocked_extensions: default_blocked_extensions(),
+        }
+    }
+}
+
+impl From<&putio_sync_core::config::DownloadConfig> for DownloadConfig {
+    /// The one mapping from `[download]` to the manager, used by `daemon`, `server` and
+    /// the settings API. `[download]` fields with no manager counterpart (`resume_enabled`,
+    /// `chunk_size_mb`, `progress_style`, sorting, glob patterns, `delete_empty_folders`,
+    /// `max_concurrent`) are read by the one-off `download` command only.
+    fn from(settings: &putio_sync_core::config::DownloadConfig) -> Self {
+        Self {
+            target_directory: settings.target_directory.clone(),
+            skip_existing: settings.skip_existing,
+            buffer_size_mb: settings.buffer_size_mb,
+            bandwidth_limit_bytes_per_sec: settings.bandwidth_limit_bytes_per_sec,
+            max_retries: settings.max_retries,
+            retry_initial_delay_secs: settings.retry_initial_delay_secs,
+            workers: settings.workers,
+            delete_after_download: settings.delete_after_download,
+            blocked_extensions: settings.blocked_extensions.clone(),
         }
     }
 }
@@ -525,6 +547,26 @@ impl DownloadManager {
             "Worker {} removed (remaining workers: {})",
             worker_id, remaining
         );
+    }
+
+    /// Put queue rows a crash left in `downloading` back to `pending`
+    ///
+    /// Call once at startup, before `start_workers`. Their partial `.<name>.downloading`
+    /// files resume from where they stopped. Returns the count; 0 without a database.
+    pub async fn recover_interrupted(&self) -> DownloadResult<usize> {
+        let Some(db) = self.database.as_ref() else {
+            return Ok(0);
+        };
+        let count = db.queue().requeue_interrupted().await.map_err(|e| {
+            DownloadError::InternalError(format!("Failed to requeue interrupted downloads: {}", e))
+        })?;
+        if count > 0 {
+            info!(
+                count,
+                "Requeued interrupted downloads left in downloading state"
+            );
+        }
+        Ok(count)
     }
 
     /// Get current worker count (for monitoring)

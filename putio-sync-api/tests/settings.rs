@@ -255,6 +255,31 @@ async fn file_tokens_are_kept() {
     }
 }
 
+/// A save edits only the changed key: comments, blank lines and keys this version
+/// doesn't know survive a settings PUT
+#[tokio::test]
+async fn save_keeps_comments_and_unknown_keys() {
+    let app = test_app().await;
+    let path = config_path(&app);
+    let original = std::fs::read_to_string(&path).unwrap();
+    let workers = format!("\nworkers = {}\n", saved(&app).download.workers);
+    assert!(original.contains(&workers), "{original}");
+    let edited = format!(
+        "# putio-sync on the NAS\n\n{}\n# Added by hand\n[future]\nknob = \"keep me\"\n",
+        original.replace(
+            "[download]\n",
+            "[download]\n# Two is plenty on this box\n\nunknown_setting = 1 # later version\n",
+        )
+    );
+    std::fs::write(&path, &edited).unwrap();
+
+    let body = get_ok(&app, "/settings/download").await;
+    put_changed(&app, "/settings/download", body, "workers", json!(6)).await;
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(text, edited.replace(&workers, "\nworkers = 6\n"));
+}
+
 // ---- Save messages: what applies now, what needs a restart ---------------------------
 
 #[tokio::test]
