@@ -27,7 +27,7 @@ default.
 |---|---|---|---|
 | `PutioSyncDown` | `up{job="putio_sync"} == 0` | 10m | critical |
 | `PutioSyncNoRecentSuccess` | `time() - putio_sync_last_success_timestamp_seconds > 1800` | 5m | warning |
-| `PutioSyncQueueStuck` | `putio_sync_queue_items{state="pending"} > 0 and putio_sync_downloads_active > 0 and increase(putio_sync_downloads_completed_total[2h]) == 0` | 15m | warning |
+| `PutioSyncQueueStuck` | `putio_sync_queue_items{state="pending"} > 0 and on (job, instance) putio_sync_downloads_active > 0 and on (job, instance) increase(putio_sync_downloads_completed_total[2h]) == 0` | 15m | warning |
 | `PutioSyncApiRetriesHigh` | `increase(putio_sync_api_retries_total[1h]) > 20` | 1h | warning |
 | `PutioSyncDiskLow` | `putio_sync_disk_free_bytes / putio_sync_disk_total_bytes < 0.10` | 15m | critical |
 | `PutioSyncDbErrors` | `increase(putio_sync_db_errors_total[15m]) > 0` | 0m | warning |
@@ -35,6 +35,8 @@ default.
 - `PutioSyncNoRecentSuccess` also fires if the gauge is absent for 30 min after startup.
   This is done with
   `or (time() - putio_sync_start_time_seconds > 1800 unless putio_sync_last_success_timestamp_seconds)`.
+- `PutioSyncQueueStuck` joins `on (job, instance)`: only `queue_items` has a `state`
+  label, so a plain `and` never matches and the alert could never fire.
 - The retry rule's expression sums by instance:
   `sum by (instance) (increase(putio_sync_api_retries_total[1h])) > 20`.
 - Annotations follow the existing rules in that file (`summary`, `description`).

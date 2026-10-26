@@ -368,10 +368,9 @@ async fn update_logging_settings(
     // Persist config to file
     persist_config(&state).await?;
 
-    // Note: Logging hot reload is not currently supported due to tracing-subscriber's
-    // complex layer type system. Changes will take effect after server restart.
+    // The config poller applies level and module_filters from the saved file (feature 003)
     Ok(Json(SuccessResponse {
-        message: "Logging configuration updated successfully. Note: Server restart required for changes to take effect.".to_string(),
+        message: "Logging configuration updated successfully. Level and module filters apply within 10 seconds; other logging settings need a restart.".to_string(),
     }))
 }
 

@@ -479,8 +479,8 @@ pub enum Commands {
     #[command(about = "Manage Put.io transfers", subcommand)]
     Transfers(TransfersCommands),
 
-    /// Run combined download sync and torrent watch daemon with hot reloading
-    #[command(about = "Run combined download sync and torrent watch daemon with hot reloading")]
+    /// Run combined download sync and torrent watch daemon
+    #[command(about = "Run combined download sync and torrent watch daemon")]
     Daemon {
         /// Download sync interval in seconds
         #[arg(

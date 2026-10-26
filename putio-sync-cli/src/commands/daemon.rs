@@ -109,8 +109,6 @@ pub async fn execute_daemon(
         parent_id,
         delete_after_upload: config.watch.delete_after_upload,
         watch_enabled: config.watch.enabled,
-        enable_hot_reload: true,
-        config_path: Some(config_file_path),
         workers,
         buffer_size_mb,
         delete_after_download,
@@ -127,6 +125,15 @@ pub async fn execute_daemon(
         daemon_config.download_dir.clone(),
     )
     .await?;
+
+    // Reload [logging] when the config file changes (FR-016)
+    putio_sync_core::config::spawn_reload_poller(
+        config_file_path,
+        std::time::Duration::from_secs(10),
+        |logging| {
+            let _ = putio_sync_core::logging::apply_level(&logging);
+        },
+    );
 
     info!("Daemon configuration:");
     info!(
@@ -148,7 +155,6 @@ pub async fn execute_daemon(
     info!("  Download workers: {}", daemon_config.workers);
     info!("  Buffer size: {}MB", daemon_config.buffer_size_mb);
     info!("  Parent folder ID: {:?}", daemon_config.parent_id);
-    info!("  Hot reload: {}", daemon_config.enable_hot_reload);
     info!(
         "  Delete after download: {}",
         daemon_config.delete_after_download

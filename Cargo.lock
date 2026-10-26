@@ -2141,7 +2141,6 @@ dependencies = [
  "futures",
  "glob",
  "indicatif",
- "notify",
  "oauth2",
  "open",
  "predicates",
@@ -2214,7 +2213,6 @@ name = "putio-sync-daemon"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "notify",
  "putio-sync-client",
  "putio-sync-db",
  "putio-sync-download",

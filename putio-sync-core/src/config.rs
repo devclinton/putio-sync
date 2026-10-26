@@ -957,6 +957,67 @@ impl Config {
     }
 }
 
+/// Poll the config file and pass its `[logging]` section to `on_change` whenever the
+/// file's modified time or length changes.
+///
+/// Load and metadata errors are logged once per distinct file state, and polling carries
+/// on. Production uses a 10 s interval, so a level change applies within 30 s.
+pub fn spawn_reload_poller(
+    path: PathBuf,
+    interval: std::time::Duration,
+    on_change: impl Fn(crate::logging::LoggingConfig) + Send + 'static,
+) -> tokio::task::JoinHandle<()> {
+    type Stamp = Option<(std::time::SystemTime, u64)>;
+
+    async fn stamp(path: &Path) -> std::io::Result<Stamp> {
+        let meta = tokio::fs::metadata(path).await?;
+        Ok(Some((meta.modified()?, meta.len())))
+    }
+
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The state at startup is the one already applied.
+        ticker.tick().await;
+        let mut last: Stamp = stamp(&path).await.unwrap_or(None);
+        let mut missing = false;
+
+        loop {
+            ticker.tick().await;
+            let current = match stamp(&path).await {
+                Ok(current) => current,
+                Err(e) => {
+                    if !missing {
+                        tracing::error!(path = %path.display(), error = %e, "Config file unreadable; logging settings not reloaded");
+                        missing = true;
+                    }
+                    last = None;
+                    continue;
+                }
+            };
+            if current == last {
+                continue;
+            }
+            last = current;
+            missing = false;
+
+            let loaded = {
+                let path = path.clone();
+                tokio::task::spawn_blocking(move || Config::load(&path)).await
+            };
+            match loaded {
+                Ok(Ok(config)) => on_change(config.logging),
+                Ok(Err(e)) => {
+                    tracing::error!(path = %path.display(), error = %e, "Config reload failed; logging settings not changed");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Config reload task failed");
+                }
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

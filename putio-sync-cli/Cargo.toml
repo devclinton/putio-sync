@@ -85,7 +85,6 @@ chrono = "0.4"
 glob = "0.3"
 
 # Filesystem watching
-notify = "6.1"
 
 # System information
 sysinfo = { workspace = true }

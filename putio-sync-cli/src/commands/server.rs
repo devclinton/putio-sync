@@ -81,6 +81,17 @@ pub async fn execute_server(
     )
     .await?;
 
+    // Reload [logging] when the config file changes (FR-016); nothing to watch without one
+    if config_file_path.exists() {
+        putio_sync_core::config::spawn_reload_poller(
+            config_file_path.clone(),
+            std::time::Duration::from_secs(10),
+            |logging| {
+                let _ = putio_sync_core::logging::apply_level(&logging);
+            },
+        );
+    }
+
     // Prepare server address
     let addr = format!("{}:{}", bind, port);
     info!("HTTP API server will bind to: {}", addr);

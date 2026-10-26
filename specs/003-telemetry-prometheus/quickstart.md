@@ -75,8 +75,12 @@ Expected:
 
 ## 4. Alert rules
 
-Render the putio-sync alert group from the home-network template, then check and test it.
-The commands below are illustrative; the tasks phase pins the exact render command.
+Render only the `putio-sync` group from the home-network template. Ansible's Python has
+jinja2 and PyYAML, and rendering turns `{{ '{{' }}` into `{{`:
+
+```bash
+"$(head -1 "$(which ansible)" | sed 's/^#!//')" -c "import jinja2, yaml, os; t = jinja2.Template(open(os.path.expanduser('~/dev/home-network/roles/monitoring_prometheus/templates/alerts.yml.j2')).read()); g = [g for g in yaml.safe_load(t.render(groups={}))['groups'] if g['name'] == 'putio-sync']; open('/tmp/putio-sync-alerts.yml', 'w').write(yaml.safe_dump({'groups': g}, sort_keys=False))"
+```
 
 ```bash
 promtool check rules /tmp/putio-sync-alerts.yml
@@ -86,8 +90,9 @@ promtool check rules /tmp/putio-sync-alerts.yml
 promtool test rules specs/003-telemetry-prometheus/alert-tests.yml
 ```
 
-Expected: both succeed. Each alert in [contracts/alerts.md](contracts/alerts.md) fires on
-its synthetic series and stays silent on the healthy one.
+Expected: `SUCCESS: 6 rules found`, then `SUCCESS`. Each alert in
+[contracts/alerts.md](contracts/alerts.md) fires on its "bad" series and stays silent on
+the "good" one.
 
 ## 5. Home-network checks
 

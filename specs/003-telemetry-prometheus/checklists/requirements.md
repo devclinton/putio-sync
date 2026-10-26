@@ -38,9 +38,9 @@
 - No clarification markers were needed. The open decisions have defaults recorded under
   Assumptions:
   - the metrics port is chosen in the plan;
-  - metrics are unauthenticated by default;
+  - metrics are always unauthenticated, with no auth option (settled in clarify);
   - the operator publishes the port on Unraid;
   - the image registry is deferred to the image feature.
-- Scope note for planning: a live config reload of the log level (FR-010, SC-005) is the
-  largest new piece of behaviour. If the plan finds it too costly, it can be dropped back to
-  P3 with `/speckit-clarify`.
+- Scope note: a live config reload of the log level (FR-010, SC-005) was the largest new
+  piece of behaviour. Clarify kept it at P2, and it was built in US4 (a 10 s config
+  poller and a reloadable log filter).

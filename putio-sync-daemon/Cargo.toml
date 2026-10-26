@@ -21,7 +21,6 @@ tokio = { workspace = true }
 reqwest = { workspace = true }
 
 # File watching
-notify = "6.1"
 
 # Error handling
 anyhow = { workspace = true }

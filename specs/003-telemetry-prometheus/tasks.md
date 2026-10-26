@@ -438,14 +438,14 @@ low disk and DB errors.
 **Independent Test**: `promtool check rules` and `promtool test rules` pass. Each alert
 fires on its synthetic series and stays silent on the healthy one.
 
-- [ ] T029 [P] [US3] Write `specs/003-telemetry-prometheus/alert-tests.yml`, a
+- [X] T029 [P] [US3] Write `specs/003-telemetry-prometheus/alert-tests.yml`, a
   `promtool test rules` file. For each of the six alerts in
   [contracts/alerts.md](contracts/alerts.md), include:
   - one `input_series` that makes it fire, with `alert_rule_test` at a time past its `for`;
   - one healthy series that gives `exp_alerts: []`.
 
   `rule_files:` points to `/tmp/putio-sync-alerts.yml` (rendered in T031).
-- [ ] T030 [US3] Add `- name: putio-sync` with the six rules to
+- [X] T030 [US3] Add `- name: putio-sync` with the six rules to
   `~/dev/home-network/roles/monitoring_prometheus/templates/alerts.yml.j2`. Take the
   expressions, `for` and severity from contracts/alerts.md, including:
   - the `NoRecentSuccess` `or … unless` clause;
@@ -467,7 +467,7 @@ fires on its synthetic series and stays silent on the healthy one.
   - Record the value used in the rule's description, on `apps/putio-sync.md` and in
     Implementation Notes.
   - Never print the rest of the container config or env, because it holds the token.
-- [ ] T031 [US3] Render and test the rules:
+- [X] T031 [US3] Render and test the rules:
   1. Render only the new group to `/tmp/putio-sync-alerts.yml`, for example by extracting
      the `putio-sync` group with python + jinja2 (`{{ '{{' }}` → `{{`).
   2. Run `promtool check rules /tmp/putio-sync-alerts.yml`.
@@ -492,7 +492,7 @@ fires on its synthetic series and stays silent on the healthy one.
 
 ### Tests for User Story 4 ⚠️ write first
 
-- [ ] T032 [P] [US4] Add tests to `putio-sync-core/src/logging.rs`, under `ENV_LOCK`:
+- [X] T032 [P] [US4] Add tests to `putio-sync-core/src/logging.rs`, under `ENV_LOCK`:
   1. `PUTIO_SYNC_LOG_FORMAT=json` overrides `console_format`, with source Env.
   2. An invalid format gives `invalid logging.console_format 'x': expected one of compact,
      pretty, json`.
@@ -501,14 +501,14 @@ fires on its synthetic series and stays silent on the healthy one.
      - `Unchanged` for the same level;
      - `IgnoredEnv` when `RUST_LOG` is set;
      - `Invalid(_)` for `"loud"`, with the filter left as it was.
-- [ ] T033 [P] [US4] Write `putio-sync-core/tests/config_reload.rs`:
+- [X] T033 [P] [US4] Write `putio-sync-core/tests/config_reload.rs`:
   - Write a temp config with `level="info"` and start
     `spawn_reload_poller(path, Duration::from_millis(50), cb)` with a recording callback.
   - Rewrite the file with `level="debug"` and wait. The callback gets the new
     `LoggingConfig` within 500 ms.
   - Write invalid TOML. You get one ERROR and no callback.
   - Delete the file. You get one ERROR, and the poller is still running.
-- [ ] T034 [P] [US4] Add a detail test to `putio-sync-telemetry/tests/contract.rs`. At
+- [X] T034 [P] [US4] Add a detail test to `putio-sync-telemetry/tests/contract.rs`. At
   `detailed`, with `init(workers=3)`:
   - `putio_sync_worker_state{worker="0"}` through `{worker="2"}` exist, and no
     `worker="3"`;
@@ -517,7 +517,7 @@ fires on its synthetic series and stays silent on the healthy one.
 
 ### Implementation for User Story 4
 
-- [ ] T035 [US4] Make the log filter reloadable in `putio-sync-core/src/logging.rs`:
+- [X] T035 [US4] Make the log filter reloadable in `putio-sync-core/src/logging.rs`:
   - Wrap the `EnvFilter` in `tracing_subscriber::reload::Layer` in every branch of
     `init_logging`, and store the `reload::Handle` in a `static OnceLock`.
   - Add `pub enum LevelChange { Unchanged, Changed{old,new}, IgnoredEnv, Invalid(String) }`.
@@ -528,23 +528,23 @@ fires on its synthetic series and stays silent on the healthy one.
     - `info!(old, new, source="Config", "Log level changed")`;
     - `info!("Log level change in config ignored; RUST_LOG is set")`;
     - `error!(error, "Log level not changed")`.
-- [ ] T036 [US4] Add the `PUTIO_SYNC_LOG_FORMAT` override to
+- [X] T036 [US4] Add the `PUTIO_SYNC_LOG_FORMAT` override to
   `putio-sync-core/src/logging.rs`:
   - It applies before the subscriber is built and accepts `compact`, `pretty`, `json`.
   - Extend the 002 startup line to
     `info!(level, source, format, format_source, "Log level")`.
-- [ ] T037 [US4] Add the reload poller to `putio-sync-core/src/config.rs`:
+- [X] T037 [US4] Add the reload poller to `putio-sync-core/src/config.rs`:
   - `pub fn spawn_reload_poller(path: PathBuf, interval: Duration, on_change: impl Fn(LoggingConfig) + Send + 'static) -> JoinHandle<()>`.
   - It uses `tokio::time::interval` and compares `(modified, len)` from
     `tokio::fs::metadata`. On a change it calls `Config::load(&path)` and passes
     `config.logging` to the callback.
   - Load or metadata errors give `error!` once per distinct stamp, and it carries on.
   - Production uses an interval of 10 s (R8).
-- [ ] T038 [US4] Start the poller in both modes, in `putio-sync-cli/src/commands/daemon.rs`
+- [X] T038 [US4] Start the poller in both modes, in `putio-sync-cli/src/commands/daemon.rs`
   and `putio-sync-cli/src/commands/server.rs`:
   - Only when a config file path is known.
   - The callback is `|logging| { let _ = putio_sync_core::logging::apply_level(&logging); }`.
-- [ ] T039 [US4] Remove the dead notify watcher:
+- [X] T039 [US4] Remove the dead notify watcher:
   - delete `putio-sync-daemon/src/config_watcher.rs`;
   - remove its `mod`/`pub use` in `putio-sync-daemon/src/lib.rs`;
   - remove the `config_watcher` field, init block and start block, and the
@@ -555,13 +555,13 @@ fires on its synthetic series and stays silent on the healthy one.
 
   Check with `grep -rn "enable_hot_reload\|ConfigWatcher\|notify" putio-sync-*/src putio-sync-*/Cargo.toml`
   that nothing is left.
-- [ ] T040 [US4] Record per-worker metrics for detailed mode:
+- [X] T040 [US4] Record per-worker metrics for detailed mode:
   - In `putio-sync-download/src/manager.rs` and `putio-sync-download/src/stream.rs`, pass
     the worker id to the download path. It is already in `WorkerStats.worker_id`.
   - Call `download::worker_busy(id, true/false)` around each job, and
     `download::worker_inflight(id, bytes_so_far)` with each chunk.
   - Both are no-ops at `basic` (T007).
-- [ ] T041 [P] [US4] Document the settings in `config.example.toml` and `README.md`:
+- [X] T041 [P] [US4] Document the settings in `config.example.toml` and `README.md`:
   - add the `[metrics]` block from contracts/config.md, with comments;
   - add a "Verbosity" table covering every env var, its allowed values, what's live versus
     what needs a restart, and the startup lines;
@@ -578,7 +578,7 @@ fires on its synthetic series and stays silent on the healthy one.
 **Independent Test**: the dashboard is provisioned by the Grafana role and `make check`
 passes. After deploy, the panels load with no errors.
 
-- [ ] T042 [US5] Write `~/dev/home-network/roles/monitoring_grafana/templates/putio-sync-dashboard.json.j2`:
+- [X] T042 [US5] Write `~/dev/home-network/roles/monitoring_grafana/templates/putio-sync-dashboard.json.j2`:
   - Model it on `ollama-queue-dashboard.json.j2`: the same datasource reference, uid style
     and `{% raw %}`/escaping conventions as that file.
   - Panels:
@@ -591,7 +591,7 @@ passes. After deploy, the panels load with no errors.
     - watch uploads and cleanups;
     - blocked files;
     - disk free %.
-- [ ] T043 [US5] Add a copy task for `putio-sync-dashboard.json.j2` to
+- [X] T043 [US5] Add a copy task for `putio-sync-dashboard.json.j2` to
   `~/dev/home-network/roles/monitoring_grafana/tasks/main.yml`, next to the
   `ollama-queue-dashboard.json.j2` task (around line 206), using the same module, dest
   pattern and notify. Then re-run `make -C ~/dev/home-network check` and validate the
@@ -603,20 +603,20 @@ passes. After deploy, the panels load with no errors.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T044 [P] Check throughput overhead (SC-002). Add an `#[ignore]` benchmark-style test
+- [X] T044 [P] Check throughput overhead (SC-002). Add an `#[ignore]` benchmark-style test
   to `putio-sync-download/tests/metrics_sync.rs` that streams a 64 MiB synthetic file
   twice, once with telemetry initialised and once without. Run it once with
   `cargo test -- --ignored`. Record the throughput delta (≤2%) in Implementation Notes.
-- [ ] T045 Run `make ci` from the repo root. Fix anything it reports. Record the baseline
+- [X] T045 Run `make ci` from the repo root. Fix anything it reports. Record the baseline
   and final test counts in Implementation Notes (002 ended at 333).
-- [ ] T046 Run quickstart §1–§5 and record each outcome. §6 is the operator's
+- [X] T046 Run quickstart §1–§5 and record each outcome. §6 is the operator's
   post-deploy step; list it as pending.
-- [ ] T047 [P] Update `specs/003-telemetry-prometheus/checklists/requirements.md` notes.
+- [X] T047 [P] Update `specs/003-telemetry-prometheus/checklists/requirements.md` notes.
   Two of them are out of date after clarify:
   - "metrics are unauthenticated by default" is now "always unauthenticated, no auth
     option";
   - the live-reload note should now say it was kept at P2, as clarified.
-- [ ] T048 Add an "Implementation Notes" section at the end of this file covering:
+- [X] T048 Add an "Implementation Notes" section at the end of this file covering:
   - baseline and final test counts;
   - deviations from plan or research;
   - the home-network files changed, all uncommitted;
@@ -735,3 +735,102 @@ US2 (T025–T028):
   nas01; app pages aren't schema-validated, only fleet manifests are).
 - README "Metrics" includes a short `[metrics]` settings block; T041 still owns the
   full settings docs and `config.example.toml`.
+
+US3 (T029–T031):
+
+- The NAS container runs `--download-interval 60` (only that flag was read, 2026-10-25).
+  That's under 450 s, so `PutioSyncNoRecentSuccess` keeps 1800 s. The value is in the
+  rule's comment and description, and on `apps/putio-sync.md`.
+- Contract fix: `PutioSyncQueueStuck` now joins `and on (job, instance)`. With a plain
+  `and`, `queue_items{state=…}` never matches `downloads_active` (different label sets),
+  so the alert as written could never fire. contracts/alerts.md is updated.
+- `promtool check rules` reports 6 rules and `promtool test rules` passes: 7 test groups
+  (NoRecentSuccess has a stale-success case and a never-succeeded case), each with a
+  firing "bad" instance and a silent "good" one, annotations checked.
+- quickstart.md §4 now has the exact render command (Ansible's Python, jinja2 + PyYAML).
+- The alert group is appended at the end of `alerts.yml.j2`, which had no other
+  uncommitted edits. `make -C ~/dev/home-network check` still passes.
+
+US4 (T032–T041):
+
+- `make ci` passes with 368 tests.
+- The worker id reaches the download path through a `tokio::task_local!` (`WORKER_ID`)
+  set by both worker loops, not as a new parameter. `download_file` and `stream_download`
+  keep their public signatures (the API and CLI call them too). `stream_download` reads the
+  id before spawning its writer task, since task-locals don't cross `tokio::spawn`.
+- `worker_busy` is set once `process_queue` claims an item (a drop guard resets it), so an
+  idle worker polling an empty queue never shows as busy. `worker_inflight` includes the
+  resume offset.
+- Worker ids from `spawn_worker` keep counting up after the pool is scaled down and up
+  again. Ids at or above the startup worker count have no series, so they are not
+  recorded. Acceptable at `detailed` only; noted rather than fixed.
+- The poller logs once per distinct state: a load error is logged once per changed stamp
+  (a load only runs on a change), and a missing or unreadable file once until it
+  reappears.
+- Server mode starts the poller only if the config file exists at startup; the daemon
+  always has one, because it fails without it.
+- T039 also removed `DaemonError::WatchError` (its only user of `notify` in the daemon)
+  and the unused `notify` dependency in `putio-sync-cli`. `putio-sync-file-manager` still
+  uses `notify` for watch folders. `handle_config_update` was already dead code; only its
+  comment changed.
+- `PUT /settings/logging` saves `config.toml`, so the poller now applies its level change.
+  Its response no longer says a restart is required for that.
+- README: the "Hot Reloading" sections are replaced by "Live configuration changes"
+  (logging from the file; download and watcher settings through the API) and a
+  "Verbosity" table under Metrics. `config.example.toml` has the `[metrics]` block.
+
+US5 (T042–T043):
+
+- The dashboard (uid `putio-sync`, 15 panels: 6 stats, 9 time series) is generated as
+  JSON and escaped like `ollama-queue-dashboard.json.j2` (`{{ '{{' }}x{{ '}}' }}` legends,
+  `"uid": "Prometheus"` datasource, a multi-select `host` variable from
+  `up{job="putio_sync"}`). It renders with jinja2, passes `python3 -m json.tool`, and all
+  22 expressions parse with promtool (each checked as a recording rule). Every metric it
+  uses is in the contract.
+- The install task uses `ansible.builtin.template`, as its neighbours do. Those tasks have
+  no `notify`, so neither does this one. `make -C ~/dev/home-network check` passes.
+- `apps/putio-sync.md` now lists the dashboard instead of "planned".
+
+Polish (T044–T048):
+
+- Test counts: 333 at the end of 002, 368 now (plus 2 ignored, including the T044
+  benchmark). `make ci` passes.
+- T044 (SC-002): recording can't be switched off (`metrics.enabled` only stops the
+  listener), so the test times a 64 MiB loopback stream and then the telemetry calls it
+  makes, assuming 4 KiB chunks. Result: 0.10% of download time in release, 0.99% in a
+  debug build. Real downloads are slower than loopback, so the share is lower in practice.
+  Run it with
+  `cargo test -p putio-sync-download --release --test metrics_sync -- --ignored --nocapture`.
+- T046, quickstart run on 2026-10-26:
+  - §1: `make ci` passes.
+  - §2 and §3 were run against `server` mode with no token (the daemon needs one), on
+    localhost, with a temp config made from `config.example.toml`. That also shows the
+    example parses. All checks passed: build_info, start_time, queue_items and
+    disk_free at startup; `worker_state{worker="0"}` at detailed; `Metrics disabled
+    source=Env` with the listener off; `Log level changed old=info new=debug
+    source=Config` 10 s after the edit, then DEBUG lines; the `RUST_LOG is set` line;
+    and `invalid metrics.detail 'max': expected one of basic, detailed` with a non-zero
+    exit.
+  - §4: `SUCCESS: 6 rules found`, then `SUCCESS`.
+  - §5: `✓ All offline checks passed`.
+  - §6 (after deploy) is pending; it's the operator's step.
+- Found during the quickstart run: the `Log level changed` and startup lines printed
+  `source="Config"` and `format="compact"` with quotes. Both now log unquoted, as in
+  contracts/config.md. Also, the `daemon` help text no longer mentions hot reloading.
+- A local build reports `build_info{commit="unknown"}`. The commit comes from
+  `PUTIO_SYNC_GIT_SHA` at compile time, which the Docker build sets; the contract allows
+  `unknown`.
+- home-network files changed, all uncommitted and alongside the user's own
+  uncommitted work there:
+  - `group_vars/monitoring_server/main.yml` (scrape job);
+  - `roles/monitoring_prometheus/templates/alerts.yml.j2` (alert group);
+  - `roles/monitoring_grafana/tasks/main.yml` (dashboard install task);
+  - `roles/monitoring_grafana/templates/putio-sync-dashboard.json.j2` (new);
+  - `apps/putio-sync.md` (new).
+- Operator steps:
+  1. In the Unraid template for `putio-sync`, publish container port 9742 on host port
+     9742 (TCP).
+  2. Pull and run an image built from this branch.
+  3. Deploy the monitoring stack, `deploy-monitoring.yml --limit monitoring_server`. This
+     loads the scrape job, the alerts and the dashboard.
+  4. Run quickstart §6.

@@ -146,3 +146,35 @@ async fn size_mismatch_is_an_integrity_failure() {
     assert_eq!(after.completed, before.completed);
     assert_eq!(value("putio_sync_downloads_active", &[]), 0.0);
 }
+
+/// SC-002: telemetry adds ≤2% to download time. Recording can't be switched off (only the
+/// listener can), so this times a 64 MiB stream, then times the telemetry calls that
+/// stream makes, assuming 4 KiB chunks (more calls than real reads produce).
+/// Run with `cargo test -p putio-sync-download --release --test metrics_sync -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore]
+async fn telemetry_overhead_is_under_two_percent() {
+    const SIZE: usize = 64 * 1024 * 1024;
+    let _serial = SERIAL.lock().await;
+    let (_server, manager, _dir, _mocks) = setup(100, SIZE as u64, SIZE).await;
+    manager.sync_downloads().await.unwrap();
+
+    let started = std::time::Instant::now();
+    assert!(manager.process_queue().await.unwrap());
+    let download = started.elapsed();
+
+    let chunks = SIZE / 4096;
+    let started = std::time::Instant::now();
+    for i in 0..chunks {
+        global().download_bytes(4096);
+        global().worker_inflight(0, (i * 4096) as u64);
+    }
+    let telemetry = started.elapsed();
+
+    let share = telemetry.as_secs_f64() / download.as_secs_f64() * 100.0;
+    println!(
+        "64 MiB download {:?}, {} chunk updates {:?}: {:.3}% of download time",
+        download, chunks, telemetry, share
+    );
+    assert!(share <= 2.0, "telemetry took {:.3}%", share);
+}
