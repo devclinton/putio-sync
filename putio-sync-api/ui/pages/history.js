@@ -2,7 +2,7 @@
 // 50 per page, with totals from /history/stats. Loads on filter or page change only.
 
 import { get } from "../api.js";
-import { h } from "../app.js";
+import { empty, h } from "../app.js";
 import { bytes, dateTime, speed, utc } from "../format.js";
 
 const PAGE = 50;
@@ -103,7 +103,7 @@ async function load() {
 function render(entries, total, filtered) {
   if (!entries.length) {
     els.pager.replaceChildren();
-    els.list.replaceChildren(h("h2", { text: "History" }), h("p", { class: "muted", text: filtered ? "Nothing matches the filters." : "No downloads or deletions yet." }));
+    els.list.replaceChildren(h("h2", { text: "History" }), filtered ? empty("Nothing matches the filters", "Clear a filter to see more.") : empty("No downloads or deletions yet", "Finished downloads and removals are listed here."));
     return;
   }
   els.list.replaceChildren(
