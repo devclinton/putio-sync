@@ -16,11 +16,12 @@ putio-sync-client = { path = "../putio-sync-client" }
 putio-sync-db = { path = "../putio-sync-db" }
 putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-file-manager = { path = "../putio-sync-file-manager" }
+putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 
 # Web framework
 axum = "0.7"
 tower = { version = "0.4", features = ["util"] }
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower-http = { version = "0.5", features = ["trace"] }
 
 # Async runtime
 tokio = { workspace = true }
@@ -43,9 +44,6 @@ reqwest = { workspace = true }
 # Date/time handling
 chrono = "0.4"
 
-# System information
-sys-info = "0.9"
-
 # Base64 encoding/decoding
 base64 = "0.22"
 
@@ -56,3 +54,4 @@ uuid = { version = "1.6", features = ["v4"] }
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.8"
 reqwest = { workspace = true }
+mockito = "1.2"

@@ -128,7 +128,7 @@ pub async fn execute_daemon(
 
     // Reload [logging] when the config file changes (FR-016)
     putio_sync_core::config::spawn_reload_poller(
-        config_file_path,
+        config_file_path.clone(),
         std::time::Duration::from_secs(10),
         |logging| {
             let _ = putio_sync_core::logging::apply_level(&logging);
@@ -183,6 +183,23 @@ pub async fn execute_daemon(
 
     if let Some(db) = daemon.get_database() {
         let _ = queue_db.set(db);
+    }
+
+    // API and web UI on the daemon's own engine (feature 004). Needs a local download
+    // manager, so it is skipped when downloads are delegated to a remote API.
+    match (daemon.get_client(), daemon.get_download_manager()) {
+        (Some(client), Some(download_manager)) => {
+            let state = putio_sync_api::AppState::new(
+                config.clone(),
+                Some(config_file_path),
+                client,
+                daemon.get_database(),
+                download_manager,
+                daemon.get_file_watcher(),
+            );
+            crate::api_listener::start(&config, state).await?;
+        }
+        _ => warn!("API listener not started: no local download manager (api.enabled is set)"),
     }
 
     info!("✅ Daemon initialized successfully");

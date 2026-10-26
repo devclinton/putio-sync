@@ -18,7 +18,8 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let config = Config::default();
+//!     let mut config = Config::default();
+//!     config.api.auth_token = Some("change-me".to_string());
 //!     let app = create_app(config, None, None, None).await.unwrap();
 //!     let listener = tokio::net::TcpListener::bind("0.0.0.0:15432")
 //!         .await
@@ -32,15 +33,18 @@ pub mod handlers;
 pub mod middleware;
 pub mod models;
 pub mod routes;
+pub mod ui;
 
 use axum::Router;
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::Config;
 use putio_sync_db::Database;
 use putio_sync_download::{DownloadConfig, DownloadManager};
+use putio_sync_file_manager::TorrentWatcher;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
-use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 /// Extract DownloadConfig from Config
@@ -78,7 +82,92 @@ pub struct AppState {
     /// Download manager (uses internal RwLock for hot reload)
     pub download_manager: Arc<DownloadManager>,
     /// File watcher (optional, for hot reload)
-    pub file_watcher: Option<Arc<putio_sync_file_manager::TorrentWatcher>>,
+    pub file_watcher: Option<Arc<TorrentWatcher>>,
+    /// When the state was built, for uptime
+    pub started_at: Instant,
+    /// Failed-authentication limiter shared by the middleware and `/auth/login`
+    pub limiter: Arc<middleware::ratelimit::AuthLimiter>,
+}
+
+impl AppState {
+    /// Build the state from an engine the caller already runs (the daemon) or has just
+    /// built (`create_app`).
+    ///
+    /// `config.api.auth_token` must already hold the resolved token (env override
+    /// applied); the auth middleware reads it from here.
+    pub fn new(
+        config: Config,
+        config_path: Option<PathBuf>,
+        client: Arc<PutioApiClient>,
+        database: Option<Arc<Database>>,
+        download_manager: Arc<DownloadManager>,
+        file_watcher: Option<Arc<TorrentWatcher>>,
+    ) -> AppState {
+        AppState {
+            config: Arc::new(RwLock::new(config)),
+            config_path: config_path.map(Arc::new),
+            client,
+            database,
+            download_manager,
+            file_watcher,
+            started_at: Instant::now(),
+            limiter: Arc::new(middleware::ratelimit::AuthLimiter::new(
+                middleware::ratelimit::AUTH_FAILURE_LIMIT,
+                middleware::ratelimit::AUTH_FAILURE_WINDOW,
+            )),
+        }
+    }
+}
+
+/// Build the router for `state`: protected routes behind the auth middleware, plus the
+/// public routes, which never require a token.
+///
+/// The public routes are the base the protected ones merge into, so the merged router
+/// keeps the protected fallback: an unknown path needs a token too (401, not 404).
+pub fn router(state: AppState) -> Router {
+    let protected = Router::new()
+        .nest("/putio/files", create_putio_files_router())
+        .nest("/putio/transfers", create_putio_transfers_router())
+        .nest("/local/files", create_local_files_router())
+        .nest("/local/queue", create_local_queue_router())
+        .nest("/local/downloads", create_local_downloads_router())
+        .nest("/local/watcher", create_local_watcher_router())
+        .nest("/local/workers", create_local_workers_router())
+        .nest("/settings", create_settings_router())
+        .nest("/stats", create_stats_router())
+        .nest("/history", create_history_router())
+        .route(
+            "/status",
+            axum::routing::get(routes::system::status::get_status),
+        )
+        // Apply authentication middleware to all routes above and to the fallback
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::auth::require_auth,
+        ))
+        .with_state(state.clone());
+
+    public_routes(state)
+        .merge(protected)
+        .layer(TraceLayer::new_for_http())
+}
+
+/// Routes that answer without a token: health, sign-in, and the web UI page and its
+/// assets
+fn public_routes(state: AppState) -> Router {
+    Router::new()
+        .route("/health", axum::routing::get(health))
+        .route(
+            "/auth/status",
+            axum::routing::get(routes::system::auth::auth_status),
+        )
+        .route(
+            "/auth/login",
+            axum::routing::post(routes::system::auth::login),
+        )
+        .route("/", axum::routing::get(ui::index))
+        .route("/assets/*path", axum::routing::get(ui::asset))
+        .with_state(state)
 }
 
 /// Create the main application router
@@ -115,7 +204,7 @@ pub async fn create_app(
     config: Config,
     database_path: Option<std::path::PathBuf>,
     config_path: Option<std::path::PathBuf>,
-    file_watcher: Option<Arc<putio_sync_file_manager::TorrentWatcher>>,
+    file_watcher: Option<Arc<TorrentWatcher>>,
 ) -> Result<Router, Box<dyn std::error::Error>> {
     use putio_sync_core::config::AuthMethod;
     use tracing::{info, warn};
@@ -169,41 +258,14 @@ pub async fn create_app(
         DownloadManager::new_without_database(client.clone(), download_config)
     };
 
-    let state = AppState {
-        config: Arc::new(RwLock::new(config)),
-        config_path: config_path.map(Arc::new),
+    Ok(router(AppState::new(
+        config,
+        config_path,
         client,
         database,
-        download_manager: Arc::new(download_manager),
+        Arc::new(download_manager),
         file_watcher,
-    };
-
-    Ok(Router::new()
-        // New organized routes (protected by auth middleware)
-        .nest("/putio/files", create_putio_files_router())
-        .nest("/putio/transfers", create_putio_transfers_router())
-        .nest("/local/files", create_local_files_router())
-        .nest("/local/queue", create_local_queue_router())
-        .nest("/local/downloads", create_local_downloads_router())
-        .nest("/local/watcher", create_local_watcher_router())
-        .nest("/local/workers", create_local_workers_router())
-        .nest("/settings", create_settings_router())
-        .nest("/stats", create_stats_router())
-        .nest("/history", create_history_router())
-        // Legacy routes (for backward compatibility)
-        .nest("/api/files", create_legacy_files_router())
-        .nest("/api/transfers", create_legacy_transfers_router())
-        .nest("/api/queue", create_legacy_queue_router())
-        // Apply authentication middleware to all routes
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            middleware::auth::require_auth,
-        ))
-        .with_state(state)
-        // Health is mounted after the auth layer so it never requires a token
-        .route("/health", axum::routing::get(health))
-        .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http()))
+    )))
 }
 
 // New route constructors with proper state types
@@ -247,21 +309,6 @@ fn create_history_router() -> Router<AppState> {
     routes::system::history::router()
 }
 
-fn create_legacy_files_router() -> Router<AppState> {
-    // Legacy routes deprecated - use /putio/files and /local/files instead
-    Router::new().route("/", axum::routing::get(legacy_deprecated_placeholder))
-}
-
-fn create_legacy_transfers_router() -> Router<AppState> {
-    // Legacy routes deprecated - use /putio/transfers instead
-    Router::new().route("/", axum::routing::get(legacy_deprecated_placeholder))
-}
-
-fn create_legacy_queue_router() -> Router<AppState> {
-    // Legacy routes deprecated - use /local/queue instead
-    Router::new().route("/", axum::routing::get(legacy_deprecated_placeholder))
-}
-
 /// Unauthenticated liveness check
 ///
 /// GET /health
@@ -270,10 +317,6 @@ async fn health() -> axum::Json<serde_json::Value> {
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
     }))
-}
-
-async fn legacy_deprecated_placeholder() -> &'static str {
-    "Legacy API deprecated - please use /putio/* and /local/* endpoints"
 }
 
 #[cfg(test)]

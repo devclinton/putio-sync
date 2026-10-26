@@ -1,6 +1,11 @@
 //! Server command implementation
 //!
 //! Starts an HTTP API server with optional daemon modes for watch and download.
+//!
+//! This is the thin dev mode: it builds its own engine through `create_app`. Of `[api]`
+//! it reads only the token (`auth_token` / `PUTIO_SYNC_API_TOKEN`); `--bind` and `--port`
+//! decide the address, and `api.listen` / `api.bind` are ignored here (they are for
+//! `daemon`).
 
 use anyhow::{anyhow, Context, Result};
 use putio_sync_client::PutioApiClient;
@@ -50,7 +55,7 @@ pub async fn execute_server(
         .or_else(|| Config::default_path().ok())
         .context("Could not determine config path")?;
 
-    let config = if config_file_path.exists() {
+    let mut config = if config_file_path.exists() {
         Config::load(&config_file_path).context("Failed to load configuration")?
     } else {
         warn!("Config file not found, using default configuration");
@@ -63,6 +68,12 @@ pub async fn execute_server(
         .context("Configuration validation failed")?;
 
     info!("Configuration loaded successfully");
+
+    // Only the token applies in this mode; the env override wins over the file
+    config.api.auth_token = config.resolve_api()?.value.token;
+    if config.api.auth_token.is_none() {
+        warn!("API token not configured (set [api] auth_token or PUTIO_SYNC_API_TOKEN); all API and UI requests will be refused");
+    }
     debug!(
         "Watch config: enabled={}, paths={:?}, archive_dir={:?}, delete_after_upload={}",
         config.watch.enabled,
@@ -167,10 +178,14 @@ pub async fn execute_server(
     };
 
     // Run server with graceful shutdown
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("Server error")?;
+    // Connect info gives the auth limiter the client IP
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("Server error")?;
 
     info!("Server shut down gracefully");
 

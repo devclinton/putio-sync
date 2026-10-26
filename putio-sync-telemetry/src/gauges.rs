@@ -25,24 +25,34 @@ impl Telemetry {
 
     /// Set the disk gauges from `statvfs(dir)`. On error both gauges are removed.
     pub fn refresh_disk(&self, dir: &Path) -> std::io::Result<()> {
-        match rustix::fs::statvfs(dir) {
-            Ok(st) => {
-                let frsize = st.f_frsize as f64;
+        match disk_usage(dir) {
+            Ok((free, total)) => {
                 self.disk_free
                     .with_label_values::<&str>(&[])
-                    .set(st.f_bavail as f64 * frsize);
+                    .set(free as f64);
                 self.disk_total
                     .with_label_values::<&str>(&[])
-                    .set(st.f_blocks as f64 * frsize);
+                    .set(total as f64);
                 Ok(())
             }
             Err(e) => {
                 let _ = self.disk_free.remove_label_values::<&str>(&[]);
                 let _ = self.disk_total.remove_label_values::<&str>(&[]);
-                Err(e.into())
+                Err(e)
             }
         }
     }
+}
+
+/// `(free, total)` bytes of the filesystem holding `dir`, from `statvfs`. Free is the
+/// space available to unprivileged users (`f_bavail`), as `df` reports it.
+pub fn disk_usage(dir: &Path) -> std::io::Result<(u64, u64)> {
+    let st = rustix::fs::statvfs(dir)?;
+    let frsize = st.f_frsize;
+    Ok((
+        st.f_bavail.saturating_mul(frsize),
+        st.f_blocks.saturating_mul(frsize),
+    ))
 }
 
 /// Refresh the queue and disk gauges now and then every [`REFRESH_INTERVAL`].
@@ -143,6 +153,15 @@ mod tests {
         refresh_once(&t, dir.path(), &none, &mut warned).await;
         assert!(!warned);
         assert!(t.sample("putio_sync_disk_free_bytes", &[]).is_some());
+    }
+
+    #[test]
+    fn disk_usage_reports_free_and_total() {
+        let dir = tempfile::tempdir().unwrap();
+        let (free, total) = disk_usage(dir.path()).unwrap();
+        assert!(free > 0);
+        assert!(total >= free);
+        assert!(disk_usage(&dir.path().join("missing")).is_err());
     }
 
     #[tokio::test]

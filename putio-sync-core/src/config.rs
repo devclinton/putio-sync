@@ -283,6 +283,7 @@ pub struct NotificationConfig {
 
 /// API/Daemon mode configuration
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
 pub struct ApiConfig {
     /// Enable daemon to communicate with API server for downloads
     /// When true, the daemon will send download requests to an API server
@@ -297,6 +298,58 @@ pub struct ApiConfig {
     /// Format: "Bearer <token>"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_token: Option<String>,
+    /// `daemon` opens the API and web UI listener. A bool or `true`/`false`/`1`/`0`,
+    /// checked by [`Config::resolve_api`]. Default `true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub listen: Option<Flag>,
+    /// Listener address for `daemon`, `ip:port`. Default `0.0.0.0:15432`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bind: Option<String>,
+}
+
+/// A boolean setting written either as a TOML bool or as a string, so a bad string
+/// gets the same error from the file as from the environment.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum Flag {
+    /// `listen = true`
+    Bool(bool),
+    /// `listen = "1"`
+    Text(String),
+}
+
+/// Default `[api] bind`
+pub const DEFAULT_API_BIND: &str = "0.0.0.0:15432";
+
+/// `[api]` listener settings after env overrides and validation
+#[derive(Clone, PartialEq, Eq)]
+pub struct ApiSettings {
+    /// Open the listener (`daemon` only)
+    pub listen: bool,
+    /// Listener address (`daemon` only)
+    pub bind: std::net::SocketAddr,
+    /// Bearer token every protected route requires
+    pub token: Option<String>,
+}
+
+impl std::fmt::Debug for ApiSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiSettings")
+            .field("listen", &self.listen)
+            .field("bind", &self.bind)
+            .field(
+                "token",
+                &format_args!(
+                    "{}",
+                    if self.token.is_some() {
+                        "<set>"
+                    } else {
+                        "<unset>"
+                    }
+                ),
+            )
+            .finish()
+    }
 }
 
 impl Default for SyncConfig {
@@ -957,6 +1010,60 @@ impl Config {
     }
 }
 
+impl Config {
+    /// Resolve `[api]`, applying the `PUTIO_SYNC_API_*` overrides. Invalid values in
+    /// either place are an error, so startup fails. Token errors never echo the value.
+    pub fn resolve_api(&self) -> CoreResult<Resolved<ApiSettings>> {
+        let a = &self.api;
+        let mut source = LevelSource::Config;
+        let mut env = |name: &str| {
+            let v = std::env::var(name).ok();
+            if v.is_some() {
+                source = LevelSource::Env;
+            }
+            v
+        };
+
+        let listen_str = match env("PUTIO_SYNC_API_LISTEN") {
+            Some(v) => Some(v),
+            None => match &a.listen {
+                None => None,
+                Some(Flag::Bool(b)) => Some(b.to_string()),
+                Some(Flag::Text(t)) => Some(t.clone()),
+            },
+        };
+        let listen = match listen_str.as_deref() {
+            None | Some("true") | Some("1") => true,
+            Some("false") | Some("0") => false,
+            Some(v) => return Err(invalid("api.listen", v, "true, false, 1, 0")),
+        };
+        let bind_str = env("PUTIO_SYNC_API_BIND")
+            .or_else(|| a.bind.clone())
+            .unwrap_or_else(|| DEFAULT_API_BIND.to_string());
+        let bind = bind_str
+            .parse()
+            .map_err(|_| invalid("api.bind", &bind_str, "ip:port"))?;
+        let token = env("PUTIO_SYNC_API_TOKEN").or_else(|| a.auth_token.clone());
+        if let Some(t) = &token {
+            if t.is_empty() || t.chars().any(char::is_whitespace) {
+                return Err(CoreError::ConfigError(
+                    "invalid api.auth_token: expected a non-empty value without whitespace"
+                        .to_string(),
+                ));
+            }
+        }
+
+        Ok(Resolved {
+            value: ApiSettings {
+                listen,
+                bind,
+                token,
+            },
+            source,
+        })
+    }
+}
+
 /// Poll the config file and pass its `[logging]` section to `on_change` whenever the
 /// file's modified time or length changes.
 ///
@@ -1459,11 +1566,14 @@ mod metrics_tests {
     /// Serialises tests that change PUTIO_SYNC_METRICS_*
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    const VARS: [&str; 4] = [
+    const VARS: [&str; 7] = [
         "PUTIO_SYNC_METRICS_ENABLED",
         "PUTIO_SYNC_METRICS_BIND",
         "PUTIO_SYNC_METRICS_PATH",
         "PUTIO_SYNC_METRICS_DETAIL",
+        "PUTIO_SYNC_API_LISTEN",
+        "PUTIO_SYNC_API_BIND",
+        "PUTIO_SYNC_API_TOKEN",
     ];
 
     fn with_env<R>(vars: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
@@ -1571,5 +1681,98 @@ mod metrics_tests {
             with_env(&[], || err(&config)),
             "invalid metrics.detail 'max': expected one of basic, detailed"
         );
+    }
+
+    fn api_err(config: &Config) -> String {
+        match config.resolve_api() {
+            Err(CoreError::ConfigError(msg)) => msg,
+            other => panic!("expected a config error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn api_defaults() {
+        let r = with_env(&[], || Config::default().resolve_api().unwrap());
+        assert!(r.value.listen);
+        assert_eq!(r.value.bind.to_string(), "0.0.0.0:15432");
+        assert_eq!(r.value.token, None);
+        assert_eq!(r.source, LevelSource::Config);
+    }
+
+    #[test]
+    fn api_toml_table_is_read() {
+        let config: Config = toml::from_str(
+            "[api]\nlisten = \"false\"\nbind = \"127.0.0.1:8080\"\nauth_token = \"t0k\"\n",
+        )
+        .unwrap();
+        let r = with_env(&[], || config.resolve_api().unwrap());
+        assert!(!r.value.listen);
+        assert_eq!(r.value.bind.to_string(), "127.0.0.1:8080");
+        assert_eq!(r.value.token.as_deref(), Some("t0k"));
+        assert_eq!(r.source, LevelSource::Config);
+
+        let config: Config = toml::from_str("[api]\nlisten = false\n").unwrap();
+        let r = with_env(&[], || config.resolve_api().unwrap());
+        assert!(!r.value.listen);
+    }
+
+    #[test]
+    fn api_env_overrides() {
+        let mut config = Config::default();
+        config.api.auth_token = Some("from-file".to_string());
+        let r = with_env(
+            &[
+                ("PUTIO_SYNC_API_LISTEN", "0"),
+                ("PUTIO_SYNC_API_BIND", "127.0.0.1:1"),
+                ("PUTIO_SYNC_API_TOKEN", "abc"),
+            ],
+            || config.resolve_api().unwrap(),
+        );
+        assert!(!r.value.listen);
+        assert_eq!(r.value.bind.to_string(), "127.0.0.1:1");
+        assert_eq!(r.value.token.as_deref(), Some("abc"));
+        assert_eq!(r.source, LevelSource::Env);
+    }
+
+    #[test]
+    fn api_invalid_values() {
+        let config: Config = toml::from_str("[api]\nlisten = \"maybe\"\n").unwrap();
+        assert_eq!(
+            with_env(&[], || api_err(&config)),
+            "invalid api.listen 'maybe': expected one of true, false, 1, 0"
+        );
+
+        assert_eq!(
+            with_env(&[("PUTIO_SYNC_API_BIND", "nope")], || api_err(
+                &Config::default()
+            )),
+            "invalid api.bind 'nope': expected one of ip:port"
+        );
+
+        let mut config = Config::default();
+        config.api.auth_token = Some("has space".to_string());
+        let msg = with_env(&[], || api_err(&config));
+        assert_eq!(
+            msg,
+            "invalid api.auth_token: expected a non-empty value without whitespace"
+        );
+        assert!(!msg.contains("has space"));
+
+        assert_eq!(
+            with_env(&[("PUTIO_SYNC_API_TOKEN", "")], || api_err(
+                &Config::default()
+            )),
+            "invalid api.auth_token: expected a non-empty value without whitespace"
+        );
+    }
+
+    #[test]
+    fn api_token_never_in_debug() {
+        let mut config = Config::default();
+        config.api.auth_token = Some("super-secret-value".to_string());
+        let settings = with_env(&[], || config.resolve_api().unwrap()).value;
+        let debug = format!("{:?}", settings);
+        assert!(!debug.contains("super-secret-value"));
+        assert!(debug.contains("<set>"));
     }
 }

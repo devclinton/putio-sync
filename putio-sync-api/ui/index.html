@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>putio-sync</title>
+  <!-- An empty icon stops the browser asking for /favicon.ico, which is not public -->
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/assets/app.css">
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/status">putio-sync</a>
+    <nav id="nav" aria-label="Pages">
+      <a href="#/status" data-page="status">Status</a>
+      <a href="#/queue" data-page="queue">Queue</a>
+      <a href="#/putio" data-page="putio">Put.io</a>
+      <a href="#/transfers" data-page="transfers">Transfers</a>
+      <a href="#/history" data-page="history">History</a>
+      <a href="#/settings" data-page="settings">Settings</a>
+    </nav>
+    <div class="topbar-end">
+      <a id="metrics-link" class="muted" hidden>Metrics</a>
+      <button id="signout" class="btn btn-quiet" type="button" hidden>Sign out</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" role="status" hidden>
+    Can't reach the daemon. Retrying every 10 seconds.
+  </div>
+
+  <main id="view" tabindex="-1">
+    <noscript>
+      <p class="notice">This page needs a current browser with JavaScript turned on.</p>
+    </noscript>
+  </main>
+
+  <div id="toasts" aria-live="polite"></div>
+
+  <dialog id="confirm" aria-labelledby="confirm-title">
+    <form method="dialog">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-text"></p>
+      <div class="dialog-actions">
+        <button id="confirm-cancel" class="btn" value="cancel">Cancel</button>
+        <button id="confirm-ok" class="btn btn-danger" value="ok">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

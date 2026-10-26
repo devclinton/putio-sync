@@ -90,7 +90,7 @@ async fn start_download(
         file_id: file_info.id,
         filename: request.filename.unwrap_or(file_info.name.clone()),
         file_size: file_info.size as u64,
-        download_url: format!("https://api.put.io/v2/files/{}/download", file_info.id),
+        download_url: state.client.get_download_url(file_info.id),
         relative_path: request.relative_path.unwrap_or_default(),
     };
 
