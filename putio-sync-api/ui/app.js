@@ -8,16 +8,18 @@ import * as queue from "./pages/queue.js";
 import * as putio from "./pages/putio.js";
 import * as transfers from "./pages/transfers.js";
 import * as history from "./pages/history.js";
+import * as stats from "./pages/stats.js";
 import * as settings from "./pages/settings.js";
 import * as login from "./pages/login.js";
 
-const PAGES = { status, queue, putio, transfers, history, settings, login };
+const PAGES = { status, queue, putio, transfers, history, stats, settings, login };
 const TITLES = {
   status: "Status",
   queue: "Queue",
   putio: "Put.io",
   transfers: "Transfers",
   history: "History",
+  stats: "Stats",
   settings: "Settings",
   login: "Sign in",
 };
@@ -82,10 +84,12 @@ function remembered() {
 
 // ---- Router -----------------------------------------------------------------
 
+/** "#/stats/x?range=30d" → { name: "stats", path: ["x"], query: URLSearchParams } */
 function parse(hash) {
-  const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  const [route, search = ""] = hash.replace(/^#\/?/, "").split("?", 2);
+  const parts = route.split("/").filter(Boolean);
   const name = PAGES[parts[0]] ? parts[0] : "status";
-  return { name, path: PAGES[parts[0]] ? parts.slice(1) : [] };
+  return { name, path: PAGES[parts[0]] ? parts.slice(1) : [], query: new URLSearchParams(search) };
 }
 
 /** Go to `hash` (e.g. "#/queue"); re-renders when it is already the current route. */
@@ -95,7 +99,7 @@ export function navigate(hash) {
 }
 
 function route() {
-  const { name, path } = parse(window.location.hash);
+  const { name, path, query } = parse(window.location.hash);
   if (name !== "login" && !getToken()) {
     showLogin({});
     return;
@@ -107,7 +111,7 @@ function route() {
     return;
   }
   remember(window.location.hash || "#/status");
-  mount(name, { path });
+  mount(name, { path, query });
 }
 
 function mount(name, params) {

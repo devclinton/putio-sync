@@ -7,14 +7,16 @@
 //!
 //! Prints the URL and the API token to sign in with, then runs until Ctrl+C. The port
 //! defaults to a free one. Nothing reaches the real Put.io through `state.client`.
-//! The history holds 64 rows (two pages); 7 of them match `ubuntu`.
+//! The history holds 64 rows (two pages); 7 of them match `ubuntu`. About 120 days of
+//! older downloads, evening-heavy, with sources and origins, fill the Stats page.
 //! "Remove empty folders" on the Put.io page finds `Movies/Extras` (empty); the mocked
 //! delete succeeds but the listing still shows it.
 
+use chrono::{Duration, Timelike, Utc};
 use putio_sync_api::{extract_download_config, router, AppState};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthConfig, Config};
-use putio_sync_db::models::{HistoryAction, QueueStatus};
+use putio_sync_db::models::{DownloadSource, HistoryAction, Origin, QueueStatus, SourceType};
 use putio_sync_db::Database;
 use putio_sync_download::DownloadManager;
 use serde_json::{json, Value};
@@ -73,7 +75,9 @@ fn transfer(id: i64, name: &str, status: &str, percent: i64) -> Value {
         "finished_at": null,
         "save_parent_id": 0,
         "file_id": null,
-        "is_private": false
+        "is_private": false,
+        "type": "TORRENT",
+        "tracker": "udp://tracker.opentrackr.org:1337/announce"
     })
 }
 
@@ -249,6 +253,108 @@ async fn seed_history(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// About 120 days of downloads for the Stats page: mostly evenings, more at weekends,
+/// a mix of file types, sources (two public trackers, one private, URL, unknown) and
+/// origins (two watch folders, manual, Put.io)
+async fn seed_stats(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
+    // (extension, minimum size, size spread)
+    const KINDS: [(&str, i64, i64); 9] = [
+        ("mkv", 700_000_000, 6_000_000_000),
+        ("mkv", 1_500_000_000, 9_000_000_000),
+        ("mp4", 300_000_000, 2_000_000_000),
+        ("flac", 20_000_000, 60_000_000),
+        ("mp3", 4_000_000, 8_000_000),
+        ("zip", 50_000_000, 900_000_000),
+        ("srt", 40_000, 80_000),
+        ("pdf", 1_000_000, 30_000_000),
+        ("", 1_000_000, 50_000_000),
+    ];
+    const FOLDERS: [&str; 5] = ["Movies", "TV", "Music", "Books", "(root)"];
+    // A fixed linear congruential generator keeps every run the same
+    let mut state: u64 = 0x5eed;
+    let mut next = move |n: u64| {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (state >> 33) % n
+    };
+    let history = db.history();
+    let sources = db.sources();
+    let today = Utc::now().with_minute(0).and_then(|t| t.with_second(0));
+    let today = today.ok_or("time")?;
+    let mut file_id = 10_000_i64;
+    for day in 0..120_i64 {
+        let date = today - Duration::days(day);
+        let weekend = date.format("%u").to_string().parse::<u32>()? >= 6;
+        let count = next(4) + if weekend { 3 } else { 1 };
+        for _ in 0..count {
+            let hour = if next(10) < 7 { 18 + next(6) } else { next(24) } as i64;
+            let finish = date - Duration::hours(date.hour() as i64)
+                + Duration::hours(hour)
+                + Duration::minutes(next(60) as i64);
+            if finish > Utc::now() {
+                continue;
+            }
+            let (ext, min, spread) = KINDS[next(KINDS.len() as u64) as usize];
+            let size = min + next(spread as u64) as i64;
+            let seconds = (size / (2_000_000 + next(18_000_000) as i64)).max(1);
+            let name = if ext.is_empty() {
+                format!("file-{file_id}")
+            } else {
+                format!("file-{file_id}.{ext}")
+            };
+            file_id += 1;
+            history
+                .insert_download_at(
+                    file_id,
+                    &name,
+                    size,
+                    Some(seconds),
+                    Some(size / seconds),
+                    finish,
+                )
+                .await?;
+
+            let (source_type, tracker, private) = match next(10) {
+                0..=3 => (
+                    Some(SourceType::Torrent),
+                    Some("tracker.opentrackr.org"),
+                    false,
+                ),
+                4..=5 => (Some(SourceType::Torrent), Some("open.demonii.com"), false),
+                6 => (
+                    Some(SourceType::Torrent),
+                    Some("tracker.private.example"),
+                    true,
+                ),
+                7 => (Some(SourceType::Url), None, false),
+                _ => (None, None, false),
+            };
+            if source_type.is_none() && next(2) == 0 {
+                continue; // queued before sources were recorded: no row at all
+            }
+            let (origin, watch_folder) = match next(6) {
+                0 | 1 => (Origin::Watch, Some("/watch/tv")),
+                2 => (Origin::Watch, Some("/watch/movies")),
+                3 => (Origin::Manual, None),
+                _ if source_type.is_some() => (Origin::Putio, None),
+                _ => (Origin::Unknown, None),
+            };
+            let source = DownloadSource {
+                transfer_id: source_type.map(|_| 900 + next(50) as i64),
+                source_type,
+                tracker_host: tracker.map(str::to_string),
+                is_private: private,
+                origin,
+                watch_folder: watch_folder.map(str::to_string),
+                putio_folder: Some(FOLDERS[next(FOLDERS.len() as u64) as usize].to_string()),
+            };
+            sources.record(file_id, &source).await?;
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -317,6 +423,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     seed_history(&db).await?;
+    seed_stats(&db).await?;
 
     let client = Arc::new(PutioApiClient::with_base_url(
         PUTIO_TOKEN.to_string(),

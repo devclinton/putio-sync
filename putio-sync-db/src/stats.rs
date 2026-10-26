@@ -8,7 +8,7 @@ use tracing::debug;
 
 /// Repository for managing download statistics
 pub struct StatsRepository<'a> {
-    pool: &'a SqlitePool,
+    pub(crate) pool: &'a SqlitePool,
 }
 
 /// Statistics by file extension

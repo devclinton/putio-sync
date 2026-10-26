@@ -85,6 +85,33 @@ CREATE TABLE IF NOT EXISTS processed_torrents (
 )
 "#;
 
+/// SQL to create the download_sources table (feature 006): where each queued Put.io
+/// file came from. `tracker_host` is a host name only, never a tracker address.
+pub const CREATE_DOWNLOAD_SOURCES_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS download_sources (
+    file_id INTEGER PRIMARY KEY,
+    transfer_id INTEGER,
+    source_type TEXT CHECK(source_type IN ('torrent', 'url', 'other')),
+    tracker_host TEXT,
+    is_private INTEGER NOT NULL DEFAULT 0,
+    origin TEXT NOT NULL CHECK(origin IN ('watch', 'manual', 'putio', 'unknown')),
+    watch_folder TEXT,
+    putio_folder TEXT,
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"#;
+
+/// SQL to create the transfer_origins table (feature 006): transfers putio-sync
+/// created itself, from a watch folder or the web UI
+pub const CREATE_TRANSFER_ORIGINS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS transfer_origins (
+    transfer_id INTEGER PRIMARY KEY,
+    origin TEXT NOT NULL CHECK(origin IN ('watch', 'manual')),
+    watch_folder TEXT,
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"#;
+
 /// SQL to create performance indexes
 /// These indexes optimize common query patterns
 pub const CREATE_INDEXES: &str = r#"
@@ -122,6 +149,8 @@ mod tests {
         assert!(CREATE_DOWNLOADS_TABLE.contains("CREATE TABLE"));
         assert!(CREATE_DOWNLOAD_HISTORY_TABLE.contains("CREATE TABLE"));
         assert!(CREATE_DOWNLOAD_STATS_TABLE.contains("CREATE TABLE"));
+        assert!(CREATE_DOWNLOAD_SOURCES_TABLE.contains("CREATE TABLE"));
+        assert!(CREATE_TRANSFER_ORIGINS_TABLE.contains("CREATE TABLE"));
     }
 
     #[test]

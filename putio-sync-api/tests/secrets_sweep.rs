@@ -96,6 +96,7 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         get("/stats/downloads"),
         get("/stats/transfers"),
         get("/stats/disk"),
+        get("/stats/summary"),
         get("/history"),
         get("/history/stats"),
         get("/status"),
@@ -254,4 +255,74 @@ async fn every_protected_route_refused_without_token() {
             "{method} {path}"
         );
     }
+}
+
+/// A private tracker's passkey (in the tracker address, magnet link and source) never
+/// reaches a response or the recorded download sources (feature 006, FR-011, SC-005)
+#[tokio::test]
+async fn no_tracker_passkey_in_responses_or_sources() {
+    const PASSKEY: &str = "a1b2c3d4e5f6passkey";
+    let mut app = test_app().await;
+    let root = json!({
+        "id": 0, "name": "root", "size": 0, "file_type": "FOLDER", "parent_id": -1,
+        "is_folder": true, "is_shared": false,
+    });
+    let file = json!({
+        "id": 31, "name": "movie.mkv", "size": 100, "file_type": "VIDEO", "parent_id": 0,
+        "is_folder": false, "is_shared": false,
+    });
+    let _files = app
+        .mock_files_list(
+            0,
+            json!({ "status": "OK", "files": [file], "parent": root }),
+        )
+        .await;
+    let _transfers = app
+        .putio
+        .mock("GET", "/transfers/list")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            json!({ "status": "OK", "transfers": [{
+                "id": 5, "name": "movie", "status": "COMPLETED",
+                "created_at": "2026-10-20T09:30:00", "save_parent_id": 0, "file_id": 31,
+                "type": "TORRENT", "is_private": true,
+                "tracker": format!("https://tracker.example.org/{PASSKEY}/announce"),
+                "magneturi": format!("magnet:?xt=urn:btih:abc&tr=https%3A%2F%2Ftracker.example.org%2F{PASSKEY}%2Fannounce"),
+                "source": format!("magnet:?xt=urn:btih:abc&tr=https%3A%2F%2Ftracker.example.org%2F{PASSKEY}%2Fannounce"),
+            }]})
+            .to_string(),
+        )
+        .create_async()
+        .await;
+
+    let response = app.get("/putio/transfers").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let text = body_text(response).await;
+    assert!(!text.contains(PASSKEY), "{text}");
+    assert!(
+        text.contains(r#""tracker_host":"tracker.example.org""#),
+        "{text}"
+    );
+
+    app.state.download_manager.enqueue_tree(0).await.unwrap();
+    let source = app.db().sources().get(31).await.unwrap().unwrap();
+    assert_eq!(source.tracker_host.as_deref(), Some("tracker.example.org"));
+    assert!(!format!("{source:?}").contains(PASSKEY));
+
+    app.db()
+        .history()
+        .insert(
+            31,
+            "movie.mkv",
+            100,
+            putio_sync_db::models::HistoryAction::Downloaded,
+            Some(1),
+            None,
+        )
+        .await
+        .unwrap();
+    let text = body_text(app.get("/stats/summary?range=24h").await).await;
+    assert!(text.contains("tracker.example.org"), "{text}");
+    assert!(!text.contains(PASSKEY), "{text}");
 }
