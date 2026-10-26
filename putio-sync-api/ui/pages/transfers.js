@@ -7,7 +7,7 @@
 // (a dry run for the count, a confirm, then one clean on Put.io).
 
 import { del, get, post } from "../api.js";
-import { confirm, h, poll, toast } from "../app.js";
+import { confirm, empty, h, poll, toast } from "../app.js";
 import { bytes, duration, percent, speed } from "../format.js";
 import { selection } from "../select.js";
 
@@ -289,7 +289,7 @@ function render(list) {
   // The selection survives a refresh for transfers still listed
   sel.reset(list.map((t) => t.id));
   if (list.length === 0) {
-    els.list.replaceChildren(h("h2", { text: "Transfers" }), h("p", { class: "muted", text: "No transfers on Put.io." }));
+    els.list.replaceChildren(h("h2", { text: "Transfers" }), empty("No transfers on Put.io", "Transfers you add on Put.io show up here."));
     sel.update();
     return;
   }
