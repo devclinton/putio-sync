@@ -16,7 +16,7 @@ A high-performance Rust-based CLI tool for Put.io with support for downloads, tr
 - **Post-Processing**: Archive or delete processed torrent files after upload
 - **Advanced Daemon**: Unified daemon with live log-level changes and graceful worker scaling
 - **Prometheus Metrics**: Sync, download, watch-folder, API and database metrics on `:9742/metrics`
-- **Web UI**: status, queue, Put.io browser, transfers, history and settings in the browser on `:15432`, behind a token ([Web UI](#web-ui))
+- **Web UI**: status, queue, Put.io browser, transfers, history, stats and settings in the browser on `:15432`, behind a token ([Web UI](#web-ui))
 - **Statistics & History**: Track download stats and view history
 - **File Management**: List, download, and delete files on Put.io
 - **SQLite Database**: Local state tracking for downloads and history
@@ -587,12 +587,38 @@ as well as a desktop. The pages:
 - **Transfers**: add a magnet link, URL or `.torrent` file; retry a failed transfer;
   remove a transfer (Put.io cancels it). Put.io has no pause or resume for transfers.
 - **History**: downloads and deletions, filtered by action and by name.
+- **Stats**: charts of what was downloaded and when (see [Stats page](#stats-page)).
 - **Settings**: download, watcher, logging and notification settings (see
   [Settings from the UI](#settings-from-the-ui)). The API token and Put.io
   credentials are never shown.
 
 The UI is built into the binary and the Docker image; there is nothing else to install
 or mount.
+
+### Stats page
+
+`#/stats` shows, for the last 24 hours, 7, 30 or 90 days, a year or everything:
+
+- totals: files, bytes, time spent downloading and average speed;
+- **Bandwidth**: bytes per hour, six hours, day or week, spread over each download's
+  duration; hover, tap or use the arrow keys for a bar's details;
+- **When**: an hour × weekday heatmap in your local time, by bytes or by files;
+- **File types**: video, audio, archive, image, document, subtitle and other, with the
+  top extensions in each;
+- **Origin**: how each download reached Put.io (a watch folder, added in putio-sync,
+  added on Put.io) and its top-level Put.io folder;
+- **Sources**: torrent, URL or other; the tracker host; private or public.
+
+Filters for type, source, tracker, privacy, origin, watch folder and Put.io folder sit
+above the charts, and clicking a row in a breakdown sets that filter. Filters are kept
+in the page address, so a reload or a bookmark keeps them.
+
+The numbers come from putio-sync's own download history, not from Prometheus. Sources
+and origins are recorded when a file is queued, starting with this version; older
+downloads show as "unknown". Only the tracker's host name is stored, never the tracker
+URL or its passkey. Put.io doesn't report DHT peers, so there is no DHT breakdown;
+private torrents don't use DHT anyway. The page reads `GET /stats/summary` (token
+required), which takes the same filters as query parameters.
 
 ### Token (required)
 

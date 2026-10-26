@@ -47,6 +47,7 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
         JS,
         include_bytes!("../ui/pages/history.js"),
     ),
+    ("pages/stats.js", JS, include_bytes!("../ui/pages/stats.js")),
     (
         "pages/settings.js",
         JS,

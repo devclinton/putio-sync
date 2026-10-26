@@ -82,6 +82,7 @@ async fn every_referenced_asset_resolves() {
         "putio",
         "transfers",
         "history",
+        "stats",
         "settings",
         "login",
     ] {

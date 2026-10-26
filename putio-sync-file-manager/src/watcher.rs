@@ -8,6 +8,7 @@
 use anyhow::{Context, Result};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use putio_sync_client::PutioApiClient;
+use putio_sync_db::models::{Origin, TransferOrigin};
 use putio_sync_db::Database;
 use putio_sync_telemetry::watch as watch_metrics;
 use std::collections::HashSet;
@@ -404,6 +405,21 @@ impl TorrentWatchCore {
 
                 // Record in database if available
                 if let Some(db) = database {
+                    // Remember the transfer came from this watch folder, for the Stats
+                    // page's origin breakdown (feature 006). Watching isn't recursive,
+                    // so the file's directory is the configured watch folder.
+                    let origin = TransferOrigin {
+                        origin: Origin::Watch,
+                        watch_folder: path.parent().map(|dir| dir.display().to_string()),
+                    };
+                    if let Err(e) = db
+                        .sources()
+                        .record_transfer_origin(transfer.id, &origin)
+                        .await
+                    {
+                        warn!(transfer_id = transfer.id, error = %e, "Failed to record transfer origin");
+                    }
+
                     let (checksum, magnet_link) = if self.is_magnet_file(path) {
                         // For magnet files, record the magnet link and use content checksum
                         match tokio::fs::read_to_string(path).await {
