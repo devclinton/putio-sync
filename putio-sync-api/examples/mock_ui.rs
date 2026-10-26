@@ -17,14 +17,20 @@
 //! disabled) or `#/transfers` for the bulk actions. On `#/transfers`, Clear completed
 //! finds 2 (one completed, one seeding), Clear failed 1, Clear all finished 3. Every
 //! mocked delete, cancel and clean succeeds, but the listings don't change.
+//! Feature 010: `#/doctor` finds Put.io storage at 93%, the failed and stalled transfers,
+//! a duplicate of Sintel in Shows, an orphaned `.torrent` at the top, queue row 501 for a
+//! deleted file, failed queue row 403, a stale partial download in `Movies/` and an
+//! unknown key in the config file. Its fixes run against the same mocks.
 
 use chrono::{Duration, Timelike, Utc};
 use putio_sync_api::{extract_download_config, router, AppState};
 use putio_sync_client::PutioApiClient;
+use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::{AuthConfig, Config};
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::models::{DownloadSource, HistoryAction, Origin, QueueStatus, SourceType};
 use putio_sync_db::Database;
+use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadManager;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -119,6 +125,9 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
     let movies = file(MOVIES, "Movies", 9_000_000_000, "FOLDER", 0);
     let shows = file(SHOWS, "Shows", 4_000_000_000, "FOLDER", 0);
     let readme = file(300, "README.txt", 2_048, "TEXT", 0);
+    // No transfer has this name, so the doctor reports it as left over
+    let mut torrent = file(301, "Old.Release.2019.torrent", 40_960, "FILE", 0);
+    torrent["extension"] = json!("torrent");
     let big = file(
         101,
         "Big.Buck.Bunny.2008.2160p.mkv",
@@ -137,6 +146,11 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         "VIDEO",
         SHOWS,
     );
+    // Same name and size as the one in Movies: a duplicate
+    let sintel_copy = file(202, "Sintel.2010.1080p.mkv", 1_288_490_189, "VIDEO", SHOWS);
+    // Tears of Steel's queue row is paused; the file lives outside the walked folders
+    let tears = file(402, "Tears.of.Steel.2012.720p.mkv", 734_003_200, "VIDEO", 0);
+    let cosmos = file(403, "Cosmos.Laundromat.2015.mkv", 524_288_000, "VIDEO", 0);
 
     let transfers = transfers();
 
@@ -154,7 +168,10 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         json_mock(
             "GET",
             "/files/list?parent_id=0".into(),
-            listing(root.clone(), vec![movies.clone(), shows.clone(), readme.clone()]),
+            listing(
+                root.clone(),
+                vec![movies.clone(), shows.clone(), readme.clone(), torrent.clone()],
+            ),
         ),
         json_mock(
             "GET",
@@ -205,9 +222,30 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         json_mock("POST", "/transfers/retry".into(), json!({ "status": "OK" }).to_string()),
         // Clear by status (feature 008): no `deleted_ids`, so every id sent counts as cleaned
         json_mock("POST", "/transfers/clean".into(), json!({ "status": "OK" }).to_string()),
+        // The doctor (feature 010): storage at 93%
+        json_mock(
+            "GET",
+            "/account/info".into(),
+            json!({ "status": "OK", "info": { "user_id": 1, "username": "mock-user",
+                "mail": "mock@example.com", "account_active": true,
+                "disk": { "size": 1_000_000_000_000_i64, "used": 930_000_000_000_i64,
+                    "avail": 70_000_000_000_i64 } } })
+            .to_string(),
+        ),
     ];
     for f in [
-        &movies, &shows, &extras, &readme, &big, &setup, &sintel, &episode,
+        &movies,
+        &shows,
+        &extras,
+        &readme,
+        &big,
+        &setup,
+        &sintel,
+        &episode,
+        &sintel_copy,
+        &tears,
+        &cosmos,
+        &torrent,
     ] {
         mocks.push(json_mock(
             "GET",
@@ -218,7 +256,7 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
 
     // The Shows listing answers after 3 s, so a "sync now" (which walks every folder)
     // stays in progress long enough to see it and to try a second one
-    let shows_listing = listing(shows.clone(), vec![episode.clone()]);
+    let shows_listing = listing(shows.clone(), vec![episode.clone(), sintel_copy.clone()]);
     mocks.push(
         server
             .mock("GET", format!("/files/list?parent_id={SHOWS}").as_str())
@@ -228,6 +266,16 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
                 std::thread::sleep(std::time::Duration::from_secs(3));
                 w.write_all(shows_listing.as_bytes())
             })
+            .expect_at_least(0),
+    );
+
+    // Queue row 501 points at a file deleted from Put.io
+    mocks.push(
+        server
+            .mock("GET", "/files/501")
+            .with_status(404)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status":"ERROR","error_type":"NotFound"}"#)
             .expect_at_least(0),
     );
 
@@ -416,6 +464,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     config.api.auth_token = Some(API_TOKEN.to_string());
     let config_path = dir.path().join("config.toml");
     config.save(&config_path)?;
+    // An unknown key for the doctor's config check
+    let saved = std::fs::read_to_string(&config_path)?;
+    std::fs::write(&config_path, format!("sync_everything = true\n{saved}"))?;
 
     let db = Arc::new(Database::new(dir.path().join(".putiosync.db")).await?);
     let queue = db.queue();
@@ -444,6 +495,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             734_003_200,
             QueueStatus::Paused,
         ),
+        (
+            403,
+            "Cosmos.Laundromat.2015.mkv",
+            524_288_000,
+            QueueStatus::Failed,
+        ),
+        (
+            501,
+            "Removed.Movie.2001.mkv",
+            2_147_483_648,
+            QueueStatus::Pending,
+        ),
     ];
     // Listed (and downloaded) highest priority first, so the first row gets the highest
     let top = rows.len() as i64;
@@ -458,6 +521,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     seed_history(&db).await?;
     seed_stats(&db).await?;
+    seed_partial(dir.path())?;
 
     let client = Arc::new(PutioApiClient::with_base_url(
         PUTIO_TOKEN.to_string(),
@@ -465,6 +529,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let manager =
         DownloadManager::new(client.clone(), db.clone(), extract_download_config(&config));
+    let tracker = seeded_tracker();
+    let cleanup = Arc::new(EmptyFolderCleanup::from_config(client.clone(), &config));
+    let doctor = Doctor::new(
+        config.clone(),
+        client.clone(),
+        Some(db.clone()),
+        cleanup.clone(),
+    )
+    .with_stalls(tracker.clone())
+    .with_config_path(Some(config_path.clone()));
     let state = AppState::new(
         config,
         Some(config_path),
@@ -473,7 +547,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(manager),
         None,
     )
-    .with_stall_tracker(seeded_tracker());
+    .with_stall_tracker(tracker)
+    .with_cleanup(cleanup)
+    .with_doctor(Arc::new(doctor));
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     let addr = listener.local_addr()?;
@@ -489,6 +565,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await?;
     Ok(())
+}
+
+/// A partial download in `Movies/` that no queue row owns, last written 3 hours ago
+fn seed_partial(root: &std::path::Path) -> std::io::Result<()> {
+    let dir = root.join("Movies");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(".Lost.Download.2020.mkv.downloading");
+    std::fs::write(&path, vec![0u8; 4096])?;
+    std::fs::File::options()
+        .write(true)
+        .open(&path)?
+        .set_modified(SystemTime::now() - std::time::Duration::from_secs(3 * 3600))
 }
 
 /// A tracker that saw the transfer list 7 hours ago and now, so transfer 5 shows as

@@ -9,6 +9,7 @@ members = [
     "putio-sync-cli",
     "putio-sync-api",
     "putio-sync-telemetry",
+    "putio-sync-doctor",
 ]
 resolver = "2"
 

@@ -366,3 +366,36 @@ fn transfers_stalled_reads_the_last_count() {
     t.set_transfers_stalled(0);
     assert_eq!(t.sample("putio_sync_transfers_stalled", &[]), Some(0.0));
 }
+
+/// Feature 010: doctor series appear after the first run and hold the last result
+#[test]
+fn doctor_metrics() {
+    let t = Telemetry::new();
+    let before = t.encode();
+    assert!(!before.contains("putio_sync_doctor_check_status{"));
+    assert!(!before.contains("\nputio_sync_doctor_last_run_timestamp_seconds "));
+
+    t.doctor_check("dead_queue_rows", 1.0, 3);
+    t.doctor_check("auth", -1.0, 0);
+    t.doctor_run(Duration::from_millis(1500));
+    let status = |c| t.sample("putio_sync_doctor_check_status", &[("check", c)]);
+    assert_eq!(status("dead_queue_rows"), Some(1.0));
+    assert_eq!(status("auth"), Some(-1.0));
+    assert_eq!(
+        t.sample(
+            "putio_sync_doctor_check_items",
+            &[("check", "dead_queue_rows")]
+        ),
+        Some(3.0)
+    );
+    assert_eq!(
+        t.sample("putio_sync_doctor_last_run_duration_seconds", &[]),
+        Some(1.5)
+    );
+    assert!(t
+        .sample("putio_sync_doctor_last_run_timestamp_seconds", &[])
+        .is_some_and(|v| v > 0.0));
+
+    t.doctor_check("dead_queue_rows", 0.0, 0);
+    assert_eq!(status("dead_queue_rows"), Some(0.0));
+}

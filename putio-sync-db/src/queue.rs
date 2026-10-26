@@ -249,6 +249,30 @@ impl<'a> QueueRepository<'a> {
         Ok(result.rows_affected() as usize)
     }
 
+    /// Failed rows, oldest first (doctor, feature 010)
+    pub async fn failed(&self) -> DbResult<Vec<QueueItem>> {
+        sqlx::query_as::<_, QueueItem>(
+            "SELECT * FROM download_queue WHERE status = 'failed' ORDER BY updated_at ASC",
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Queue, "Failed to list failed queue items"))
+    }
+
+    /// Rows a download still owns: pending, downloading or paused (doctor, feature 010)
+    pub async fn claimed(&self) -> DbResult<Vec<QueueItem>> {
+        sqlx::query_as::<_, QueueItem>(
+            r#"
+            SELECT * FROM download_queue
+            WHERE status IN ('pending', 'downloading', 'paused')
+            ORDER BY priority DESC, created_at ASC
+            "#,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Queue, "Failed to list claimed queue items"))
+    }
+
     /// Remove item from queue
     pub async fn remove(&self, file_id: i64) -> DbResult<()> {
         sqlx::query(

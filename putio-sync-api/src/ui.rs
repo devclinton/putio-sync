@@ -50,6 +50,11 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ),
     ("pages/stats.js", JS, include_bytes!("../ui/pages/stats.js")),
     (
+        "pages/doctor.js",
+        JS,
+        include_bytes!("../ui/pages/doctor.js"),
+    ),
+    (
         "pages/settings.js",
         JS,
         include_bytes!("../ui/pages/settings.js"),

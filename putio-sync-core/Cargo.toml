@@ -46,6 +46,8 @@ base64 = "0.22"
 futures-util = "0.3"
 sha2 = "0.10"
 chrono = "0.4"
+# Lists config keys serde ignores, for the doctor's config check (feature 010)
+serde_ignored = "0.1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

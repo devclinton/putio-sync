@@ -29,6 +29,7 @@ putio-sync-db = { path = "../putio-sync-db" }
 putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-file-manager = { path = "../putio-sync-file-manager" }
 putio-sync-daemon = { path = "../putio-sync-daemon" }
+putio-sync-doctor = { path = "../putio-sync-doctor" }
 
 # Async runtime
 tokio = { workspace = true }
@@ -95,6 +96,7 @@ tokio = { workspace = true, features = ["test-util"] }
 assert_cmd = "2.0"
 predicates = "3.0"
 assert_fs = "1.1"
+mockito = "1.2"
 
 [package.metadata.docs.rs]
 all-features = true
