@@ -13,6 +13,10 @@
 //! delete succeeds but the listing still shows it.
 //! On `#/transfers`, transfer 5 is stalled at 97% (feature 007), transfer 1 downloads
 //! normally and the failed transfer 4 has no magnet link.
+//! Feature 008: tick rows on `#/putio/100` (Big.Buck.Bunny is queued, so its box is
+//! disabled) or `#/transfers` for the bulk actions. On `#/transfers`, Clear completed
+//! finds 2 (one completed, one seeding), Clear failed 1, Clear all finished 3. Every
+//! mocked delete, cancel and clean succeeds, but the listings don't change.
 
 use chrono::{Duration, Timelike, Utc};
 use putio_sync_api::{extract_download_config, router, AppState};
@@ -88,7 +92,8 @@ fn transfer(id: i64, name: &str, status: &str, percent: i64) -> Value {
 /// Stuck at 97% with no complete copy in the swarm; seeded as stalled for 7 hours
 const STALLED: i64 = 5;
 
-/// What `/transfers/list` answers: one downloading, one stalled, one failed without magnet
+/// What `/transfers/list` answers: one downloading, one stalled, one failed without
+/// magnet, one completed and one seeding
 fn transfers() -> Vec<Value> {
     let mut sintel = transfer(1, "Sintel.2010.1080p", "DOWNLOADING", 42);
     sintel["magneturi"] = json!("magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10");
@@ -101,7 +106,11 @@ fn transfers() -> Vec<Value> {
     // Only a failed transfer offers Retry
     let mut failed = transfer(4, "Broken.Torrent.2009", "ERROR", 12);
     failed["error_message"] = json!("Tracker unreachable");
-    vec![sintel, stalled, failed]
+    let mut done = transfer(6, "Big.Buck.Bunny.2008.1080p", "COMPLETED", 100);
+    done["down_speed"] = json!(0);
+    let mut seeding = transfer(7, "Elephants.Dream.2006.720p", "SEEDING", 100);
+    seeding["down_speed"] = json!(0);
+    vec![sintel, stalled, failed, done, seeding]
 }
 
 /// Persistent mocks for every Put.io call the UI can trigger
@@ -194,6 +203,8 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         // Remove and retry
         json_mock("POST", "/transfers/cancel".into(), json!({ "status": "OK" }).to_string()),
         json_mock("POST", "/transfers/retry".into(), json!({ "status": "OK" }).to_string()),
+        // Clear by status (feature 008): no `deleted_ids`, so every id sent counts as cleaned
+        json_mock("POST", "/transfers/clean".into(), json!({ "status": "OK" }).to_string()),
     ];
     for f in [
         &movies, &shows, &extras, &readme, &big, &setup, &sintel, &episode,

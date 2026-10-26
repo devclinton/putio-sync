@@ -608,13 +608,19 @@ as well as a desktop. The pages:
   whole queue.
 - **Put.io**: browse folders, filter by name, queue a file or a whole folder
   ("found, queued, skipped, blocked"), delete from Put.io with confirmation. Delete is
-  refused for files that are queued, downloading or paused.
+  refused for files that are queued, downloading or paused. Tick rows (or **Select
+  all**) to download or delete several at once, with one confirmation for the lot;
+  queued files can't be ticked.
 - **Transfers**: add a magnet link, URL or `.torrent` file; retry a failed transfer;
   remove a transfer (Put.io cancels it). Put.io has no pause or resume for transfers.
   A transfer still downloading with no new bytes for 6 hours gets a **stalled** badge
   and the likely reason (availability below 100%, no peers, or no progress); see
   [Stalled transfers](#stalled-transfers). **Copy magnet** copies its magnet link,
   and **Re-add** cancels it and adds the same magnet again to the same folder.
+  Tick rows (or **Select all**) to retry or remove several at once. **Clear
+  completed** (completed and seeding), **Clear failed** and **Clear all finished**
+  remove those transfers from the Put.io transfer list after a confirm with the count;
+  their files stay in the account.
 - **History**: downloads and deletions, filtered by action and by name.
 - **Stats**: charts of what was downloaded and when (see [Stats page](#stats-page)).
 - **Settings**: download, watcher, logging and notification settings (see
@@ -747,8 +753,12 @@ the token. Errors are `{"error": "...", "details": "..."}`.
 | `GET /local/downloads`, `DELETE /local/downloads/{id}` | Active downloads; cancel one (404 if unknown) |
 | `GET /putio/files?parent_id=`, `GET /putio/files/{id}` | Browse Put.io |
 | `DELETE /putio/files/{id}` | Delete from Put.io; 409 when the file is queued, downloading or paused |
+| `POST /putio/files/delete` | `{"file_ids": [1, 2]}`: delete several with one Put.io call; 409 (nothing deleted, names in `details`) when any is queued, downloading or paused; 400 for an empty list |
 | `GET`/`POST /putio/transfers`, `DELETE /putio/transfers/{id}` | List, add (`{"url"}` or `{"file_data"}`), remove transfers |
 | `POST /putio/transfers/{id}/retry` | Retry a failed transfer; answers with the transfer |
+| `POST /putio/transfers/remove` | `{"transfer_ids": [1, 2]}`: remove several with one Put.io cancel |
+| `POST /putio/transfers/retry` | `{"transfer_ids": [1, 2]}`: retry each → `{"retried": [ids], "failed": [{"id", "error"}]}` |
+| `POST /putio/transfers/clear` | `{"status": "completed" \| "failed" \| "finished", "dry_run": true}`: the transfers in that group → `{"count", "transfers"}`; with `false`, removes them from the transfer list (one Put.io clean, then one cancel for any it left) |
 | `POST /putio/cleanup/empty-folders` | `{"dry_run": true}`: find (or, with `false`, remove) empty Put.io folders → report with `removed`, `removed_count`, `kept_protected`, `kept_too_new`, `failures`; 409 while a run is going |
 | `POST /putio/transfers/{id}/readd` | Cancel a transfer and add its magnet again to the same folder; answers `{"cancelled_id", "transfer"}`. 400 without a magnet link (nothing cancelled); 500 with the magnet in `details` if the add fails after the cancel |
 | `GET /history?action=&name=&limit=&offset=` | History; `name` is a case-insensitive substring |
