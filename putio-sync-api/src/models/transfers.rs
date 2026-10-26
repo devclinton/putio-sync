@@ -1,6 +1,8 @@
 //! Transfer-related request and response models
 
+use putio_sync_core::stall::Stall;
 use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Request to add a new transfer
 #[derive(Debug, Deserialize)]
@@ -48,11 +50,58 @@ pub struct TransferResponse {
     /// Creation date
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+    /// Share of the torrent the swarm can supply (0-100); below 100 the last pieces may
+    /// never arrive
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub availability: Option<i32>,
+    /// Magnet link, when the transfer has one (feature 007)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub magnet: Option<String>,
+    /// Set while the transfer is stalled (feature 007)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stall: Option<StallInfo>,
+}
+
+/// A stalled transfer's verdict as the API reports it
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct StallInfo {
+    /// Last progress, Unix seconds
+    pub since: u64,
+    /// Seconds since the last progress, at response time
+    pub seconds: u64,
+    /// `availability N%`, `no peers` or `no progress`
+    pub reason: String,
+}
+
+impl StallInfo {
+    /// `stall` as seen at `now`
+    pub fn new(stall: &Stall, now: SystemTime) -> Self {
+        Self {
+            since: stall
+                .since
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs()),
+            seconds: now.duration_since(stall.since).map_or(0, |d| d.as_secs()),
+            reason: stall.reason.label(),
+        }
+    }
+}
+
+/// Answer to `POST /putio/transfers/{id}/readd`
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReaddResponse {
+    /// The transfer that was cancelled
+    pub cancelled_id: i64,
+    /// The transfer Put.io created from the same magnet
+    pub transfer: TransferResponse,
 }
 
 impl From<putio_sync_client::Transfer> for TransferResponse {
     fn from(transfer: putio_sync_client::Transfer) -> Self {
         Self {
+            availability: transfer.availability,
+            magnet: transfer.magnet().map(str::to_string),
+            stall: None,
             id: transfer.id,
             name: transfer.name,
             status: transfer.status,
@@ -105,6 +154,9 @@ mod tests {
             up_speed: Some(10240),
             error_message: None,
             created_at: Some("2024-01-01".to_string()),
+            availability: None,
+            magnet: None,
+            stall: None,
         };
 
         let json = serde_json::to_string(&response).unwrap();

@@ -31,6 +31,9 @@ pub mod notification;
 /// Path handling utilities
 pub mod path_utils;
 
+/// Stalled Put.io transfer detection
+pub mod stall;
+
 /// Re-export commonly used types
 pub mod prelude {
     pub use crate::config::{

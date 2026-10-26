@@ -124,8 +124,8 @@ pub struct Transfer {
     /// Availability percentage (0-100)
     #[serde(default)]
     pub availability: Option<i32>,
-    /// Current ratio
-    #[serde(default)]
+    /// Current ratio; Put.io sends it as a number or as text
+    #[serde(default, deserialize_with = "number_or_text")]
     pub current_ratio: Option<f64>,
     /// Seconds spent seeding
     pub seconds_seeding: Option<i64>,
@@ -142,6 +142,52 @@ pub struct Transfer {
     /// Whether transfer is private
     #[serde(default)]
     pub is_private: bool,
+    /// Magnet link of a torrent transfer (empty or absent for other kinds)
+    #[serde(default)]
+    pub magneturi: Option<String>,
+    /// Put.io path to the transfer's .torrent file
+    #[serde(default)]
+    pub torrent_link: Option<String>,
+    /// What the transfer was added from: a magnet link, a URL or a Put.io path
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Transfer kind (`TORRENT`, `URL`, `PLAYLIST`, ...)
+    #[serde(default, rename = "type")]
+    pub transfer_type: Option<String>,
+    /// Put.io's human-readable status line
+    #[serde(default)]
+    pub status_message: Option<String>,
+    /// Last message from the torrent's tracker
+    #[serde(default)]
+    pub tracker_message: Option<String>,
+}
+
+impl Transfer {
+    /// The magnet link to add this transfer again: `magneturi`, else `source` when it is a
+    /// magnet link. `None` for URL downloads and torrents added from a file without one.
+    pub fn magnet(&self) -> Option<&str> {
+        let magneturi = self.magneturi.as_deref().filter(|m| !m.is_empty());
+        magneturi.or_else(|| self.source.as_deref().filter(|s| s.starts_with("magnet:")))
+    }
+}
+
+/// `Option<f64>` from a JSON number, a numeric string or null
+fn number_or_text<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Number(f64),
+        Text(String),
+    }
+
+    match Option::<Raw>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(Raw::Number(n)) => Ok(Some(n)),
+        Some(Raw::Text(t)) => t.trim().parse().map(Some).map_err(serde::de::Error::custom),
+    }
 }
 
 /// Response for transfer listing
@@ -367,5 +413,66 @@ mod tests {
         let parsed: FileEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.id, file.id);
         assert_eq!(parsed.name, file.name);
+    }
+
+    /// A transfer as Put.io sends it, with `extra` merged over the defaults
+    fn transfer_json(extra: serde_json::Value) -> String {
+        let mut t = serde_json::json!({
+            "id": 7, "name": "Ubuntu ISO", "status": "DOWNLOADING",
+            "created_at": "2026-10-26T10:00:00Z", "save_parent_id": 12,
+            "estimated_time": null, "seconds_seeding": null, "error_message": null,
+            "finished_at": null, "file_id": null
+        });
+        for (k, v) in extra.as_object().unwrap() {
+            t[k] = v.clone();
+        }
+        t.to_string()
+    }
+
+    #[test]
+    fn transfer_reads_magnet_and_messages() {
+        let json = transfer_json(serde_json::json!({
+            "magneturi": "magnet:?xt=urn:btih:abc", "source": "magnet:?xt=urn:btih:abc",
+            "torrent_link": "/v2/transfers/7/torrent", "type": "TORRENT",
+            "status_message": "Downloading", "tracker_message": "Peers: 0"
+        }));
+        let t: Transfer = serde_json::from_str(&json).unwrap();
+        assert_eq!(t.magnet(), Some("magnet:?xt=urn:btih:abc"));
+        assert_eq!(t.transfer_type.as_deref(), Some("TORRENT"));
+        assert_eq!(t.status_message.as_deref(), Some("Downloading"));
+        assert_eq!(t.tracker_message.as_deref(), Some("Peers: 0"));
+        assert_eq!(t.torrent_link.as_deref(), Some("/v2/transfers/7/torrent"));
+    }
+
+    #[test]
+    fn transfer_magnet_falls_back_to_a_magnet_source() {
+        let from_source = transfer_json(serde_json::json!({
+            "magneturi": "", "source": "magnet:?xt=urn:btih:def"
+        }));
+        let t: Transfer = serde_json::from_str(&from_source).unwrap();
+        assert_eq!(t.magnet(), Some("magnet:?xt=urn:btih:def"));
+
+        let url_source = transfer_json(serde_json::json!({
+            "source": "https://example.com/file.iso", "type": "URL"
+        }));
+        let t: Transfer = serde_json::from_str(&url_source).unwrap();
+        assert_eq!(t.magnet(), None);
+    }
+
+    /// Put.io sends `current_ratio` as a number or as text (go-putio FIXME)
+    #[test]
+    fn transfer_current_ratio_accepts_number_text_or_null() {
+        for (raw, want) in [
+            (serde_json::json!(0.5), Some(0.5)),
+            (serde_json::json!("0.25"), Some(0.25)),
+            (serde_json::json!(null), None),
+        ] {
+            let json = transfer_json(serde_json::json!({ "current_ratio": raw }));
+            let t: Transfer = serde_json::from_str(&json).unwrap();
+            assert_eq!(t.current_ratio, want);
+        }
+        let missing: Transfer =
+            serde_json::from_str(&transfer_json(serde_json::json!({}))).unwrap();
+        assert_eq!(missing.current_ratio, None);
     }
 }

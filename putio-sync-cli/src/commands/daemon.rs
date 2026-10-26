@@ -193,6 +193,7 @@ pub async fn execute_daemon(
                 download_manager,
                 daemon.get_file_watcher(),
             )
+            .with_stall_tracker(daemon.stall_tracker())
             .on_daemon();
             crate::api_listener::start(&config, state).await?;
         }
@@ -232,12 +233,30 @@ fn daemon_config(
         watch_enabled: config.watch.enabled,
         api_enabled: config.api.enabled,
         api_url: config.api.url.clone(),
+        stall_threshold: std::time::Duration::from_secs(
+            config.transfers.stall_threshold_hours.saturating_mul(3600),
+        ),
+        stall_check_interval: config.transfers.stall_check_interval_secs,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `[transfers]` reaches the daemon's stall check (feature 007)
+    #[test]
+    fn daemon_config_takes_the_stall_settings() {
+        let mut config = Config::default();
+        config.transfers.stall_threshold_hours = 12;
+        config.transfers.stall_check_interval_secs = 120;
+        let daemon = daemon_config(&config, "t".to_string(), vec![], 60, 300, None);
+        assert_eq!(
+            daemon.stall_threshold,
+            std::time::Duration::from_secs(12 * 3600)
+        );
+        assert_eq!(daemon.stall_check_interval, 120);
+    }
 
     /// Every `[download]` setting the manager has reaches the daemon, not only the
     /// target directory, workers, buffer, delete-after and blocklist it used to copy

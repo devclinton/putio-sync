@@ -2215,12 +2215,16 @@ name = "putio-sync-daemon"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "mockito",
  "putio-sync-client",
+ "putio-sync-core",
  "putio-sync-db",
  "putio-sync-download",
  "putio-sync-file-manager",
+ "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",

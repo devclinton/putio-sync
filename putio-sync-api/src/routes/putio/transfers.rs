@@ -6,13 +6,14 @@
 //! - GET  /putio/transfers/:id    - Get specific transfer stats
 //! - DELETE /putio/transfers/:id  - Remove transfer (Put.io cancel)
 //! - POST /putio/transfers/:id/retry - Retry a failed transfer
+//! - POST /putio/transfers/:id/readd - Cancel a transfer and add its magnet again
 //!
 //! Put.io has no pause or resume for transfers, so there are no start/stop routes:
 //! retry restarts a failed one, remove stops and deletes one.
 
 use crate::error::ApiError;
 use crate::handlers::transfers;
-use crate::models::transfers::{AddTransferRequest, TransferResponse};
+use crate::models::transfers::{AddTransferRequest, ReaddResponse, TransferResponse};
 use crate::models::{ListResponse, SuccessResponse};
 use axum::{
     extract::{Path, State},
@@ -31,6 +32,7 @@ pub fn router() -> Router<AppState> {
         .route("/:id", get(get_transfer))
         .route("/:id", delete(remove_transfer))
         .route("/:id/retry", post(retry_transfer))
+        .route("/:id/readd", post(readd_transfer))
 }
 
 /// List all transfers
@@ -39,7 +41,9 @@ pub fn router() -> Router<AppState> {
 async fn list_transfers(
     State(state): State<AppState>,
 ) -> Result<Json<ListResponse<TransferResponse>>, ApiError> {
-    transfers::list_transfers(&state.client).await.map(Json)
+    transfers::list_transfers(&state.client, &state.stall_tracker)
+        .await
+        .map(Json)
 }
 
 /// Add a new transfer
@@ -61,7 +65,7 @@ async fn get_transfer(
     State(state): State<AppState>,
     Path(transfer_id): Path<i64>,
 ) -> Result<Json<TransferResponse>, ApiError> {
-    transfers::get_transfer(&state.client, transfer_id)
+    transfers::get_transfer(&state.client, &state.stall_tracker, transfer_id)
         .await
         .map(Json)
 }
@@ -86,6 +90,18 @@ async fn retry_transfer(
     Path(transfer_id): Path<i64>,
 ) -> Result<Json<TransferResponse>, ApiError> {
     transfers::retry_transfer(&state.client, transfer_id)
+        .await
+        .map(Json)
+}
+
+/// Cancel a transfer and add its magnet again to the same folder (feature 007)
+///
+/// POST /putio/transfers/:id/readd
+async fn readd_transfer(
+    State(state): State<AppState>,
+    Path(transfer_id): Path<i64>,
+) -> Result<Json<ReaddResponse>, ApiError> {
+    transfers::readd_transfer(&state.client, transfer_id)
         .await
         .map(Json)
 }

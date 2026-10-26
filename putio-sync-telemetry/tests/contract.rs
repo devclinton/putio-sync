@@ -30,6 +30,7 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_watch_cleanups_total",
     "putio_sync_watch_invalid_total",
     "putio_sync_watch_cleanup_failures_total",
+    "putio_sync_transfers_stalled",
     "putio_sync_db_errors_total",
     "putio_sync_disk_free_bytes",
     "putio_sync_disk_total_bytes",
@@ -136,6 +137,7 @@ fn record_everything(t: &Telemetry) {
     t.watch_cleaned_up();
     t.watch_invalid_file();
     t.watch_cleanup_failed();
+    t.set_transfers_stalled(2);
     t.db_error(DbOp::Queue);
     t.set_queue_counts(&[(QueueState::Pending, 2)]);
     let dir = tempfile::tempdir().unwrap();
@@ -292,4 +294,15 @@ fn detailed_creates_one_series_per_worker_and_feeds_operation_latency() {
         t.sample("putio_sync_api_operation_duration_seconds", &op),
         Some(1.0)
     );
+}
+
+/// Feature 007: the stalled-transfer gauge starts at 0 and holds the last count
+#[test]
+fn transfers_stalled_reads_the_last_count() {
+    let t = Telemetry::new();
+    assert_eq!(t.sample("putio_sync_transfers_stalled", &[]), Some(0.0));
+    t.set_transfers_stalled(3);
+    assert_eq!(t.sample("putio_sync_transfers_stalled", &[]), Some(3.0));
+    t.set_transfers_stalled(0);
+    assert_eq!(t.sample("putio_sync_transfers_stalled", &[]), Some(0.0));
 }
