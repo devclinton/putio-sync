@@ -6,6 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use putio_sync_core::config::{AuthMethod, Config};
 use putio_sync_daemon::{DaemonConfig, PutioDaemon};
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 use tracing::{info, warn};
 
 /// Execute the daemon command
@@ -118,6 +119,15 @@ pub async fn execute_daemon(
         blocked_extensions: config.download.blocked_extensions.clone(),
     };
 
+    let queue_db = Arc::new(OnceLock::new());
+    crate::telemetry::start(
+        &config,
+        queue_db.clone(),
+        daemon_config.workers,
+        daemon_config.download_dir.clone(),
+    )
+    .await?;
+
     info!("Daemon configuration:");
     info!(
         "  Download directory: {}",
@@ -164,6 +174,10 @@ pub async fn execute_daemon(
         .initialize()
         .await
         .context("Failed to initialize daemon")?;
+
+    if let Some(db) = daemon.get_database() {
+        let _ = queue_db.set(db);
+    }
 
     info!("✅ Daemon initialized successfully");
     info!("🔄 Starting daemon loop...");

@@ -2,6 +2,8 @@
 
 use super::error::{DbError, DbResult};
 use super::models::ProcessedTorrent;
+use crate::error::tracked;
+use putio_sync_telemetry::DbOp;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
@@ -25,9 +27,7 @@ impl<'a> ProcessedTorrentsRepository<'a> {
                 .bind(checksum)
                 .fetch_one(self.pool)
                 .await
-                .map_err(|e| {
-                    DbError::DatabaseError(format!("Failed to check processed torrent: {}", e))
-                })?;
+                .map_err(tracked(DbOp::Uploads, "Failed to check processed torrent"))?;
 
         let count: i64 = result.get("count");
         Ok(count > 0)
@@ -55,9 +55,7 @@ impl<'a> ProcessedTorrentsRepository<'a> {
             .bind(magnet_link)
             .execute(self.pool)
             .await
-            .map_err(|e| {
-                DbError::DatabaseError(format!("Failed to record processed torrent: {}", e))
-            })?;
+            .map_err(tracked(DbOp::Uploads, "Failed to record processed torrent"))?;
 
         debug!(
             "Recorded processed torrent: {} (checksum: {})",
@@ -73,7 +71,7 @@ impl<'a> ProcessedTorrentsRepository<'a> {
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to fetch processed torrents: {}", e)))?;
+        .map_err(tracked(DbOp::Uploads, "Failed to fetch processed torrents"))?;
 
         Ok(torrents)
     }
@@ -83,9 +81,7 @@ impl<'a> ProcessedTorrentsRepository<'a> {
         let result = sqlx::query("SELECT COUNT(*) as count FROM processed_torrents")
             .fetch_one(self.pool)
             .await
-            .map_err(|e| {
-                DbError::DatabaseError(format!("Failed to count processed torrents: {}", e))
-            })?;
+            .map_err(tracked(DbOp::Uploads, "Failed to count processed torrents"))?;
 
         Ok(result.get("count"))
     }
@@ -98,9 +94,10 @@ impl<'a> ProcessedTorrentsRepository<'a> {
             .bind(days)
             .execute(self.pool)
             .await
-            .map_err(|e| {
-                DbError::DatabaseError(format!("Failed to cleanup old processed torrents: {}", e))
-            })?;
+            .map_err(tracked(
+                DbOp::Uploads,
+                "Failed to cleanup old processed torrents",
+            ))?;
 
         let rows_deleted = result.rows_affected();
         info!("Cleaned up {} old processed torrent records", rows_deleted);

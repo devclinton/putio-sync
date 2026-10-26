@@ -2085,6 +2085,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "prometheus"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ca5326d8d0b950a9acd87e6a3f94745394f62e4dae1b1ee22b2bc0c394af43a"
+dependencies = [
+ "cfg-if",
+ "fnv",
+ "lazy_static",
+ "memchr",
+ "parking_lot",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "putio-sync-api"
 version = "0.1.1"
 dependencies = [
@@ -2138,6 +2152,7 @@ dependencies = [
  "putio-sync-db",
  "putio-sync-download",
  "putio-sync-file-manager",
+ "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2158,6 +2173,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "mockito",
+ "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2178,6 +2194,7 @@ dependencies = [
  "glob",
  "mockito",
  "putio-sync-client",
+ "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2217,6 +2234,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "putio-sync-telemetry",
  "serde",
  "serde_json",
  "sha2",
@@ -2238,6 +2256,7 @@ dependencies = [
  "mockito",
  "putio-sync-client",
  "putio-sync-db",
+ "putio-sync-telemetry",
  "reqwest 0.12.28",
  "tempfile",
  "thiserror 1.0.69",
@@ -2256,12 +2275,26 @@ dependencies = [
  "notify",
  "putio-sync-client",
  "putio-sync-db",
+ "putio-sync-telemetry",
  "sha2",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "putio-sync-telemetry"
+version = "0.1.1"
+dependencies = [
+ "axum",
+ "prometheus",
+ "reqwest 0.12.28",
+ "rustix",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

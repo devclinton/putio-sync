@@ -3,9 +3,10 @@
 use crate::auth::{AuthConfig, AuthMethod};
 use crate::error::{ClientError, ClientResult};
 use base64::{engine::general_purpose::STANDARD, Engine};
+use putio_sync_telemetry::{api, ApiOp, ApiOutcome, RetryReason};
 use reqwest::{header, Client, Request, Response, StatusCode};
 use serde::de::DeserializeOwned;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{debug, trace, warn};
 
 /// Default base URL for Put.io API
@@ -54,6 +55,16 @@ impl RetryPolicy {
         // 0.8..=1.2
         let factor = 0.8 + f64::from(nanos % 401) / 1000.0;
         base.mul_f64(factor)
+    }
+}
+
+/// Outcome class of one HTTP attempt. Every 4xx, 429 included, is a client error.
+pub(crate) fn attempt_outcome(result: &reqwest::Result<Response>) -> ApiOutcome {
+    match result {
+        Ok(r) if r.status().is_success() => ApiOutcome::Success,
+        Ok(r) if r.status().is_server_error() => ApiOutcome::ServerError,
+        Ok(_) => ApiOutcome::ClientError,
+        Err(_) => ApiOutcome::NetworkError,
     }
 }
 
@@ -454,6 +465,7 @@ impl PutioApiClient {
         let max_attempts = self.retry_policy.max_attempts.max(1);
         let mut url = request.url().clone();
         url.set_query(None);
+        let op = ApiOp::from_path(url.path());
         let mut attempt = 0;
 
         loop {
@@ -465,7 +477,11 @@ impl PutioApiClient {
                 ClientError::InternalError("Cannot clone request for retry".to_string())
             })?;
 
-            let (delay, error) = match self.client.execute(req).await {
+            let started = Instant::now();
+            let result = self.client.execute(req).await;
+            api::record_attempt(op, attempt_outcome(&result), started.elapsed());
+
+            let (delay, error, reason) = match result {
                 Ok(response) => {
                     let status = response.status();
                     trace!("Response status: {}", status);
@@ -488,11 +504,18 @@ impl PutioApiClient {
                         Some(d) if status == StatusCode::TOO_MANY_REQUESTS => d,
                         _ => self.retry_policy.delay(attempt),
                     };
-                    (delay, format!("HTTP {}", status))
+                    let reason = if status == StatusCode::TOO_MANY_REQUESTS {
+                        RetryReason::RateLimited
+                    } else {
+                        RetryReason::ServerError
+                    };
+                    (delay, format!("HTTP {}", status), reason)
                 }
-                Err(e) if attempt < max_attempts => {
-                    (self.retry_policy.delay(attempt), error_chain(&e))
-                }
+                Err(e) if attempt < max_attempts => (
+                    self.retry_policy.delay(attempt),
+                    error_chain(&e),
+                    RetryReason::Network,
+                ),
                 Err(e) => return Err(ClientError::HttpError(e)),
             };
 
@@ -504,6 +527,7 @@ impl PutioApiClient {
                 error = %error,
                 "Put.io request failed, retrying"
             );
+            api::record_retry(reason);
             tokio::time::sleep(delay).await;
         }
     }

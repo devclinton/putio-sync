@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::logging::LevelSource;
+use putio_sync_telemetry::server::MetricsSettings;
+use putio_sync_telemetry::Detail;
+
 /// Default value for delete_empty_folders
 fn default_delete_empty_folders() -> bool {
     true
@@ -52,6 +56,9 @@ pub struct Config {
     /// Logging configuration
     #[serde(default)]
     pub logging: crate::logging::LoggingConfig,
+    /// Prometheus metrics configuration
+    #[serde(default)]
+    pub metrics: MetricsConfig,
 }
 
 /// Authentication method
@@ -851,7 +858,102 @@ impl ConfigBuilder {
             notifications: NotificationConfig::default(),
             api: ApiConfig::default(),
             logging: crate::logging::LoggingConfig::default(),
+            metrics: MetricsConfig::default(),
         }
+    }
+}
+
+/// `[metrics]` settings as written in the config file. Values are kept as written and
+/// checked by [`Config::resolve_metrics`], so a bad value gets the same error from TOML
+/// and from the environment.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct MetricsConfig {
+    /// Start the metrics listener
+    pub enabled: bool,
+    /// Listen address, `ip:port`
+    pub bind: String,
+    /// Scrape path
+    pub path: String,
+    /// `basic` or `detailed`
+    pub detail: String,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        let d = MetricsSettings::default();
+        Self {
+            enabled: d.enabled,
+            bind: d.bind.to_string(),
+            path: d.path,
+            detail: d.detail.as_str().to_string(),
+        }
+    }
+}
+
+/// A resolved setting and where it came from. `source` is `Env` when any environment
+/// variable overrode the config file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resolved<T> {
+    /// The effective value
+    pub value: T,
+    /// Where it came from
+    pub source: LevelSource,
+}
+
+fn invalid(setting: &str, value: &str, allowed: &str) -> CoreError {
+    CoreError::ConfigError(format!(
+        "invalid {} '{}': expected one of {}",
+        setting, value, allowed
+    ))
+}
+
+impl Config {
+    /// Resolve `[metrics]`, applying the `PUTIO_SYNC_METRICS_*` overrides. Invalid
+    /// values in either place are an error, so startup fails.
+    pub fn resolve_metrics(&self) -> CoreResult<Resolved<MetricsSettings>> {
+        let m = &self.metrics;
+        let mut source = LevelSource::Config;
+        let mut env = |name: &str| {
+            let v = std::env::var(name).ok();
+            if v.is_some() {
+                source = LevelSource::Env;
+            }
+            v
+        };
+
+        let enabled = match env("PUTIO_SYNC_METRICS_ENABLED") {
+            None => m.enabled,
+            Some(v) => match v.as_str() {
+                "true" | "1" => true,
+                "false" | "0" => false,
+                _ => return Err(invalid("metrics.enabled", &v, "true, false, 1, 0")),
+            },
+        };
+        let bind_str = env("PUTIO_SYNC_METRICS_BIND").unwrap_or_else(|| m.bind.clone());
+        let bind = bind_str
+            .parse()
+            .map_err(|_| invalid("metrics.bind", &bind_str, "ip:port"))?;
+        let path = env("PUTIO_SYNC_METRICS_PATH").unwrap_or_else(|| m.path.clone());
+        if !path.starts_with('/') || path.chars().any(char::is_whitespace) {
+            return Err(invalid(
+                "metrics.path",
+                &path,
+                "a path starting with / and no spaces",
+            ));
+        }
+        let detail_str = env("PUTIO_SYNC_METRICS_DETAIL").unwrap_or_else(|| m.detail.clone());
+        let detail: Detail = detail_str.parse().map_err(CoreError::ConfigError)?;
+
+        Ok(Resolved {
+            value: MetricsSettings {
+                enabled,
+                bind,
+                path,
+                detail,
+            },
+            source,
+        })
     }
 }
 
@@ -899,6 +1001,7 @@ mod tests {
             notifications: NotificationConfig::default(),
             api: ApiConfig::default(),
             logging: crate::logging::LoggingConfig::default(),
+            metrics: MetricsConfig::default(),
         }
     }
 
@@ -1285,5 +1388,127 @@ mod tests {
     fn test_auth_method_default() {
         let method = AuthMethod::default();
         assert_eq!(method, AuthMethod::Token);
+    }
+}
+
+#[cfg(test)]
+mod metrics_tests {
+    use super::*;
+
+    /// Serialises tests that change PUTIO_SYNC_METRICS_*
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    const VARS: [&str; 4] = [
+        "PUTIO_SYNC_METRICS_ENABLED",
+        "PUTIO_SYNC_METRICS_BIND",
+        "PUTIO_SYNC_METRICS_PATH",
+        "PUTIO_SYNC_METRICS_DETAIL",
+    ];
+
+    fn with_env<R>(vars: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        for v in VARS {
+            std::env::remove_var(v);
+        }
+        for (k, v) in vars {
+            std::env::set_var(k, v);
+        }
+        let out = f();
+        for v in VARS {
+            std::env::remove_var(v);
+        }
+        out
+    }
+
+    fn err(config: &Config) -> String {
+        match config.resolve_metrics() {
+            Err(CoreError::ConfigError(msg)) => msg,
+            other => panic!("expected a config error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn defaults() {
+        let r = with_env(&[], || Config::default().resolve_metrics().unwrap());
+        assert_eq!(r.value, MetricsSettings::default());
+        assert_eq!(r.source, LevelSource::Config);
+    }
+
+    #[test]
+    fn toml_table_is_read() {
+        let config: Config = toml::from_str(
+            "[metrics]\nenabled = false\nbind = \"127.0.0.1:9100\"\ndetail = \"detailed\"\n",
+        )
+        .unwrap();
+        let r = with_env(&[], || config.resolve_metrics().unwrap());
+        assert!(!r.value.enabled);
+        assert_eq!(r.value.bind.to_string(), "127.0.0.1:9100");
+        assert_eq!(r.value.path, "/metrics");
+        assert_eq!(r.value.detail, Detail::Detailed);
+    }
+
+    #[test]
+    fn env_beats_config() {
+        let mut config = Config::default();
+        config.metrics.enabled = false;
+        let r = with_env(
+            &[
+                ("PUTIO_SYNC_METRICS_ENABLED", "1"),
+                ("PUTIO_SYNC_METRICS_BIND", "127.0.0.1:0"),
+                ("PUTIO_SYNC_METRICS_PATH", "/prom"),
+                ("PUTIO_SYNC_METRICS_DETAIL", "detailed"),
+            ],
+            || config.resolve_metrics().unwrap(),
+        );
+        assert!(r.value.enabled);
+        assert_eq!(r.value.bind.to_string(), "127.0.0.1:0");
+        assert_eq!(r.value.path, "/prom");
+        assert_eq!(r.value.detail, Detail::Detailed);
+        assert_eq!(r.source, LevelSource::Env);
+    }
+
+    #[test]
+    fn invalid_env_values_give_exact_messages() {
+        let config = Config::default();
+        let cases = [
+            (
+                "PUTIO_SYNC_METRICS_ENABLED",
+                "yes",
+                "invalid metrics.enabled 'yes': expected one of true, false, 1, 0",
+            ),
+            (
+                "PUTIO_SYNC_METRICS_BIND",
+                "nas:9742",
+                "invalid metrics.bind 'nas:9742': expected one of ip:port",
+            ),
+            (
+                "PUTIO_SYNC_METRICS_PATH",
+                "metrics",
+                "invalid metrics.path 'metrics': expected one of a path starting with / and no spaces",
+            ),
+            (
+                "PUTIO_SYNC_METRICS_PATH",
+                "/my metrics",
+                "invalid metrics.path '/my metrics': expected one of a path starting with / and no spaces",
+            ),
+            (
+                "PUTIO_SYNC_METRICS_DETAIL",
+                "max",
+                "invalid metrics.detail 'max': expected one of basic, detailed",
+            ),
+        ];
+        for (var, value, message) in cases {
+            assert_eq!(with_env(&[(var, value)], || err(&config)), message);
+        }
+    }
+
+    #[test]
+    fn invalid_toml_value_gives_the_same_message() {
+        let mut config = Config::default();
+        config.metrics.detail = "max".to_string();
+        assert_eq!(
+            with_env(&[], || err(&config)),
+            "invalid metrics.detail 'max': expected one of basic, detailed"
+        );
     }
 }

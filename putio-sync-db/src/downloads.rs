@@ -1,7 +1,8 @@
 //! Download repository for managing download records
 
-use super::error::{DbError, DbResult};
+use super::error::{tracked, DbResult};
 use super::models::{Download, DownloadStatus};
+use putio_sync_telemetry::DbOp;
 use sqlx::SqlitePool;
 use tracing::debug;
 
@@ -51,7 +52,7 @@ impl<'a> DownloadRepository<'a> {
         .bind(status.to_string())
         .execute(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to insert download: {}", e)))?;
+        .map_err(tracked(DbOp::History, "Failed to insert download"))?;
 
         Ok(result.last_insert_rowid())
     }
@@ -85,7 +86,7 @@ impl<'a> DownloadRepository<'a> {
         .bind(retry_count)
         .execute(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to insert download: {}", e)))?;
+        .map_err(tracked(DbOp::History, "Failed to insert download"))?;
 
         Ok(result.last_insert_rowid())
     }
@@ -103,7 +104,7 @@ impl<'a> DownloadRepository<'a> {
         .bind(file_id)
         .fetch_optional(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to find download: {}", e)))?;
+        .map_err(tracked(DbOp::History, "Failed to find download"))?;
 
         Ok(download)
     }
@@ -126,7 +127,7 @@ impl<'a> DownloadRepository<'a> {
         .bind(file_size)
         .fetch_optional(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to find download: {}", e)))?;
+        .map_err(tracked(DbOp::History, "Failed to find download"))?;
 
         Ok(download)
     }
@@ -141,7 +142,7 @@ impl<'a> DownloadRepository<'a> {
         .bind(id)
         .fetch_optional(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to get download: {}", e)))?;
+        .map_err(tracked(DbOp::History, "Failed to get download"))?;
 
         Ok(download)
     }
@@ -159,7 +160,7 @@ impl<'a> DownloadRepository<'a> {
         .bind(id)
         .execute(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to update download status: {}", e)))?;
+        .map_err(tracked(DbOp::History, "Failed to update download status"))?;
 
         Ok(())
     }
@@ -175,9 +176,10 @@ impl<'a> DownloadRepository<'a> {
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| {
-            DbError::DatabaseError(format!("Failed to list incomplete downloads: {}", e))
-        })?;
+        .map_err(tracked(
+            DbOp::History,
+            "Failed to list incomplete downloads",
+        ))?;
 
         Ok(downloads)
     }
@@ -194,7 +196,7 @@ impl<'a> DownloadRepository<'a> {
         .bind(id)
         .execute(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to delete download: {}", e)))?;
+        .map_err(tracked(DbOp::History, "Failed to delete download"))?;
 
         Ok(())
     }

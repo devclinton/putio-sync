@@ -1,7 +1,8 @@
 //! Queue repository for managing download queue
 
-use super::error::{DbError, DbResult};
+use super::error::{tracked, DbResult};
 use super::models::{QueueItem, QueueStatus};
+use putio_sync_telemetry::DbOp;
 use sqlx::SqlitePool;
 use tracing::debug;
 
@@ -50,7 +51,7 @@ impl<'a> QueueRepository<'a> {
         .bind(QueueStatus::Pending.to_string())
         .execute(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to add to queue: {}", e)))?;
+        .map_err(tracked(DbOp::Queue, "Failed to add to queue"))?;
 
         Ok(result.last_insert_rowid())
     }
@@ -66,7 +67,7 @@ impl<'a> QueueRepository<'a> {
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to get pending queue items: {}", e)))?;
+        .map_err(tracked(DbOp::Queue, "Failed to get pending queue items"))?;
 
         Ok(items)
     }
@@ -95,7 +96,7 @@ impl<'a> QueueRepository<'a> {
         )
         .fetch_optional(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to claim queue item: {}", e)))
+        .map_err(tracked(DbOp::Queue, "Failed to claim queue item"))
     }
 
     /// Get all queue items
@@ -108,7 +109,7 @@ impl<'a> QueueRepository<'a> {
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to get queue items: {}", e)))?;
+        .map_err(tracked(DbOp::Queue, "Failed to get queue items"))?;
 
         Ok(items)
     }
@@ -124,9 +125,7 @@ impl<'a> QueueRepository<'a> {
         .bind(file_id)
         .fetch_optional(self.pool)
         .await
-        .map_err(|e| {
-            DbError::DatabaseError(format!("Failed to get queue item by file_id: {}", e))
-        })?;
+        .map_err(tracked(DbOp::Queue, "Failed to get queue item by file_id"))?;
 
         Ok(item)
     }
@@ -144,7 +143,7 @@ impl<'a> QueueRepository<'a> {
         .bind(file_id)
         .execute(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to update queue status: {}", e)))?;
+        .map_err(tracked(DbOp::Queue, "Failed to update queue status"))?;
 
         Ok(())
     }
@@ -162,7 +161,7 @@ impl<'a> QueueRepository<'a> {
         .bind(file_id)
         .execute(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to update queue priority: {}", e)))?;
+        .map_err(tracked(DbOp::Queue, "Failed to update queue priority"))?;
 
         Ok(())
     }
@@ -178,7 +177,7 @@ impl<'a> QueueRepository<'a> {
         )
         .execute(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to pause queue: {}", e)))?;
+        .map_err(tracked(DbOp::Queue, "Failed to pause queue"))?;
 
         Ok(result.rows_affected() as usize)
     }
@@ -194,7 +193,7 @@ impl<'a> QueueRepository<'a> {
         )
         .execute(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to resume queue: {}", e)))?;
+        .map_err(tracked(DbOp::Queue, "Failed to resume queue"))?;
 
         Ok(result.rows_affected() as usize)
     }
@@ -210,7 +209,7 @@ impl<'a> QueueRepository<'a> {
         .bind(file_id)
         .execute(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to remove from queue: {}", e)))?;
+        .map_err(tracked(DbOp::Queue, "Failed to remove from queue"))?;
 
         Ok(())
     }
@@ -225,9 +224,23 @@ impl<'a> QueueRepository<'a> {
         )
         .execute(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to clear completed items: {}", e)))?;
+        .map_err(tracked(DbOp::Queue, "Failed to clear completed items"))?;
 
         Ok(result.rows_affected() as usize)
+    }
+
+    /// Row counts for the states that have a queue gauge
+    pub async fn counts_by_status(&self) -> DbResult<Vec<(String, i64)>> {
+        sqlx::query_as::<_, (String, i64)>(
+            r#"
+            SELECT status, COUNT(*) FROM download_queue
+            WHERE status IN ('pending', 'downloading', 'paused', 'failed')
+            GROUP BY status
+            "#,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Queue, "Failed to count queue items"))
     }
 
     /// Get queue statistics
@@ -246,7 +259,7 @@ impl<'a> QueueRepository<'a> {
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to get queue stats: {}", e)))?;
+        .map_err(tracked(DbOp::Queue, "Failed to get queue stats"))?;
 
         Ok(stats)
     }

@@ -1,7 +1,8 @@
 //! History repository for managing download and delete history
 
-use super::error::{DbError, DbResult};
+use super::error::{tracked, DbResult};
 use super::models::{DownloadHistory, HistoryAction};
+use putio_sync_telemetry::DbOp;
 use sqlx::SqlitePool;
 use tracing::debug;
 
@@ -61,7 +62,7 @@ impl<'a> HistoryRepository<'a> {
         .bind(average_speed)
         .execute(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to insert history: {}", e)))?;
+        .map_err(tracked(DbOp::History, "Failed to insert history"))?;
 
         Ok(result.last_insert_rowid())
     }
@@ -109,7 +110,7 @@ impl<'a> HistoryRepository<'a> {
                 .await
             }
         }
-        .map_err(|e| DbError::DatabaseError(format!("Failed to query history: {}", e)))?;
+        .map_err(tracked(DbOp::History, "Failed to query history"))?;
 
         Ok(history)
     }
@@ -157,9 +158,10 @@ impl<'a> HistoryRepository<'a> {
         }
         q = q.bind(limit).bind(offset);
 
-        let history = q.fetch_all(self.pool).await.map_err(|e| {
-            DbError::DatabaseError(format!("Failed to query history by date: {}", e))
-        })?;
+        let history = q
+            .fetch_all(self.pool)
+            .await
+            .map_err(tracked(DbOp::History, "Failed to query history by date"))?;
 
         Ok(history)
     }
@@ -191,7 +193,7 @@ impl<'a> HistoryRepository<'a> {
                 .await
             }
         }
-        .map_err(|e| DbError::DatabaseError(format!("Failed to count history: {}", e)))?;
+        .map_err(tracked(DbOp::History, "Failed to count history"))?;
 
         Ok(count.0)
     }

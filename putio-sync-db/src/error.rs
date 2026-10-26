@@ -25,6 +25,18 @@ pub enum DbError {
 /// Convenience type alias for Results that return `DbError`
 pub type DbResult<T> = Result<T, DbError>;
 
+/// Build a `map_err` closure that counts the error under `op` and wraps it as
+/// `DatabaseError("<context>: <error>")`.
+pub(crate) fn tracked<E: std::fmt::Display>(
+    op: putio_sync_telemetry::DbOp,
+    context: &'static str,
+) -> impl Fn(E) -> DbError {
+    move |e| {
+        putio_sync_telemetry::db::error(op);
+        DbError::DatabaseError(format!("{}: {}", context, e))
+    }
+}
+
 impl From<serde_json::Error> for DbError {
     fn from(err: serde_json::Error) -> Self {
         DbError::SerializationError(err.to_string())

@@ -165,14 +165,20 @@ impl PutioApiClient {
         let url = "https://upload.put.io/v2/files/upload";
         let auth_header = self.get_auth_header()?;
 
-        let response = self
+        let started = std::time::Instant::now();
+        let result = self
             .client
             .post(url)
             .header(reqwest::header::AUTHORIZATION, auth_header)
             .multipart(form)
             .send()
-            .await
-            .map_err(crate::error::ClientError::HttpError)?;
+            .await;
+        putio_sync_telemetry::api::record_attempt(
+            putio_sync_telemetry::ApiOp::Upload,
+            crate::client::attempt_outcome(&result),
+            started.elapsed(),
+        );
+        let response = result.map_err(crate::error::ClientError::HttpError)?;
 
         let status = response.status();
 

@@ -8,6 +8,9 @@ repository.workspace = true
 description = "Download management for putio-sync - streaming downloads and worker pools"
 
 [dependencies]
+# Metrics
+putio-sync-telemetry = { path = "../putio-sync-telemetry" }
+
 # Internal dependencies
 putio-sync-client = { path = "../putio-sync-client" }
 putio-sync-db = { path = "../putio-sync-db" }
