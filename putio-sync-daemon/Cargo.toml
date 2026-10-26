@@ -10,10 +10,11 @@ description = "Daemon orchestrator for putio-sync - coordinates downloads, file 
 [dependencies]
 # Internal dependencies
 putio-sync-client = { path = "../putio-sync-client" }
+putio-sync-core = { path = "../putio-sync-core" }
+putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 putio-sync-db = { path = "../putio-sync-db" }
 putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-file-manager = { path = "../putio-sync-file-manager" }
-putio-sync-core = { path = "../putio-sync-core" }
 
 # Async runtime
 tokio = { workspace = true }
@@ -38,6 +39,8 @@ chrono = "0.4"
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.8"
+mockito = "1.2"
+serde_json = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true

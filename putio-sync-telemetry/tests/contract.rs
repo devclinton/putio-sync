@@ -34,6 +34,7 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_empty_folders_deleted_total",
     "putio_sync_empty_folder_delete_failures_total",
     "putio_sync_empty_folder_last_success_timestamp_seconds",
+    "putio_sync_transfers_stalled",
     "putio_sync_db_errors_total",
     "putio_sync_disk_free_bytes",
     "putio_sync_disk_total_bytes",
@@ -143,6 +144,7 @@ fn record_everything(t: &Telemetry) {
     t.empty_folder_run(CleanupTrigger::Schedule, SyncResult::Success);
     t.empty_folders_deleted(3);
     t.empty_folder_delete_failed();
+    t.set_transfers_stalled(2);
     t.db_error(DbOp::Queue);
     t.set_queue_counts(&[(QueueState::Pending, 2)]);
     let dir = tempfile::tempdir().unwrap();
@@ -352,4 +354,15 @@ fn empty_folder_cleanup_metrics() {
         t.sample("putio_sync_empty_folder_delete_failures_total", &[]),
         Some(1.0)
     );
+}
+
+/// Feature 007: the stalled-transfer gauge starts at 0 and holds the last count
+#[test]
+fn transfers_stalled_reads_the_last_count() {
+    let t = Telemetry::new();
+    assert_eq!(t.sample("putio_sync_transfers_stalled", &[]), Some(0.0));
+    t.set_transfers_stalled(3);
+    assert_eq!(t.sample("putio_sync_transfers_stalled", &[]), Some(3.0));
+    t.set_transfers_stalled(0);
+    assert_eq!(t.sample("putio_sync_transfers_stalled", &[]), Some(0.0));
 }

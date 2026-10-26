@@ -39,6 +39,7 @@ use axum::Router;
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::Config;
+use putio_sync_core::stall::StallTracker;
 use putio_sync_db::Database;
 use putio_sync_download::{DownloadConfig, DownloadManager};
 use putio_sync_file_manager::TorrentWatcher;
@@ -86,6 +87,9 @@ pub struct AppState {
     pub logging_reload: bool,
     /// Empty-folder cleanup; under `daemon`, the same service runs the daily cleanup
     pub cleanup: Arc<EmptyFolderCleanup>,
+    /// Stalled-transfer verdicts (feature 007). Empty unless the daemon's tracker is
+    /// swapped in with [`AppState::with_stall_tracker`].
+    pub stall_tracker: Arc<StallTracker>,
 }
 
 /// The engine behind the API (FR-018: a save says what applies now)
@@ -125,11 +129,18 @@ impl AppState {
             download_manager,
             file_watcher,
             started_at: Instant::now(),
+            stall_tracker: Arc::new(StallTracker::default()),
             limiter: Arc::new(middleware::ratelimit::AuthLimiter::new(
                 middleware::ratelimit::AUTH_FAILURE_LIMIT,
                 middleware::ratelimit::AUTH_FAILURE_WINDOW,
             )),
         }
+    }
+
+    /// Read stall verdicts from `tracker`, the one the daemon's stall check task feeds
+    pub fn with_stall_tracker(mut self, tracker: Arc<StallTracker>) -> AppState {
+        self.stall_tracker = tracker;
+        self
     }
 
     /// Mark the state as running on the daemon's own engine (`api_listener::start`)

@@ -1799,10 +1799,7 @@ async fn download_source(
     DownloadSource {
         transfer_id: Some(transfer.id),
         source_type: Some(source_type),
-        tracker_host: transfer
-            .any_tracker_host()
-            .filter(|_| torrent)
-            .map(str::to_string),
+        tracker_host: transfer.any_tracker_host().filter(|_| torrent),
         is_private: torrent && transfer.is_private,
         origin: created.as_ref().map_or(Origin::Putio, |c| c.origin),
         watch_folder: created.and_then(|c| c.watch_folder),

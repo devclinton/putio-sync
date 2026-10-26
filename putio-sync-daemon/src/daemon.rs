@@ -8,12 +8,14 @@
 use crate::error::DaemonResult;
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::cleanup::EmptyFolderCleanup;
+use putio_sync_core::stall::StallTracker;
 use putio_sync_db::Database;
 use putio_sync_download::{DownloadConfig, DownloadManager};
 use putio_sync_file_manager::watcher::WatcherConfig;
 use putio_sync_file_manager::TorrentWatcher;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -50,6 +52,10 @@ pub struct DaemonConfig {
     pub api_enabled: bool,
     /// API server URL (required if api_enabled is true)
     pub api_url: Option<String>,
+    /// Time without new bytes before a downloading Put.io transfer is stalled
+    pub stall_threshold: Duration,
+    /// Seconds between checks of the Put.io transfer list for stalls
+    pub stall_check_interval: u64,
 }
 
 /// (Put.io sync interval, queue worker interval) in seconds.
@@ -73,6 +79,8 @@ impl Default for DaemonConfig {
             watch_enabled: true,
             api_enabled: false,
             api_url: None,
+            stall_threshold: Duration::from_secs(6 * 3600),
+            stall_check_interval: 600,
         }
     }
 }
@@ -113,12 +121,15 @@ pub struct PutioDaemon {
     file_watcher: Option<Arc<TorrentWatcher>>,
     /// Empty-folder cleanup run daily (shared with the API)
     cleanup: Option<Arc<EmptyFolderCleanup>>,
+    /// Stalled-transfer verdicts, fed by the stall check task and read by the API
+    stall_tracker: Arc<StallTracker>,
 }
 
 impl PutioDaemon {
     /// Create a new daemon with the given configuration
     pub fn new(config: DaemonConfig) -> Self {
         Self {
+            stall_tracker: Arc::new(StallTracker::new(config.stall_threshold)),
             config: Arc::new(RwLock::new(config)),
             client: None,
             database: None,
@@ -321,6 +332,14 @@ impl PutioDaemon {
             .cleanup
             .clone()
             .map(|cleanup| tokio::spawn(crate::schedule::run_daily(cleanup)));
+        // Spawn the stall check task (feature 007): flags Put.io transfers whose bytes stop
+        let interval = self.config.read().await.stall_check_interval;
+        let stall_task = self.client.clone().map(|client| {
+            let tracker = self.stall_tracker.clone();
+            tokio::spawn(async move {
+                Self::run_stall_loop(client, tracker, interval).await;
+            })
+        });
 
         info!("Daemon started successfully");
         info!(
@@ -384,9 +403,28 @@ impl PutioDaemon {
         if let Some(task) = cleanup_task {
             task.abort();
         }
+        if let Some(task) = stall_task {
+            task.abort();
+        }
 
         info!("Daemon shutting down...");
         Ok(())
+    }
+
+    /// Check the Put.io transfer list for stalls every `interval_secs`
+    async fn run_stall_loop(
+        client: Arc<PutioApiClient>,
+        tracker: Arc<StallTracker>,
+        interval_secs: u64,
+    ) {
+        info!(interval_secs, "Stall check task started");
+        let mut tick = tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
+        loop {
+            tick.tick().await;
+            if let Err(e) = check_stalls(&client, &tracker, SystemTime::now()).await {
+                warn!(error = %e, "Stall check failed; keeping previous verdicts");
+            }
+        }
     }
 
     /// Run the watch loop as an independent async task
@@ -546,6 +584,11 @@ impl PutioDaemon {
         self.config.read().await.watch_enabled
     }
 
+    /// The stalled-transfer tracker the API reads (feature 007)
+    pub fn stall_tracker(&self) -> Arc<StallTracker> {
+        self.stall_tracker.clone()
+    }
+
     /// Get the daemon config (for use by API server)
     pub fn get_daemon_config(&self) -> Arc<RwLock<DaemonConfig>> {
         self.config.clone()
@@ -567,9 +610,103 @@ impl PutioDaemon {
     }
 }
 
+/// One stall check: fetch the transfer list, update `tracker` as of `now` and the
+/// `putio_sync_transfers_stalled` gauge. On a Put.io error nothing changes.
+pub async fn check_stalls(
+    client: &PutioApiClient,
+    tracker: &StallTracker,
+    now: SystemTime,
+) -> putio_sync_client::error::ClientResult<usize> {
+    let list = client.list_transfers().await?;
+    let stalled = tracker.observe(&list.transfers, now);
+    putio_sync_telemetry::transfers::set_stalled(stalled);
+    for transfer in &list.transfers {
+        if let Some(stall) = tracker.get(transfer.id) {
+            debug!(
+                transfer_id = transfer.id,
+                name = %transfer.name,
+                reason = %stall.reason.label(),
+                "Transfer stalled"
+            );
+        }
+    }
+    Ok(stalled)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn downloading(id: i64, downloaded: i64) -> serde_json::Value {
+        serde_json::json!({
+            "id": id, "name": "Ubuntu ISO", "status": "DOWNLOADING",
+            "downloaded": downloaded, "availability": 92, "peers_sending_to_us": 0,
+            "percent_done": 97, "created_at": "2026-10-26T10:00:00Z", "save_parent_id": 0,
+            "estimated_time": null, "seconds_seeding": null, "error_message": null,
+            "finished_at": null, "file_id": null
+        })
+    }
+
+    async fn mock_list(
+        server: &mut mockito::Server,
+        transfers: serde_json::Value,
+    ) -> mockito::Mock {
+        server
+            .mock("GET", "/transfers/list")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(serde_json::json!({ "status": "OK", "transfers": transfers }).to_string())
+            .create_async()
+            .await
+    }
+
+    /// FR-001..FR-004: a downloading transfer whose bytes do not move is flagged once the
+    /// threshold passes, with the availability reason
+    #[tokio::test]
+    async fn check_stalls_flags_a_frozen_transfer() {
+        let mut server = mockito::Server::new_async().await;
+        let _list = mock_list(&mut server, serde_json::json!([downloading(5, 970)])).await;
+        let client = PutioApiClient::with_base_url("t".to_string(), server.url());
+        let tracker = StallTracker::new(Duration::from_secs(6 * 3600));
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+
+        assert_eq!(check_stalls(&client, &tracker, t0).await.unwrap(), 0);
+        let later = t0 + Duration::from_secs(6 * 3600 + 600);
+        assert_eq!(check_stalls(&client, &tracker, later).await.unwrap(), 1);
+        let stall = tracker.get(5).unwrap();
+        assert_eq!(stall.since, t0);
+        assert_eq!(stall.reason.label(), "availability 92%");
+    }
+
+    /// Put.io failing keeps the previous verdicts (spec edge case)
+    #[tokio::test]
+    async fn check_stalls_keeps_state_when_putio_fails() {
+        let mut server = mockito::Server::new_async().await;
+        let list = mock_list(&mut server, serde_json::json!([downloading(5, 970)])).await;
+        let client = PutioApiClient::with_base_url("t".to_string(), server.url());
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        check_stalls(&client, &tracker, t0).await.unwrap();
+        check_stalls(&client, &tracker, t0 + Duration::from_secs(7200))
+            .await
+            .unwrap();
+        assert_eq!(tracker.stalled_count(), 1);
+
+        list.remove_async().await;
+        let _broken = server
+            .mock("GET", "/transfers/list")
+            .with_status(400)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status":"ERROR","error_type":"BadRequest","error_message":"nope"}"#)
+            .create_async()
+            .await;
+        assert!(
+            check_stalls(&client, &tracker, t0 + Duration::from_secs(9000))
+                .await
+                .is_err()
+        );
+        assert_eq!(tracker.stalled_count(), 1);
+    }
 
     #[test]
     fn sync_loop_uses_download_interval() {

@@ -255,6 +255,8 @@ main {
 .badge.ok { color: var(--ok); }
 .badge.warn { color: var(--warn); }
 .badge.bad { color: var(--bad); }
+.badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.warn-text { color: var(--warn); }
 
 /* Buttons */
 
