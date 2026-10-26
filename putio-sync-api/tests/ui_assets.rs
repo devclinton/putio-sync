@@ -177,14 +177,13 @@ async fn no_cache_header() {
 }
 
 #[tokio::test]
-async fn assets_total_under_160kb() {
+async fn assets_total_under_200kb() {
     let app = test_app().await;
     let mut total = body_text(public_get(&app, "/").await).await.len();
     for path in all_assets(&app).await {
         total += body_text(public_get(&app, &path).await).await.len();
     }
-    // 150 KB until feature 010 added the Doctor page
-    assert!(total < 160 * 1024, "UI is {total} bytes");
+    assert!(total < 200 * 1024, "UI is {total} bytes");
 }
 
 #[tokio::test]

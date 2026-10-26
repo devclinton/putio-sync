@@ -28,12 +28,12 @@ use putio_sync_core::error::CoreError;
 use putio_sync_core::logging::ConsoleFormat;
 
 /// A malformed or mistyped body is a 400 with a JSON `error`, like a failed validation
-fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
+pub(crate) fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
     body.map(|Json(value)| value)
         .map_err(|rejection| ApiError::BadRequest(rejection.body_text()))
 }
 
-fn invalid(e: CoreError) -> ApiError {
+pub(crate) fn invalid(e: CoreError) -> ApiError {
     match e {
         CoreError::ConfigError(msg) => ApiError::BadRequest(msg),
         other => ApiError::BadRequest(other.to_string()),
@@ -48,7 +48,7 @@ fn invalid(e: CoreError) -> ApiError {
 /// token in memory may come from `PUTIO_SYNC_API_TOKEN` and must not be written.
 ///
 /// Returns the names of the fields of `view` (the group's GET body) that changed.
-async fn update<V: Serialize>(
+pub(crate) async fn update<V: Serialize>(
     state: &AppState,
     view: fn(&Config) -> V,
     change: impl FnOnce(&mut Config) -> Result<(), ApiError>,

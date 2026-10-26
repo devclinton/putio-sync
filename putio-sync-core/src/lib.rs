@@ -37,6 +37,9 @@ pub mod notification;
 /// Path handling utilities
 pub mod path_utils;
 
+/// Per-folder file rules: presets, inheritance and decisions
+pub mod rules;
+
 /// Stalled Put.io transfer detection
 pub mod stall;
 

@@ -795,7 +795,12 @@ mod tests {
             retry_initial_delay_secs: 11,
             workers: 3,
             delete_after_download: true,
-            blocked_extensions: vec!["iso".to_string()],
+            rules: putio_sync_core::rules::RuleSet::from_config(
+                &putio_sync_core::config::DownloadConfig {
+                    blocked_extensions: vec!["iso".to_string()],
+                    ..Default::default()
+                },
+            ),
         };
         let config = DaemonConfig {
             database_path: Some(dir.path().join(".putiosync.db")),

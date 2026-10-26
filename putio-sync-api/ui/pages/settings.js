@@ -2,10 +2,12 @@
 // as forms built from each GET body. Save PUTs the whole group and shows the API's
 // message verbatim; a 400 shows its error under the form. Tokens are shown only as set /
 // not set. The Radarr / Sonarr card is read-only, with a connection test per server.
+// Feature 009: Folder rules, Presets and Recently blocked cards (rules.js).
 
 import { arrStatus, get, put, testArrServer } from "../api.js";
 import { h, toast } from "../app.js";
 import { relative } from "../format.js";
+import { settingsCards } from "../rules.js";
 
 // Field kinds: b checkbox, n number, n? number or empty, s text, s? text or empty,
 // l one entry per line, or an array of <select> values.
@@ -95,6 +97,7 @@ export function mount(el) {
       h("section", { class: "card" }, h("h2", { text: "Credentials" }), secrets, h("p", { class: "muted spaced", text: "Tokens and passwords are never shown here. Change them in the config file or environment." })),
       arrCard(mine),
       GROUPS.map((g) => group(g, mine)),
+      settingsCards(() => mine === seq),
     ),
   );
   get("/status")

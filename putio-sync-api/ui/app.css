@@ -725,6 +725,21 @@ button.brow:hover { background: var(--surface-2); }
   .swatches span { min-width: 58px; }
 }
 
+/* Folder rules (feature 009) */
+
+.rule-kv dd { overflow-wrap: anywhere; }
+.rule-kv dd small { white-space: nowrap; }
+.rule-items { list-style: none; margin: 0; padding: 0; }
+.rule-items li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 0; border-top: 1px solid var(--border); min-width: 0; }
+.rule-items li:first-child { border-top: 0; }
+.rule-items .name { font-weight: 500; overflow-wrap: anywhere; min-width: 0; }
+.rule-items small { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+.rule-items .row-actions { margin-left: auto; }
+.preset-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; }
+.preset-form .input { width: auto; flex: 1 1 10em; min-width: 0; }
+.preset-form select.input { flex: 0 1 auto; }
+.rule-preview { margin-top: 8px; }
+
 /* Doctor page */
 
 .doctor-check { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--border); }

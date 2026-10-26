@@ -22,7 +22,8 @@ pub use files::{
 };
 pub use manager::{
     ActiveDownload, DownloadConfig, DownloadFile, DownloadManager, DownloadOperationResult,
-    SyncStats, TreeDecision, TreeFile, TreeReport, WorkerStats,
+    PreviewItem, RulePreview, SyncStats, TreeDecision, TreeFile, TreeReport, WorkerStats,
+    PREVIEW_ITEMS,
 };
 pub use progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 pub use rate_limiter::RateLimiter;

@@ -12,6 +12,7 @@ A high-performance Rust-based CLI tool for Put.io with support for downloads, tr
 - **Put.io Empty-Folder Cleanup**: Remove empty folders from your Put.io account once a day or on demand, from the CLI, API or web UI ([details](#putio-empty-folder-cleanup))
 - **Smart Filtering**: Whitelist/blacklist patterns with glob support
 - **Executable Guard**: Executables and installers on Put.io (`.exe`, `.msi`, `.bat`, ...) are never downloaded; configurable with `blocked_extensions`
+- **Folder Rules**: Per-folder type presets (video, audio, ebooks, no binaries, or your own), skip a folder, or delete blocked files from Put.io; child folders inherit
 - **Transfer Management**: Add torrents from files or magnet links
 - **Radarr / Sonarr**: acts as their Transmission download client: Put.io transfer, local download, progress, completion and blocklisting of failed releases ([details](#radarr-and-sonarr))
 - **Watch Mode**: Automatically upload .torrent and .magnet files from watched directories with smart deduplication
@@ -581,7 +582,8 @@ H = histogram.
 | `putio_sync_last_sync_duration_seconds` | gauge | — | Duration of the latest run |
 | `putio_sync_last_success_timestamp_seconds` | gauge | — | Unix time the last successful run finished; absent until the first one |
 | `putio_sync_last_sync_files` | gauge | `kind` | Counts from the latest run |
-| `putio_sync_files_blocked_total` | counter | — | Files skipped by the blocked-extension list (warned once per file id) |
+| `putio_sync_files_blocked_total` | counter | — | Files blocked or skipped by a folder rule or the blocked-extension list (once per file id) |
+| `putio_sync_rule_decisions_total` | counter | `decision` | Folder rule decisions: `blocked`, `skipped`, `deleted` (from Put.io) |
 | `putio_sync_queue_items` | gauge | `state` | Queue rows by state, refreshed every 15 s and at startup |
 | `putio_sync_downloads_active` | gauge | — | Downloads in progress |
 | `putio_sync_download_workers` | gauge | — | Configured worker count |
@@ -809,6 +811,12 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /doctor/fixes/{fix}/apply` | `{"items": ["key", ...], "confirm": true}` → `{"done", "skipped", "failed", "check"}`. Only items that still qualify are touched. 400 without `confirm` for a fix that deletes, 404 for an unknown fix, 409 while an empty-folder cleanup runs |
 | `GET /arr` | The Radarr / Sonarr card: enabled, username, URL base, download folder, last contact, servers, item counts. Never the password or API keys |
 | `POST /arr/servers/{index}/test` | Test one `[[arr.servers]]` entry → `{"ok": true, "app", "version"}` or `{"ok": false, "reason", "detail"}` |
+| `GET /rules` | Folder rules, presets (built-in and your own, with the rules using each) and the global defaults |
+| `GET`/`PUT`/`DELETE /rules/folder/{id}` | A folder's rule and its effective settings, each with the rule it comes from; `PUT` an empty body clears it; 400 for the root |
+| `POST /rules/delete` | `{"path": "Shows"}`: remove a rule by path |
+| `PUT`/`DELETE /rules/presets/{name}` | Add or change a preset (`{"only": [...]}` or `{"block": [...]}`); `DELETE` resets a built-in, or 409 while rules use it |
+| `POST /rules/preview` | `{"folder_id", "rule"}`: what each file below the folder would get, without saving or deleting |
+| `GET /rules/decisions?limit=`, `POST /rules/decisions/clear` | Recently blocked or skipped files and the rule that decided; 503 without a database |
 
 The legacy `/api/*` placeholder routes are removed, and no CORS headers are sent: the
 UI is served from the same origin, and non-browser clients are unaffected.
@@ -884,6 +892,49 @@ They are never logged or sent back by the API. The UI shows only whether each on
 settings save from the UI keeps the ones in the file and never writes env-only values.
 
 ## Advanced Features
+
+### Folder Rules
+
+A rule applies to a Put.io folder and everything below it. Its path is relative to
+the Put.io root, which is also where the files land under `target_directory`. Each
+setting is optional: for each one, the deepest rule that sets it wins, and anything
+no rule sets comes from `[download]`.
+
+| Setting | Effect |
+|---|---|
+| `preset` | Which types download: `video`, `audio`, `ebooks`, `no-binaries`, `everything`, or a preset of your own |
+| `allow`, `block` | Extra extensions on top of the preset |
+| `skip` | Download nothing in this folder |
+| `delete_blocked` | Delete the files this rule blocks from Put.io, with one call per sync |
+| `delete_after_download`, `skip_existing` | Override the `[download]` values for this folder |
+
+The type filter starts at the root with `blocked_extensions`. A rule's preset
+replaces the filter it inherits; its `allow` and `block` extensions apply after that.
+A blocked extension wins over an allow list.
+
+```toml
+[[download.rules]]
+path = "Shows"
+preset = "video"
+allow = ["srt"]
+
+[[download.rules]]
+path = "Books"
+preset = "ebooks"
+delete_blocked = true
+
+[download.presets.comics]   # a new preset, or a built-in name to change its list
+only = ["cbz", "cbr"]
+```
+
+On the web UI's Put.io page, each folder has a card showing its effective rule and
+where each part comes from. **Set rule** opens an editor with a **Preview** button
+that lists what each file below the folder would get; when a save would delete files
+from Put.io, it asks first. File rows show a `blocked` or `skipped` badge. Settings
+lists every rule, lets you edit presets, and shows the recently blocked files with
+the rule that decided each one (also logged). Saves keep the rest of `config.toml` as
+it is. Under `daemon` they apply from the next sync; under `server` they reach only the
+API's own downloads.
 
 ### Put.io Empty-Folder Cleanup
 
