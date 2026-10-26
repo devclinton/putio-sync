@@ -102,10 +102,14 @@ Or download the latest release from [GitHub Releases](https://github.com/clinton
 
 ### Linux
 
-**Snap** (all distributions):
+**Snap** (all distributions; edge channel for now), with the daemon as a service:
 ```bash
-sudo snap install putio-sync
+sudo snap install putio-sync --edge
+sudo putio-sync login
+sudo snap set putio-sync api-token="$(openssl rand -hex 24)"
+sudo snap start --enable putio-sync.daemon
 ```
+See [snap/README.md](snap/README.md) for where the config and downloads live.
 
 **Flatpak** (all distributions):
 ```bash

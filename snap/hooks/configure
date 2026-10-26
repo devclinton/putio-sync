@@ -1,0 +1,16 @@
+#!/bin/sh
+# `snap set putio-sync api-token=...`: check the token, then restart a running
+# daemon so it picks the new one up.
+set -eu
+
+api_token="$(snapctl get api-token)"
+case "$api_token" in
+    *[[:space:]]*)
+        echo "api-token must not contain whitespace" >&2
+        exit 1
+        ;;
+esac
+
+if snapctl services putio-sync.daemon | grep -q " active"; then
+    snapctl restart putio-sync.daemon
+fi
