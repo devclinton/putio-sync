@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use putio_sync_client::PutioApiClient;
 use putio_sync_db::Database;
+use putio_sync_telemetry::watch as watch_metrics;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -130,6 +131,7 @@ impl TorrentWatchCore {
         database: Option<&Database>,
     ) -> Result<WatchStats> {
         let mut stats = WatchStats::new();
+        watch_metrics::scan();
 
         debug!("Starting scan of {} directories", directories.len());
 
@@ -167,6 +169,7 @@ impl TorrentWatchCore {
                 {
                     Ok(ProcessOutcome::Uploaded) => {
                         stats.files_processed += 1;
+                        watch_metrics::uploaded();
                         info!("Successfully processed: {}", file_path.display());
 
                         match self
@@ -174,15 +177,20 @@ impl TorrentWatchCore {
                             .await
                         {
                             Ok(Some(PostUploadAction::Archived(to))) => {
+                                watch_metrics::cleaned_up();
                                 info!(path = %file_path.display(), to = %to.display(), "Archived uploaded watch file");
                             }
                             Ok(Some(PostUploadAction::Deleted)) => {
+                                watch_metrics::cleaned_up();
                                 info!(path = %file_path.display(), "Deleted uploaded watch file");
                             }
                             Ok(None) => {}
-                            Err(e) => self.warn_once(&file_path, |p| {
-                                warn!(path = %p.display(), error = %format!("{:#}", e), "Post-upload action failed");
-                            }),
+                            Err(e) => {
+                                watch_metrics::cleanup_failed();
+                                self.warn_once(&file_path, |p| {
+                                    warn!(path = %p.display(), error = %format!("{:#}", e), "Post-upload action failed");
+                                })
+                            }
                         }
                     }
                     Ok(ProcessOutcome::AlreadyUploaded) => {
@@ -197,15 +205,18 @@ impl TorrentWatchCore {
                         {
                             Ok(Some(PostUploadAction::Archived(to))) => {
                                 stats.cleaned_up += 1;
+                                watch_metrics::cleaned_up();
                                 info!(path = %file_path.display(), to = %to.display(), "Archived already-uploaded watch file");
                             }
                             Ok(Some(PostUploadAction::Deleted)) => {
                                 stats.cleaned_up += 1;
+                                watch_metrics::cleaned_up();
                                 info!(path = %file_path.display(), "Removed already-uploaded watch file");
                             }
                             Ok(None) => stats.files_skipped += 1,
                             Err(e) => {
                                 stats.files_failed += 1;
+                                watch_metrics::cleanup_failed();
                                 self.warn_once(&file_path, |p| {
                                     warn!(path = %p.display(), error = %format!("{:#}", e), "Failed to clean up already-uploaded watch file");
                                 });
@@ -219,6 +230,7 @@ impl TorrentWatchCore {
                     Ok(ProcessOutcome::Invalid(reason)) => {
                         stats.files_failed += 1;
                         self.warn_once(&file_path, |p| {
+                            watch_metrics::invalid();
                             warn!(path = %p.display(), reason = %reason, "Invalid watch file");
                         });
                     }
@@ -961,6 +973,7 @@ impl TorrentWatcher {
         {
             Ok(ProcessOutcome::Invalid(reason)) => {
                 self.core.warn_once(path, |p| {
+                    watch_metrics::invalid();
                     warn!(path = %p.display(), reason = %reason, "Invalid watch file");
                 });
                 Ok(())

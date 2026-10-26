@@ -1,5 +1,6 @@
 //! Error types for download operations
 
+use putio_sync_telemetry::FailReason;
 use thiserror::Error;
 
 /// Download operation errors
@@ -36,3 +37,22 @@ pub enum DownloadError {
 
 /// Result type for download operations
 pub type DownloadResult<T> = Result<T, DownloadError>;
+
+impl DownloadError {
+    /// Metric reason for a failed download
+    pub fn fail_reason(&self) -> FailReason {
+        match self {
+            DownloadError::HttpError(e) if e.status().is_some() => FailReason::Http,
+            DownloadError::HttpError(_) => FailReason::Network,
+            DownloadError::IoError(_) => FailReason::Io,
+            DownloadError::ApiError(msg) if msg.starts_with("Size mismatch") => {
+                FailReason::Integrity
+            }
+            DownloadError::ApiError(msg) if msg.starts_with("HTTP error") => FailReason::Http,
+            DownloadError::ApiError(msg) if msg.starts_with("Download stalled") => {
+                FailReason::Network
+            }
+            _ => FailReason::Other,
+        }
+    }
+}

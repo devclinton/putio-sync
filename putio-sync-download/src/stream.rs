@@ -382,6 +382,7 @@ pub async fn stream_download(
                         format!("Failed to write to download file: {}", e),
                     ))
                 })?;
+                putio_sync_telemetry::download::bytes(chunk.len() as u64);
                 total_written += chunk.len() as u64;
             }
 

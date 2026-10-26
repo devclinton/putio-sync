@@ -1,0 +1,46 @@
+# Specification Quality Checklist: Telemetry and Prometheus Monitoring
+
+**Purpose**: Validate specification completeness and quality before proceeding to planning
+**Created**: 2026-10-25
+**Feature**: [spec.md](../spec.md)
+
+## Content Quality
+
+- [x] No implementation details (languages, frameworks, APIs)
+- [x] Focused on user value and business needs
+- [x] Written for non-technical stakeholders
+- [x] All mandatory sections completed
+
+## Requirement Completeness
+
+- [x] No [NEEDS CLARIFICATION] markers remain
+- [x] Requirements are testable and unambiguous
+- [x] Success criteria are measurable
+- [x] Success criteria are technology-agnostic (no implementation details)
+- [x] All acceptance scenarios are defined
+- [x] Edge cases are identified
+- [x] Scope is clearly bounded
+- [x] Dependencies and assumptions identified
+
+## Feature Readiness
+
+- [x] All functional requirements have clear acceptance criteria
+- [x] User scenarios cover primary flows
+- [x] Feature meets measurable outcomes defined in Success Criteria
+- [x] No implementation details leak into specification
+
+## Notes
+
+- The spec names Prometheus, Grafana, the Prometheus text format, `make check` and
+  `config.example.toml`. The user asked for these by name, and the constitution (Principle
+  V) requires them, so they are treated as requirements rather than implementation choices.
+  No language, crate or code structure is named.
+- No clarification markers were needed. The open decisions have defaults recorded under
+  Assumptions:
+  - the metrics port is chosen in the plan;
+  - metrics are unauthenticated by default;
+  - the operator publishes the port on Unraid;
+  - the image registry is deferred to the image feature.
+- Scope note for planning: a live config reload of the log level (FR-010, SC-005) is the
+  largest new piece of behaviour. If the plan finds it too costly, it can be dropped back to
+  P3 with `/speckit-clarify`.

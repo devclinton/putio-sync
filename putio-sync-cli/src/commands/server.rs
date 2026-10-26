@@ -8,7 +8,7 @@ use putio_sync_core::config::{AuthMethod, Config};
 use putio_sync_db::Database;
 use putio_sync_download::{DownloadConfig, DownloadFile, DownloadManager};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::signal;
 use tracing::{debug, error, info, warn};
 
@@ -70,6 +70,16 @@ pub async fn execute_server(
         config.watch.archive_directory,
         config.watch.delete_after_upload
     );
+
+    // Metrics run in every server configuration, even without a token (FR-007)
+    let queue_db = Arc::new(OnceLock::new());
+    crate::telemetry::start(
+        &config,
+        queue_db.clone(),
+        config.download.workers,
+        config.download.target_directory.clone(),
+    )
+    .await?;
 
     // Prepare server address
     let addr = format!("{}:{}", bind, port);
@@ -140,7 +150,7 @@ pub async fn execute_server(
     // Start download mode thread if enabled
     let _download_handle = if download {
         info!("Starting download mode daemon...");
-        Some(spawn_download_daemon(config.clone()))
+        Some(spawn_download_daemon(config.clone(), queue_db))
     } else {
         None
     };
@@ -266,7 +276,10 @@ fn spawn_watch_daemon(config: Config) -> std::thread::JoinHandle<()> {
 ///
 /// Monitors completed transfers and automatically downloads them to the configured
 /// download directory.
-fn spawn_download_daemon(config: Config) -> std::thread::JoinHandle<()> {
+fn spawn_download_daemon(
+    config: Config,
+    queue_db: Arc<OnceLock<Arc<Database>>>,
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         // Create a new Tokio runtime for this thread
         let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
@@ -323,7 +336,9 @@ fn spawn_download_daemon(config: Config) -> std::thread::JoinHandle<()> {
             let database = match Database::new(&database_path).await {
                 Ok(db) => {
                     info!("Download daemon: Database initialized");
-                    Some(Arc::new(db))
+                    let db = Arc::new(db);
+                    let _ = queue_db.set(db.clone());
+                    Some(db)
                 }
                 Err(e) => {
                     warn!("Download daemon: Failed to initialize database: {}", e);

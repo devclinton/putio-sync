@@ -5,4 +5,5 @@
 pub mod commands;
 pub mod diagnostics;
 pub mod output;
+pub mod telemetry;
 pub mod ui;

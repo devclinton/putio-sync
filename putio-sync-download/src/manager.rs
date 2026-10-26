@@ -9,6 +9,7 @@ use crate::utils::retry_with_stall_detection;
 use putio_sync_client::{error_chain, FileEntry, PutioApiClient};
 use putio_sync_db::models::DownloadStatus;
 use putio_sync_db::Database;
+use putio_sync_telemetry::{self as telemetry, SyncKind, SyncResult};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -576,6 +577,9 @@ impl DownloadManager {
             });
         }
 
+        let _active = telemetry::download::active();
+        let started = Instant::now();
+
         // Check for resume capability
         // Create temporary download path
         let temp_path = create_temp_path(&target_path)?;
@@ -601,12 +605,17 @@ impl DownloadManager {
         // Handle result
         match result {
             Ok(result) => {
+                // A successful result means the temp file was verified and renamed.
+                if result.success {
+                    telemetry::download::completed(started.elapsed());
+                }
                 if let Some(ref callback) = progress_callback {
                     callback.on_file_complete(file_id, &filename, result.success);
                 }
                 Ok(result)
             }
             Err(e) => {
+                telemetry::download::failed(e.fail_reason());
                 error!("Download failed for {}: {}", filename, e);
                 if let Some(ref callback) = progress_callback {
                     callback.on_file_complete(file_id, &filename, false);
@@ -752,6 +761,7 @@ impl DownloadManager {
                 })
             }
             Err(e) => {
+                telemetry::download::failed(e.fail_reason());
                 // Check if it's a 404 error
                 if let DownloadError::ApiError(ref msg) = e {
                     if msg.contains("404") {
@@ -905,6 +915,7 @@ impl DownloadManager {
                 })
             }
             Err(e) => {
+                telemetry::download::failed(e.fail_reason());
                 // Check if it's a 404 error
                 if let DownloadError::ApiError(ref msg) = e {
                     if msg.contains("404") {
@@ -934,6 +945,27 @@ impl DownloadManager {
     ///
     /// Statistics about the sync operation
     pub async fn sync_downloads(&self) -> DownloadResult<SyncStats> {
+        let started = Instant::now();
+        let result = self.sync_downloads_inner().await;
+        let (outcome, stats) = match &result {
+            Ok(stats) => (SyncResult::Success, stats.clone()),
+            Err(_) => (SyncResult::Failure, SyncStats::default()),
+        };
+        telemetry::sync::record_run(
+            outcome,
+            started.elapsed(),
+            &[
+                (SyncKind::Found, stats.total_files),
+                (SyncKind::Queued, stats.files_downloaded),
+                (SyncKind::Skipped, stats.files_skipped),
+                (SyncKind::Blocked, stats.files_blocked),
+                (SyncKind::Failed, stats.files_failed),
+            ],
+        );
+        result
+    }
+
+    async fn sync_downloads_inner(&self) -> DownloadResult<SyncStats> {
         let mut stats = SyncStats::default();
 
         info!("Starting download sync...");
@@ -981,6 +1013,7 @@ impl DownloadManager {
                     .map(|mut warned| warned.insert(file.id))
                     .unwrap_or(true);
                 if first_time {
+                    telemetry::sync::file_blocked();
                     warn!(
                         file_id = file.id,
                         name = %file.name,
@@ -1039,7 +1072,7 @@ impl DownloadManager {
                 file.name, file.size, relative_path
             );
 
-            let download_url = format!("https://api.put.io/v2/files/{}/download", file.id);
+            let download_url = self.client.get_download_url(file.id);
 
             match queue_repo
                 .add(
@@ -1125,7 +1158,7 @@ impl DownloadManager {
                     filename: file_info.name.clone(),
                     relative_path: queue_item.relative_path.clone(),
                     file_size: file_info.size as u64,
-                    download_url: format!("https://api.put.io/v2/files/{}/download", file_id),
+                    download_url: self.client.get_download_url(file_id),
                 };
 
                 match self.download_file(download_file, None).await {

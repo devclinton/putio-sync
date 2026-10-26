@@ -183,6 +183,7 @@ list: ## Run list command (use with ARGS="/path/to/folder")
 DOCKER_IMAGE ?= putio-sync
 DOCKER_TAG ?= latest
 DOCKER_REGISTRY ?= ghcr.io
+GIT_SHA ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DOCKER_FULL_IMAGE ?= $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG)
 
 docker-build: ## Build Docker image with BuildKit caching (Alpine + musl)
@@ -190,6 +191,7 @@ docker-build: ## Build Docker image with BuildKit caching (Alpine + musl)
 	env DOCKER_BUILDKIT=1 docker build \
 		--cache-from=$(DOCKER_IMAGE):cache \
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
+		--build-arg PUTIO_SYNC_GIT_SHA=$(GIT_SHA) \
 		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 	@echo "Image built successfully: $(DOCKER_IMAGE):$(DOCKER_TAG)"
 
@@ -199,6 +201,7 @@ docker-build-cache: ## Build Docker image with external cache support (registry-
 		--cache-from=type=registry,ref=$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):cache \
 		--cache-to=type=registry,ref=$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):cache,mode=max \
 		--load \
+		--build-arg PUTIO_SYNC_GIT_SHA=$(GIT_SHA) \
 		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 	@echo "Image built successfully with registry cache: $(DOCKER_IMAGE):$(DOCKER_TAG)"
 
@@ -211,6 +214,7 @@ docker-build-local-cache: ## Build Docker image with local cache (requires build
 		--cache-from=type=local,src=/tmp/docker-cache \
 		--cache-to=type=local,dest=/tmp/docker-cache,mode=max \
 		--load \
+		--build-arg PUTIO_SYNC_GIT_SHA=$(GIT_SHA) \
 		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 	@echo "Image built successfully with local cache: $(DOCKER_IMAGE):$(DOCKER_TAG)"
 
@@ -219,6 +223,7 @@ docker-build-multiarch: ## Build multi-architecture Docker image (amd64, arm64)
 	docker buildx build --platform linux/amd64,linux/arm64 \
 		--cache-from=type=registry,ref=$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):cache \
 		--cache-to=type=registry,ref=$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):cache,mode=max \
+		--build-arg PUTIO_SYNC_GIT_SHA=$(GIT_SHA) \
 		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 
 docker-test: docker-build ## Test Docker image
@@ -264,6 +269,7 @@ docker-build-fast: ## Build Docker image with optimized inline cache (no externa
 	env DOCKER_BUILDKIT=1 docker build \
 		--cache-from=$(DOCKER_IMAGE):$(DOCKER_TAG) \
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
+		--build-arg PUTIO_SYNC_GIT_SHA=$(GIT_SHA) \
 		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 	@echo "Image built successfully with inline cache: $(DOCKER_IMAGE):$(DOCKER_TAG)"
 

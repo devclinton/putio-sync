@@ -46,6 +46,8 @@ pub use queue::{QueueRepository, QueueStats};
 pub use stats::{ExtensionStats, StatsRepository};
 pub use torrents::ProcessedTorrentsRepository;
 
+use crate::error::tracked;
+use putio_sync_telemetry::DbOp;
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
 };
@@ -85,9 +87,10 @@ impl Database {
         // Create parent directory if it doesn't exist
         if let Some(parent) = path.parent() {
             if !parent.exists() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    DbError::DatabaseError(format!("Failed to create database directory: {}", e))
-                })?;
+                std::fs::create_dir_all(parent).map_err(tracked(
+                    DbOp::Migrate,
+                    "Failed to create database directory",
+                ))?;
             }
         }
 
@@ -95,7 +98,7 @@ impl Database {
 
         // Create connection options
         let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", path.display()))
-            .map_err(|e| DbError::DatabaseError(format!("Invalid database path: {}", e)))?
+            .map_err(tracked(DbOp::Migrate, "Invalid database path"))?
             .create_if_missing(true)
             // WAL lets readers and the claiming writer run side by side; the busy timeout
             // makes brief write contention wait instead of failing.
@@ -108,7 +111,7 @@ impl Database {
             .max_connections(5)
             .connect_with(options)
             .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to connect to database: {}", e)))?;
+            .map_err(tracked(DbOp::Migrate, "Failed to connect to database"))?;
 
         let db = Database { pool };
 
@@ -160,39 +163,40 @@ impl Database {
         sqlx::query(schema::CREATE_DOWNLOADS_TABLE)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                DbError::DatabaseError(format!("Failed to create downloads table: {}", e))
-            })?;
+            .map_err(tracked(DbOp::Migrate, "Failed to create downloads table"))?;
 
         // Create download_history table
         sqlx::query(schema::CREATE_DOWNLOAD_HISTORY_TABLE)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                DbError::DatabaseError(format!("Failed to create download_history table: {}", e))
-            })?;
+            .map_err(tracked(
+                DbOp::Migrate,
+                "Failed to create download_history table",
+            ))?;
 
         // Create download_stats table
         sqlx::query(schema::CREATE_DOWNLOAD_STATS_TABLE)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                DbError::DatabaseError(format!("Failed to create download_stats table: {}", e))
-            })?;
+            .map_err(tracked(
+                DbOp::Migrate,
+                "Failed to create download_stats table",
+            ))?;
 
         // Initialize stats table if empty
         sqlx::query(schema::INIT_DOWNLOAD_STATS)
             .execute(&self.pool)
             .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to initialize stats: {}", e)))?;
+            .map_err(tracked(DbOp::Migrate, "Failed to initialize stats"))?;
 
         // Create download_queue table
         sqlx::query(schema::CREATE_DOWNLOAD_QUEUE_TABLE)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                DbError::DatabaseError(format!("Failed to create download_queue table: {}", e))
-            })?;
+            .map_err(tracked(
+                DbOp::Migrate,
+                "Failed to create download_queue table",
+            ))?;
 
         // Migrate: Add relative_path column to download_queue if it doesn't exist
         self.migrate_add_relative_path_column().await?;
@@ -201,15 +205,16 @@ impl Database {
         sqlx::query(schema::CREATE_PROCESSED_TORRENTS_TABLE)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                DbError::DatabaseError(format!("Failed to create processed_torrents table: {}", e))
-            })?;
+            .map_err(tracked(
+                DbOp::Migrate,
+                "Failed to create processed_torrents table",
+            ))?;
 
         // Create performance indexes
         sqlx::query(schema::CREATE_INDEXES)
             .execute(&self.pool)
             .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to create indexes: {}", e)))?;
+            .map_err(tracked(DbOp::Migrate, "Failed to create indexes"))?;
 
         info!("Database migrations completed");
 
@@ -237,9 +242,7 @@ impl Database {
                 )
                 .execute(&self.pool)
                 .await
-                .map_err(|e| {
-                    DbError::DatabaseError(format!("Failed to add relative_path column: {}", e))
-                })?;
+                .map_err(tracked(DbOp::Migrate, "Failed to add relative_path column"))?;
                 info!("Successfully added 'relative_path' column to download_queue table");
                 Ok(())
             }

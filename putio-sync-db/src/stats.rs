@@ -1,7 +1,8 @@
 //! Statistics repository for managing download statistics
 
-use super::error::{DbError, DbResult};
+use super::error::{tracked, DbResult};
 use super::models::DownloadStats;
+use putio_sync_telemetry::DbOp;
 use sqlx::SqlitePool;
 use tracing::debug;
 
@@ -36,7 +37,7 @@ impl<'a> StatsRepository<'a> {
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to get stats: {}", e)))?;
+        .map_err(tracked(DbOp::Other, "Failed to get stats"))?;
 
         Ok(stats)
     }
@@ -67,7 +68,7 @@ impl<'a> StatsRepository<'a> {
         .bind(duration_seconds)
         .execute(self.pool)
         .await
-        .map_err(|e| DbError::DatabaseError(format!("Failed to update download stats: {}", e)))?;
+        .map_err(tracked(DbOp::Other, "Failed to update download stats"))?;
 
         Ok(())
     }
@@ -121,7 +122,7 @@ impl<'a> StatsRepository<'a> {
         let results = q
             .fetch_all(self.pool)
             .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to get extension stats: {}", e)))?;
+            .map_err(tracked(DbOp::Other, "Failed to get extension stats"))?;
 
         let stats = results
             .into_iter()
@@ -177,7 +178,7 @@ impl<'a> StatsRepository<'a> {
         let result = q
             .fetch_one(self.pool)
             .await
-            .map_err(|e| DbError::DatabaseError(format!("Failed to get range stats: {}", e)))?;
+            .map_err(tracked(DbOp::Other, "Failed to get range stats"))?;
 
         Ok(result)
     }

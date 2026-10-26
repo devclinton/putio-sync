@@ -1,0 +1,29 @@
+[package]
+name = "putio-sync-telemetry"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Prometheus metrics for putio-sync"
+
+[dependencies]
+# Metrics registry and text encoding
+prometheus = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Metrics HTTP listener
+axum = "0.7"
+
+# Logging
+tracing = { workspace = true }
+
+# Disk space (statvfs)
+rustix = { version = "1", features = ["fs"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+reqwest = { workspace = true }
+tempfile = "3.8"
