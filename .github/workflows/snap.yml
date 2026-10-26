@@ -1,6 +1,18 @@
 name: Build and Publish Snap
 
+# Pushes to main go to the edge channel, releases to stable. Publishing needs the
+# SNAPCRAFT_TOKEN secret (`snapcraft export-login`); without it the snap is only
+# built, tested and uploaded as an artifact.
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'putio-sync-*/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'config.example.toml'
+      - 'snap/**'
+      - '.github/workflows/snap.yml'
   release:
     types: [published]
   workflow_dispatch:
@@ -10,13 +22,17 @@ on:
         required: true
         default: 'edge'
       version:
-        description: 'Version to build (e.g., v0.1.1)'
+        description: 'Version to build (e.g., v0.1.1); default is the Cargo version plus the commit'
         required: false
 
 jobs:
   build-snap:
     name: Build Snap Package
     runs-on: ubuntu-latest
+    outputs:
+      snap_file: ${{ steps.snap_file.outputs.snap_file }}
+    env:
+      HAS_STORE_TOKEN: ${{ secrets.SNAPCRAFT_TOKEN != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,24 +40,33 @@ jobs:
       - name: Get version
         id: get_version
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            VERSION="${{ github.event.release.tag_name }}"
-            CHANNEL="stable"
-          else
-            VERSION="${{ github.event.inputs.version }}"
-            CHANNEL="${{ github.event.inputs.channel }}"
+          CARGO_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          case "${{ github.event_name }}" in
+            release)
+              VERSION="${{ github.event.release.tag_name }}"
+              CHANNEL="stable"
+              ;;
+            workflow_dispatch)
+              VERSION="${{ github.event.inputs.version }}"
+              CHANNEL="${{ github.event.inputs.channel }}"
+              ;;
+            *)
+              VERSION=""
+              CHANNEL="edge"
+              ;;
+          esac
+          # Snap versions allow 32 characters: 0.1.1+git1a2b3c4 for untagged builds
+          if [ -z "$VERSION" ]; then
+            VERSION="${CARGO_VERSION}+git$(git rev-parse --short=7 HEAD)"
           fi
-          # Remove 'v' prefix for snap version
           VERSION_NO_V=${VERSION#v}
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "version_no_v=${VERSION_NO_V}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION_NO_V}" >> $GITHUB_OUTPUT
           echo "channel=${CHANNEL}" >> $GITHUB_OUTPUT
 
       - name: Update snap version
         run: |
-          VERSION="${{ steps.get_version.outputs.version_no_v }}"
+          VERSION="${{ steps.get_version.outputs.version }}"
           sed -i "s/^version: .*/version: '${VERSION}'/" snap/snapcraft.yaml
-          echo "Updated snap version to ${VERSION}"
           grep "^version:" snap/snapcraft.yaml
 
       - name: Build snap
@@ -51,69 +76,55 @@ jobs:
       - name: Get snap filename
         id: snap_file
         run: |
-          SNAP_FILE=$(ls *.snap | head -n 1)
+          SNAP_FILE=$(basename "${{ steps.build.outputs.snap }}")
           echo "snap_file=${SNAP_FILE}" >> $GITHUB_OUTPUT
           echo "Built snap: ${SNAP_FILE}"
-
-      - name: Publish to Snap Store
-        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-        uses: snapcore/action-publish@v1
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
-        with:
-          snap: ${{ steps.snap_file.outputs.snap_file }}
-          release: ${{ steps.get_version.outputs.channel }}
 
       - name: Upload snap artifact
         uses: actions/upload-artifact@v4
         with:
           name: snap-package
-          path: "*.snap"
+          path: ${{ steps.build.outputs.snap }}
+
+      - name: Publish to Snap Store
+        if: env.HAS_STORE_TOKEN == 'true'
+        uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
+        with:
+          snap: ${{ steps.build.outputs.snap }}
+          release: ${{ steps.get_version.outputs.channel }}
 
       - name: Create summary
         run: |
           VERSION="${{ steps.get_version.outputs.version }}"
           CHANNEL="${{ steps.get_version.outputs.channel }}"
-          SNAP_FILE="${{ steps.snap_file.outputs.snap_file }}"
-
-          echo "## Snap Package Built" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: ${VERSION}" >> $GITHUB_STEP_SUMMARY
-          echo "- **File**: ${SNAP_FILE}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Channel**: ${CHANNEL}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ github.event_name }}" = "release" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "### Published to Snap Store" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "The snap has been published to the **${CHANNEL}** channel." >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Installation" >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-
-            if [ "${CHANNEL}" = "stable" ]; then
-              echo "sudo snap install putio-sync" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Snap Package Built"
+            echo ""
+            echo "- **Version**: ${VERSION}"
+            echo "- **File**: ${{ steps.snap_file.outputs.snap_file }}"
+            echo "- **Channel**: ${CHANNEL}"
+            echo ""
+            if [ "$HAS_STORE_TOKEN" = "true" ]; then
+              echo "Published to the **${CHANNEL}** channel:"
+              echo ""
+              echo '```bash'
+              if [ "${CHANNEL}" = "stable" ]; then
+                echo "sudo snap install putio-sync"
+              else
+                echo "sudo snap install putio-sync --${CHANNEL}"
+              fi
+              echo '```'
             else
-              echo "sudo snap install putio-sync --${CHANNEL}" >> $GITHUB_STEP_SUMMARY
+              echo "Not published: the SNAPCRAFT_TOKEN secret is not set. The snap is attached as an artifact."
             fi
-
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
-            echo "1. Monitor the Snap Store: https://snapcraft.io/putio-sync" >> $GITHUB_STEP_SUMMARY
-            echo "2. Check metrics and downloads" >> $GITHUB_STEP_SUMMARY
-            echo "3. Respond to user reviews and feedback" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### Development Build" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "This is a development build. To publish, create a release or use workflow dispatch." >> $GITHUB_STEP_SUMMARY
-          fi
+          } >> $GITHUB_STEP_SUMMARY
 
   test-snap:
     name: Test Snap Installation
     needs: build-snap
     runs-on: ubuntu-latest
-    if: github.event_name != 'release'
     steps:
       - name: Download snap artifact
         uses: actions/download-artifact@v4
@@ -121,23 +132,44 @@ jobs:
           name: snap-package
 
       - name: Install snap
-        run: |
-          SNAP_FILE=$(ls *.snap | head -n 1)
-          echo "Installing ${SNAP_FILE}"
-          sudo snap install --dangerous ${SNAP_FILE}
+        run: sudo snap install --dangerous "${{ needs.build-snap.outputs.snap_file }}"
 
-      - name: Test snap
+      - name: Test the CLI
         run: |
-          # Test basic command
           putio-sync --version
-
-          # Verify snap info
-          snap info putio-sync
-
-          # Check connections
+          snap info --verbose putio-sync || true
           snap connections putio-sync
+          # The daemon stays off until the user enables it
+          snap services putio-sync.daemon | grep -q "disabled"
+
+      - name: Test the daemon service
+        run: |
+          # Running the CLI with sudo writes the starter config; a placeholder
+          # Put.io token lets the daemon start without logging in
+          sudo putio-sync --version
+          config=/var/snap/putio-sync/common/config.toml
+          sudo test -f "$config"
+          sudo sed -i 's|^# token = "YOUR_OAUTH_TOKEN_HERE"|token = "ci-placeholder"|' "$config"
+
+          sudo snap set putio-sync api-token=ci-api-token
+          sudo snap start --enable putio-sync.daemon
+
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:15432/health; then
+              echo
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:15432/health > /dev/null
+          # The web UI token from `snap set` is in force
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:15432/settings/download)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer ci-api-token' http://127.0.0.1:15432/settings/download)" = 200
+
+      - name: Daemon logs
+        if: always()
+        run: sudo snap logs -n 100 putio-sync.daemon || true
 
       - name: Uninstall snap
         if: always()
-        run: |
-          sudo snap remove putio-sync || true
+        run: sudo snap remove --purge putio-sync || true

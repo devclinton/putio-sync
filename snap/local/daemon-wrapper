@@ -1,0 +1,14 @@
+#!/bin/sh
+# Starts `putio-sync daemon` inside the snap. The web UI token comes from
+# `snap set putio-sync api-token=...`.
+set -eu
+
+"$SNAP/bin/ensure-config"
+
+api_token="$(snapctl get api-token)"
+if [ -n "$api_token" ]; then
+    PUTIO_SYNC_API_TOKEN="$api_token"
+    export PUTIO_SYNC_API_TOKEN
+fi
+
+exec "$SNAP/bin/putio-sync" daemon "$@"
