@@ -14,7 +14,8 @@ A high-performance Rust-based CLI tool for Put.io with support for downloads, tr
 - **Transfer Management**: Add torrents from files or magnet links
 - **Watch Mode**: Automatically upload .torrent and .magnet files from watched directories with smart deduplication
 - **Post-Processing**: Archive or delete processed torrent files after upload
-- **Advanced Daemon**: Unified daemon with hot-reload configuration and intelligent worker scaling
+- **Advanced Daemon**: Unified daemon with live log-level changes and intelligent worker scaling
+- **Prometheus Metrics**: Sync, download, watch-folder, API and database metrics on `:9742/metrics`
 - **Statistics & History**: Track download stats and view history
 - **File Management**: List, download, and delete files on Put.io
 - **SQLite Database**: Local state tracking for downloads and history
@@ -50,7 +51,7 @@ This project is organized as a Cargo workspace with specialized crates following
 - **putio-sync-daemon**: Background daemon service
   - Periodic download synchronization
   - Torrent file watching and upload
-  - Hot-reload configuration support
+  - Worker scaling on settings changes from the API
   - Worker pool management
 
 - **putio-sync-core**: Shared utilities
@@ -487,6 +488,33 @@ detail = "basic"        # PUTIO_SYNC_METRICS_DETAIL: basic | detailed
 process restarts, so query them with `increase()` or `rate()`. In Docker, publish the
 port (`-p 9742:9742`).
 
+### Verbosity
+
+Logging and metrics detail are set in `config.toml` or by environment variables; the
+variable wins when both are set.
+
+| Variable | Setting | Allowed | Applies |
+|---|---|---|---|
+| `RUST_LOG` | `logging.level` + `module_filters` | any tracing `EnvFilter` directive | restart; while set, config level changes are ignored |
+| `PUTIO_SYNC_LOG_FORMAT` | `logging.console_format` | `compact`, `pretty`, `json` | restart |
+| `PUTIO_SYNC_METRICS_ENABLED` | `metrics.enabled` | `true`, `false`, `1`, `0` | restart |
+| `PUTIO_SYNC_METRICS_BIND` | `metrics.bind` | `host:port` | restart |
+| `PUTIO_SYNC_METRICS_PATH` | `metrics.path` | starts with `/` | restart |
+| `PUTIO_SYNC_METRICS_DETAIL` | `metrics.detail` | `basic`, `detailed` | restart |
+
+`logging.level` and `logging.module_filters` in the config file are live: putio-sync checks
+the file every 10 s and logs `Log level changed old=info new=debug source=Config`. An invalid
+level logs `Log level not changed` once and keeps the current one. An invalid value at
+startup, in the file or the environment, stops putio-sync with
+`invalid <setting> '<value>': expected one of <allowed>`.
+
+The effective settings are logged at startup:
+
+```text
+Log level level=info source=Config format=compact format_source=Config
+Metrics enabled bind=0.0.0.0:9742 path=/metrics detail=basic source=Config
+```
+
 ### Metric families
 
 H = histogram.
@@ -609,9 +637,9 @@ putio-sync download --all --daemon --interval 300 --filter "*.mkv"
 
 You can run both periodic downloads and torrent watching at the same time using multiple terminal sessions, systemd services, or Docker containers. Here are several approaches:
 
-### Method 1: New Unified Daemon Command with Hot Reloading (Recommended)
+### Method 1: Unified Daemon Command (Recommended)
 
-Use the new `daemon` command that combines both download sync and torrent watching in a single process with **automatic configuration hot reloading**:
+Use the `daemon` command, which runs download sync and torrent watching in a single process:
 
 ```bash
 # Run both download sync and torrent watching together
@@ -671,36 +699,17 @@ INFO Removed already-uploaded watch file path=/watch/Series.magnet
 🗑️  Successfully deleted Movie.mkv from Put.io (delete_after_download enabled)
 ```
 
-#### 🔥 Hot Reloading Features
+#### Live configuration changes
 
-The daemon command supports intelligent **hot reloading** of configuration changes:
-
-- **Config File Watching**: Automatically detects changes to `~/.putiosync/config.toml`
-- **Intelligent Worker Scaling**: 
-  - **Scaling Up**: Adds new workers seamlessly
-  - **Scaling Down**: Preserves downloads ≥75% complete, interrupts downloads <75%
-  - **Download Preservation**: Interrupted downloads are moved to the top of the queue with higher priority
-- **Live Settings Updates**: Changes to download settings apply to new downloads immediately
-- **Zero Downtime**: Configuration changes happen without stopping the daemon
-
-#### Configuration Hot Reload Examples
-
-```bash
-# Start daemon with 2 workers
-putio-sync daemon --download-only
-
-# Edit config.toml to change workers to 4 - automatically applied!
-# Downloads continue seamlessly
-
-# Edit config.toml to change workers to 1 - downloads <75% are intelligently interrupted
-# and prioritized for restart after active downloads complete
-
-# Change bandwidth limits, chunk sizes, etc. - applied to new downloads immediately
-```
+Only `[logging] level` and `module_filters` are re-read from `config.toml` while running
+(see [Verbosity](#verbosity)). Everything else in the file needs a restart. Download and
+watch settings can also be changed at runtime through the API (`PUT /settings/download`,
+`PUT /settings/watcher`); a new `workers` value there scales the pool as described below.
+`PUT /settings/logging` saves to `config.toml`, so its level change is picked up the same way.
 
 #### Worker Scaling Intelligence
 
-When scaling down workers:
+When `workers` is lowered through the API:
 1. ✅ **Preserve** downloads ≥75% complete (let them finish)
 2. ⚠️ **Interrupt** downloads <75% complete 
 3. 🔄 **Prioritize** interrupted downloads (moved to front of queue with +1000 priority)

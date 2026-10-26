@@ -367,6 +367,10 @@ pub async fn stream_download(
     let mut progress_logger =
         expected_size.map(|size| ProgressLogger::new(size, filename.to_string()));
 
+    // Task-locals don't reach the writer task, so take the worker id here
+    let worker = crate::manager::current_worker();
+    let written_before = resume_from_byte.unwrap_or(0);
+
     // Spawn disk writer task that runs concurrently
     let writer_handle = tokio::spawn({
         let temp_path = temp_path.clone();
@@ -384,6 +388,12 @@ pub async fn stream_download(
                 })?;
                 putio_sync_telemetry::download::bytes(chunk.len() as u64);
                 total_written += chunk.len() as u64;
+                if let Some(id) = worker {
+                    putio_sync_telemetry::download::worker_inflight(
+                        id,
+                        written_before + total_written,
+                    );
+                }
             }
 
             // Flush any remaining buffered data

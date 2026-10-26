@@ -9,24 +9,43 @@
 
 use crate::error::CoreError;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use tracing_appender::{non_blocking, rolling};
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::{
+    fmt, layer::SubscriberExt, reload, util::SubscriberInitExt, EnvFilter, Layer, Registry,
+};
 
 /// Result type for logging operations
 pub type LoggingResult<T> = Result<T, CoreError>;
 
-// NOTE: Dynamic logging hot reload was attempted but is not currently supported due to
-// tracing-subscriber's complex layer type system. The reload::Layer wrapper creates type
-// incompatibilities when combined with file_layer and fmt::layer() in the subscriber stack.
-//
-// Potential future approaches:
-// - Use a simpler reload mechanism without wrapping multiple layers
-// - Restructure logging initialization to be more reload-friendly
-// - Use global state pattern with dynamic log level checking
-//
-// For now, logging configuration changes require a server restart.
-//
-// See: https://github.com/tokio-rs/tracing/issues/1629 for related discussions
+// The level filter is the first layer on the Registry, wrapped in reload::Layer, so every
+// output combination shares one handle type and the level can change at runtime
+// (apply_level). Other logging settings (format, outputs, file path) need a restart.
+
+/// Handle to the live level filter, set by `init_logging`
+static FILTER_HANDLE: OnceLock<reload::Handle<EnvFilter, Registry>> = OnceLock::new();
+
+/// Directive string of the filter currently in effect
+static CURRENT_DIRECTIVE: Mutex<String> = Mutex::new(String::new());
+
+/// Result of applying a new `[logging]` level at runtime
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LevelChange {
+    /// The level is the one already in effect
+    Unchanged,
+    /// The filter was replaced
+    Changed {
+        /// Previous directive
+        old: String,
+        /// New directive
+        new: String,
+    },
+    /// `RUST_LOG` is set, so the config level does not apply
+    IgnoredEnv,
+    /// The new level is invalid; the current filter is kept
+    Invalid(String),
+}
 
 /// Console output format options
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, PartialEq)]
@@ -39,6 +58,17 @@ pub enum ConsoleFormat {
     Pretty,
     /// JSON format (for log aggregation)
     Json,
+}
+
+impl ConsoleFormat {
+    /// The config value
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ConsoleFormat::Compact => "compact",
+            ConsoleFormat::Pretty => "pretty",
+            ConsoleFormat::Json => "json",
+        }
+    }
 }
 
 /// Logging configuration
@@ -143,19 +173,17 @@ fn default_max_backups() -> usize {
 pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
     // Build the filter
     let (filter, source, directive) = build_filter(config)?;
+    let (format, format_source) = resolve_format(config)?;
+    let (filter, handle) = reload::Layer::new(filter);
 
     // Initialize based on enabled outputs and console format
-    match (
-        config.console_enabled,
-        config.file_enabled,
-        &config.console_format,
-    ) {
+    match (config.console_enabled, config.file_enabled, &format) {
         // Both console and file logging
         (true, true, ConsoleFormat::Compact) => {
             let file_layer = create_file_layer_concrete(&config.file_path)?;
             tracing_subscriber::registry()
-                .with(file_layer)
                 .with(filter)
+                .with(file_layer)
                 .with(fmt::layer().compact())
                 .try_init()
                 .map_err(|e| {
@@ -165,8 +193,8 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
         (true, true, ConsoleFormat::Pretty) => {
             let file_layer = create_file_layer_concrete(&config.file_path)?;
             tracing_subscriber::registry()
-                .with(file_layer)
                 .with(filter)
+                .with(file_layer)
                 .with(fmt::layer().pretty())
                 .try_init()
                 .map_err(|e| {
@@ -176,8 +204,8 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
         (true, true, ConsoleFormat::Json) => {
             let file_layer = create_file_layer_concrete(&config.file_path)?;
             tracing_subscriber::registry()
-                .with(file_layer)
                 .with(filter)
+                .with(file_layer)
                 .with(fmt::layer().json())
                 .try_init()
                 .map_err(|e| {
@@ -216,8 +244,8 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
         (false, true, _) => {
             let file_layer = create_file_layer_concrete(&config.file_path)?;
             tracing_subscriber::registry()
-                .with(file_layer)
                 .with(filter)
+                .with(file_layer)
                 .try_init()
                 .map_err(|e| {
                     CoreError::ConfigError(format!("Failed to initialize logging: {}", e))
@@ -235,16 +263,28 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
         }
     }
 
+    let _ = FILTER_HANDLE.set(handle);
+    *CURRENT_DIRECTIVE.lock().unwrap_or_else(|e| e.into_inner()) = directive.clone();
+
     // RUST_LOG silently replaced the configured level before; say which one won.
-    tracing::info!(level = %directive, source = ?source, "Log level");
+    tracing::info!(
+        level = %directive,
+        source = ?source,
+        format = %format.as_str(),
+        format_source = ?format_source,
+        "Log level"
+    );
 
     Ok(())
 }
 
-/// Create a file logging layer with daily rotation (concrete type)
-fn create_file_layer_concrete(
+/// Create a file logging layer with daily rotation
+fn create_file_layer_concrete<S>(
     file_path: &PathBuf,
-) -> LoggingResult<impl Layer<tracing_subscriber::Registry> + Send + Sync + 'static> {
+) -> LoggingResult<impl Layer<S> + Send + Sync + 'static>
+where
+    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+{
     // Expand ~ in path
     let expanded_path = crate::path_utils::expand_path(file_path)?;
 
@@ -290,6 +330,62 @@ pub enum LevelSource {
     Config,
     /// The `RUST_LOG` environment variable, which overrides the config
     Env,
+}
+
+/// Resolve the console format: `PUTIO_SYNC_LOG_FORMAT` wins over `logging.console_format`.
+fn resolve_format(config: &LoggingConfig) -> LoggingResult<(ConsoleFormat, LevelSource)> {
+    let Ok(value) = std::env::var("PUTIO_SYNC_LOG_FORMAT") else {
+        return Ok((config.console_format.clone(), LevelSource::Config));
+    };
+    let format = match value.as_str() {
+        "compact" => ConsoleFormat::Compact,
+        "pretty" => ConsoleFormat::Pretty,
+        "json" => ConsoleFormat::Json,
+        other => {
+            return Err(CoreError::ConfigError(format!(
+                "invalid logging.console_format '{}': expected one of compact, pretty, json",
+                other
+            )))
+        }
+    };
+    Ok((format, LevelSource::Env))
+}
+
+/// Apply a new `[logging]` level and module filters to the running subscriber.
+///
+/// Called by the config reload poller. Logs one line describing what happened.
+pub fn apply_level(config: &LoggingConfig) -> LevelChange {
+    if std::env::var_os("RUST_LOG").is_some() {
+        tracing::info!("Log level change in config ignored; RUST_LOG is set");
+        return LevelChange::IgnoredEnv;
+    }
+
+    let (filter, _, directive) = match build_filter(config) {
+        Ok(built) => built,
+        Err(e) => {
+            tracing::error!(error = %e, "Log level not changed");
+            return LevelChange::Invalid(e.to_string());
+        }
+    };
+
+    let mut current = CURRENT_DIRECTIVE.lock().unwrap_or_else(|e| e.into_inner());
+    if *current == directive {
+        return LevelChange::Unchanged;
+    }
+    if let Some(handle) = FILTER_HANDLE.get() {
+        if let Err(e) = handle.reload(filter) {
+            tracing::error!(error = %e, "Log level not changed");
+            return LevelChange::Invalid(e.to_string());
+        }
+    }
+    let old = std::mem::replace(&mut *current, directive.clone());
+    drop(current);
+
+    tracing::info!(old = %old, new = %directive, source = ?LevelSource::Config, "Log level changed");
+    LevelChange::Changed {
+        old,
+        new: directive,
+    }
 }
 
 /// Build the environment filter from configuration
@@ -422,6 +518,81 @@ mod tests {
         if let Some(v) = previous {
             std::env::set_var("RUST_LOG", v);
         }
+    }
+
+    fn with_env<T>(name: &str, value: Option<&str>, f: impl FnOnce() -> T) -> T {
+        let previous = std::env::var(name).ok();
+        match value {
+            Some(v) => std::env::set_var(name, v),
+            None => std::env::remove_var(name),
+        }
+        let out = f();
+        match previous {
+            Some(v) => std::env::set_var(name, v),
+            None => std::env::remove_var(name),
+        }
+        out
+    }
+
+    fn level(level: &str) -> LoggingConfig {
+        LoggingConfig {
+            level: level.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn log_format_env_overrides_config() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let config = LoggingConfig::default();
+
+        let resolved = with_env("PUTIO_SYNC_LOG_FORMAT", Some("json"), || {
+            resolve_format(&config).unwrap()
+        });
+        assert_eq!(resolved, (ConsoleFormat::Json, LevelSource::Env));
+
+        let resolved = with_env("PUTIO_SYNC_LOG_FORMAT", None, || {
+            resolve_format(&config).unwrap()
+        });
+        assert_eq!(resolved, (ConsoleFormat::Compact, LevelSource::Config));
+    }
+
+    #[test]
+    fn invalid_log_format_names_allowed_values() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let err = with_env("PUTIO_SYNC_LOG_FORMAT", Some("x"), || {
+            resolve_format(&LoggingConfig::default()).unwrap_err()
+        });
+        assert_eq!(
+            err.to_string(),
+            "Configuration error: invalid logging.console_format 'x': expected one of compact, pretty, json"
+        );
+    }
+
+    #[test]
+    fn apply_level_reports_each_outcome() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_env("RUST_LOG", None, || {
+            *CURRENT_DIRECTIVE.lock().unwrap() = "info".to_string();
+
+            assert_eq!(
+                apply_level(&level("debug")),
+                LevelChange::Changed {
+                    old: "info".to_string(),
+                    new: "debug".to_string()
+                }
+            );
+            assert_eq!(apply_level(&level("debug")), LevelChange::Unchanged);
+            assert!(matches!(
+                apply_level(&level("loud")),
+                LevelChange::Invalid(_)
+            ));
+            assert_eq!(*CURRENT_DIRECTIVE.lock().unwrap(), "debug");
+        });
+
+        with_env("RUST_LOG", Some("warn"), || {
+            assert_eq!(apply_level(&level("trace")), LevelChange::IgnoredEnv);
+        });
     }
 
     #[test]

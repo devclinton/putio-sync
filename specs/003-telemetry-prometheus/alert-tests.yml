@@ -1,0 +1,164 @@
+# promtool test rules for the putio-sync alert group (SC-004).
+# Render the group first (quickstart.md §4), then:
+#   promtool test rules specs/003-telemetry-prometheus/alert-tests.yml
+#
+# Each test has a "bad" instance that must fire and a "good" one that must not.
+
+rule_files:
+  - /tmp/putio-sync-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: PutioSyncDown
+    interval: 1m
+    input_series:
+      - series: 'up{job="putio_sync",instance="bad",host="Mnemosyne"}'
+        values: '0x20'
+      - series: 'up{job="putio_sync",instance="good",host="Mnemosyne"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: PutioSyncDown
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: PutioSyncDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: putio_sync, instance: bad, host: Mnemosyne}
+            exp_annotations:
+              summary: "putio-sync down on Mnemosyne"
+              description: "Prometheus cannot scrape putio-sync /metrics. Check the container and that port 9742 is published."
+
+  - name: PutioSyncNoRecentSuccess (stale success)
+    interval: 1m
+    input_series:
+      # bad: last success at t=0; good: last success keeps up with time().
+      - series: 'putio_sync_last_success_timestamp_seconds{job="putio_sync",instance="bad",host="Mnemosyne"}'
+        values: '0x60'
+      - series: 'putio_sync_last_success_timestamp_seconds{job="putio_sync",instance="good",host="Mnemosyne"}'
+        values: '0+60x60'
+      - series: 'putio_sync_start_time_seconds{job="putio_sync",instance="bad",host="Mnemosyne"}'
+        values: '0x60'
+      - series: 'putio_sync_start_time_seconds{job="putio_sync",instance="good",host="Mnemosyne"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: PutioSyncNoRecentSuccess
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: PutioSyncNoRecentSuccess
+        exp_alerts:
+          - exp_labels: {severity: warning, job: putio_sync, instance: bad, host: Mnemosyne}
+            exp_annotations:
+              summary: "putio-sync has not synced successfully on Mnemosyne"
+              description: "No successful Put.io sync for over 30 minutes (threshold 1800 s, sync interval 60 s)."
+
+  - name: PutioSyncNoRecentSuccess (never succeeded)
+    interval: 1m
+    input_series:
+      # bad: up since t=0 with no success yet; good: just restarted.
+      - series: 'putio_sync_start_time_seconds{job="putio_sync",instance="bad",host="Mnemosyne"}'
+        values: '0x60'
+      - series: 'putio_sync_start_time_seconds{job="putio_sync",instance="good",host="Mnemosyne"}'
+        values: '0+60x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: PutioSyncNoRecentSuccess
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: PutioSyncNoRecentSuccess
+        exp_alerts:
+          - exp_labels: {severity: warning, job: putio_sync, instance: bad, host: Mnemosyne}
+            exp_annotations:
+              summary: "putio-sync has not synced successfully on Mnemosyne"
+              description: "No successful Put.io sync for over 30 minutes (threshold 1800 s, sync interval 60 s)."
+
+  - name: PutioSyncQueueStuck
+    interval: 1m
+    input_series:
+      - series: 'putio_sync_queue_items{job="putio_sync",instance="bad",host="Mnemosyne",state="pending"}'
+        values: '3x40'
+      - series: 'putio_sync_downloads_active{job="putio_sync",instance="bad",host="Mnemosyne"}'
+        values: '1x40'
+      - series: 'putio_sync_downloads_completed_total{job="putio_sync",instance="bad",host="Mnemosyne"}'
+        values: '5x40'
+      # good: same queue and activity, but downloads keep completing.
+      - series: 'putio_sync_queue_items{job="putio_sync",instance="good",host="Mnemosyne",state="pending"}'
+        values: '3x40'
+      - series: 'putio_sync_downloads_active{job="putio_sync",instance="good",host="Mnemosyne"}'
+        values: '1x40'
+      - series: 'putio_sync_downloads_completed_total{job="putio_sync",instance="good",host="Mnemosyne"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PutioSyncQueueStuck
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: PutioSyncQueueStuck
+        exp_alerts:
+          - exp_labels: {severity: warning, job: putio_sync, instance: bad, host: Mnemosyne, state: pending}
+            exp_annotations:
+              summary: "putio-sync queue stuck on Mnemosyne"
+              description: "Downloads are pending and active, but none completed in 2 hours."
+
+  - name: PutioSyncApiRetriesHigh
+    interval: 1m
+    input_series:
+      # bad: 60 retries/h; good: 6 retries/h.
+      - series: 'putio_sync_api_retries_total{job="putio_sync",instance="bad",host="Mnemosyne",reason="server_error"}'
+        values: '0+1x180'
+      - series: 'putio_sync_api_retries_total{job="putio_sync",instance="good",host="Mnemosyne",reason="network"}'
+        values: '0+0.1x180'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: PutioSyncApiRetriesHigh
+        exp_alerts: []
+      - eval_time: 150m
+        alertname: PutioSyncApiRetriesHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: bad}
+            exp_annotations:
+              summary: "putio-sync retrying Put.io often on bad"
+              description: "More than 20 Put.io API retries per hour for an hour. Check putio_sync_api_retries_total by reason."
+
+  - name: PutioSyncDiskLow
+    interval: 1m
+    input_series:
+      - series: 'putio_sync_disk_free_bytes{job="putio_sync",instance="bad",host="Mnemosyne"}'
+        values: '5x30'
+      - series: 'putio_sync_disk_total_bytes{job="putio_sync",instance="bad",host="Mnemosyne"}'
+        values: '100x30'
+      - series: 'putio_sync_disk_free_bytes{job="putio_sync",instance="good",host="Mnemosyne"}'
+        values: '50x30'
+      - series: 'putio_sync_disk_total_bytes{job="putio_sync",instance="good",host="Mnemosyne"}'
+        values: '100x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PutioSyncDiskLow
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: PutioSyncDiskLow
+        exp_alerts:
+          - exp_labels: {severity: critical, job: putio_sync, instance: bad, host: Mnemosyne}
+            exp_annotations:
+              summary: "putio-sync download disk below 10% free on Mnemosyne"
+              description: "The filesystem holding the download folder has less than 10% free space."
+
+  - name: PutioSyncDbErrors
+    interval: 1m
+    input_series:
+      - series: 'putio_sync_db_errors_total{job="putio_sync",instance="bad",host="Mnemosyne",operation="queue"}'
+        values: '0x5 1+1x25'
+      - series: 'putio_sync_db_errors_total{job="putio_sync",instance="good",host="Mnemosyne",operation="queue"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PutioSyncDbErrors
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: PutioSyncDbErrors
+        exp_alerts:
+          - exp_labels: {severity: warning, job: putio_sync, instance: bad, host: Mnemosyne, operation: queue}
+            exp_annotations:
+              summary: "putio-sync database errors on Mnemosyne"
+              description: "putio-sync logged queue database errors in the last 15 minutes."

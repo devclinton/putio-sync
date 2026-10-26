@@ -57,6 +57,37 @@ impl Default for DownloadConfig {
     }
 }
 
+tokio::task_local! {
+    /// The pool worker running the current job, for per-worker metrics at `detailed`.
+    static WORKER_ID: usize;
+}
+
+/// The current pool worker id, or `None` outside a worker (one-off downloads).
+pub(crate) fn current_worker() -> Option<usize> {
+    WORKER_ID.try_with(|id| *id).ok()
+}
+
+/// Marks the current worker busy until dropped. No-op outside a worker or at `basic`.
+struct BusyGuard(Option<usize>);
+
+impl BusyGuard {
+    fn new() -> Self {
+        let id = current_worker();
+        if let Some(id) = id {
+            telemetry::download::worker_busy(id, true);
+        }
+        Self(id)
+    }
+}
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        if let Some(id) = self.0 {
+            telemetry::download::worker_busy(id, false);
+        }
+    }
+}
+
 /// Sanitize a filename to remove invalid characters
 fn sanitize_filename(filename: &str) -> String {
     filename
@@ -397,7 +428,7 @@ impl DownloadManager {
                 }
 
                 // Try to process one item from queue
-                match worker_dm.process_queue().await {
+                match WORKER_ID.scope(worker_id, worker_dm.process_queue()).await {
                     Ok(true) => {
                         // Processed an item, continue
                         debug!("Worker {} processed an item", worker_id);
@@ -1136,6 +1167,7 @@ impl DownloadManager {
             }
         };
 
+        let _busy = BusyGuard::new();
         let file_id = queue_item.file_id;
 
         info!(
@@ -1314,7 +1346,7 @@ impl DownloadManager {
 
                 // Process items until queue is empty
                 loop {
-                    match worker_dm.process_queue().await {
+                    match WORKER_ID.scope(worker_id, worker_dm.process_queue()).await {
                         Ok(true) => {
                             count += 1;
                         }

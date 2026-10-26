@@ -3,10 +3,8 @@
 //! The PutioDaemon coordinates all sync operations including:
 //! - File watching for torrent/magnet files
 //! - Download management and synchronization
-//! - Configuration hot-reloading
 //! - API server (when enabled)
 
-use crate::config_watcher::ConfigWatcher;
 use crate::error::DaemonResult;
 use putio_sync_client::PutioApiClient;
 use putio_sync_db::Database;
@@ -41,10 +39,6 @@ pub struct DaemonConfig {
     pub delete_after_upload: bool,
     /// Enable file watcher (can be toggled at runtime via API)
     pub watch_enabled: bool,
-    /// Enable config hot-reloading
-    pub enable_hot_reload: bool,
-    /// Config file path (for hot-reload)
-    pub config_path: Option<PathBuf>,
     /// Number of concurrent download workers
     pub workers: usize,
     /// Buffer size for streaming downloads in megabytes
@@ -77,8 +71,6 @@ impl Default for DaemonConfig {
             parent_id: None,
             delete_after_upload: false,
             watch_enabled: true,
-            enable_hot_reload: false,
-            config_path: None,
             workers: 1,
             buffer_size_mb: 64,
             delete_after_download: false,
@@ -123,8 +115,6 @@ pub struct PutioDaemon {
     download_mode: Option<DownloadMode>,
     /// File watcher for torrents/magnets (shared with API for hot reload)
     file_watcher: Option<Arc<TorrentWatcher>>,
-    /// Config file watcher (for hot-reload)
-    config_watcher: Option<ConfigWatcher>,
 }
 
 impl PutioDaemon {
@@ -136,7 +126,6 @@ impl PutioDaemon {
             database: None,
             download_mode: None,
             file_watcher: None,
-            config_watcher: None,
         }
     }
 
@@ -234,22 +223,6 @@ impl PutioDaemon {
             info!("No watch directories configured, file watching disabled");
         }
 
-        // Initialize config watcher (if enabled)
-        if config.enable_hot_reload {
-            if let Some(ref config_path) = config.config_path {
-                let _daemon_config = self.config.clone();
-                let watcher = ConfigWatcher::new_with_path(config_path.clone(), move || {
-                    info!("Config file changed, reload would be triggered here");
-                    // In a full implementation, this would reload the config
-                    // and call handle_config_update
-                });
-                self.config_watcher = Some(watcher);
-                info!("Config watcher initialized: {}", config_path.display());
-            } else {
-                warn!("Hot-reload enabled but no config path provided");
-            }
-        }
-
         info!("Daemon initialization complete");
         Ok(())
     }
@@ -259,7 +232,6 @@ impl PutioDaemon {
     /// This spawns independent async tasks for:
     /// - File watch events (torrent/magnet scanner)
     /// - Download synchronization
-    /// - Config updates (hot reload)
     ///
     /// Each task manages its own timing and runs independently.
     pub async fn start(&mut self) -> DaemonResult<()> {
@@ -268,17 +240,6 @@ impl PutioDaemon {
         // Ensure daemon is initialized
         if self.client.is_none() {
             self.initialize().await?;
-        }
-
-        // Start config watcher in background task if configured
-        if let Some(mut config_watcher) = self.config_watcher.take() {
-            info!("Starting config watcher...");
-            tokio::spawn(async move {
-                if let Err(e) = config_watcher.start().await {
-                    error!("Config watcher error: {}", e);
-                }
-            });
-            debug!("Config watcher started in background");
         }
 
         // Spawn watch task if file watcher is configured
@@ -496,7 +457,8 @@ impl PutioDaemon {
 
     /// Handle a configuration update
     ///
-    /// This is called when the config file changes (hot-reload)
+    /// Not called yet: only `[logging]` settings reload at runtime, via
+    /// `putio_sync_core::config::spawn_reload_poller`.
     #[allow(dead_code)]
     async fn handle_config_update(&mut self, new_config: DaemonConfig) -> DaemonResult<()> {
         info!("Handling configuration update");
@@ -595,7 +557,6 @@ mod tests {
     fn test_daemon_config_default() {
         let config = DaemonConfig::default();
         assert_eq!(config.watch_interval, 60);
-        assert!(!config.enable_hot_reload);
         assert!(config.watch_dirs.is_empty());
     }
 

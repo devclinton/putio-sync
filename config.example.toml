@@ -210,6 +210,8 @@ backend = "none"
 # - info: General informational messages (default)
 # - warn: Warning messages
 # - error: Error messages only
+# Changes apply while running (checked every 10 s). RUST_LOG, if set, wins and
+# turns off live changes.
 # Default: "info"
 level = "info"
 
@@ -240,6 +242,7 @@ console_enabled = true
 # - compact: Single line per log (default, best for production)
 # - pretty: Multi-line format (best for development/debugging)
 # - json: Structured JSON format (best for log aggregation)
+# Env override: PUTIO_SYNC_LOG_FORMAT. Restart to change.
 # Default: "compact"
 console_format = "compact"
 
@@ -248,8 +251,32 @@ console_format = "compact"
 # Examples:
 #   - "putio_sync_download=trace" - enable trace logs for download module
 #   - "putio_sync_client=debug" - enable debug logs for client module
+# Changes apply while running, together with level.
 # Default: [] (no module-specific filters)
 module_filters = []
+
+# ============================================================================
+# Metrics (Prometheus)
+# ============================================================================
+# Served by both `daemon` and `server`. There is no authentication: anyone who
+# can reach the port can read the metrics. They carry no tokens, file names or
+# paths. Restart to change any of these. Each has an env override, which wins.
+[metrics]
+# Env: PUTIO_SYNC_METRICS_ENABLED (true, false, 1, 0). Default: true
+enabled = true
+
+# host:port to listen on. 0.0.0.0 means all interfaces; in Docker, exposure is
+# decided by which port the container publishes.
+# Env: PUTIO_SYNC_METRICS_BIND. Default: "0.0.0.0:9742"
+bind = "0.0.0.0:9742"
+
+# URL path, must start with "/". Env: PUTIO_SYNC_METRICS_PATH. Default: "/metrics"
+path = "/metrics"
+
+# basic or detailed. detailed adds per-worker state and in-flight bytes, and
+# per-operation API latency.
+# Env: PUTIO_SYNC_METRICS_DETAIL. Default: "basic"
+detail = "basic"
 
 # ============================================================================
 # Database Configuration (Advanced)

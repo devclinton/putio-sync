@@ -25,10 +25,6 @@ pub enum DaemonError {
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 
-    /// Watch error
-    #[error("Filesystem watch error: {0}")]
-    WatchError(#[from] notify::Error),
-
     /// Config error
     #[error("Configuration error: {0}")]
     ConfigError(String),

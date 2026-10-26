@@ -259,3 +259,37 @@ fn counters_never_decrease() {
         assert!(later.value >= s.value, "{} decreased", s.name);
     }
 }
+
+#[test]
+fn detailed_creates_one_series_per_worker_and_feeds_operation_latency() {
+    let t = Telemetry::new();
+    t.set_detail(Detail::Detailed);
+    t.init(3, "1.2.3", "abc1234");
+    for id in ["0", "1", "2"] {
+        assert_eq!(
+            t.sample("putio_sync_worker_state", &[("worker", id)]),
+            Some(0.0),
+            "worker {}",
+            id
+        );
+    }
+    assert_eq!(
+        t.sample("putio_sync_worker_state", &[("worker", "3")]),
+        None
+    );
+
+    let op = [("operation", "list_files")];
+    assert_eq!(
+        t.sample("putio_sync_api_operation_duration_seconds", &op),
+        None
+    );
+    t.api_attempt(
+        ApiOp::ListFiles,
+        ApiOutcome::Success,
+        Duration::from_millis(80),
+    );
+    assert_eq!(
+        t.sample("putio_sync_api_operation_duration_seconds", &op),
+        Some(1.0)
+    );
+}
