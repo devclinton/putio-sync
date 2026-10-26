@@ -394,14 +394,14 @@ explaining how it's monitored.
 **Independent Test**: `make -C ~/dev/home-network-new check` passes. After deploy, the
 `putio_sync` target is UP.
 
-- [ ] T025 [US2] Add the `putio_sync` scrape job from
+- [X] T025 [US2] Add the `putio_sync` scrape job from
   [contracts/alerts.md](contracts/alerts.md#scrape-job-group_varsmonitoring_servermainyml-appended-to-prometheus_extra_scrape_configs).
   - File: `~/dev/home-network-new/group_vars/monitoring_server/main.yml`.
   - Append it to the end of the `prometheus_extra_scrape_configs` block, with its
     comment: target `192.168.1.34:9742`, labels `{host: "Mnemosyne", app: "putio-sync"}`.
   - Additive edit only: run `git -C ~/dev/home-network-new diff group_vars/monitoring_server/main.yml`
     before and after, and confirm the only new hunk is this job.
-- [ ] T026 [P] [US2] Write `~/dev/home-network-new/apps/putio-sync.md`.
+- [X] T026 [P] [US2] Write `~/dev/home-network-new/apps/putio-sync.md`.
   - Use frontmatter in the style of `apps/pull-through-cache.md`:
     - `app: putio-sync`, a summary;
     - `hosts: [Mnemosyne]`;
@@ -417,12 +417,12 @@ explaining how it's monitored.
     - the query cookbook from contracts/metrics.md;
     - alerts and dashboard links;
     - a Divergences note: not Ansible-managed, no fleet manifest (R12).
-- [ ] T027 [P] [US2] Document metrics in `README.md`, in a new "Metrics" section:
+- [X] T027 [P] [US2] Document metrics in `README.md`, in a new "Metrics" section:
   - the endpoint, defaults and the no-auth warning ("anything that can reach the port can
     read metrics");
   - the full family table (type, labels, meaning), copied from contracts/metrics.md;
   - the questions-to-queries table.
-- [ ] T028 [US2] Run `make -C ~/dev/home-network-new check`. Record the result in this
+- [X] T028 [US2] Run `make -C ~/dev/home-network-new check`. Record the result in this
   file's Implementation Notes. If a failure is caused by the user's unrelated uncommitted
   work, note it and don't change their files.
 
@@ -720,3 +720,18 @@ MVP (T001–T024), recorded during implementation. T048 extends this section.
   pool timeouts fire under a paused clock.
 - Tests that share the global registry serialise on a `tokio::sync::Mutex` (clippy rejects
   a std guard held across `.await`).
+
+US2 (T025–T028):
+
+- `make -C ~/dev/home-network-new check` passes ("All offline checks passed"), and the
+  rendered scrape configs parse with 13 jobs, `putio_sync` last. The check prints an
+  `action` string warning and a `49agents.py` usage error; both predate this change.
+- The scrape job follows `main.yml`'s block style (multi-line `targets`/`labels`)
+  rather than the inline form in contracts/alerts.md. Same values.
+- The `main.yml` diff was compared before and after: the only new hunk is the
+  `putio_sync` job. The user's other uncommitted edits in home-network-new are untouched,
+  and nothing there is committed.
+- `apps/putio-sync.md` keeps `host_group: nas_devices` (the real inventory group for
+  Mnemosyne; app pages aren't schema-validated, only fleet manifests are).
+- README "Metrics" includes a short `[metrics]` settings block; T041 still owns the
+  full settings docs and `config.example.toml`.
