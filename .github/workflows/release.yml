@@ -37,10 +37,8 @@ jobs:
         run: |
           VERSION="${{ steps.get_version.outputs.version_no_v }}"
 
-          # Try to extract changelog for this version
-          if grep -q "## \[${VERSION}\]" putio-sync-cli/CHANGELOG.md; then
-            CHANGELOG=$(sed -n "/## \[${VERSION}\]/,/## \[/p" putio-sync-cli/CHANGELOG.md | sed '$d')
-          else
+          CHANGELOG=$(bash scripts/changelog-section.sh "$VERSION")
+          if [ -z "$CHANGELOG" ]; then
             CHANGELOG="Release ${VERSION}"
           fi
 

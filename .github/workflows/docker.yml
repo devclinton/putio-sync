@@ -59,3 +59,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: ${{ (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch') && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+
+      - name: Build notes
+        run: |
+          {
+            echo "## Docker image"
+            echo ""
+            echo '${{ steps.meta.outputs.tags }}' | sed 's/^/- `/; s/$/`/'
+            echo ""
+            bash scripts/build-notes.sh "${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+          } >> $GITHUB_STEP_SUMMARY

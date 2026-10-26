@@ -13,6 +13,7 @@ target/
 
 # Documentation
 *.md
+!CHANGELOG.md
 docs/
 Resources/
 Tasks/

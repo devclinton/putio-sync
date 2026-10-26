@@ -1,28 +1,47 @@
 name: putio-sync
 base: core22
 version: '0.1.1'
-summary: Sync Put.io to local storage, with a background daemon and web UI
+title: Put.io Sync
+summary: Sync Put.io to your NAS or server, with a daemon and web UI
 description: |
-  putio-sync downloads your Put.io files to local storage and keeps them in sync.
+  putio-sync downloads your Put.io files to a NAS, server or desktop and keeps
+  them in sync, so new transfers land on local storage without you lifting a
+  finger.
 
-  * A background daemon with a web UI (port 15432) for status, queue, Put.io
-    files and transfers, history, stats and settings
-  * Concurrent, resumable downloads with per-type filters
-  * Watch folders that upload .torrent and .magnet files to Put.io
-  * Stalled-transfer detection and empty-folder cleanup
-  * Prometheus metrics on port 9742
+  It is a single native binary written in Rust and very light on resources: on
+  a home NAS the daemon idles at about 11 MB of memory and well under 1% of one
+  CPU core.
 
-  After installing:
+  Features:
+
+  * Background daemon with a web UI (port 15432) that works on desktop and
+    phone, in light or dark mode
+  * Status, download queue, Put.io file browser, transfers, history and stats
+    pages
+  * Concurrent, resumable downloads with per-folder rules: video, audio or ebook
+    presets, blocked file types, skip or delete after download
+  * Add magnet links and .torrent files from the web UI, or drop them into a
+    watch folder
+  * Radarr and Sonarr can use putio-sync as a download client
+  * Doctor page that finds stalled or failed transfers, duplicates, leftover
+    .torrent files and a full Put.io account, with one-click fixes
+  * Empty-folder cleanup and stalled-transfer detection
+  * Prometheus metrics (port 9742) with a ready-made Grafana dashboard
+
+  Getting started:
 
     sudo putio-sync login
     sudo snap set putio-sync api-token="$(openssl rand -hex 24)"
     sudo snap start --enable putio-sync.daemon
 
   Then open http://<host>:15432/ and sign in with the api-token. Settings live
-  in /var/snap/putio-sync/common/config.toml and downloads go to
-  /var/snap/putio-sync/common/downloads unless you change target_directory.
-  To download to /media or /mnt, run:
-  sudo snap connect putio-sync:removable-media
+  in /var/snap/putio-sync/common/config.toml, and downloads go to
+  /var/snap/putio-sync/common/downloads unless you change target_directory. To
+  download to /media or /mnt, run:
+
+    sudo snap connect putio-sync:removable-media
+
+  putio-sync is not affiliated with Put.io.
 website: https://github.com/devclinton/putio-sync
 license: MIT
 grade: stable
@@ -75,6 +94,7 @@ parts:
       cp target/release/putio-sync $CRAFT_PART_INSTALL/bin/
       strip $CRAFT_PART_INSTALL/bin/putio-sync
       cp config.example.toml $CRAFT_PART_INSTALL/share/
+      cp CHANGELOG.md $CRAFT_PART_INSTALL/share/
 
   wrapper:
     plugin: dump
