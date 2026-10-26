@@ -221,7 +221,8 @@ the auth token fields show "set" or "not set" and can't be read.
    as the API already does today (for example, worker count scales the pool; log level
    applies live).
 3. **Given** a setting that needs a restart to take effect, **When** it is saved, **Then**
-   the UI says so.
+   the UI says so, naming the setting; a setting that applies live is not called
+   restart-only, and a save of settings that all apply live shows no restart note.
 4. **Given** the settings page, **Then** the Put.io token, app password and API token are
    never shown or editable. The page says whether each is set.
 
@@ -333,7 +334,10 @@ the auth token fields show "set" or "not set" and can't be read.
 - **FR-018**: The UI MUST show and let the operator change the download, watcher, logging
   and notification settings the API already exposes, with validation messages and a note
   when a restart is needed. Saved settings MUST be written to the config file and applied
-  as they are today.
+  as they are today. The save message MUST name which changed settings apply now and which
+  need a restart, for the engine the API runs on (`daemon` or `server`). A save MUST NOT
+  write a token the file didn't hold: `[auth]` and `api.auth_token` stay as they are on
+  disk, so a `PUTIO_SYNC_API_TOKEN` value never reaches the file.
 
 **Quality**
 

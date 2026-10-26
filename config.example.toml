@@ -169,6 +169,13 @@ refresh_cycle = 60
 # Default: [] (empty - no paths watched)
 paths = []
 
+# Move each uploaded .torrent/.magnet file into this folder (created if
+# missing; ~ is expanded). Takes precedence over delete_after_upload. The daemon
+# reads it at startup, and a save from the web UI applies it at the next scan.
+# Default: unset (files stay, tracked in the database, or are deleted with
+# delete_after_upload = true)
+# archive_directory = "~/processed"
+
 # ============================================================================
 # Notification Configuration
 # ============================================================================
@@ -277,6 +284,39 @@ path = "/metrics"
 # per-operation API latency.
 # Env: PUTIO_SYNC_METRICS_DETAIL. Default: "basic"
 detail = "basic"
+
+# ============================================================================
+# API and Web UI
+# ============================================================================
+# `daemon` serves the JSON API and the web UI on one port (http://<host>:15432/).
+# `server` serves the same API and UI but uses its --bind/--port flags instead of
+# `listen` and `bind`. Plain HTTP: keep the port on a trusted LAN. Restart to
+# change any of these. Each has an env override, which wins.
+[api]
+# Bearer token for the web UI and every API route except /health. REQUIRED for
+# the UI: without it every request is refused with 401 "API token not
+# configured". Must be non-empty with no whitespace; an empty string ("") stops
+# putio-sync at startup. Prefer the env variable so the token stays out of this
+# file. A settings save from the web UI rewrites this file but keeps the tokens
+# it finds here ([auth] and auth_token); an env-only token is never written.
+# Env: PUTIO_SYNC_API_TOKEN
+# auth_token = "change-me"
+
+# `daemon` only: open the API and web UI listener (true, false, 1, 0). If the
+# port can't be bound, one error is logged and the daemon keeps syncing.
+# Env: PUTIO_SYNC_API_LISTEN. Default: true
+listen = true
+
+# `daemon` only: host:port to listen on. 0.0.0.0 means all interfaces; in
+# Docker, exposure is decided by which port the container publishes.
+# Env: PUTIO_SYNC_API_BIND. Default: "0.0.0.0:15432"
+bind = "0.0.0.0:15432"
+
+# Unrelated to the listener: make the daemon hand downloads to a remote API
+# server at `url` instead of downloading itself. The daemon's own API and UI
+# listener is not started in that mode.
+# enabled = false
+# url = "http://host:15432"
 
 # ============================================================================
 # Database Configuration (Advanced)

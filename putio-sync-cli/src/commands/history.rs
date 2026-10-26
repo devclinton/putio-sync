@@ -62,7 +62,7 @@ pub async fn execute_history(
 
     // Get total count for pagination info
     let total_count = history_repo
-        .count(action_filter)
+        .count(action_filter, None)
         .await
         .context("Failed to count history entries")?;
 
@@ -80,7 +80,7 @@ pub async fn execute_history(
             .context("Failed to query history")?
     } else {
         history_repo
-            .query(action_filter, limit as i64, offset as i64)
+            .query(action_filter, limit as i64, offset as i64, None)
             .await
             .context("Failed to query history")?
     };

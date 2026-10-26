@@ -94,9 +94,6 @@ pub async fn execute_daemon(
     if delete_torrents {
         warn!("--delete-torrents flag not yet supported in daemon mode, ignoring");
     }
-    if config.watch.archive_directory.is_some() {
-        warn!("watch.archive_directory is not supported in daemon mode, ignoring");
-    }
 
     // Create daemon configuration
     let daemon_config = DaemonConfig {
@@ -108,6 +105,7 @@ pub async fn execute_daemon(
         download_interval,
         parent_id,
         delete_after_upload: config.watch.delete_after_upload,
+        archive_dir: config.watch.archive_directory.clone(),
         watch_enabled: config.watch.enabled,
         workers,
         buffer_size_mb,
@@ -163,6 +161,7 @@ pub async fn execute_daemon(
         "  Delete after upload: {}",
         daemon_config.delete_after_upload
     );
+    info!("  Archive directory: {:?}", daemon_config.archive_dir);
     info!(
         "  Blocked extensions: {}",
         if daemon_config.blocked_extensions.is_empty() {
@@ -196,7 +195,8 @@ pub async fn execute_daemon(
                 daemon.get_database(),
                 download_manager,
                 daemon.get_file_watcher(),
-            );
+            )
+            .on_daemon();
             crate::api_listener::start(&config, state).await?;
         }
         _ => warn!("API listener not started: no local download manager (api.enabled is set)"),

@@ -16,6 +16,9 @@ considered.
     on the developer machine or in the `rust:alpine` builder stage (Principle II, VII).
   - The UI is six pages of tables and forms over existing JSON. That is around 1,500
     lines of plain JavaScript; a framework would be larger than the application.
+    Measured at the end of the feature (2026-10-26): 12 files, 2,565 lines (about 1,970
+    of them JavaScript), 82,206 bytes (about 82 KB) uncompressed, against the 150 KB
+    budget.
   - `include_bytes!` is in the standard library. No new crate for asset embedding.
   - Everything is served from the LAN, so there is no CDN and the page works offline.
   - Plain CSS with a single-column layout under 700 px handles the phone requirement
@@ -42,8 +45,9 @@ considered.
   - `GET /` → `index.html`;
   - `GET /assets/{file}` → the matching entry, or 404.
 
-  Responses carry `Cache-Control: no-cache` and an `ETag` equal to the crate version, so
-  browsers revalidate cheaply and a new release is never served stale. Both routes are
+  Responses carry `Cache-Control: no-cache` and an `ETag` that hashes the file's content
+  (std hasher, computed once), so browsers revalidate cheaply and a rebuild is never
+  served stale, even at the same version. Both routes are
   mounted outside the auth layer: the page itself is public (it only contains the sign-in
   form and rendering code), and every piece of data behind it is protected.
 - **Rationale**: the UI must be served "by the same process and port as the JSON API"

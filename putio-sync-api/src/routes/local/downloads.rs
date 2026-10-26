@@ -196,11 +196,26 @@ async fn get_download_progress(
 /// DELETE /local/downloads/:id
 ///
 /// Cancels an active download by updating its status to pending.
-/// The download will not be retried until manually resumed.
+/// The download will not be retried until manually resumed. An id that is not in the
+/// queue is 404.
 async fn cancel_download(
     State(state): State<AppState>,
     Path(download_id): Path<i64>,
 ) -> Result<Json<CancelResponse>, ApiError> {
+    if let Some(db) = state.database.as_ref() {
+        let queued = db
+            .queue()
+            .get_by_file_id(download_id)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to get queue item: {}", e)))?;
+        if queued.is_none() {
+            return Err(ApiError::NotFound(format!(
+                "Download {} not found",
+                download_id
+            )));
+        }
+    }
+
     state
         .download_manager
         .cancel_download(download_id)

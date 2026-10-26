@@ -67,50 +67,37 @@ impl<'a> HistoryRepository<'a> {
         Ok(result.last_insert_rowid())
     }
 
-    /// Query history with optional filters
+    /// Query history with optional filters, newest first
     ///
     /// # Arguments
     ///
     /// * `action` - Optional action filter (downloaded or deleted)
     /// * `limit` - Maximum number of results (default: 50)
     /// * `offset` - Number of results to skip (for pagination)
+    /// * `name` - Optional case-insensitive filename fragment; `%`, `_` and `\` match
+    ///   literally, and an empty fragment is no filter
     pub async fn query(
         &self,
         action: Option<HistoryAction>,
         limit: i64,
         offset: i64,
+        name: Option<&str>,
     ) -> DbResult<Vec<DownloadHistory>> {
-        let history = match action {
-            Some(action) => {
-                sqlx::query_as::<_, DownloadHistory>(
-                    r#"
-                    SELECT * FROM download_history
-                    WHERE action = ?
-                    ORDER BY timestamp DESC
-                    LIMIT ? OFFSET ?
-                    "#,
-                )
-                .bind(action.to_string())
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(self.pool)
-                .await
-            }
-            None => {
-                sqlx::query_as::<_, DownloadHistory>(
-                    r#"
-                    SELECT * FROM download_history
-                    ORDER BY timestamp DESC
-                    LIMIT ? OFFSET ?
-                    "#,
-                )
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(self.pool)
-                .await
-            }
+        let (filter, bindings) = filters(action, name);
+        let sql = format!(
+            "SELECT * FROM download_history WHERE 1=1{filter} \
+             ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?"
+        );
+        let mut q = sqlx::query_as::<_, DownloadHistory>(&sql);
+        for binding in bindings {
+            q = q.bind(binding);
         }
-        .map_err(tracked(DbOp::History, "Failed to query history"))?;
+        let history = q
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self.pool)
+            .await
+            .map_err(tracked(DbOp::History, "Failed to query history"))?;
 
         Ok(history)
     }
@@ -166,37 +153,55 @@ impl<'a> HistoryRepository<'a> {
         Ok(history)
     }
 
-    /// Count total history entries
+    /// Count history entries matching the same filters as [`Self::query`]
     ///
     /// # Arguments
     ///
     /// * `action` - Optional action filter
-    pub async fn count(&self, action: Option<HistoryAction>) -> DbResult<i64> {
-        let count: (i64,) = match action {
-            Some(action) => {
-                sqlx::query_as(
-                    r#"
-                    SELECT COUNT(*) FROM download_history WHERE action = ?
-                    "#,
-                )
-                .bind(action.to_string())
-                .fetch_one(self.pool)
-                .await
-            }
-            None => {
-                sqlx::query_as(
-                    r#"
-                    SELECT COUNT(*) FROM download_history
-                    "#,
-                )
-                .fetch_one(self.pool)
-                .await
-            }
+    /// * `name` - Optional filename fragment, as in [`Self::query`]
+    pub async fn count(&self, action: Option<HistoryAction>, name: Option<&str>) -> DbResult<i64> {
+        let (filter, bindings) = filters(action, name);
+        let sql = format!("SELECT COUNT(*) FROM download_history WHERE 1=1{filter}");
+        let mut q = sqlx::query_as::<_, (i64,)>(&sql);
+        for binding in bindings {
+            q = q.bind(binding);
         }
-        .map_err(tracked(DbOp::History, "Failed to count history"))?;
+        let count = q
+            .fetch_one(self.pool)
+            .await
+            .map_err(tracked(DbOp::History, "Failed to count history"))?;
 
         Ok(count.0)
     }
+}
+
+/// `AND …` clauses and their bindings for the action and name filters (R7)
+fn filters(action: Option<HistoryAction>, name: Option<&str>) -> (String, Vec<String>) {
+    let mut sql = String::new();
+    let mut bindings = Vec::new();
+    if let Some(action) = action {
+        sql.push_str(" AND action = ?");
+        bindings.push(action.to_string());
+    }
+    if let Some(name) = name.filter(|n| !n.is_empty()) {
+        sql.push_str(" AND LOWER(filename) LIKE ? ESCAPE '\\'");
+        bindings.push(like_pattern(name));
+    }
+    (sql, bindings)
+}
+
+/// `%fragment%`, lower-cased, with the `LIKE` wildcards and the escape character escaped
+fn like_pattern(fragment: &str) -> String {
+    let mut pattern = String::with_capacity(fragment.len() + 2);
+    pattern.push('%');
+    for c in fragment.to_lowercase().chars() {
+        if matches!(c, '\\' | '%' | '_') {
+            pattern.push('\\');
+        }
+        pattern.push(c);
+    }
+    pattern.push('%');
+    pattern
 }
 
 #[cfg(test)]
@@ -261,17 +266,17 @@ mod tests {
             .await
             .unwrap();
 
-        let all = repo.query(None, 50, 0).await.unwrap();
+        let all = repo.query(None, 50, 0, None).await.unwrap();
         assert_eq!(all.len(), 3);
 
         let downloaded = repo
-            .query(Some(HistoryAction::Downloaded), 50, 0)
+            .query(Some(HistoryAction::Downloaded), 50, 0, None)
             .await
             .unwrap();
         assert_eq!(downloaded.len(), 2);
 
         let deleted = repo
-            .query(Some(HistoryAction::Deleted), 50, 0)
+            .query(Some(HistoryAction::Deleted), 50, 0, None)
             .await
             .unwrap();
         assert_eq!(deleted.len(), 1);
@@ -296,10 +301,10 @@ mod tests {
             .unwrap();
         }
 
-        let page1 = repo.query(None, 5, 0).await.unwrap();
+        let page1 = repo.query(None, 5, 0, None).await.unwrap();
         assert_eq!(page1.len(), 5);
 
-        let page2 = repo.query(None, 5, 5).await.unwrap();
+        let page2 = repo.query(None, 5, 5, None).await.unwrap();
         assert_eq!(page2.len(), 5);
 
         // Ensure pages are different
@@ -321,14 +326,78 @@ mod tests {
             .await
             .unwrap();
 
-        let total = repo.count(None).await.unwrap();
+        let total = repo.count(None, None).await.unwrap();
         assert_eq!(total, 3);
 
-        let downloaded = repo.count(Some(HistoryAction::Downloaded)).await.unwrap();
+        let downloaded = repo
+            .count(Some(HistoryAction::Downloaded), None)
+            .await
+            .unwrap();
         assert_eq!(downloaded, 2);
 
-        let deleted = repo.count(Some(HistoryAction::Deleted)).await.unwrap();
+        let deleted = repo
+            .count(Some(HistoryAction::Deleted), None)
+            .await
+            .unwrap();
         assert_eq!(deleted, 1);
+    }
+
+    async fn seed_name_filter(repo: &HistoryRepository<'_>) {
+        for (id, name, action) in [
+            (1, "Ubuntu.iso", HistoryAction::Downloaded),
+            (2, "debian.iso", HistoryAction::Deleted),
+            (3, "100%_done.mkv", HistoryAction::Downloaded),
+            (4, r"back\slash.txt", HistoryAction::Downloaded),
+        ] {
+            repo.insert(id, name, 1024, action, None, None)
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_name_filter_case_insensitive() {
+        let (_temp_dir, db) = setup_test_db().await;
+        let repo = HistoryRepository::new(db.pool());
+        seed_name_filter(&repo).await;
+
+        let rows = repo.query(None, 10, 0, Some("ubuntu")).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].filename, "Ubuntu.iso");
+
+        assert_eq!(repo.count(None, Some("iso")).await.unwrap(), 2);
+        assert_eq!(repo.count(None, Some("ISO")).await.unwrap(), 2);
+        assert_eq!(
+            repo.count(Some(HistoryAction::Deleted), Some("iso"))
+                .await
+                .unwrap(),
+            1
+        );
+        // Empty fragment is no filter
+        assert_eq!(repo.count(None, Some("")).await.unwrap(), 4);
+        assert_eq!(repo.query(None, 10, 0, Some("")).await.unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_name_filter_wildcards_are_literal() {
+        let (_temp_dir, db) = setup_test_db().await;
+        let repo = HistoryRepository::new(db.pool());
+        seed_name_filter(&repo).await;
+
+        let percent = repo.query(None, 10, 0, Some("%")).await.unwrap();
+        assert_eq!(percent.len(), 1);
+        assert_eq!(percent[0].filename, "100%_done.mkv");
+
+        let underscore = repo.query(None, 10, 0, Some("_done")).await.unwrap();
+        assert_eq!(underscore.len(), 1);
+        assert_eq!(underscore[0].filename, "100%_done.mkv");
+
+        // Unescaped, `_` would match the `b` in "Ubuntu"
+        assert_eq!(repo.count(None, Some("u_untu")).await.unwrap(), 0);
+
+        let backslash = repo.query(None, 10, 0, Some(r"\")).await.unwrap();
+        assert_eq!(backslash.len(), 1);
+        assert_eq!(backslash[0].filename, r"back\slash.txt");
     }
 
     #[tokio::test]
@@ -340,7 +409,7 @@ mod tests {
             .await
             .unwrap();
 
-        let history = repo.query(None, 1, 0).await.unwrap();
+        let history = repo.query(None, 1, 0, None).await.unwrap();
         assert_eq!(history[0].extension, Some("mkv".to_string()));
     }
 }

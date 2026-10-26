@@ -35,7 +35,15 @@ pub enum ClientError {
 /// Convenience type alias for Results that return `ClientError`
 pub type ClientResult<T> = Result<T, ClientError>;
 
+/// The `ApiError` message for a 404 from Put.io
+pub(crate) const NOT_FOUND_MESSAGE: &str = "Resource not found.";
+
 impl ClientError {
+    /// Put.io answered 404: the file, folder or transfer does not exist
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, ClientError::ApiError(msg) if msg == NOT_FOUND_MESSAGE)
+    }
+
     /// Create an AuthError with a helpful suggestion
     pub fn auth_error_with_suggestion(msg: &str) -> Self {
         ClientError::AuthError(format!(

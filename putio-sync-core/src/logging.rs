@@ -388,10 +388,16 @@ pub fn apply_level(config: &LoggingConfig) -> LevelChange {
     }
 }
 
-/// Build the environment filter from configuration
+/// Check that `level` and `module_filters` parse, without touching the subscriber.
 ///
-/// Returns the filter, where its level came from, and the effective directive string.
-fn build_filter(config: &LoggingConfig) -> LoggingResult<(EnvFilter, LevelSource, String)> {
+/// The settings API calls this before saving, so a bad value is refused instead of being
+/// written to the config file and rejected later by the reload poller.
+pub fn validate_filters(config: &LoggingConfig) -> LoggingResult<()> {
+    config_filter(config).map(|_| ())
+}
+
+/// The filter for `level` plus `module_filters`, ignoring `RUST_LOG`
+fn config_filter(config: &LoggingConfig) -> LoggingResult<EnvFilter> {
     // A bare word is accepted by EnvFilter as a target name, so a typo like "inf" would
     // silently disable logging. Plain values must be real levels; directive strings
     // ("info,putio_sync_download=debug") are passed through as-is.
@@ -416,6 +422,15 @@ fn build_filter(config: &LoggingConfig) -> LoggingResult<(EnvFilter, LevelSource
             CoreError::ConfigError(format!("Invalid module filter '{}': {}", module_filter, e))
         })?);
     }
+
+    Ok(filter)
+}
+
+/// Build the environment filter from configuration
+///
+/// Returns the filter, where its level came from, and the effective directive string.
+fn build_filter(config: &LoggingConfig) -> LoggingResult<(EnvFilter, LevelSource, String)> {
+    let filter = config_filter(config)?;
 
     // Allow RUST_LOG environment variable to override if set
     if let Ok(env_filter) = std::env::var("RUST_LOG") {
@@ -628,6 +643,17 @@ mod tests {
         };
 
         assert!(build_filter(&config).is_ok());
+    }
+
+    #[test]
+    fn validate_filters_checks_level_and_module_filters() {
+        assert!(validate_filters(&level("debug")).is_ok());
+        assert!(validate_filters(&level("loud")).is_err());
+        let config = LoggingConfig {
+            module_filters: vec!["a=b=c".to_string()],
+            ..Default::default()
+        };
+        assert!(validate_filters(&config).is_err());
     }
 
     #[test]

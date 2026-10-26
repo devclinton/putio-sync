@@ -25,7 +25,7 @@
 //!     let history = HistoryRepository::new(db.pool());
 //!
 //!     // Query history
-//!     let entries = history.query(None, 10, 0).await?;
+//!     let entries = history.query(None, 10, 0, Some("ubuntu")).await?;
 //!     Ok(())
 //! }
 //! ```

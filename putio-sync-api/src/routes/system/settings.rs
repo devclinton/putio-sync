@@ -9,7 +9,7 @@
 use crate::error::ApiError;
 use crate::models::SuccessResponse;
 use axum::{
-    extract::State,
+    extract::{rejection::JsonRejection, State},
     routing::{get, put},
     Json, Router,
 };
@@ -18,18 +18,100 @@ use std::path::PathBuf;
 
 // Re-export AppState from parent
 pub use crate::AppState;
-use putio_sync_core::config::{NotificationBackend, ProgressStyle, SortOrder};
+use crate::Engine;
+use putio_sync_core::config::{Config, NotificationBackend, ProgressStyle, SortOrder};
+use putio_sync_core::error::CoreError;
 use putio_sync_core::logging::ConsoleFormat;
 
-/// Helper function to persist config to file
-async fn persist_config(state: &AppState) -> Result<(), ApiError> {
-    if let Some(ref config_path) = state.config_path {
-        let config = state.config.read().await;
-        config
-            .save(config_path.as_ref())
+/// A malformed or mistyped body is a 400 with a JSON `error`, like a failed validation
+fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
+    body.map(|Json(value)| value)
+        .map_err(|rejection| ApiError::BadRequest(rejection.body_text()))
+}
+
+fn invalid(e: CoreError) -> ApiError {
+    match e {
+        CoreError::ConfigError(msg) => ApiError::BadRequest(msg),
+        other => ApiError::BadRequest(other.to_string()),
+    }
+}
+
+/// Apply `change` to a copy of the config and keep it only when the whole config still
+/// validates and, with a config file, was written to it. A refused PUT therefore changes
+/// nothing in memory or on disk.
+///
+/// The file keeps its own credentials (`Config::save_keeping_file_credentials`): the API
+/// token in memory may come from `PUTIO_SYNC_API_TOKEN` and must not be written.
+///
+/// Returns the names of the fields of `view` (the group's GET body) that changed.
+async fn update<V: Serialize>(
+    state: &AppState,
+    view: fn(&Config) -> V,
+    change: impl FnOnce(&mut Config) -> Result<(), ApiError>,
+) -> Result<Vec<String>, ApiError> {
+    let mut config = state.config.write().await;
+    let mut candidate = config.clone();
+    change(&mut candidate)?;
+    candidate.validate().map_err(invalid)?;
+    if let Some(ref path) = state.config_path {
+        candidate
+            .save_keeping_file_credentials(path.as_ref())
             .map_err(|e| ApiError::InternalError(format!("Failed to persist config: {}", e)))?;
     }
-    Ok(())
+    let changed = changed_fields(&view(&config), &view(&candidate));
+    *config = candidate;
+    Ok(changed)
+}
+
+/// Top-level fields that differ between two serialised group bodies
+fn changed_fields<V: Serialize>(before: &V, after: &V) -> Vec<String> {
+    let (Ok(serde_json::Value::Object(before)), Ok(serde_json::Value::Object(after))) =
+        (serde_json::to_value(before), serde_json::to_value(after))
+    else {
+        return Vec::new();
+    };
+    after
+        .iter()
+        .filter(|(name, value)| before.get(*name) != Some(*value))
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+/// The save message (FR-018): which changed fields apply now and which need a restart.
+///
+/// `live` lists the fields this engine applies without a restart and `when` says when
+/// they take effect; every other changed field needs a restart. Fields a note explains
+/// are taken out of `changed` by the caller.
+fn saved_message(
+    group: &str,
+    changed: &[String],
+    live: &[&str],
+    when: &str,
+    notes: &[String],
+) -> String {
+    if changed.is_empty() && notes.is_empty() {
+        return format!("{group} settings saved; nothing changed.");
+    }
+    let (now, later): (Vec<&str>, Vec<&str>) = changed
+        .iter()
+        .map(String::as_str)
+        .partition(|field| live.contains(field));
+    let mut parts = vec![format!("{group} settings saved.")];
+    if !now.is_empty() {
+        parts.push(format!("{when}: {}.", now.join(", ")));
+    }
+    if !later.is_empty() {
+        parts.push(format!("Needs a restart: {}.", later.join(", ")));
+    }
+    parts.extend(notes.iter().cloned());
+    parts.join(" ")
+}
+
+/// Remove `field` from `changed`; true when it was there
+fn take(changed: &mut Vec<String>, field: &str) -> bool {
+    let before = changed.len();
+    changed.retain(|f| f != field);
+    changed.len() != before
 }
 
 /// Parse ProgressStyle from string
@@ -155,15 +237,27 @@ pub fn router() -> Router<AppState> {
         .route("/notifications", put(update_notification_settings))
 }
 
-/// Get download settings
-///
-/// GET /settings/download
-async fn get_download_settings(
-    State(state): State<AppState>,
-) -> Result<Json<DownloadSettings>, ApiError> {
-    let config = state.config.read().await;
+/// Download fields the engine's download manager picks up for the next download
+/// (README "Settings from the UI", checked against the daemon code)
+const DOWNLOAD_LIVE: &[&str] = &[
+    "workers",
+    "bandwidth_limit_bytes_per_sec",
+    "buffer_size_mb",
+    "max_retries",
+    "retry_initial_delay_secs",
+    "skip_existing",
+    "delete_after_download",
+    "blocked_extensions",
+];
 
-    Ok(Json(DownloadSettings {
+/// Watcher fields a shared watcher picks up at its next scan
+const WATCHER_LIVE: &[&str] = &["paths", "parent_folder_id", "archive_directory"];
+
+/// Logging fields the config reload poller applies
+const LOGGING_LIVE: &[&str] = &["level", "module_filters"];
+
+fn download_view(config: &Config) -> DownloadSettings {
+    DownloadSettings {
         workers: config.download.workers,
         target_directory: config
             .download
@@ -185,7 +279,56 @@ async fn get_download_settings(
         max_retries: config.download.max_retries,
         retry_initial_delay_secs: config.download.retry_initial_delay_secs,
         delete_empty_folders: config.download.delete_empty_folders,
-    }))
+    }
+}
+
+fn watcher_view(config: &Config) -> WatcherConfig {
+    WatcherConfig {
+        enabled: config.watch.enabled,
+        paths: config
+            .watch
+            .paths
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect(),
+        refresh_cycle: config.watch.refresh_cycle,
+        parent_folder_id: config.watch.parent_folder_id,
+        archive_directory: config
+            .watch
+            .archive_directory
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string()),
+        delete_after_upload: config.watch.delete_after_upload,
+    }
+}
+
+fn logging_view(config: &Config) -> LoggingSettings {
+    LoggingSettings {
+        level: config.logging.level.clone(),
+        file_enabled: config.logging.file_enabled,
+        file_path: config.logging.file_path.to_string_lossy().to_string(),
+        console_enabled: config.logging.console_enabled,
+        console_format: format!("{:?}", config.logging.console_format),
+        module_filters: config.logging.module_filters.clone(),
+    }
+}
+
+fn notification_view(config: &Config) -> NotificationSettings {
+    NotificationSettings {
+        enabled: config.notifications.enabled,
+        backend: format!("{:?}", config.notifications.backend),
+        webhook_url: config.notifications.webhook_url.clone(),
+        email: config.notifications.email.clone(),
+    }
+}
+
+/// Get download settings
+///
+/// GET /settings/download
+async fn get_download_settings(
+    State(state): State<AppState>,
+) -> Result<Json<DownloadSettings>, ApiError> {
+    Ok(Json(download_view(&*state.config.read().await)))
 }
 
 /// Update download settings
@@ -193,16 +336,14 @@ async fn get_download_settings(
 /// PUT /settings/download
 async fn update_download_settings(
     State(state): State<AppState>,
-    Json(settings): Json<DownloadSettings>,
+    settings: Result<Json<DownloadSettings>, JsonRejection>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
+    let settings = body(settings)?;
     // Parse enums before acquiring write lock
     let progress_style = parse_progress_style(&settings.progress_style)?;
     let sort_order = parse_sort_order(&settings.sort_order)?;
 
-    {
-        let mut config = state.config.write().await;
-
-        // Update configuration
+    let mut changed = update(&state, download_view, |config| {
         config.download.workers = settings.workers;
         config.download.target_directory = settings.target_directory.into();
         config.download.buffer_size_mb = settings.buffer_size_mb;
@@ -220,29 +361,43 @@ async fn update_download_settings(
         config.download.max_retries = settings.max_retries;
         config.download.retry_initial_delay_secs = settings.retry_initial_delay_secs;
         config.download.delete_empty_folders = settings.delete_empty_folders;
-    }
+        Ok(())
+    })
+    .await?;
 
-    // Hot reload: Update download manager configuration dynamically
-    // This updates the shared config without restarting workers or losing queue state.
-    // Changes take effect immediately:
-    // - Bandwidth limits applied to active and new downloads
-    // - Worker count changes (future: will scale workers gracefully)
-    // - Buffer sizes applied to new downloads
+    // Hand the new settings to the download manager the API holds: the daemon's own
+    // under `daemon`, the API's own under `server`. The pool scales to `workers`; the
+    // other `DOWNLOAD_LIVE` fields apply from the next download.
     {
         let download_config = {
             let cfg = state.config.read().await;
             crate::extract_download_config(&cfg)
         };
-
-        // Update config via hot reload - workers will see changes immediately
         state.download_manager.update_config(download_config).await;
     }
 
-    // Persist config to file
-    persist_config(&state).await?;
+    let mut notes = Vec::new();
+    if take(&mut changed, "target_directory") {
+        notes.push(
+            "New downloads go to the new target_directory now; the queue database and disk figures stay on the startup folder until a restart."
+                .to_string(),
+        );
+    }
+    let when = match state.engine {
+        Engine::Daemon => "Applies from the next download",
+        Engine::Server => {
+            if !changed.is_empty() || !notes.is_empty() {
+                notes.push(
+                    "The server --download background thread keeps its startup settings until a restart."
+                        .to_string(),
+                );
+            }
+            "Applies to the API's own download manager from the next download"
+        }
+    };
 
     Ok(Json(SuccessResponse {
-        message: "Download settings updated successfully via hot reload. Changes applied without restarting workers.".to_string(),
+        message: saved_message("Download", &changed, DOWNLOAD_LIVE, when, &notes),
     }))
 }
 
@@ -252,25 +407,7 @@ async fn update_download_settings(
 async fn get_watcher_config(
     State(state): State<AppState>,
 ) -> Result<Json<WatcherConfig>, ApiError> {
-    let config = state.config.read().await;
-
-    Ok(Json(WatcherConfig {
-        enabled: config.watch.enabled,
-        paths: config
-            .watch
-            .paths
-            .iter()
-            .map(|p| p.to_string_lossy().to_string())
-            .collect(),
-        refresh_cycle: config.watch.refresh_cycle,
-        parent_folder_id: config.watch.parent_folder_id,
-        archive_directory: config
-            .watch
-            .archive_directory
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string()),
-        delete_after_upload: config.watch.delete_after_upload,
-    }))
+    Ok(Json(watcher_view(&*state.config.read().await)))
 }
 
 /// Update file watcher configuration
@@ -278,29 +415,29 @@ async fn get_watcher_config(
 /// PUT /settings/watcher
 async fn update_watcher_config(
     State(state): State<AppState>,
-    Json(watcher): Json<WatcherConfig>,
+    watcher: Result<Json<WatcherConfig>, JsonRejection>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
+    let watcher = body(watcher)?;
     use putio_sync_file_manager::watcher::WatcherConfig as FileWatcherConfig;
     use std::time::Duration;
 
     let watch_paths: Vec<PathBuf> = watcher.paths.into_iter().map(PathBuf::from).collect();
     let archive_dir = watcher.archive_directory.map(PathBuf::from);
 
-    {
-        let mut config = state.config.write().await;
-
-        // Update file watcher configuration
+    let mut changed = update(&state, watcher_view, |config| {
         config.watch.enabled = watcher.enabled;
         config.watch.paths = watch_paths.clone();
         config.watch.refresh_cycle = watcher.refresh_cycle;
         config.watch.parent_folder_id = watcher.parent_folder_id;
         config.watch.archive_directory = archive_dir.clone();
         config.watch.delete_after_upload = watcher.delete_after_upload;
-    }
+        Ok(())
+    })
+    .await?;
 
-    // Hot reload: Update file watcher configuration dynamically
-    // This updates the shared config without restarting the watcher daemon.
-    // Changes take effect on the next scan cycle.
+    // A watcher shared with the daemon (it started with a watch folder) reads paths,
+    // parent folder and archive folder at its next scan. `enabled` and
+    // `delete_after_upload` are read by the daemon's watch loop only at startup.
     if let Some(ref file_watcher) = state.file_watcher {
         let new_watcher_config = FileWatcherConfig {
             watch_dirs: watch_paths,
@@ -313,16 +450,37 @@ async fn update_watcher_config(
         file_watcher.update_config(new_watcher_config);
     }
 
-    // Persist config to file
-    persist_config(&state).await?;
-
-    let message = if state.file_watcher.is_some() {
-        "File watcher configuration updated successfully via hot reload. Changes will take effect on next scan cycle.".to_string()
-    } else {
-        "File watcher configuration updated successfully. Note: Server restart required for changes to take effect (watcher not available for hot reload).".to_string()
+    let mut notes = Vec::new();
+    let live = match (state.engine, state.file_watcher.is_some()) {
+        (Engine::Daemon, true) => {
+            if take(&mut changed, "refresh_cycle") {
+                notes.push(
+                    "refresh_cycle is saved, but the daemon scans on --watch-interval.".to_string(),
+                );
+            }
+            WATCHER_LIVE
+        }
+        (Engine::Daemon, false) => {
+            if !changed.is_empty() {
+                notes.push(
+                    "The daemon started without a watch folder, so the watcher picks up changes only after a restart."
+                        .to_string(),
+                );
+            }
+            &[]
+        }
+        (Engine::Server, _) => &[],
     };
 
-    Ok(Json(SuccessResponse { message }))
+    Ok(Json(SuccessResponse {
+        message: saved_message(
+            "Watcher",
+            &changed,
+            live,
+            "Applies at the next scan",
+            &notes,
+        ),
+    }))
 }
 
 /// Get logging settings
@@ -331,16 +489,7 @@ async fn update_watcher_config(
 async fn get_logging_settings(
     State(state): State<AppState>,
 ) -> Result<Json<LoggingSettings>, ApiError> {
-    let config = state.config.read().await;
-
-    Ok(Json(LoggingSettings {
-        level: config.logging.level.clone(),
-        file_enabled: config.logging.file_enabled,
-        file_path: config.logging.file_path.to_string_lossy().to_string(),
-        console_enabled: config.logging.console_enabled,
-        console_format: format!("{:?}", config.logging.console_format),
-        module_filters: config.logging.module_filters.clone(),
-    }))
+    Ok(Json(logging_view(&*state.config.read().await)))
 }
 
 /// Update logging settings
@@ -348,29 +497,48 @@ async fn get_logging_settings(
 /// PUT /settings/logging
 async fn update_logging_settings(
     State(state): State<AppState>,
-    Json(settings): Json<LoggingSettings>,
+    settings: Result<Json<LoggingSettings>, JsonRejection>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
+    let settings = body(settings)?;
     // Parse enum before acquiring write lock
     let console_format = parse_console_format(&settings.console_format)?;
 
-    {
-        let mut config = state.config.write().await;
-
-        // Update logging configuration
+    let mut changed = update(&state, logging_view, |config| {
         config.logging.level = settings.level;
         config.logging.file_enabled = settings.file_enabled;
         config.logging.file_path = settings.file_path.into();
         config.logging.console_enabled = settings.console_enabled;
         config.logging.console_format = console_format;
-        config.logging.module_filters = settings.module_filters.clone();
-    }
+        config.logging.module_filters = settings.module_filters;
+        // The poller would refuse a bad level later; refuse it before it is saved
+        putio_sync_core::logging::validate_filters(&config.logging).map_err(invalid)
+    })
+    .await?;
 
-    // Persist config to file
-    persist_config(&state).await?;
+    // The config reload poller (feature 003) applies level and module_filters from the
+    // saved file, unless RUST_LOG is set; it runs only if the file existed at startup.
+    let mut notes = Vec::new();
+    let live = if !state.logging_reload {
+        &[]
+    } else if std::env::var_os("RUST_LOG").is_some() {
+        let level = take(&mut changed, "level");
+        let filters = take(&mut changed, "module_filters");
+        if level || filters {
+            notes.push("level and module_filters are ignored while RUST_LOG is set.".to_string());
+        }
+        &[]
+    } else {
+        LOGGING_LIVE
+    };
 
-    // The config poller applies level and module_filters from the saved file (feature 003)
     Ok(Json(SuccessResponse {
-        message: "Logging configuration updated successfully. Level and module filters apply within 10 seconds; other logging settings need a restart.".to_string(),
+        message: saved_message(
+            "Logging",
+            &changed,
+            live,
+            "Applies within 10 seconds",
+            &notes,
+        ),
     }))
 }
 
@@ -380,14 +548,7 @@ async fn update_logging_settings(
 async fn get_notification_settings(
     State(state): State<AppState>,
 ) -> Result<Json<NotificationSettings>, ApiError> {
-    let config = state.config.read().await;
-
-    Ok(Json(NotificationSettings {
-        enabled: config.notifications.enabled,
-        backend: format!("{:?}", config.notifications.backend),
-        webhook_url: config.notifications.webhook_url.clone(),
-        email: config.notifications.email.clone(),
-    }))
+    Ok(Json(notification_view(&*state.config.read().await)))
 }
 
 /// Update notification settings
@@ -395,30 +556,24 @@ async fn get_notification_settings(
 /// PUT /settings/notifications
 async fn update_notification_settings(
     State(state): State<AppState>,
-    Json(settings): Json<NotificationSettings>,
+    settings: Result<Json<NotificationSettings>, JsonRejection>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
+    let settings = body(settings)?;
     // Parse enum before acquiring write lock
     let backend = parse_notification_backend(&settings.backend)?;
 
-    {
-        let mut config = state.config.write().await;
-
-        // Update notification configuration
+    // Notifications are set up at startup, so every change needs a restart
+    let changed = update(&state, notification_view, |config| {
         config.notifications.enabled = settings.enabled;
         config.notifications.backend = backend;
         config.notifications.webhook_url = settings.webhook_url;
         config.notifications.email = settings.email;
-
-        // Note: Notification system hot reload is not currently implemented.
-        // The notification system is initialized at startup and changes require a server restart.
-        // Future enhancement: Add dynamic notification backend reinitialization.
-    }
-
-    // Persist config to file
-    persist_config(&state).await?;
+        Ok(())
+    })
+    .await?;
 
     Ok(Json(SuccessResponse {
-        message: "Notification configuration updated successfully. Note: Server restart required for changes to take effect.".to_string(),
+        message: saved_message("Notification", &changed, &[], "", &[]),
     }))
 }
 

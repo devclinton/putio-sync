@@ -67,8 +67,9 @@ pub fn extract_download_config(config: &Config) -> DownloadConfig {
 /// This state is shared across all route handlers and provides access to
 /// all core services: database, download manager, API client, and configuration.
 ///
-/// Note: Logging hot reload is not currently supported due to tracing-subscriber's
-/// complex layer type system. Logging configuration changes require a server restart.
+/// Note: `PUT /settings/logging` only saves the file; the config poller started by
+/// `daemon`/`server` applies `level` and `module_filters` from it. Other logging
+/// settings need a restart.
 #[derive(Clone)]
 pub struct AppState {
     /// Application configuration (wrapped in RwLock for settings updates)
@@ -87,6 +88,21 @@ pub struct AppState {
     pub started_at: Instant,
     /// Failed-authentication limiter shared by the middleware and `/auth/login`
     pub limiter: Arc<middleware::ratelimit::AuthLimiter>,
+    /// The engine the API runs on, which decides what a settings save reaches live
+    pub engine: Engine,
+    /// Whether a config reload poller applies `[logging]` level changes from the file.
+    /// Both commands start one exactly when the config file exists at startup.
+    pub logging_reload: bool,
+}
+
+/// The engine behind the API (FR-018: a save says what applies now)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Engine {
+    /// `daemon`: the API shares the daemon's download manager and watcher
+    Daemon,
+    /// `server`: the API has its own download manager; the `--watch`/`--download`
+    /// threads keep their startup config
+    Server,
 }
 
 impl AppState {
@@ -103,7 +119,10 @@ impl AppState {
         download_manager: Arc<DownloadManager>,
         file_watcher: Option<Arc<TorrentWatcher>>,
     ) -> AppState {
+        let logging_reload = config_path.as_ref().is_some_and(|path| path.exists());
         AppState {
+            engine: Engine::Server,
+            logging_reload,
             config: Arc::new(RwLock::new(config)),
             config_path: config_path.map(Arc::new),
             client,
@@ -116,6 +135,12 @@ impl AppState {
                 middleware::ratelimit::AUTH_FAILURE_WINDOW,
             )),
         }
+    }
+
+    /// Mark the state as running on the daemon's own engine (`api_listener::start`)
+    pub fn on_daemon(mut self) -> AppState {
+        self.engine = Engine::Daemon;
+        self
     }
 }
 
@@ -130,6 +155,10 @@ pub fn router(state: AppState) -> Router {
         .nest("/putio/transfers", create_putio_transfers_router())
         .nest("/local/files", create_local_files_router())
         .nest("/local/queue", create_local_queue_router())
+        .route(
+            "/local/sync",
+            axum::routing::post(routes::local::sync::sync_now),
+        )
         .nest("/local/downloads", create_local_downloads_router())
         .nest("/local/watcher", create_local_watcher_router())
         .nest("/local/workers", create_local_workers_router())

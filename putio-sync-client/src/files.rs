@@ -161,8 +161,8 @@ impl PutioApiClient {
         }
 
         // Send the request with multipart form
-        // Put.io uses a separate upload domain for file uploads
-        let url = "https://upload.put.io/v2/files/upload";
+        // Put.io uses a separate upload domain for file uploads (see `DEFAULT_UPLOAD_URL`)
+        let url = self.upload_url.as_str();
         let auth_header = self.get_auth_header()?;
 
         let started = std::time::Instant::now();
@@ -342,7 +342,38 @@ mod tests {
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         let result = client.list_files(999).await;
 
-        assert!(result.is_err());
+        assert!(result.unwrap_err().is_not_found());
+        mock.assert_async().await;
+    }
+
+    /// The upload goes to the configured base URL, never the real upload host
+    #[tokio::test]
+    async fn test_upload_file_uses_base_url() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/files/upload")
+            .match_header("authorization", "Bearer test_token")
+            .match_header(
+                "content-type",
+                mockito::Matcher::Regex("^multipart/form-data".to_string()),
+            )
+            .match_body(mockito::Matcher::Regex("d8:announce".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"status":"OK","transfer":{"id":7,"name":"t","status":"WAITING","created_at":"2026-10-26T08:00:00","save_parent_id":0,"is_private":false}}"#,
+            )
+            .create_async()
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.torrent");
+        std::fs::write(&path, b"d8:announce3:urle").unwrap();
+
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        let response = client.upload_file(&path, None).await.unwrap();
+
+        assert_eq!(response.transfer.unwrap().id, 7);
         mock.assert_async().await;
     }
 }

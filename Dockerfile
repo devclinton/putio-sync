@@ -118,5 +118,9 @@ WORKDIR /config
 # default to info logging
 ENV RUST_LOG=info
 
+# Prometheus metrics ([metrics] bind) and the API + web UI ([api] bind). The UI is
+# embedded in the binary; publish the ports with -p or the Unraid template.
+EXPOSE 9742 15432
+
 # Set default command
 CMD ["putio-sync", "--config", "/config/config.toml", "daemon", "--download-interval", "60", "--watch-interval", "60"]
