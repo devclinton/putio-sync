@@ -42,6 +42,25 @@ rustc --version
 cargo --version
 echo ""
 
+# Repository checks: changelog entries and the Docker build's crate list
+print_step "Checking CHANGELOG.md..."
+if bash scripts/check-changelog.sh; then
+    print_success "Changelog check passed"
+else
+    print_error "Changelog check failed"
+    exit 1
+fi
+echo ""
+
+print_step "Checking the Dockerfile covers every workspace crate..."
+if bash scripts/check-dockerfile-members.sh; then
+    print_success "Dockerfile check passed"
+else
+    print_error "Dockerfile check failed"
+    exit 1
+fi
+echo ""
+
 # Check formatting
 print_step "Checking code formatting..."
 if cargo fmt --all -- --check; then

@@ -31,6 +31,9 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        # The changelog check compares a PR with its base branch
+        fetch-depth: 0
 
     # rustup reads rust-toolchain.toml and installs the pinned version + components
     - name: Install pinned toolchain
@@ -40,6 +43,8 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Run local CI gate
+      env:
+        CHANGELOG_BASE: ${{ github.base_ref && format('origin/{0}', github.base_ref) || '' }}
       run: bash scripts/ci-local.sh
 
   matrix:

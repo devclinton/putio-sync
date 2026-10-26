@@ -56,16 +56,21 @@ This guide is for maintainers of the putio-sync project, covering release proced
 
 2. **Update Changelog**
 
-   Add release notes to `putio-sync-cli/CHANGELOG.md`:
+   Rename the `[Unreleased]` section of `CHANGELOG.md` to the version and start
+   a new empty `[Unreleased]` above it. Entries are added there as changes land
+   (`make ci` fails a branch with `feat:` or `fix:` commits and no entry), so
+   this is only the heading:
    ```markdown
-   ## [0.1.2] - 2025-11-16
+   ## [Unreleased]
+
+   ## [0.1.2] - 2026-11-16
 
    ### Added
    - New feature description
-
-   ### Fixed
-   - Bug fix description
    ```
+
+   The release workflow uses that section as the GitHub release notes
+   (`scripts/changelog-section.sh 0.1.2`).
 
 3. **Run Pre-Release Validation**
 
@@ -411,7 +416,7 @@ Benefits:
 - [ ] Tests pass
 - [ ] Code follows style guidelines
 - [ ] Documentation updated
-- [ ] Changelog entry added (if user-facing)
+- [ ] Entry under [Unreleased] in CHANGELOG.md (if user-facing)
 - [ ] No security issues
 - [ ] Commit messages are clear
 

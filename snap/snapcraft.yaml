@@ -75,6 +75,7 @@ parts:
       cp target/release/putio-sync $CRAFT_PART_INSTALL/bin/
       strip $CRAFT_PART_INSTALL/bin/putio-sync
       cp config.example.toml $CRAFT_PART_INSTALL/share/
+      cp CHANGELOG.md $CRAFT_PART_INSTALL/share/
 
   wrapper:
     plugin: dump
