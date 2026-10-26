@@ -48,10 +48,15 @@ pub struct TransferResponse {
     /// Creation date
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+    /// Put.io transfer type (`TORRENT`, `URL`, ...)
+    pub transfer_type: Option<String>,
+    /// Tracker host name only, never the tracker address (feature 006)
+    pub tracker_host: Option<String>,
 }
 
 impl From<putio_sync_client::Transfer> for TransferResponse {
     fn from(transfer: putio_sync_client::Transfer) -> Self {
+        let tracker_host = transfer.any_tracker_host().map(str::to_string);
         Self {
             id: transfer.id,
             name: transfer.name,
@@ -62,6 +67,8 @@ impl From<putio_sync_client::Transfer> for TransferResponse {
             up_speed: transfer.up_speed,
             error_message: transfer.error_message,
             created_at: Some(transfer.created_at),
+            transfer_type: transfer.transfer_type,
+            tracker_host,
         }
     }
 }
@@ -105,6 +112,8 @@ mod tests {
             up_speed: Some(10240),
             error_message: None,
             created_at: Some("2024-01-01".to_string()),
+            transfer_type: Some("TORRENT".to_string()),
+            tracker_host: None,
         };
 
         let json = serde_json::to_string(&response).unwrap();

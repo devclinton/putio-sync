@@ -234,6 +234,120 @@ pub struct ProcessedTorrent {
     pub processed_at: String, // SQLite datetime as string
 }
 
+/// Kind of Put.io transfer a download came from (feature 006)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceType {
+    /// A torrent (magnet link or .torrent file)
+    Torrent,
+    /// A plain URL
+    Url,
+    /// Anything else Put.io reports (playlists, streams)
+    Other,
+}
+
+impl SourceType {
+    /// The value stored in `download_sources.source_type`
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SourceType::Torrent => "torrent",
+            SourceType::Url => "url",
+            SourceType::Other => "other",
+        }
+    }
+
+    /// Map Put.io's transfer `type` (`TORRENT`, `URL`, ...) to a source type
+    pub fn from_putio(transfer_type: Option<&str>) -> Self {
+        match transfer_type.map(str::to_ascii_uppercase).as_deref() {
+            Some("TORRENT") => SourceType::Torrent,
+            Some("URL") => SourceType::Url,
+            _ => SourceType::Other,
+        }
+    }
+}
+
+impl std::str::FromStr for SourceType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "torrent" => Ok(SourceType::Torrent),
+            "url" => Ok(SourceType::Url),
+            "other" => Ok(SourceType::Other),
+            _ => Err(format!("Invalid source type: {}", s)),
+        }
+    }
+}
+
+/// How a download reached Put.io (feature 006, R11)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Origin {
+    /// The watcher uploaded it from a watch folder
+    Watch,
+    /// Added through the putio-sync web UI or API
+    Manual,
+    /// A transfer putio-sync didn't create (Put.io website, apps, RSS)
+    Putio,
+    /// No matching transfer: an upload, or a transfer Put.io already cleared
+    Unknown,
+}
+
+impl Origin {
+    /// The value stored in `origin` columns
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Origin::Watch => "watch",
+            Origin::Manual => "manual",
+            Origin::Putio => "putio",
+            Origin::Unknown => "unknown",
+        }
+    }
+}
+
+impl std::str::FromStr for Origin {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "watch" => Ok(Origin::Watch),
+            "manual" => Ok(Origin::Manual),
+            "putio" => Ok(Origin::Putio),
+            "unknown" => Ok(Origin::Unknown),
+            _ => Err(format!("Invalid origin: {}", s)),
+        }
+    }
+}
+
+/// Where a queued Put.io file came from (feature 006). Holds a tracker's host name
+/// only, never its address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadSource {
+    /// The Put.io transfer the file was matched to
+    pub transfer_id: Option<i64>,
+    /// The transfer's kind; `None` when no transfer matched
+    pub source_type: Option<SourceType>,
+    /// The tracker's host name, lower case
+    pub tracker_host: Option<String>,
+    /// A private torrent (no DHT or PEX)
+    pub is_private: bool,
+    /// How the file reached Put.io
+    pub origin: Origin,
+    /// The watch folder, for `Origin::Watch`
+    pub watch_folder: Option<String>,
+    /// The top-level Put.io folder the file was synced from, `(root)` at the root
+    pub putio_folder: Option<String>,
+}
+
+/// A transfer putio-sync created, and how (feature 006, R11)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransferOrigin {
+    /// `Origin::Watch` or `Origin::Manual`
+    pub origin: Origin,
+    /// The watch folder, for `Origin::Watch`
+    pub watch_folder: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +374,27 @@ mod tests {
             DownloadStatus::Failed
         );
         assert!("invalid".parse::<DownloadStatus>().is_err());
+    }
+
+    #[test]
+    fn test_source_type_from_putio() {
+        assert_eq!(SourceType::from_putio(Some("TORRENT")), SourceType::Torrent);
+        assert_eq!(SourceType::from_putio(Some("url")), SourceType::Url);
+        assert_eq!(SourceType::from_putio(Some("PLAYLIST")), SourceType::Other);
+        assert_eq!(SourceType::from_putio(None), SourceType::Other);
+    }
+
+    #[test]
+    fn test_origin_round_trip() {
+        for origin in [
+            Origin::Watch,
+            Origin::Manual,
+            Origin::Putio,
+            Origin::Unknown,
+        ] {
+            assert_eq!(origin.as_str().parse::<Origin>().unwrap(), origin);
+        }
+        assert!("upload".parse::<Origin>().is_err());
     }
 
     #[test]

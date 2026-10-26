@@ -30,12 +30,14 @@
 //! }
 //! ```
 
+pub mod analytics;
 pub mod downloads;
 pub mod error;
 pub mod history;
 pub mod models;
 pub mod queue;
 pub mod schema;
+pub mod sources;
 pub mod stats;
 pub mod torrents;
 
@@ -43,6 +45,7 @@ pub use downloads::DownloadRepository;
 pub use error::{DbError, DbResult};
 pub use history::HistoryRepository;
 pub use queue::{QueueRepository, QueueStats};
+pub use sources::SourcesRepository;
 pub use stats::{ExtensionStats, StatsRepository};
 pub use torrents::ProcessedTorrentsRepository;
 
@@ -148,6 +151,11 @@ impl Database {
         QueueRepository::new(&self.pool)
     }
 
+    /// Get a download sources repository (feature 006)
+    pub fn sources(&self) -> SourcesRepository<'_> {
+        SourcesRepository::new(&self.pool)
+    }
+
     /// Get a processed torrents repository
     pub fn processed_torrents(&self) -> ProcessedTorrentsRepository<'_> {
         ProcessedTorrentsRepository::new(&self.pool)
@@ -209,6 +217,23 @@ impl Database {
                 DbOp::Migrate,
                 "Failed to create processed_torrents table",
             ))?;
+
+        // Create the download source tables (feature 006)
+        for (sql, context) in [
+            (
+                schema::CREATE_DOWNLOAD_SOURCES_TABLE,
+                "Failed to create download_sources table",
+            ),
+            (
+                schema::CREATE_TRANSFER_ORIGINS_TABLE,
+                "Failed to create transfer_origins table",
+            ),
+        ] {
+            sqlx::query(sql)
+                .execute(&self.pool)
+                .await
+                .map_err(tracked(DbOp::Migrate, context))?;
+        }
 
         // Create performance indexes
         sqlx::query(schema::CREATE_INDEXES)

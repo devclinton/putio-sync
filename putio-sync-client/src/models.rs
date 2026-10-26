@@ -142,6 +142,85 @@ pub struct Transfer {
     /// Whether transfer is private
     #[serde(default)]
     pub is_private: bool,
+    /// Put.io transfer type (`TORRENT`, `URL`, `PLAYLIST`, ...)
+    #[serde(default, rename(deserialize = "type"))]
+    pub transfer_type: Option<String>,
+    /// The tracker's host name, read from Put.io's `tracker`. The rest of the address
+    /// (which can hold a private tracker's passkey) is dropped while parsing.
+    #[serde(
+        default,
+        rename(deserialize = "tracker"),
+        deserialize_with = "deserialize_tracker_host"
+    )]
+    pub tracker_host: Option<String>,
+    /// Host of the first tracker in Put.io's `magneturi`; the magnet link itself is
+    /// never kept or serialised
+    #[serde(
+        default,
+        rename(deserialize = "magneturi"),
+        deserialize_with = "deserialize_magnet_tracker_host",
+        skip_serializing
+    )]
+    pub magnet_tracker_host: Option<String>,
+}
+
+impl Transfer {
+    /// The tracker host from `tracker`, else from the magnet link
+    pub fn any_tracker_host(&self) -> Option<&str> {
+        self.tracker_host
+            .as_deref()
+            .or(self.magnet_tracker_host.as_deref())
+    }
+}
+
+/// The host name in a tracker address, lower case: the first of a comma- or
+/// space-separated list, from a URL or a bare `host[:port]`. Anything else is `None`.
+pub fn tracker_host(value: &str) -> Option<String> {
+    let token = value
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .find(|t| !t.is_empty())?;
+    let host = if token.contains("://") {
+        reqwest::Url::parse(token).ok()?.host_str()?.to_string()
+    } else {
+        let (host, port) = token.split_once(':').unwrap_or((token, ""));
+        if !port.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        host.to_string()
+    };
+    let host = host
+        .trim_matches(|c| c == '[' || c == ']')
+        .to_ascii_lowercase();
+    let bare = host
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':'));
+    (!host.is_empty() && bare).then_some(host)
+}
+
+/// The host of the first `tr=` tracker in a magnet link
+pub fn magnet_tracker_host(magnet: &str) -> Option<String> {
+    let url = reqwest::Url::parse(magnet).ok()?;
+    let tracker = url
+        .query_pairs()
+        .find(|(key, _)| key == "tr")
+        .map(|(_, value)| value.into_owned())?;
+    tracker_host(&tracker)
+}
+
+fn deserialize_tracker_host<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: Option<String> = Option::deserialize(deserializer)?;
+    Ok(value.as_deref().and_then(tracker_host))
+}
+
+fn deserialize_magnet_tracker_host<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: Option<String> = Option::deserialize(deserializer)?;
+    Ok(value.as_deref().and_then(magnet_tracker_host))
 }
 
 /// Response for transfer listing
@@ -294,6 +373,88 @@ mod tests {
         assert_eq!(transfer.name, "Test Transfer");
         assert_eq!(transfer.percent_done, Some(50));
         assert_eq!(transfer.status, "DOWNLOADING");
+    }
+
+    #[test]
+    fn test_tracker_host() {
+        let cases = [
+            (
+                "https://Tracker.Example.org:443/a1b2c3d4/announce",
+                Some("tracker.example.org"),
+            ),
+            (
+                "http://t.example.net/announce?passkey=SECRET",
+                Some("t.example.net"),
+            ),
+            ("udp://open.example.com:6969", Some("open.example.com")),
+            (
+                "http://user:SECRET@t.example.net/announce",
+                Some("t.example.net"),
+            ),
+            ("tracker.example.org:6969", Some("tracker.example.org")),
+            ("tracker.example.org", Some("tracker.example.org")),
+            ("udp://a.example, udp://b.example", Some("a.example")),
+            ("  udp://a.example udp://b.example", Some("a.example")),
+            ("tracker.example.org/SECRET/announce", None),
+            ("tracker.example.org:SECRET", None),
+            ("bad_host!", None),
+            ("", None),
+        ];
+        for (value, host) in cases {
+            assert_eq!(tracker_host(value).as_deref(), host, "{value}");
+        }
+    }
+
+    #[test]
+    fn test_magnet_tracker_host() {
+        let magnet = "magnet:?xt=urn:btih:abc&dn=x&tr=https%3A%2F%2Ftracker.example.org%2FSECRET%2Fannounce&tr=udp%3A%2F%2Fb.example";
+        assert_eq!(
+            magnet_tracker_host(magnet).as_deref(),
+            Some("tracker.example.org")
+        );
+        assert_eq!(magnet_tracker_host("magnet:?xt=urn:btih:abc"), None);
+        assert_eq!(magnet_tracker_host("garbage"), None);
+    }
+
+    #[test]
+    fn test_transfer_keeps_tracker_host_only() {
+        let json = r#"{
+            "id": 1, "name": "x", "status": "COMPLETED", "created_at": "2025-11-08T10:00:00",
+            "save_parent_id": 0, "is_private": true, "type": "TORRENT",
+            "tracker": "https://tracker.example.org/SECRET/announce",
+            "magneturi": "magnet:?xt=urn:btih:abc&tr=udp%3A%2F%2Fother.example%2FSECRET",
+            "source": "magnet:?xt=urn:btih:abc&tr=SECRET"
+        }"#;
+        let transfer: Transfer = serde_json::from_str(json).unwrap();
+        assert_eq!(transfer.transfer_type.as_deref(), Some("TORRENT"));
+        assert_eq!(transfer.any_tracker_host(), Some("tracker.example.org"));
+        assert_eq!(
+            transfer.magnet_tracker_host.as_deref(),
+            Some("other.example")
+        );
+
+        let out = serde_json::to_string(&transfer).unwrap();
+        assert!(!out.contains("SECRET"), "{out}");
+        assert!(!format!("{transfer:?}").contains("SECRET"));
+        assert!(!out.contains("magnet"), "{out}");
+        assert!(out.contains(r#""transfer_type":"TORRENT""#), "{out}");
+        assert!(
+            out.contains(r#""tracker_host":"tracker.example.org""#),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn test_transfer_tracker_falls_back_to_magnet() {
+        let json = r#"{
+            "id": 1, "name": "x", "status": "COMPLETED", "created_at": "2025-11-08T10:00:00",
+            "save_parent_id": 0, "tracker": null,
+            "magneturi": "magnet:?xt=urn:btih:abc&tr=udp%3A%2F%2Fopen.example.com%3A6969"
+        }"#;
+        let transfer: Transfer = serde_json::from_str(json).unwrap();
+        assert_eq!(transfer.tracker_host, None);
+        assert_eq!(transfer.any_tracker_host(), Some("open.example.com"));
+        assert_eq!(transfer.transfer_type, None);
     }
 
     #[test]

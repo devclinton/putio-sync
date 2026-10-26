@@ -67,6 +67,43 @@ impl<'a> HistoryRepository<'a> {
         Ok(result.last_insert_rowid())
     }
 
+    /// Insert a finished download with an explicit finish time (UTC). Used to seed
+    /// tests and the mock UI with history spread over time (feature 006, R10).
+    pub async fn insert_download_at(
+        &self,
+        file_id: i64,
+        filename: &str,
+        file_size: i64,
+        duration_seconds: Option<i64>,
+        average_speed: Option<i64>,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> DbResult<i64> {
+        let extension = std::path::Path::new(filename)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_lowercase());
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO download_history (file_id, filename, file_size, extension, action, duration_seconds, average_speed, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(file_id)
+        .bind(filename)
+        .bind(file_size)
+        .bind(extension)
+        .bind(HistoryAction::Downloaded.to_string())
+        .bind(duration_seconds)
+        .bind(average_speed)
+        .bind(timestamp.format("%Y-%m-%d %H:%M:%S").to_string())
+        .execute(self.pool)
+        .await
+        .map_err(tracked(DbOp::History, "Failed to insert history"))?;
+
+        Ok(result.last_insert_rowid())
+    }
+
     /// Query history with optional filters, newest first
     ///
     /// # Arguments
@@ -215,6 +252,25 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let db = Database::new(&db_path).await.unwrap();
         (temp_dir, db)
+    }
+
+    #[tokio::test]
+    async fn test_insert_download_at_keeps_timestamp() {
+        let (_temp_dir, db) = setup_test_db().await;
+        let repo = HistoryRepository::new(db.pool());
+        let at = chrono::DateTime::parse_from_rfc3339("2026-03-04T05:06:07Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+
+        repo.insert_download_at(7, "Show.S01E01.MKV", 1000, Some(10), Some(100), at)
+            .await
+            .unwrap();
+
+        let rows = repo.query(None, 10, 0, None).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].timestamp, "2026-03-04 05:06:07");
+        assert_eq!(rows[0].extension.as_deref(), Some("mkv"));
+        assert_eq!(rows[0].action, "downloaded");
     }
 
     #[tokio::test]

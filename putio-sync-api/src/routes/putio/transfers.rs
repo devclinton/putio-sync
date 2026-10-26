@@ -2,7 +2,8 @@
 //!
 //! Provides REST API endpoints for Put.io transfer operations:
 //! - GET  /putio/transfers        - List all transfers
-//! - POST /putio/transfers        - Add transfer (multipart for .torrent, JSON for magnet)
+//! - POST /putio/transfers        - Add transfer (multipart for .torrent, JSON for magnet);
+//!   records it as added by hand for the Stats page (feature 006)
 //! - GET  /putio/transfers/:id    - Get specific transfer stats
 //! - DELETE /putio/transfers/:id  - Remove transfer (Put.io cancel)
 //! - POST /putio/transfers/:id/retry - Retry a failed transfer
@@ -19,6 +20,8 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
+use putio_sync_db::models::{Origin, TransferOrigin};
+use tracing::warn;
 
 // Re-export AppState from parent
 pub use crate::AppState;
@@ -49,9 +52,21 @@ async fn add_transfer(
     State(state): State<AppState>,
     Json(request): Json<AddTransferRequest>,
 ) -> Result<Json<TransferResponse>, ApiError> {
-    transfers::add_transfer(&state.client, request)
-        .await
-        .map(Json)
+    let transfer = transfers::add_transfer(&state.client, request).await?;
+    if let Some(db) = state.database.as_ref() {
+        let origin = TransferOrigin {
+            origin: Origin::Manual,
+            watch_folder: None,
+        };
+        if let Err(e) = db
+            .sources()
+            .record_transfer_origin(transfer.id, &origin)
+            .await
+        {
+            warn!(transfer_id = transfer.id, error = %e, "Failed to record transfer origin");
+        }
+    }
+    Ok(Json(transfer))
 }
 
 /// Get transfer details

@@ -4,10 +4,17 @@
 //! - GET  /stats/downloads - Statistics about past downloads
 //! - GET  /stats/transfers - Statistics about current transfers
 //! - GET  /stats/disk     - Disk space information
+//! - GET  /stats/summary  - Everything the Stats page draws (feature 006)
 
 use crate::error::ApiError;
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{
+    extract::{Query, State},
+    routing::get,
+    Json, Router,
+};
+use putio_sync_db::analytics::{StatsParams, StatsQuery, StatsSummary};
 use putio_sync_db::models::HistoryAction;
+use putio_sync_db::StatsRepository;
 use serde::Serialize;
 use tracing::error;
 
@@ -46,6 +53,31 @@ pub fn router() -> Router<AppState> {
         .route("/downloads", get(download_stats))
         .route("/transfers", get(transfer_stats))
         .route("/disk", get(disk_stats))
+        .route("/summary", get(summary))
+}
+
+/// Pre-aggregated download statistics for one range and filter set
+///
+/// GET /stats/summary?range=&tz=&category=&ext=&source=&tracker=&private=&origin=&watch=&folder=
+async fn summary(
+    State(state): State<AppState>,
+    Query(params): Query<StatsParams>,
+) -> Result<Json<StatsSummary>, ApiError> {
+    let query = StatsQuery::try_from(params)
+        .map_err(|e| ApiError::BadRequest("Invalid query".to_string()).with_details(e))?;
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
+
+    StatsRepository::new(db.pool())
+        .summary(&query, chrono::Utc::now())
+        .await
+        .map(Json)
+        .map_err(|e| {
+            error!("Failed to build stats summary: {}", e);
+            ApiError::InternalError("Failed to build stats summary".to_string())
+        })
 }
 
 /// Get download statistics
