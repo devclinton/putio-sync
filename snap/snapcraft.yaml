@@ -1,39 +1,62 @@
 name: putio-sync
 base: core22
 version: '0.1.1'
-summary: CLI tool for syncing files from Put.io to local storage
+summary: Sync Put.io to local storage, with a background daemon and web UI
 description: |
-  putio-sync is a command-line tool for downloading and managing
-  files from Put.io cloud storage service. Features include:
+  putio-sync downloads your Put.io files to local storage and keeps them in sync.
 
-  * Download files and folders from Put.io with concurrent workers
-  * Resume support for interrupted downloads
-  * Daemon mode for continuous syncing
-  * Filter files by name, type, size, and date
-  * Delete files after download
-  * HTTP API server for remote control
-  * Watch mode for automatic torrent uploads
-  * Comprehensive download history and statistics
+  * A background daemon with a web UI (port 15432) for status, queue, Put.io
+    files and transfers, history, stats and settings
+  * Concurrent, resumable downloads with per-type filters
+  * Watch folders that upload .torrent and .magnet files to Put.io
+  * Stalled-transfer detection and empty-folder cleanup
+  * Prometheus metrics on port 9742
 
+  After installing:
+
+    sudo putio-sync login
+    sudo snap set putio-sync api-token="$(openssl rand -hex 24)"
+    sudo snap start --enable putio-sync.daemon
+
+  Then open http://<host>:15432/ and sign in with the api-token. Settings live
+  in /var/snap/putio-sync/common/config.toml and downloads go to
+  /var/snap/putio-sync/common/downloads unless you change target_directory.
+  To download to /media or /mnt, run:
+  sudo snap connect putio-sync:removable-media
+website: https://github.com/devclinton/putio-sync
+license: MIT
 grade: stable
 confinement: strict
 
 architectures:
   - build-on: amd64
   - build-on: arm64
-  - build-on: armhf
 
 apps:
   putio-sync:
-    command: bin/putio-sync
+    command: bin/cli-wrapper
+    environment:
+      # One config for the CLI and the daemon; run the CLI with sudo to use it
+      PUTIO_SYNC_CONFIG: $SNAP_COMMON/config.toml
     plugs:
       - home
       - network
       - network-bind
       - removable-media
+
+  daemon:
+    command: bin/daemon-wrapper
+    daemon: simple
+    # Starts once the user has logged in and set an api-token
+    install-mode: disable
+    restart-condition: on-failure
+    restart-delay: 10s
     environment:
-      # Use snap user data directory for config
-      PUTIO_SYNC_CONFIG: $SNAP_USER_DATA/config.toml
+      PUTIO_SYNC_CONFIG: $SNAP_COMMON/config.toml
+    plugs:
+      - network
+      - network-bind
+      - removable-media
 
 parts:
   putio-sync:
@@ -46,12 +69,15 @@ parts:
     stage-packages:
       - libssl3
     override-build: |
-      # Build the CLI binary
       cargo build --release --package putio-sync-cli
 
-      # Install to the snap
-      mkdir -p $CRAFT_PART_INSTALL/bin
+      mkdir -p $CRAFT_PART_INSTALL/bin $CRAFT_PART_INSTALL/share
       cp target/release/putio-sync $CRAFT_PART_INSTALL/bin/
-
-      # Strip binary to reduce size
       strip $CRAFT_PART_INSTALL/bin/putio-sync
+      cp config.example.toml $CRAFT_PART_INSTALL/share/
+
+  wrapper:
+    plugin: dump
+    source: snap/local
+    organize:
+      '*': bin/
