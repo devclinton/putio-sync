@@ -100,6 +100,84 @@ pub struct ReaddResponse {
     pub transfer: TransferResponse,
 }
 
+/// Which transfers `POST /putio/transfers/clear` removes (feature 008, R4)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatusGroup {
+    /// Completed or seeding: the files are already in the account
+    Completed,
+    /// Error or failed
+    Failed,
+    /// Both of the above
+    Finished,
+}
+
+impl StatusGroup {
+    /// Whether a Put.io transfer status belongs to the group (case-insensitive)
+    pub fn matches(self, status: &str) -> bool {
+        let status = status.to_ascii_uppercase();
+        let completed = matches!(status.as_str(), "COMPLETED" | "SEEDING");
+        let failed = matches!(status.as_str(), "ERROR" | "FAILED");
+        match self {
+            StatusGroup::Completed => completed,
+            StatusGroup::Failed => failed,
+            StatusGroup::Finished => completed || failed,
+        }
+    }
+}
+
+/// Request body of `POST /putio/transfers/clear`; `dry_run` is required so nothing is
+/// cleared by accident
+#[derive(Debug, Deserialize)]
+pub struct ClearRequest {
+    /// Which transfers to clear
+    pub status: StatusGroup,
+    /// Report what would be cleared without clearing
+    pub dry_run: bool,
+}
+
+/// A transfer a clear removed (or would)
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ClearedTransfer {
+    /// Transfer ID
+    pub id: i64,
+    /// Transfer name
+    pub name: String,
+    /// Put.io status when listed
+    pub status: String,
+}
+
+/// Answer to `POST /putio/transfers/clear`
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ClearResponse {
+    /// The group that was asked for
+    pub status: StatusGroup,
+    /// Whether this was a preview
+    pub dry_run: bool,
+    /// How many transfers were cleared (or would be)
+    pub count: usize,
+    /// The transfers cleared (or that would be)
+    pub transfers: Vec<ClearedTransfer>,
+}
+
+/// A transfer Put.io refused to retry
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct RetryFailure {
+    /// Transfer ID
+    pub id: i64,
+    /// Why Put.io refused
+    pub error: String,
+}
+
+/// Answer to `POST /putio/transfers/retry`
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct RetryManyResponse {
+    /// Transfers Put.io accepted, in request order
+    pub retried: Vec<i64>,
+    /// Transfers Put.io refused
+    pub failed: Vec<RetryFailure>,
+}
+
 impl From<putio_sync_client::Transfer> for TransferResponse {
     fn from(transfer: putio_sync_client::Transfer) -> Self {
         let tracker_host = transfer.any_tracker_host();
@@ -152,6 +230,42 @@ mod tests {
         let json = r#"{"transfer_ids": [1, 2, 3]}"#;
         let req: CancelTransfersRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.transfer_ids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_status_groups() {
+        for (status, completed, failed) in [
+            ("COMPLETED", true, false),
+            ("seeding", true, false),
+            ("ERROR", false, true),
+            ("FAILED", false, true),
+            ("DOWNLOADING", false, false),
+            ("IN_QUEUE", false, false),
+        ] {
+            assert_eq!(
+                StatusGroup::Completed.matches(status),
+                completed,
+                "{status}"
+            );
+            assert_eq!(StatusGroup::Failed.matches(status), failed, "{status}");
+            assert_eq!(
+                StatusGroup::Finished.matches(status),
+                completed || failed,
+                "{status}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_clear_request_needs_dry_run() {
+        assert!(serde_json::from_str::<ClearRequest>(r#"{"status":"failed"}"#).is_err());
+        assert!(
+            serde_json::from_str::<ClearRequest>(r#"{"status":"done","dry_run":true}"#).is_err()
+        );
+        let req: ClearRequest =
+            serde_json::from_str(r#"{"status":"finished","dry_run":false}"#).unwrap();
+        assert_eq!(req.status, StatusGroup::Finished);
+        assert!(!req.dry_run);
     }
 
     #[test]

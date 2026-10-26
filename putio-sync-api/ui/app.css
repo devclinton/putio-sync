@@ -466,6 +466,44 @@ form > .error-text { margin: 12px 0 0; }
   .toolbar .input { width: 100%; }
 }
 
+/* Row selection (feature 008) */
+
+.selection-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+.select-all { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; cursor: pointer; }
+.selection-count { font-variant-numeric: tabular-nums; }
+.selection-bar .row-actions { margin-left: auto; }
+.select-all input,
+.select-cell input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.select-all input:disabled,
+.select-cell input:disabled { cursor: not-allowed; }
+.table th.select-cell,
+.table td.select-cell { width: 1%; padding-right: 0; }
+.table tr.selected td { background: var(--surface-2); }
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .table td.select-cell { grid-template-columns: 1fr; }
+  .table td.select-cell::before { content: none; }
+  .select-all input, .select-cell input { width: 22px; height: 22px; }
+  .selection-bar .row-actions { margin-left: 0; width: 100%; }
+}
+
 /* Banner, toasts, dialog */
 
 .banner {

@@ -1,11 +1,13 @@
 // Put.io page: browse folders from the root, filter the current folder, queue a file or
 // folder for download, delete from Put.io (confirmed; hidden for files the queue still
 // needs, and the server refuses those too), and remove empty folders account-wide (a dry
-// run first, then a confirm with the count).
+// run first, then a confirm with the count). Feature 008: tick rows (or Select all) to
+// download or delete several at once; queued files can't be ticked.
 
 import { del, get, post } from "../api.js";
 import { confirm, h, toast } from "../app.js";
 import { bytes, dateTime, utc } from "../format.js";
+import { selection } from "../select.js";
 
 const ROOT = { id: 0, name: "Put.io" };
 const KEEP = new Set(["pending", "downloading", "paused"]);
@@ -17,6 +19,7 @@ let files = [];
 let queued = new Set();
 let seq = 0;
 let els = null;
+let sel = null;
 
 export function mount(el, { path = [] } = {}) {
   folder = Number.parseInt(path[0], 10) || 0;
@@ -33,6 +36,12 @@ export function mount(el, { path = [] } = {}) {
     details: h("section", { class: "card", hidden: true }),
     list: h("section", { class: "card wide" }, h("p", { class: "muted", text: "Loading…" })),
   };
+  sel = selection({
+    actions: [
+      h("button", { type: "button", class: "btn btn-small", onclick: onDownloadSelected }, "Download"),
+      h("button", { type: "button", class: "btn btn-small", onclick: onDeleteSelected }, "Delete"),
+    ],
+  });
   renderCrumbs();
   if (crumbs[1] && crumbs[1].id == null) walkUp(folder);
   el.append(
@@ -44,6 +53,7 @@ export function mount(el, { path = [] } = {}) {
 
 export function unmount() {
   els = null;
+  sel = null;
   seq += 1;
 }
 
@@ -139,6 +149,70 @@ async function onDelete(button, f) {
   }
 }
 
+const SHOWN_NAMES = 5;
+
+/** Up to five names, then "and N more". */
+function some(names) {
+  const more = names.length > SHOWN_NAMES ? `, and ${names.length - SHOWN_NAMES} more` : "";
+  return names.slice(0, SHOWN_NAMES).join(", ") + more;
+}
+
+const selectedFiles = () => files.filter((f) => sel.has(f.id));
+
+/** Queue each selected item in turn and sum the counts in one toast. */
+async function onDownloadSelected() {
+  const picked = selectedFiles();
+  const page = sel;
+  page.busy(true);
+  const sum = { found: 0, queued: 0, skipped: 0, blocked: 0, failed: 0 };
+  const errors = [];
+  for (const f of picked) {
+    try {
+      const r = await post("/local/queue", { file_id: f.id });
+      for (const k of Object.keys(sum)) sum[k] += r[k] || 0;
+    } catch (e) {
+      if (e.status === 401 || e.status === 429) break;
+      sum.failed += 1;
+      errors.push(f.name);
+    }
+  }
+  const parts = [`found ${sum.found}`, `queued ${sum.queued}`, `skipped ${sum.skipped}`, `blocked ${sum.blocked}`];
+  if (sum.failed) parts.push(`failed ${sum.failed}`);
+  toast(`${plural(picked.length, "item", "items")}: ${parts.join(", ")}`, sum.failed ? "error" : "ok", errors.length ? `Couldn't queue ${some(errors)}` : null);
+  page.busy(false);
+  if (sel !== page) return;
+  sel.clear();
+  await loadQueue();
+  if (els) renderList();
+}
+
+/** One confirm with the count, then one request for every selected item. */
+async function onDeleteSelected() {
+  const picked = selectedFiles();
+  const n = picked.length;
+  const ok = await confirm({
+    title: "Delete from Put.io",
+    text: `Delete ${plural(n, "item", "items")} from Put.io (${some(picked.map((f) => f.name))})? This cannot be undone.`,
+    verb: "Delete",
+  });
+  if (!ok || !sel) return;
+  const page = sel;
+  page.busy(true);
+  try {
+    const r = await post("/putio/files/delete", { file_ids: picked.map((f) => f.id) });
+    toast((r && r.message) || `Deleted ${plural(n, "item", "items")}`);
+    page.clear();
+    load();
+  } catch (e) {
+    if (e.status !== 401 && e.status !== 429) toast(`Couldn't delete ${plural(n, "item", "items")}`, "error", reason(e));
+    // A 409 means the queue changed: refresh it so those rows can't be ticked
+    await loadQueue();
+    if (els) renderList();
+  } finally {
+    page.busy(false);
+  }
+}
+
 const CLEANUP = "/putio/cleanup/empty-folders";
 const SHOWN_PATHS = 5;
 
@@ -223,19 +297,24 @@ function renderList() {
   const q = els.filter.value.trim().toLowerCase();
   const shown = q ? files.filter((f) => f.name.toLowerCase().includes(q)) : files;
   const title = q ? `${shown.length} of ${files.length} items` : `${files.length} ${files.length === 1 ? "item" : "items"}`;
+  // Only rows shown, and not needed by the queue, can stay selected
+  sel.reset(shown.filter((f) => !queued.has(f.id)).map((f) => f.id));
   if (shown.length === 0) {
     els.list.replaceChildren(h("h2", { text: title }), h("p", { class: "muted", text: files.length ? "Nothing matches the filter." : "This folder is empty." }));
+    sel.update();
     return;
   }
   els.list.replaceChildren(
     h("h2", { text: title }),
+    sel.bar,
     h(
       "table",
       { class: "table" },
-      h("thead", {}, h("tr", {}, ["Name", "Type", "Size", "Date"].map((t) => h("th", { class: t === "Size" ? "right" : null, text: t })), h("th", { class: "right", text: "Actions" }))),
+      h("thead", {}, h("tr", {}, h("th", { class: "select-cell" }, h("span", { class: "visually-hidden", text: "Select" })), ["Name", "Type", "Size", "Date"].map((t) => h("th", { class: t === "Size" ? "right" : null, text: t })), h("th", { class: "right", text: "Actions" }))),
       h("tbody", {}, shown.map(fileRow)),
     ),
   );
+  sel.update();
 }
 
 function fileRow(f) {
@@ -246,6 +325,7 @@ function fileRow(f) {
   return h(
     "tr",
     {},
+    sel.box(f.id, { label: `Select ${f.name}`, disabled: keep, title: keep ? "In the queue; skip or cancel it to delete" : null }),
     h("td", { class: "name-cell name", "data-label": "Name" }, name),
     h("td", { "data-label": "Type" }, h("span", { class: "badge", text: isFolder(f) ? "folder" : (f.file_type || "file").toLowerCase() })),
     h("td", { class: "num right", "data-label": "Size", text: bytes(f.size) }),

@@ -2,7 +2,8 @@
 
 use crate::error::{ApiError, ApiResult};
 use crate::models::transfers::{
-    AddTransferRequest, CancelTransfersRequest, ReaddResponse, StallInfo, TransferResponse,
+    AddTransferRequest, CancelTransfersRequest, ClearRequest, ClearResponse, ClearedTransfer,
+    ReaddResponse, RetryFailure, RetryManyResponse, StallInfo, TransferResponse,
 };
 use crate::models::{ListResponse, SuccessResponse};
 use base64::Engine;
@@ -223,6 +224,115 @@ pub async fn remove_transfer(
         transfer_ids: vec![transfer_id],
     };
     cancel_transfers(client, request).await
+}
+
+/// Remove several transfers with one Put.io cancel (feature 008)
+///
+/// # Arguments
+///
+/// * `client` - The shared Put.io client from `AppState`
+/// * `transfer_ids` - Transfers to remove, already deduplicated
+///
+/// # Returns
+///
+/// Success response with the count
+pub async fn remove_transfers(
+    client: &PutioApiClient,
+    transfer_ids: Vec<i64>,
+) -> ApiResult<SuccessResponse> {
+    let count = transfer_ids.len();
+    client.cancel_transfers(transfer_ids).await?;
+    tracing::info!(count, "Removed transfers");
+    Ok(SuccessResponse {
+        message: format!("Removed {} transfer(s)", count),
+    })
+}
+
+/// Retry several transfers, one Put.io call each (Put.io has no multi-id retry); a
+/// refusal is reported for that id and the rest still run (feature 008)
+///
+/// # Arguments
+///
+/// * `client` - The shared Put.io client from `AppState`
+/// * `transfer_ids` - Transfers to retry, already deduplicated
+///
+/// # Returns
+///
+/// The ids Put.io accepted and those it refused, with why
+pub async fn retry_transfers(
+    client: &PutioApiClient,
+    transfer_ids: Vec<i64>,
+) -> ApiResult<RetryManyResponse> {
+    let mut response = RetryManyResponse::default();
+    for id in transfer_ids {
+        match client.retry_transfer(id).await {
+            Ok(()) => response.retried.push(id),
+            Err(e) => response.failed.push(RetryFailure {
+                id,
+                error: e.to_string(),
+            }),
+        }
+    }
+    tracing::info!(
+        retried = response.retried.len(),
+        failed = response.failed.len(),
+        "Retried transfers"
+    );
+    Ok(response)
+}
+
+/// Clear the transfers in a status group from the Put.io transfer list (feature 008)
+///
+/// Lists the transfers, keeps those in the group, then (unless `dry_run`) cleans them with
+/// one call and cancels any the clean left in place with one more (research R3).
+///
+/// # Arguments
+///
+/// * `client` - The shared Put.io client from `AppState`
+/// * `request` - Status group and `dry_run`
+///
+/// # Returns
+///
+/// The transfers cleared (or that would be)
+pub async fn clear_transfers(
+    client: &PutioApiClient,
+    request: ClearRequest,
+) -> ApiResult<ClearResponse> {
+    let matching: Vec<ClearedTransfer> = client
+        .list_transfers()
+        .await?
+        .transfers
+        .into_iter()
+        .filter(|t| request.status.matches(&t.status))
+        .map(|t| ClearedTransfer {
+            id: t.id,
+            name: t.name,
+            status: t.status,
+        })
+        .collect();
+
+    if !request.dry_run && !matching.is_empty() {
+        let ids: Vec<i64> = matching.iter().map(|t| t.id).collect();
+        let cleaned = client.clean_transfers(ids.clone()).await?;
+        let left: Vec<i64> = ids.into_iter().filter(|id| !cleaned.contains(id)).collect();
+        let cancelled = left.len();
+        if !left.is_empty() {
+            client.cancel_transfers(left).await?;
+        }
+        tracing::info!(
+            group = ?request.status,
+            count = matching.len(),
+            cancelled,
+            "Cleared transfers"
+        );
+    }
+
+    Ok(ClearResponse {
+        status: request.status,
+        dry_run: request.dry_run,
+        count: matching.len(),
+        transfers: matching,
+    })
 }
 
 /// Retry a failed transfer

@@ -29,6 +29,7 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("app.js", JS, include_bytes!("../ui/app.js")),
     ("api.js", JS, include_bytes!("../ui/api.js")),
     ("format.js", JS, include_bytes!("../ui/format.js")),
+    ("select.js", JS, include_bytes!("../ui/select.js")),
     ("pages/login.js", JS, include_bytes!("../ui/pages/login.js")),
     (
         "pages/status.js",

@@ -194,6 +194,54 @@ impl PutioApiClient {
         Ok(())
     }
 
+    /// Clean finished transfers from the transfer list (their files stay in the account)
+    ///
+    /// Put.io answers with the ids it removed; an id it left in place (not finished, or
+    /// already gone) is missing from the result. When the answer has no `deleted_ids`,
+    /// every id sent counts as removed. Does nothing for an empty list, since Put.io
+    /// would then clean every finished transfer.
+    ///
+    /// # Arguments
+    ///
+    /// * `transfer_ids` - Transfers to clean
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use putio_sync_client::PutioApiClient;
+    /// # async fn example() {
+    /// let client = PutioApiClient::new("my_token".to_string());
+    /// let removed = client.clean_transfers(vec![12345, 67890]).await.unwrap();
+    /// println!("Cleaned {} transfer(s)", removed.len());
+    /// # }
+    /// ```
+    pub async fn clean_transfers(&self, transfer_ids: Vec<i64>) -> ClientResult<Vec<i64>> {
+        #[derive(serde::Serialize)]
+        struct CleanRequest {
+            transfer_ids: String,
+        }
+
+        #[derive(Deserialize)]
+        struct CleanResponse {
+            deleted_ids: Option<Vec<i64>>,
+        }
+
+        if transfer_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let request = CleanRequest {
+            transfer_ids: transfer_ids
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+        };
+
+        let response: ApiResponse<CleanResponse> = self.post("/transfers/clean", &request).await?;
+        Ok(response.data.deleted_ids.unwrap_or(transfer_ids))
+    }
+
     /// Retry a failed transfer
     ///
     /// This retries a transfer that has failed. The transfer must be in a failed state.
@@ -487,6 +535,66 @@ mod tests {
         let client = ApiClient::with_base_url("test_token".to_string(), server.url());
         client.cancel_transfers(vec![1, 2]).await.unwrap();
 
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_clean_transfers_returns_deleted_ids() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("POST", "/transfers/clean")
+            .match_header("authorization", "Bearer test_token")
+            .match_body(mockito::Matcher::JsonString(
+                r#"{"transfer_ids":"7,8,9"}"#.to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status": "OK", "deleted_ids": [7, 9]}"#)
+            .create_async()
+            .await;
+
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        let removed = client.clean_transfers(vec![7, 8, 9]).await.unwrap();
+
+        assert_eq!(removed, vec![7, 9]);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_clean_transfers_without_deleted_ids_counts_all() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("POST", "/transfers/clean")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status": "OK"}"#)
+            .create_async()
+            .await;
+
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        let removed = client.clean_transfers(vec![3, 4]).await.unwrap();
+
+        assert_eq!(removed, vec![3, 4]);
+        mock.assert_async().await;
+    }
+
+    /// An empty list would make Put.io clean every finished transfer, so nothing is sent
+    #[tokio::test]
+    async fn test_clean_transfers_empty_sends_nothing() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("POST", mockito::Matcher::Any)
+            .expect(0)
+            .create_async()
+            .await;
+
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        let removed = client.clean_transfers(vec![]).await.unwrap();
+
+        assert!(removed.is_empty());
         mock.assert_async().await;
     }
 }

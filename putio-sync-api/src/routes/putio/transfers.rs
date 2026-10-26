@@ -8,16 +8,23 @@
 //! - DELETE /putio/transfers/:id  - Remove transfer (Put.io cancel)
 //! - POST /putio/transfers/:id/retry - Retry a failed transfer
 //! - POST /putio/transfers/:id/readd - Cancel a transfer and add its magnet again
+//! - POST /putio/transfers/remove - Remove several transfers (one Put.io cancel)
+//! - POST /putio/transfers/retry  - Retry several transfers, with a result per id
+//! - POST /putio/transfers/clear  - Clear completed, failed or all finished transfers
 //!
 //! Put.io has no pause or resume for transfers, so there are no start/stop routes:
 //! retry restarts a failed one, remove stops and deletes one.
 
 use crate::error::ApiError;
 use crate::handlers::transfers;
-use crate::models::transfers::{AddTransferRequest, ReaddResponse, TransferResponse};
+use crate::handlers::unique_ids;
+use crate::models::transfers::{
+    AddTransferRequest, CancelTransfersRequest, ClearRequest, ClearResponse, ReaddResponse,
+    RetryManyResponse, TransferResponse,
+};
 use crate::models::{ListResponse, SuccessResponse};
 use axum::{
-    extract::{Path, State},
+    extract::{rejection::JsonRejection, Path, State},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -36,6 +43,9 @@ pub fn router() -> Router<AppState> {
         .route("/:id", delete(remove_transfer))
         .route("/:id/retry", post(retry_transfer))
         .route("/:id/readd", post(readd_transfer))
+        .route("/remove", post(remove_transfers))
+        .route("/retry", post(retry_transfers))
+        .route("/clear", post(clear_transfers))
 }
 
 /// List all transfers
@@ -117,6 +127,53 @@ async fn readd_transfer(
     Path(transfer_id): Path<i64>,
 ) -> Result<Json<ReaddResponse>, ApiError> {
     transfers::readd_transfer(&state.client, transfer_id)
+        .await
+        .map(Json)
+}
+
+/// The ids of a bulk request body; a bad body or an empty list is 400
+fn bulk_ids(
+    request: Result<Json<CancelTransfersRequest>, JsonRejection>,
+) -> Result<Vec<i64>, ApiError> {
+    let Json(request) = request.map_err(|rejection| ApiError::BadRequest(rejection.body_text()))?;
+    unique_ids(request.transfer_ids)
+}
+
+/// Remove several transfers with one Put.io cancel (feature 008)
+///
+/// POST /putio/transfers/remove `{"transfer_ids": [1, 2]}`
+async fn remove_transfers(
+    State(state): State<AppState>,
+    request: Result<Json<CancelTransfersRequest>, JsonRejection>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let ids = bulk_ids(request)?;
+    transfers::remove_transfers(&state.client, ids)
+        .await
+        .map(Json)
+}
+
+/// Retry several transfers; answers which Put.io accepted and which it refused (feature 008)
+///
+/// POST /putio/transfers/retry `{"transfer_ids": [1, 2]}`
+async fn retry_transfers(
+    State(state): State<AppState>,
+    request: Result<Json<CancelTransfersRequest>, JsonRejection>,
+) -> Result<Json<RetryManyResponse>, ApiError> {
+    let ids = bulk_ids(request)?;
+    transfers::retry_transfers(&state.client, ids)
+        .await
+        .map(Json)
+}
+
+/// Clear the transfers in a status group (feature 008)
+///
+/// POST /putio/transfers/clear `{"status": "completed", "dry_run": true}`
+async fn clear_transfers(
+    State(state): State<AppState>,
+    request: Result<Json<ClearRequest>, JsonRejection>,
+) -> Result<Json<ClearResponse>, ApiError> {
+    let Json(request) = request.map_err(|rejection| ApiError::BadRequest(rejection.body_text()))?;
+    transfers::clear_transfers(&state.client, request)
         .await
         .map(Json)
 }
