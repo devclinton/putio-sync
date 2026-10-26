@@ -14,7 +14,7 @@ A high-performance Rust-based CLI tool for Put.io with support for downloads, tr
 - **Transfer Management**: Add torrents from files or magnet links
 - **Watch Mode**: Automatically upload .torrent and .magnet files from watched directories with smart deduplication
 - **Post-Processing**: Archive or delete processed torrent files after upload
-- **Advanced Daemon**: Unified daemon with live log-level changes and intelligent worker scaling
+- **Advanced Daemon**: Unified daemon with live log-level changes and graceful worker scaling
 - **Prometheus Metrics**: Sync, download, watch-folder, API and database metrics on `:9742/metrics`
 - **Web UI**: status, queue, Put.io browser, transfers, history and settings in the browser on `:15432`, behind a token ([Web UI](#web-ui))
 - **Statistics & History**: Track download stats and view history
@@ -840,13 +840,19 @@ the pool as described below. `PUT /settings/logging` saves to `config.toml`, so 
 change is picked up the same way. [Settings from the UI](#settings-from-the-ui) lists what
 applies live and what needs a restart.
 
-#### Worker Scaling Intelligence
+#### Worker Scaling
 
-When `workers` is lowered through the API:
-1. ✅ **Preserve** downloads ≥75% complete (let them finish)
-2. ⚠️ **Interrupt** downloads <75% complete 
-3. 🔄 **Prioritize** interrupted downloads (moved to front of queue with +1000 priority)
-4. ⏭️ **Resume** interrupted downloads after current ones complete
+When `workers` is raised through the API, new workers start straight away. When it is
+lowered, the excess workers are told to stop:
+
+1. A worker that is downloading finishes its current file, then exits. No download is
+   interrupted.
+2. Idle workers exit at once. The pool is at the new size once the busy ones finish.
+3. Queue order is unchanged; the remaining workers keep taking the highest-priority item.
+
+A partial file, for example one left by a restart, resumes from the bytes already on
+disk whenever a worker picks it. It gets no priority boost; move it up the queue to
+resume it sooner.
 
 #### Smart Torrent Processing & Deduplication
 
