@@ -9,6 +9,7 @@ Nothing is persisted; these are in-memory and wire types.
 | `enabled` | bool | `false` | Daily run on/off (daemon only) |
 | `run_at` | string `HH:MM` | `"03:00"` | 24-hour local time; `00:00`–`23:59` |
 | `min_age_hours` | u64 | `24` | `0`–`8760` |
+| `nested` | bool | `true` | Also remove folders whose sub-folders are all empty; `false` removes only folders with nothing in them |
 
 ## EmptyFolderOptions (`putio-sync-client`)
 
@@ -16,6 +17,7 @@ Nothing is persisted; these are in-memory and wire types.
 - `min_age: Duration`
 - `protected: HashSet<i64>` (from config: `watch.parent_folder_id`, `sync.remote_parent_id`)
 - `now: DateTime<Utc>`
+- `nested: bool`
 
 Root (0), shared entries and active transfer targets are added by the walk itself.
 

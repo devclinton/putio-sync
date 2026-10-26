@@ -234,6 +234,13 @@ pub struct CleanupSettings {
     pub enabled: bool,
     pub run_at: String,
     pub min_age_hours: u64,
+    /// Missing in a PUT body means the default (on)
+    #[serde(default = "default_nested")]
+    pub nested: bool,
+}
+
+fn default_nested() -> bool {
+    CleanupConfig::default().nested
 }
 
 /// Create the settings router
@@ -332,6 +339,7 @@ fn cleanup_view(config: &Config) -> CleanupSettings {
         enabled: config.cleanup.enabled,
         run_at: config.cleanup.run_at.clone(),
         min_age_hours: config.cleanup.min_age_hours,
+        nested: config.cleanup.nested,
     }
 }
 
@@ -624,6 +632,7 @@ async fn update_cleanup_settings(
             enabled: settings.enabled,
             run_at: settings.run_at,
             min_age_hours: settings.min_age_hours,
+            nested: settings.nested,
         };
         Ok(())
     })
@@ -635,15 +644,15 @@ async fn update_cleanup_settings(
 
     let mut notes = Vec::new();
     let live: &[&str] = match state.engine {
-        Engine::Daemon => &["enabled", "run_at", "min_age_hours"],
+        Engine::Daemon => &["enabled", "run_at", "min_age_hours", "nested"],
         Engine::Server => {
             if !changed.is_empty() {
                 notes.push(
-                    "The daily run happens only under `daemon`; manual runs use min_age_hours now."
+                    "The daily run happens only under `daemon`; manual runs use min_age_hours and nested now."
                         .to_string(),
                 );
             }
-            &["min_age_hours"]
+            &["min_age_hours", "nested"]
         }
     };
 

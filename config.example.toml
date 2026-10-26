@@ -180,7 +180,7 @@ paths = []
 # Put.io Empty-Folder Cleanup
 # ============================================================================
 # Removes empty folders from your Put.io account, deepest first: a folder that
-# holds only empty folders goes too. Never removed: the root, watch.parent_folder_id,
+# holds only empty folders goes too (see nested below). Never removed: the root, watch.parent_folder_id,
 # sync.remote_parent_id, shared folders, and folders unfinished transfers save to.
 # Run it by hand any time with `putio-sync files clean-empty` (add --dry-run to
 # preview), the API (POST /putio/cleanup/empty-folders) or the web UI's Put.io page.
@@ -199,6 +199,12 @@ run_at = "03:00"
 # just created is not removed. 0 to 8760.
 # Default: 24
 min_age_hours = 24
+
+# Also remove folders whose sub-folders are all empty (e.g. Show/Season 1/ with
+# nothing in Season 1), deepest first, in the same run. With false, only folders
+# with nothing at all in them are removed; their parents go on a later run.
+# Default: true
+nested = true
 
 # ============================================================================
 # Notification Configuration

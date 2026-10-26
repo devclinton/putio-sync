@@ -186,7 +186,9 @@ check `config.toml` is changed in place with comments kept.
 - **FR-002**: A folder MUST count as empty only if every entry it holds is a folder that is
   itself empty and deletable in the same run (bottom-up). An empty folder is removed
   together with its empty sub-folders; a kept folder (protected, too new, unreadable) is
-  never inside a removed one.
+  never inside a removed one. A nested setting (default on) controls this: when off, only
+  folders with no entries at all are removed in a run, and a folder holding only empty
+  folders is kept until a later run finds it with nothing in it.
 - **FR-003**: The system MUST never delete: the root; the watch upload folder
   (`watch.parent_folder_id`); `sync.remote_parent_id`; shared folders and anything under
   them; the save folder of any transfer that has not finished.
@@ -210,7 +212,7 @@ check `config.toml` is changed in place with comments kept.
 - **FR-011**: The daemon MUST run the cleanup once a day at a configurable local time
   (default 03:00) when the cleanup is enabled (default off). It MUST NOT catch up missed
   runs at startup.
-- **FR-012**: The enable flag, run time and minimum age MUST live in `config.toml`, be
+- **FR-012**: The enable flag, run time, minimum age and nested setting MUST live in `config.toml`, be
   documented in `config.example.toml`, be validated on load and save, and be readable and
   editable on the Settings page. A change made from the Settings page MUST apply from the
   next scheduled run without a restart.

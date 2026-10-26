@@ -37,14 +37,14 @@ Request body (JSON, `dry_run` required):
 ## GET /settings/cleanup
 
 ```json
-{ "enabled": false, "run_at": "03:00", "min_age_hours": 24 }
+{ "enabled": false, "run_at": "03:00", "min_age_hours": 24, "nested": true }
 ```
 
 ## PUT /settings/cleanup
 
-Same body. Validated (`run_at` `HH:MM` 24h, `min_age_hours` ≤ 8760); 400 on error with
+Same body; a missing `nested` means `true`. Validated (`run_at` `HH:MM` 24h, `min_age_hours` ≤ 8760); 400 on error with
 nothing saved. Saved with `Config::save_keeping_file_credentials`. Response
-`{"message": ...}`: under `daemon` all three fields apply from the next scheduled check;
+`{"message": ...}`: under `daemon` all fields apply from the next scheduled check;
 under `server` the message notes the daily run only happens under `daemon`.
 
 `PUT /settings/watcher` also refreshes the protected set (new `parent_folder_id`).
