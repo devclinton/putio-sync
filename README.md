@@ -575,6 +575,7 @@ H = histogram.
 | `putio_sync_db_errors_total` | counter | `operation` | Database errors |
 | `putio_sync_disk_free_bytes` | gauge | — | Free space for the download folder; absent if unreadable |
 | `putio_sync_disk_total_bytes` | gauge | — | Size of the download folder's filesystem; absent if unreadable |
+| `putio_sync_transfers_stalled` | gauge | — | Put.io transfers with no new bytes for `[transfers] stall_threshold_hours` (`daemon` only) |
 | `putio_sync_start_time_seconds` | gauge | — | Process start, Unix seconds |
 | `putio_sync_build_info` | gauge (=1) | `version`, `commit` | Build identity |
 
@@ -591,6 +592,7 @@ Label values are fixed sets, listed in
 | Executables blocked | `increase(putio_sync_files_blocked_total[7d])` |
 | Watch cleanups | `increase(putio_sync_watch_cleanups_total[7d])` |
 | DB errors | `increase(putio_sync_db_errors_total[1d])` |
+| Transfers stuck | `putio_sync_transfers_stalled > 0` |
 
 ## Web UI
 
@@ -609,6 +611,10 @@ as well as a desktop. The pages:
   refused for files that are queued, downloading or paused.
 - **Transfers**: add a magnet link, URL or `.torrent` file; retry a failed transfer;
   remove a transfer (Put.io cancels it). Put.io has no pause or resume for transfers.
+  A transfer still downloading with no new bytes for 6 hours gets a **stalled** badge
+  and the likely reason (availability below 100%, no peers, or no progress); see
+  [Stalled transfers](#stalled-transfers). **Copy magnet** copies its magnet link,
+  and **Re-add** cancels it and adds the same magnet again to the same folder.
 - **History**: downloads and deletions, filtered by action and by name.
 - **Stats**: charts of what was downloaded and when (see [Stats page](#stats-page)).
 - **Settings**: download, watcher, logging and notification settings (see
@@ -744,6 +750,7 @@ the token. Errors are `{"error": "...", "details": "..."}`.
 | `GET`/`POST /putio/transfers`, `DELETE /putio/transfers/{id}` | List, add (`{"url"}` or `{"file_data"}`), remove transfers |
 | `POST /putio/transfers/{id}/retry` | Retry a failed transfer; answers with the transfer |
 | `POST /putio/cleanup/empty-folders` | `{"dry_run": true}`: find (or, with `false`, remove) empty Put.io folders → report with `removed`, `removed_count`, `kept_protected`, `kept_too_new`, `failures`; 409 while a run is going |
+| `POST /putio/transfers/{id}/readd` | Cancel a transfer and add its magnet again to the same folder; answers `{"cancelled_id", "transfer"}`. 400 without a magnet link (nothing cancelled); 500 with the magnet in `details` if the add fails after the cancel |
 | `GET /history?action=&name=&limit=&offset=` | History; `name` is a case-insensitive substring |
 | `GET /history/stats`, `GET /stats/{downloads,transfers,disk}` | Totals |
 | `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications}` | Settings (see above) |
@@ -937,6 +944,27 @@ retry settings and always skipped files that already existed; it now follows
 `skip_existing`, which defaults to `true` (the old behaviour). An explicit
 `skip_existing = false` now really re-downloads and overwrites existing files, so remove
 that line or set it to `true` unless you want that.
+
+#### Stalled transfers
+
+Put.io transfers sometimes stop at 97% or more because no peer has the missing pieces.
+Put.io's API gives no access to a transfer's partial data, so putio-sync cannot rescue
+what was downloaded; it can tell you which transfers are stuck and restart them.
+
+`daemon` lists the transfers every `stall_check_interval_secs` and remembers when each
+`DOWNLOADING` transfer's byte count last changed. One unchanged for
+`stall_threshold_hours` is stalled: the Transfers page badges it, `GET /putio/transfers`
+adds `stall: {since, seconds, reason}`, and `putio_sync_transfers_stalled` counts it. The
+record is in memory, so after a restart the clock starts again. `server` does not check.
+
+```toml
+[transfers]
+stall_threshold_hours = 6        # no new bytes for this long = stalled
+stall_check_interval_secs = 600  # how often the daemon lists transfers
+```
+
+**Re-add** usually starts again from 0%. If the swarm still lacks the pieces it will
+stall again; **Copy magnet** lets you try the link in another client instead.
 
 #### Worker Scaling
 

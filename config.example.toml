@@ -310,6 +310,21 @@ path = "/metrics"
 detail = "basic"
 
 # ============================================================================
+# Put.io transfers
+# ============================================================================
+# The daemon checks the Put.io transfer list and flags transfers that stopped
+# making progress (often at 97%+, when no peer has the last pieces). Stalled
+# transfers get a badge on the web UI's Transfers page and are counted in the
+# putio_sync_transfers_stalled metric. Restart to change these.
+[transfers]
+# Hours a downloading transfer may go without new bytes before it is stalled.
+# Default: 6
+stall_threshold_hours = 6
+
+# Seconds between checks of the transfer list. Default: 600
+stall_check_interval_secs = 600
+
+# ============================================================================
 # API and Web UI
 # ============================================================================
 # `daemon` serves the JSON API and the web UI on one port (http://<host>:15432/).

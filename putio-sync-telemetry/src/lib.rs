@@ -23,6 +23,7 @@ pub mod gauges;
 pub mod labels;
 pub mod server;
 pub mod sync;
+pub mod transfers;
 pub mod watch;
 
 pub use labels::*;
@@ -71,6 +72,7 @@ pub struct Telemetry {
     pub(crate) empty_folder_delete_failures: IntCounter,
     // Label-less vec: absent until the first successful run
     pub(crate) empty_folder_last_success: GaugeVec,
+    pub(crate) transfers_stalled: IntGauge,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -173,6 +175,11 @@ impl Telemetry {
                 opts("queue_items", "Download queue rows by state."),
                 &["state"],
             )
+            .unwrap(),
+            transfers_stalled: IntGauge::with_opts(opts(
+                "transfers_stalled",
+                "Put.io transfers with no progress for the stall threshold, at the last check.",
+            ))
             .unwrap(),
             downloads_active: IntGauge::with_opts(opts(
                 "downloads_active",
@@ -337,6 +344,7 @@ impl Telemetry {
             Box::new(self.empty_folders_deleted.clone()),
             Box::new(self.empty_folder_delete_failures.clone()),
             Box::new(self.empty_folder_last_success.clone()),
+            Box::new(self.transfers_stalled.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
             Box::new(self.disk_total.clone()),
