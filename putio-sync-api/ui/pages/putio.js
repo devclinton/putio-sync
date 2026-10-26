@@ -1,6 +1,7 @@
 // Put.io page: browse folders from the root, filter the current folder, queue a file or
 // folder for download, delete from Put.io (confirmed; hidden for files the queue still
-// needs, and the server refuses those too).
+// needs, and the server refuses those too), and remove empty folders account-wide (a dry
+// run first, then a confirm with the count).
 
 import { del, get, post } from "../api.js";
 import { confirm, h, toast } from "../app.js";
@@ -28,13 +29,14 @@ export function mount(el, { path = [] } = {}) {
   els = {
     crumbs: h("nav", { class: "crumbs", "aria-label": "Folder" }),
     filter: h("input", { type: "search", class: "input", placeholder: "Filter by name", "aria-label": "Filter by name", oninput: renderList }),
+    clean: h("button", { type: "button", class: "btn", title: "Find and delete empty folders in the whole Put.io account", onclick: (ev) => onCleanEmpty(ev.currentTarget) }, "Remove empty folders"),
     details: h("section", { class: "card", hidden: true }),
     list: h("section", { class: "card wide" }, h("p", { class: "muted", text: "Loading…" })),
   };
   renderCrumbs();
   if (crumbs[1] && crumbs[1].id == null) walkUp(folder);
   el.append(
-    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Put.io" }), els.crumbs), h("div", { class: "toolbar" }, els.filter)),
+    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Put.io" }), els.crumbs), h("div", { class: "toolbar" }, els.filter, els.clean)),
     h("div", { class: "stack" }, els.details, els.list),
   );
   load();
@@ -134,6 +136,47 @@ async function onDelete(button, f) {
   } catch (e) {
     if (e.status !== 401 && e.status !== 429) toast(`Couldn't delete ${f.name}`, "error", reason(e));
     if (button.isConnected) button.disabled = false;
+  }
+}
+
+const CLEANUP = "/putio/cleanup/empty-folders";
+const SHOWN_PATHS = 5;
+
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+/** Dry run, confirm with the count, then the real run; the listing reloads after. */
+async function onCleanEmpty(button) {
+  button.disabled = true;
+  const label = button.textContent;
+  button.textContent = "Checking…";
+  try {
+    const preview = await post(CLEANUP, { dry_run: true });
+    const n = preview.removed_count;
+    if (n === 0) {
+      const failed = preview.failures.length;
+      toast("No empty folders to remove", failed ? "error" : "ok", failed ? `${plural(failed, "folder", "folders")} couldn't be checked` : null);
+      return;
+    }
+    const paths = preview.removed.slice(-SHOWN_PATHS).map((r) => r.path);
+    const more = n > paths.length ? `, and ${n - paths.length} more` : "";
+    const ok = await confirm({
+      title: "Remove empty folders",
+      text: `Delete ${plural(n, "empty folder", "empty folders")} from Put.io (${paths.join(", ")}${more})? This cannot be undone.`,
+      verb: "Delete",
+    });
+    if (!ok) return;
+    button.textContent = "Deleting…";
+    const r = await post(CLEANUP, { dry_run: false });
+    const failed = r.failures.length;
+    toast(`Removed ${plural(r.removed_count, "empty folder", "empty folders")}`, failed ? "error" : "ok", failed ? `${plural(failed, "folder", "folders")} failed` : null);
+    load();
+  } catch (e) {
+    if (e.status !== 401 && e.status !== 429) toast("Couldn't remove empty folders", "error", reason(e));
+  } finally {
+    if (button.isConnected) {
+      button.disabled = false;
+      button.textContent = label;
+    }
   }
 }
 

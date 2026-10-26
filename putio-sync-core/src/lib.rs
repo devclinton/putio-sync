@@ -13,6 +13,9 @@
 
 #![warn(missing_docs)]
 
+/// Put.io empty-folder cleanup service
+pub mod cleanup;
+
 /// Configuration management
 pub mod config;
 
@@ -34,8 +37,8 @@ pub mod path_utils;
 /// Re-export commonly used types
 pub mod prelude {
     pub use crate::config::{
-        AuthConfig, AuthMethod, Config, ConfigBuilder, DownloadConfig, NotificationBackend,
-        NotificationConfig, ProgressStyle, SortOrder, SyncConfig, WatchConfig,
+        AuthConfig, AuthMethod, CleanupConfig, Config, ConfigBuilder, DownloadConfig,
+        NotificationBackend, NotificationConfig, ProgressStyle, SortOrder, SyncConfig, WatchConfig,
     };
     pub use crate::error::{CoreError, CoreResult};
     pub use crate::filter::{parse_size, sort_files, FileFilter, FileTypeFilter, SortField};

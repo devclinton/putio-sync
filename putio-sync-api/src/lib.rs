@@ -37,6 +37,7 @@ pub mod ui;
 
 use axum::Router;
 use putio_sync_client::PutioApiClient;
+use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::Config;
 use putio_sync_db::Database;
 use putio_sync_download::{DownloadConfig, DownloadManager};
@@ -83,6 +84,8 @@ pub struct AppState {
     /// Whether a config reload poller applies `[logging]` level changes from the file.
     /// Both commands start one exactly when the config file exists at startup.
     pub logging_reload: bool,
+    /// Empty-folder cleanup; under `daemon`, the same service runs the daily cleanup
+    pub cleanup: Arc<EmptyFolderCleanup>,
 }
 
 /// The engine behind the API (FR-018: a save says what applies now)
@@ -110,7 +113,9 @@ impl AppState {
         file_watcher: Option<Arc<TorrentWatcher>>,
     ) -> AppState {
         let logging_reload = config_path.as_ref().is_some_and(|path| path.exists());
+        let cleanup = Arc::new(EmptyFolderCleanup::from_config(client.clone(), &config));
         AppState {
+            cleanup,
             engine: Engine::Server,
             logging_reload,
             config: Arc::new(RwLock::new(config)),
@@ -132,6 +137,13 @@ impl AppState {
         self.engine = Engine::Daemon;
         self
     }
+
+    /// Share `cleanup` with the daemon's daily run, so a manual run and the daily one
+    /// never overlap
+    pub fn with_cleanup(mut self, cleanup: Arc<EmptyFolderCleanup>) -> AppState {
+        self.cleanup = cleanup;
+        self
+    }
 }
 
 /// Build the router for `state`: protected routes behind the auth middleware, plus the
@@ -143,6 +155,7 @@ pub fn router(state: AppState) -> Router {
     let protected = Router::new()
         .nest("/putio/files", create_putio_files_router())
         .nest("/putio/transfers", create_putio_transfers_router())
+        .nest("/putio/cleanup", routes::putio::cleanup::router())
         .nest("/local/files", create_local_files_router())
         .nest("/local/queue", create_local_queue_router())
         .route(

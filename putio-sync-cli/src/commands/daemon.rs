@@ -3,6 +3,7 @@
 //! Delegates to the putio-sync-daemon crate for full daemon functionality
 
 use anyhow::{anyhow, Context, Result};
+use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::{AuthMethod, Config};
 use putio_sync_daemon::{DaemonConfig, PutioDaemon};
 use putio_sync_download::DownloadConfig;
@@ -167,6 +168,16 @@ pub async fn execute_daemon(
             download.blocked_extensions.join(", ")
         }
     );
+    info!(
+        "  Empty-folder cleanup: {} (daily at {}, min age {}h)",
+        if config.cleanup.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        },
+        config.cleanup.run_at,
+        config.cleanup.min_age_hours
+    );
 
     // Create and start daemon
     let mut daemon = PutioDaemon::new(daemon_config);
@@ -179,6 +190,14 @@ pub async fn execute_daemon(
 
     if let Some(db) = daemon.get_database() {
         let _ = queue_db.set(db);
+    }
+
+    // One cleanup service for the daily run and the API, so their runs never overlap
+    let cleanup = daemon
+        .get_client()
+        .map(|client| Arc::new(EmptyFolderCleanup::from_config(client, &config)));
+    if let Some(cleanup) = &cleanup {
+        daemon = daemon.with_cleanup(cleanup.clone());
     }
 
     // API and web UI on the daemon's own engine (feature 004). Needs a local download
@@ -194,6 +213,10 @@ pub async fn execute_daemon(
                 daemon.get_file_watcher(),
             )
             .on_daemon();
+            let state = match &cleanup {
+                Some(cleanup) => state.with_cleanup(cleanup.clone()),
+                None => state,
+            };
             crate::api_listener::start(&config, state).await?;
         }
         _ => warn!("API listener not started: no local download manager (api.enabled is set)"),

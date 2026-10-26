@@ -1,6 +1,7 @@
-// Settings page: the download, watcher, logging and notification groups as forms built
-// from each GET body. Save PUTs the whole group and shows the API's message verbatim;
-// a 400 shows its error under the form. Tokens are shown only as set / not set.
+// Settings page: the download, watcher, Put.io cleanup, logging and notification groups
+// as forms built from each GET body. Save PUTs the whole group and shows the API's
+// message verbatim; a 400 shows its error under the form. Tokens are shown only as set /
+// not set.
 
 import { get, put } from "../api.js";
 import { h, toast } from "../app.js";
@@ -42,6 +43,15 @@ const GROUPS = [
       ["archive_directory", "Archive folder", "Move uploaded .torrent files here; empty to leave them", "s?"],
       ["enabled", "Enabled", "Watch the folders (each must exist)", "b"],
       ["delete_after_upload", "Delete after upload", "Remove .torrent files once uploaded", "b"],
+    ],
+  },
+  {
+    key: "cleanup",
+    title: "Put.io cleanup",
+    fields: [
+      ["run_at", "Daily run at", "24-hour local time, HH:MM", "s"],
+      ["min_age_hours", "Minimum age (hours)", "Keep empty folders newer than this; 0 to 8760", "n", 0, 8760],
+      ["enabled", "Daily run", "Remove empty Put.io folders once a day (daemon only)", "b"],
     ],
   },
   {

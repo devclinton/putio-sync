@@ -795,6 +795,33 @@ pub enum FilesCommands {
         )]
         yes: bool,
     },
+
+    /// Remove empty folders from Put.io
+    #[command(
+        name = "clean-empty",
+        about = "Remove empty folders from Put.io",
+        long_about = "Remove empty folders from Put.io. A folder holding only empty folders \
+                      counts as empty. The root, the watch upload folder, the sync folder, \
+                      shared folders, save folders of unfinished transfers and folders \
+                      younger than [cleanup] min_age_hours are kept."
+    )]
+    CleanEmpty {
+        /// Dry run (show what would be removed)
+        #[arg(
+            long = "dry-run",
+            help = "Show what would be removed without deleting anything"
+        )]
+        dry_run: bool,
+
+        /// Skip confirmation prompt
+        #[arg(
+            short = 'y',
+            long = "yes",
+            help = "Skip confirmation prompt",
+            conflicts_with = "dry_run"
+        )]
+        yes: bool,
+    },
 }
 
 /// Queue management subcommands
@@ -1030,6 +1057,23 @@ mod tests {
         } else {
             panic!("Expected List command");
         }
+    }
+
+    #[test]
+    fn test_files_clean_empty_flags() {
+        let cli = Cli::try_parse_from(["putio-sync", "files", "clean-empty", "--dry-run"]).unwrap();
+        match cli.command {
+            Commands::Files(FilesCommands::CleanEmpty { dry_run, yes }) => {
+                assert!(dry_run);
+                assert!(!yes);
+            }
+            _ => panic!("Expected files clean-empty"),
+        }
+        assert!(Cli::try_parse_from(["putio-sync", "files", "clean-empty", "-y"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["putio-sync", "files", "clean-empty", "--dry-run", "--yes"])
+                .is_err()
+        );
     }
 
     #[test]

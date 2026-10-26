@@ -2171,6 +2171,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "chrono",
  "futures-util",
  "mockito",
  "putio-sync-telemetry",
@@ -2189,6 +2190,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "chrono",
  "dirs",
  "futures-util",
  "glob",
@@ -2215,7 +2217,9 @@ name = "putio-sync-daemon"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "putio-sync-client",
+ "putio-sync-core",
  "putio-sync-db",
  "putio-sync-download",
  "putio-sync-file-manager",

@@ -8,6 +8,8 @@
 //! Prints the URL and the API token to sign in with, then runs until Ctrl+C. The port
 //! defaults to a free one. Nothing reaches the real Put.io through `state.client`.
 //! The history holds 64 rows (two pages); 7 of them match `ubuntu`.
+//! "Remove empty folders" on the Put.io page finds `Movies/Extras` (empty); the mocked
+//! delete succeeds but the listing still shows it.
 
 use putio_sync_api::{extract_download_config, router, AppState};
 use putio_sync_client::PutioApiClient;
@@ -27,7 +29,8 @@ const PUTIO_TOKEN: &str = "mock-putio-token";
 
 const MOVIES: i64 = 100;
 const SHOWS: i64 = 200;
-/// Inside Movies: open `#/putio/110` directly to see the breadcrumb walk up
+/// Inside Movies: open `#/putio/110` directly to see the breadcrumb walk up. Empty, so
+/// the empty-folder cleanup offers to remove it.
 const EXTRAS: i64 = 110;
 
 fn file(id: i64, name: &str, size: i64, file_type: &str, parent_id: i64) -> Value {

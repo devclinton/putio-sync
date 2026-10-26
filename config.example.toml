@@ -177,6 +177,30 @@ paths = []
 # archive_directory = "~/processed"
 
 # ============================================================================
+# Put.io Empty-Folder Cleanup
+# ============================================================================
+# Removes empty folders from your Put.io account, deepest first: a folder that
+# holds only empty folders goes too. Never removed: the root, watch.parent_folder_id,
+# sync.remote_parent_id, shared folders, and folders unfinished transfers save to.
+# Run it by hand any time with `putio-sync files clean-empty` (add --dry-run to
+# preview), the API (POST /putio/cleanup/empty-folders) or the web UI's Put.io page.
+[cleanup]
+# Remove empty folders once a day. Only the `daemon` command runs the daily job,
+# and it deletes (there is no dry run for it). Missed runs are not caught up.
+# Default: false
+enabled = false
+
+# Local time of the daily run, 24-hour "HH:MM". "Local" is the process's time
+# zone: set TZ in Docker (e.g. TZ=Europe/London), otherwise it is UTC.
+# Default: "03:00"
+run_at = "03:00"
+
+# Keep empty folders younger than this many hours, so a folder a new transfer
+# just created is not removed. 0 to 8760.
+# Default: 24
+min_age_hours = 24
+
+# ============================================================================
 # Notification Configuration
 # ============================================================================
 [notifications]
