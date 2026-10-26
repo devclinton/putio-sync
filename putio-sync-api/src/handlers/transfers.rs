@@ -7,7 +7,7 @@ use crate::models::transfers::{
 };
 use crate::models::{ListResponse, SuccessResponse};
 use base64::Engine;
-use putio_sync_client::PutioApiClient;
+use putio_sync_client::{PutioApiClient, ReaddError};
 use putio_sync_core::stall::StallTracker;
 use std::time::SystemTime;
 
@@ -138,44 +138,27 @@ pub async fn get_transfer(
 ///
 /// The cancelled ID and the new transfer
 pub async fn readd_transfer(client: &PutioApiClient, transfer_id: i64) -> ApiResult<ReaddResponse> {
-    let old = client.get_transfer_info(transfer_id).await?.transfer;
-    let magnet = old.magnet().map(str::to_string).ok_or_else(|| {
-        ApiError::BadRequest(format!(
+    match client.readd_transfer(transfer_id).await {
+        Ok(readded) => Ok(ReaddResponse {
+            cancelled_id: readded.cancelled_id,
+            transfer: TransferResponse::from(readded.transfer),
+        }),
+        Err(ReaddError::NoMagnet(_)) => Err(ApiError::BadRequest(format!(
             "Transfer {} has no magnet link to re-add",
             transfer_id
+        ))),
+        Err(ReaddError::Client(e)) => Err(e.into()),
+        Err(ReaddError::AddFailed {
+            cancelled_id,
+            name,
+            magnet,
+            source,
+        }) => Err(ApiError::Internal(format!(
+            "Cancelled transfer {} ({}) but couldn't add it again: {}",
+            cancelled_id, name, source
         ))
-    })?;
-
-    client.cancel_transfers(vec![transfer_id]).await?;
-
-    let added = client
-        .add_transfer_url(&magnet, Some(old.save_parent_id), None)
-        .await
-        .map_err(|e| {
-            tracing::warn!(
-                transfer_id,
-                name = %old.name,
-                error = %e,
-                "Re-add: cancelled but couldn't add again"
-            );
-            ApiError::Internal(format!(
-                "Cancelled transfer {} ({}) but couldn't add it again: {}",
-                transfer_id, old.name, e
-            ))
-            .with_details(magnet.clone())
-        })?;
-
-    tracing::info!(
-        transfer_id,
-        name = %old.name,
-        new_transfer_id = added.id,
-        save_parent_id = old.save_parent_id,
-        "Re-added transfer"
-    );
-    Ok(ReaddResponse {
-        cancelled_id: transfer_id,
-        transfer: TransferResponse::from(added),
-    })
+        .with_details(magnet)),
+    }
 }
 
 /// Cancel transfers

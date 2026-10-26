@@ -175,6 +175,14 @@ impl Database {
         ProcessedTorrentsRepository::new(&self.pool)
     }
 
+    /// SQLite's `PRAGMA quick_check`; `["ok"]` means healthy (doctor, feature 010)
+    pub async fn quick_check(&self) -> DbResult<Vec<String>> {
+        sqlx::query_scalar("PRAGMA quick_check")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to run quick_check"))
+    }
+
     /// Run database migrations
     ///
     /// This creates all necessary tables if they don't exist.

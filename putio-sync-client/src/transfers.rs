@@ -288,6 +288,85 @@ impl PutioApiClient {
             self.post("/transfers/retry", &request).await?;
         Ok(())
     }
+
+    /// Cancel a transfer and add its magnet again to the same folder (feature 007)
+    ///
+    /// Put.io refuses a second transfer for a torrent it already has, so the cancel comes
+    /// first. If the add then fails, [`ReaddError::AddFailed`] says the old transfer is gone
+    /// and carries the magnet, so the operator can add it by hand.
+    ///
+    /// # Arguments
+    ///
+    /// * `transfer_id` - ID of the transfer to re-add
+    pub async fn readd_transfer(&self, transfer_id: i64) -> Result<Readded, ReaddError> {
+        let old = self.get_transfer_info(transfer_id).await?.transfer;
+        let magnet = old
+            .magnet()
+            .map(str::to_string)
+            .ok_or(ReaddError::NoMagnet(transfer_id))?;
+
+        self.cancel_transfers(vec![transfer_id]).await?;
+
+        let added = match self
+            .add_transfer_url(&magnet, Some(old.save_parent_id), None)
+            .await
+        {
+            Ok(added) => added,
+            Err(source) => {
+                tracing::warn!(
+                    transfer_id,
+                    name = %old.name,
+                    error = %source,
+                    "Re-add: cancelled but couldn't add again"
+                );
+                return Err(ReaddError::AddFailed {
+                    cancelled_id: transfer_id,
+                    name: old.name,
+                    magnet,
+                    source,
+                });
+            }
+        };
+
+        tracing::info!(
+            transfer_id,
+            name = %old.name,
+            new_transfer_id = added.id,
+            save_parent_id = old.save_parent_id,
+            "Re-added transfer"
+        );
+        Ok(Readded {
+            cancelled_id: transfer_id,
+            transfer: added,
+        })
+    }
+}
+
+/// A transfer cancelled and added again by [`PutioApiClient::readd_transfer`]
+#[derive(Debug, Clone)]
+pub struct Readded {
+    pub cancelled_id: i64,
+    pub transfer: Transfer,
+}
+
+/// Why [`PutioApiClient::readd_transfer`] failed
+#[derive(Debug, thiserror::Error)]
+pub enum ReaddError {
+    /// The transfer has no magnet link, so nothing was cancelled
+    #[error("Transfer {0} has no magnet link to re-add")]
+    NoMagnet(i64),
+    /// Reading or cancelling the transfer failed; nothing changed for good
+    #[error(transparent)]
+    Client(#[from] crate::error::ClientError),
+    /// The old transfer is cancelled but the new one could not be added
+    #[error("Cancelled transfer {cancelled_id} ({name}) but couldn't add it again: {source}")]
+    AddFailed {
+        cancelled_id: i64,
+        name: String,
+        /// For adding it by hand; never logged
+        magnet: String,
+        source: crate::error::ClientError,
+    },
 }
 
 #[cfg(test)]

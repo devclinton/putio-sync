@@ -74,6 +74,36 @@ pub struct Config {
     /// Radarr/Sonarr download client (Transmission RPC)
     #[serde(default)]
     pub arr: ArrConfig,
+    /// Scheduled doctor runs (feature 010)
+    #[serde(default)]
+    pub doctor: DoctorConfig,
+}
+
+/// `[doctor]`: how often the daemon runs the doctor's checks (feature 010). The CLI and
+/// the web UI can run them at any time, whatever this says.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct DoctorConfig {
+    /// Run the checks on a schedule in the daemon
+    pub enabled: bool,
+    /// Minutes between scheduled runs; values below 5 count as 5
+    pub interval_minutes: u64,
+}
+
+impl Default for DoctorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_minutes: 60,
+        }
+    }
+}
+
+impl DoctorConfig {
+    /// Time between scheduled runs
+    pub fn interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_minutes.max(5) * 60)
+    }
 }
 
 /// Default `[arr] username`
@@ -1207,6 +1237,7 @@ impl ConfigBuilder {
             cleanup: CleanupConfig::default(),
             transfers: TransfersConfig::default(),
             arr: ArrConfig::default(),
+            doctor: DoctorConfig::default(),
         }
     }
 }
@@ -1786,6 +1817,7 @@ mod tests {
             cleanup: CleanupConfig::default(),
             transfers: TransfersConfig::default(),
             arr: ArrConfig::default(),
+            doctor: DoctorConfig::default(),
         }
     }
 

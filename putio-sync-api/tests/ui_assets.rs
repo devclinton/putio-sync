@@ -83,6 +83,7 @@ async fn every_referenced_asset_resolves() {
         "transfers",
         "history",
         "stats",
+        "doctor",
         "settings",
         "login",
     ] {

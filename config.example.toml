@@ -368,6 +368,20 @@ stall_threshold_hours = 6
 stall_check_interval_secs = 600
 
 # ============================================================================
+# Doctor
+# ============================================================================
+# The doctor checks Put.io, the sync state, the local disk and the config, and
+# reports each check as OK, warning or problem (`putio-sync doctor`, the Doctor
+# page, and the putio_sync_doctor_* metrics). The daemon runs it on a schedule so
+# the metrics stay current; the CLI and the web UI can run it at any time.
+[doctor]
+# Run the checks on a schedule in the daemon. Default: true
+enabled = true
+
+# Minutes between scheduled runs (minimum 5). Default: 60
+interval_minutes = 60
+
+# ============================================================================
 # API and Web UI
 # ============================================================================
 # `daemon` serves the JSON API and the web UI on one port (http://<host>:15432/).

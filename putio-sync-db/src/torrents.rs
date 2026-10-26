@@ -76,6 +76,17 @@ impl<'a> ProcessedTorrentsRepository<'a> {
         Ok(torrents)
     }
 
+    /// Paths of every processed torrent file (doctor, feature 010)
+    pub async fn paths(&self) -> DbResult<Vec<String>> {
+        sqlx::query_scalar("SELECT file_path FROM processed_torrents")
+            .fetch_all(self.pool)
+            .await
+            .map_err(tracked(
+                DbOp::Uploads,
+                "Failed to list processed torrent paths",
+            ))
+    }
+
     /// Get processed torrents count
     pub async fn count(&self) -> DbResult<i64> {
         let result = sqlx::query("SELECT COUNT(*) as count FROM processed_torrents")

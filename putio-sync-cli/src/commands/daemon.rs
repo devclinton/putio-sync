@@ -6,6 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::{AuthMethod, Config};
 use putio_sync_daemon::{DaemonConfig, PutioDaemon};
+use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadConfig;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -201,6 +202,25 @@ pub async fn execute_daemon(
         daemon = daemon.with_cleanup(cleanup.clone());
     }
 
+    // One doctor for the scheduled runs and the API, so the Doctor page shows both
+    let doctor = match (daemon.get_client(), &cleanup) {
+        (Some(client), Some(cleanup)) => Some(Arc::new(
+            Doctor::new(
+                config.clone(),
+                client,
+                daemon.get_database(),
+                cleanup.clone(),
+            )
+            .with_stalls(daemon.stall_tracker())
+            .with_config_path(Some(config_file_path.clone()))
+            .with_metrics(),
+        )),
+        _ => None,
+    };
+    if let Some(doctor) = &doctor {
+        daemon = daemon.with_doctor(doctor.clone());
+    }
+
     // API and web UI on the daemon's own engine (feature 004). Needs a local download
     // manager, so it is skipped when downloads are delegated to a remote API.
     match (daemon.get_client(), daemon.get_download_manager()) {
@@ -217,6 +237,10 @@ pub async fn execute_daemon(
             .on_daemon();
             let state = match &cleanup {
                 Some(cleanup) => state.with_cleanup(cleanup.clone()),
+                None => state,
+            };
+            let state = match &doctor {
+                Some(doctor) => state.with_doctor(doctor.clone()),
                 None => state,
             };
             crate::api_listener::start(&config, state).await?;

@@ -41,6 +41,7 @@ use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::Config;
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::Database;
+use putio_sync_doctor::Doctor;
 use putio_sync_download::{DownloadConfig, DownloadManager};
 use putio_sync_file_manager::TorrentWatcher;
 use std::path::PathBuf;
@@ -90,6 +91,8 @@ pub struct AppState {
     /// Stalled-transfer verdicts (feature 007). Empty unless the daemon's tracker is
     /// swapped in with [`AppState::with_stall_tracker`].
     pub stall_tracker: Arc<StallTracker>,
+    /// The Put.io doctor (feature 010); under `daemon`, the one its schedule runs
+    pub doctor: Arc<Doctor>,
     /// Radarr/Sonarr download client (feature 011); `None` unless `[arr] enabled` and
     /// a database exists
     pub arr: Option<routes::arr::ArrRpc>,
@@ -121,10 +124,21 @@ impl AppState {
     ) -> AppState {
         let logging_reload = config_path.as_ref().is_some_and(|path| path.exists());
         let cleanup = Arc::new(EmptyFolderCleanup::from_config(client.clone(), &config));
+        let doctor = Arc::new(
+            Doctor::new(
+                config.clone(),
+                client.clone(),
+                database.clone(),
+                cleanup.clone(),
+            )
+            .with_config_path(config_path.clone())
+            .with_metrics(),
+        );
         let arr = build_arr(&config, &client, database.as_ref(), &download_manager);
         AppState {
             arr,
             cleanup,
+            doctor,
             engine: Engine::Server,
             logging_reload,
             config: Arc::new(RwLock::new(config)),
@@ -158,6 +172,12 @@ impl AppState {
     /// never overlap
     pub fn with_cleanup(mut self, cleanup: Arc<EmptyFolderCleanup>) -> AppState {
         self.cleanup = cleanup;
+        self
+    }
+
+    /// Share `doctor` with the daemon's schedule, so the page shows its latest run
+    pub fn with_doctor(mut self, doctor: Arc<Doctor>) -> AppState {
+        self.doctor = doctor;
         self
     }
 }
@@ -214,6 +234,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/rules", routes::system::rules::router())
         .nest("/stats", create_stats_router())
         .nest("/history", create_history_router())
+        .nest("/doctor", routes::system::doctor::router())
         .nest("/arr", routes::arr::router())
         .route(
             "/status",

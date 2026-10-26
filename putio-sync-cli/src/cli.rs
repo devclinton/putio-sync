@@ -639,6 +639,47 @@ pub enum Commands {
     /// Comprehensive debug information dump
     #[command(about = "Show comprehensive debug information for troubleshooting")]
     Debug {},
+
+    /// Check Put.io, the sync state, this machine and the connection (feature 010)
+    #[command(
+        about = "Run health checks and offer safe fixes",
+        long_about = "Run every health check and print OK, warning or problem for each, \
+                      with what to do about it. Exit code: 0 ok, 1 warning, 2 problem, \
+                      3 the doctor could not run.\n\n\
+                      With --fix ID, preview that fix and apply it. Fixes that delete \
+                      ask first unless --yes."
+    )]
+    Doctor {
+        /// Print the report as JSON
+        #[arg(long = "json", help = "Print JSON instead of text")]
+        json: bool,
+
+        /// Fix to preview and apply, e.g. dead_queue_rows.remove
+        #[arg(
+            long = "fix",
+            value_name = "FIX_ID",
+            help = "Preview and apply this fix"
+        )]
+        fix: Option<String>,
+
+        /// Only preview the fix
+        #[arg(
+            long = "dry-run",
+            requires = "fix",
+            help = "Show what the fix would do without changing anything"
+        )]
+        dry_run: bool,
+
+        /// Apply a deleting fix without asking
+        #[arg(
+            short = 'y',
+            long = "yes",
+            requires = "fix",
+            conflicts_with = "dry_run",
+            help = "Skip the confirmation prompt"
+        )]
+        yes: bool,
+    },
 }
 
 /// File management subcommands
@@ -1057,6 +1098,39 @@ mod tests {
         } else {
             panic!("Expected List command");
         }
+    }
+
+    #[test]
+    fn test_doctor_flags() {
+        let cli = Cli::try_parse_from(["putio-sync", "doctor", "--json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Doctor {
+                json: true,
+                fix: None,
+                dry_run: false,
+                yes: false
+            }
+        ));
+        let cli = Cli::try_parse_from([
+            "putio-sync",
+            "doctor",
+            "--fix",
+            "dead_queue_rows.remove",
+            "--yes",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Doctor { fix, yes, .. } => {
+                assert_eq!(fix.as_deref(), Some("dead_queue_rows.remove"));
+                assert!(yes);
+            }
+            _ => panic!("Expected doctor"),
+        }
+        assert!(Cli::try_parse_from(["putio-sync", "doctor", "--dry-run"]).is_err());
+        assert!(
+            Cli::try_parse_from(["putio-sync", "doctor", "--fix", "x", "--dry-run", "-y"]).is_err()
+        );
     }
 
     #[test]

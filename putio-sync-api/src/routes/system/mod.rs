@@ -1,8 +1,10 @@
 //! System routes
 //!
-//! Routes for settings, folder rules, statistics, history, the status summary and sign-in
+//! Routes for settings, folder rules, statistics, history, the status summary, sign-in and the
+//! doctor
 
 pub mod auth;
+pub mod doctor;
 pub mod history;
 pub mod rules;
 pub mod settings;

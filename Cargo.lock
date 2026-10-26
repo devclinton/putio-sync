@@ -2111,6 +2111,7 @@ dependencies = [
  "putio-sync-client",
  "putio-sync-core",
  "putio-sync-db",
+ "putio-sync-doctor",
  "putio-sync-download",
  "putio-sync-file-manager",
  "putio-sync-telemetry",
@@ -2165,6 +2166,7 @@ dependencies = [
  "futures",
  "glob",
  "indicatif",
+ "mockito",
  "oauth2",
  "open",
  "predicates",
@@ -2173,6 +2175,7 @@ dependencies = [
  "putio-sync-core",
  "putio-sync-daemon",
  "putio-sync-db",
+ "putio-sync-doctor",
  "putio-sync-download",
  "putio-sync-file-manager",
  "putio-sync-telemetry",
@@ -2222,6 +2225,7 @@ dependencies = [
  "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",
+ "serde_ignored",
  "serde_json",
  "sha2",
  "sqlx",
@@ -2245,6 +2249,7 @@ dependencies = [
  "putio-sync-client",
  "putio-sync-core",
  "putio-sync-db",
+ "putio-sync-doctor",
  "putio-sync-download",
  "putio-sync-file-manager",
  "putio-sync-telemetry",
@@ -2272,6 +2277,29 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "putio-sync-doctor"
+version = "0.1.1"
+dependencies = [
+ "chrono",
+ "filetime",
+ "futures-util",
+ "mockito",
+ "putio-sync-client",
+ "putio-sync-core",
+ "putio-sync-db",
+ "putio-sync-download",
+ "putio-sync-telemetry",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml",
  "tracing",
 ]
 
@@ -2780,6 +2808,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "serde_ignored"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "115dffd5f3853e06e746965a20dcbae6ee747ae30b543d91b0e089668bb07798"
+dependencies = [
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

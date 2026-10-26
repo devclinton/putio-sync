@@ -10,9 +10,10 @@ import * as transfers from "./pages/transfers.js";
 import * as history from "./pages/history.js";
 import * as stats from "./pages/stats.js";
 import * as settings from "./pages/settings.js";
+import * as doctor from "./pages/doctor.js";
 import * as login from "./pages/login.js";
 
-const PAGES = { status, queue, putio, transfers, history, stats, settings, login };
+const PAGES = { status, queue, putio, transfers, history, stats, doctor, settings, login };
 const TITLES = {
   status: "Status",
   queue: "Queue",
@@ -20,6 +21,7 @@ const TITLES = {
   transfers: "Transfers",
   history: "History",
   stats: "Stats",
+  doctor: "Doctor",
   settings: "Settings",
   login: "Sign in",
 };

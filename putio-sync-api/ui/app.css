@@ -173,6 +173,7 @@ body { padding-left: var(--side); }
 #nav a[data-page="transfers"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 4v16l-4-4M7 20l4-4M17 20V4l-4 4M17 4l4 4'/%3E%3C/svg%3E"); }
 #nav a[data-page="history"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3 2'/%3E%3C/svg%3E"); }
 #nav a[data-page="stats"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M5 20v-8M12 20V4M19 20v-11'/%3E%3C/svg%3E"); }
+#nav a[data-page="doctor"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12h4l2.5-6 5 12 2.5-6h4'/%3E%3C/svg%3E"); }
 #nav a[data-page="settings"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M4 6h8M18 6h2M4 12h2M12 12h8M4 18h10'/%3E%3Ccircle cx='15' cy='6' r='2.5'/%3E%3Ccircle cx='9' cy='12' r='2.5'/%3E%3Ccircle cx='17' cy='18' r='2.5'/%3E%3C/svg%3E"); }
 
 .topbar-end { display: flex; flex-direction: column; align-items: stretch; gap: 2px; margin-top: auto; }
@@ -738,3 +739,15 @@ button.brow:hover { background: var(--surface-2); }
 .preset-form .input { width: auto; flex: 1 1 10em; min-width: 0; }
 .preset-form select.input { flex: 0 1 auto; }
 .rule-preview { margin-top: 8px; }
+
+/* Doctor page */
+
+.doctor-check { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--border); }
+.doctor-check:first-of-type { border-top: 0; padding-top: 0; }
+.doctor-check > .badge { min-width: 72px; text-align: center; margin-top: 2px; }
+.doctor-body { min-width: 0; flex: 1; }
+.doctor-body > p { margin: 0 0 4px; }
+.doctor-body details { margin: 4px 0; }
+.doctor-body summary { cursor: pointer; color: var(--muted); }
+.doctor-body ul { margin: 6px 0; padding-left: 20px; max-height: 320px; overflow: auto; }
+.doctor-body .toolbar { margin-top: 6px; }
