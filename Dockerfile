@@ -33,6 +33,7 @@ COPY putio-sync-cli/Cargo.toml ./putio-sync-cli/
 COPY putio-sync-api/Cargo.toml ./putio-sync-api/
 COPY putio-sync-telemetry/Cargo.toml ./putio-sync-telemetry/
 COPY putio-sync-arr/Cargo.toml ./putio-sync-arr/
+COPY putio-sync-doctor/Cargo.toml ./putio-sync-doctor/
 
 # Create minimal source files for dependency analysis
 RUN mkdir -p putio-sync-client/src \
@@ -44,7 +45,8 @@ RUN mkdir -p putio-sync-client/src \
              putio-sync-cli/src \
              putio-sync-api/src \
              putio-sync-telemetry/src \
-             putio-sync-arr/src && \
+             putio-sync-arr/src \
+             putio-sync-doctor/src && \
     echo 'fn main() {}' > putio-sync-cli/src/main.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-client/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-db/src/lib.rs && \
@@ -55,7 +57,8 @@ RUN mkdir -p putio-sync-client/src \
     echo 'pub fn placeholder() {}' > putio-sync-cli/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-api/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-telemetry/src/lib.rs && \
-    echo 'pub fn placeholder() {}' > putio-sync-arr/src/lib.rs
+    echo 'pub fn placeholder() {}' > putio-sync-arr/src/lib.rs && \
+    echo 'pub fn placeholder() {}' > putio-sync-doctor/src/lib.rs
 
 # Generate dependency recipe
 RUN cargo chef prepare --recipe-path recipe.json
@@ -76,6 +79,7 @@ COPY putio-sync-cli ./putio-sync-cli
 COPY putio-sync-api ./putio-sync-api
 COPY putio-sync-telemetry ./putio-sync-telemetry
 COPY putio-sync-arr ./putio-sync-arr
+COPY putio-sync-doctor ./putio-sync-doctor
 
 # Commit SHA for putio_sync_build_info (read by option_env! at compile time)
 ARG PUTIO_SYNC_GIT_SHA=unknown
