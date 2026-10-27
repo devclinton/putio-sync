@@ -5,12 +5,6 @@ Features are built with Spec Kit, one numbered feature per branch under
 what is queued, in the order planned. Each entry is the starting brief for
 `/speckit-specify`.
 
-## In progress
-
-| # | Feature | State |
-|---|---------|-------|
-| 010 | Put.io doctor: health checks and fixes | Branch `010-putio-doctor` |
-
 ## Queued: onboarding and setup
 
 ### 013 First-run setup wizard
