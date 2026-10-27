@@ -336,17 +336,18 @@ mod tests {
         )
     }
 
+    // Shaped like Put.io's listing, which marks folders only by `file_type`
     fn folder(id: i64, name: &str, parent: i64, created_at: Option<&str>) -> Value {
         json!({
             "id": id, "name": name, "size": 0, "file_type": "FOLDER", "parent_id": parent,
-            "created_at": created_at, "is_folder": true, "is_shared": false
+            "created_at": created_at, "is_shared": false
         })
     }
 
     fn file(id: i64, parent: i64) -> Value {
         json!({
             "id": id, "name": format!("file{id}.mkv"), "size": 10, "file_type": "VIDEO",
-            "parent_id": parent, "created_at": OLD, "is_folder": false
+            "parent_id": parent, "created_at": OLD
         })
     }
 
