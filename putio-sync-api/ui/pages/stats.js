@@ -3,7 +3,7 @@
 // reload or a shared link keeps them. Loads on filter change and Refresh only.
 
 import { get } from "../api.js";
-import { h } from "../app.js";
+import { empty as emptyState, h } from "../app.js";
 import { bytes, duration, speed } from "../format.js";
 
 const RANGES = { "24h": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "90d": "Last 90 days", "1y": "Last year", all: "All time" };
@@ -168,8 +168,8 @@ const count = (n) => Number(n || 0).toLocaleString();
 function render() {
   const t = data.totals;
   const empty = !t.files;
-  const none = KEYS.some((k) => k !== "range" && f[k]) ? "Nothing matches the filters." : "Nothing in this range.";
-  const card = (title, ...body) => h("section", { class: "card" }, h("h2", { text: title }), empty ? h("p", { class: "muted", text: none }) : body);
+  const none = KEYS.some((k) => k !== "range" && f[k]) ? "Nothing matches the filters" : "Nothing in this range";
+  const card = (title, ...body) => h("section", { class: "card" }, h("h2", { text: title }), empty ? emptyState(none) : body);
   const tile = (label, value) => h("div", { class: "card tile" }, h("p", { class: "muted", text: label }), h("p", { class: "big", text: value }));
 
   els.plot = null;
