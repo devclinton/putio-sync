@@ -44,6 +44,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- Empty-folder cleanup now removes nested empty folders on Put.io. Put.io
+  marks folders only by their type, so every folder was read as a file and
+  kept. The doctor's empty-folder and duplicate checks and recursive delete
+  had the same problem.
 - Interrupted downloads resume, download settings from the config are
   honoured, and failed transfers can be retried (feature 004).
 - Problems seen in the live NAS logs (feature 002).
