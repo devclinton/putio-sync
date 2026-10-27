@@ -212,6 +212,8 @@ main {
   margin: 0;
 }
 
+.counts.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 600px) { .counts.four { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .counts div { min-width: 0; }
 .counts dt { color: var(--muted); font-size: 0.85rem; }
 .counts dd { margin: 0; font-size: 1.3rem; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -646,6 +648,7 @@ dialog p { margin: 0 0 20px; color: var(--muted); word-break: break-word; }
 .legend .cell { width: 14px; height: 12px; }
 .legend span { margin: 0 4px; }
 .blist + .blist { margin-top: 16px; }
+.card h3.sub { font-size: 0.85rem; color: var(--muted); margin: 18px 0 6px; }
 .blist h3 { font-size: 0.85rem; font-weight: 600; margin-bottom: 4px; }
 .brow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; width: 100%; padding: 6px 8px; margin: 0 -8px; border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; text-align: left; box-sizing: content-box; }
 button.brow { cursor: pointer; }

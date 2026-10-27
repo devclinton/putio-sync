@@ -1,0 +1,42 @@
+[package]
+name = "putio-sync-arr"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Radarr/Sonarr integration for putio-sync - a Transmission RPC download client backed by Put.io"
+
+[dependencies]
+# Internal dependencies
+putio-sync-client = { path = "../putio-sync-client" }
+putio-sync-core = { path = "../putio-sync-core" }
+putio-sync-db = { path = "../putio-sync-db" }
+putio-sync-download = { path = "../putio-sync-download" }
+putio-sync-telemetry = { path = "../putio-sync-telemetry" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# HTTP client (*arr API, .torrent URLs)
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.22"
+
+# Info hash of .torrent files (research R4)
+sha1 = "0.10"
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+chrono = "0.4"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3.8"
+mockito = "1.2"

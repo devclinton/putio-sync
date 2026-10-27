@@ -1,10 +1,11 @@
 // Settings page: the download, watcher, Put.io cleanup, logging and notification groups
 // as forms built from each GET body. Save PUTs the whole group and shows the API's
 // message verbatim; a 400 shows its error under the form. Tokens are shown only as set /
-// not set.
+// not set. The Radarr / Sonarr card is read-only, with a connection test per server.
 
-import { get, put } from "../api.js";
+import { arrStatus, get, put, testArrServer } from "../api.js";
 import { h, toast } from "../app.js";
+import { relative } from "../format.js";
 
 // Field kinds: b checkbox, n number, n? number or empty, s text, s? text or empty,
 // l one entry per line, or an array of <select> values.
@@ -91,6 +92,7 @@ export function mount(el) {
       "div",
       { class: "stack" },
       h("section", { class: "card" }, h("h2", { text: "Credentials" }), secrets, h("p", { class: "muted spaced", text: "Tokens and passwords are never shown here. Change them in the config file or environment." })),
+      arrCard(mine),
       GROUPS.map((g) => group(g, mine)),
     ),
   );
@@ -202,6 +204,125 @@ function form(g, data, reload) {
     h("div", { class: "fields" }, fields),
     error,
     h("div", { class: "form-foot" }, save, note),
+  );
+}
+
+// ---- Radarr / Sonarr --------------------------------------------------------
+
+const ITEM_STATES = [
+  ["putio", "On Put.io"],
+  ["local", "Downloading"],
+  ["done", "Done"],
+  ["failed", "Failed"],
+];
+const TEST_REASONS = { unreachable: "Unreachable", unauthorized: "API key refused", not_arr: "Wrong app", no_api_key: "No API key" };
+
+function arrCard(mine) {
+  const card = h("section", { class: "card" });
+  const title = () => h("h2", { text: "Radarr / Sonarr" });
+  const load = async () => {
+    card.replaceChildren(title(), h("p", { class: "muted", text: "Loading…" }));
+    try {
+      const data = await arrStatus();
+      if (mine === seq) card.replaceChildren(title(), ...arrBody(data));
+    } catch (e) {
+      if (mine !== seq || e.status === 401 || e.status === 429) return;
+      card.replaceChildren(
+        title(),
+        h("p", { class: "error-text", text: reason(e) }),
+        h("button", { type: "button", class: "btn spaced", onclick: load }, "Retry"),
+      );
+    }
+  };
+  load();
+  return card;
+}
+
+function arrBody(data) {
+  const state = data.enabled
+    ? h("span", {}, h("span", { class: "dot ok" }), "On")
+    : h("span", {}, h("span", { class: "dot" }), "Off");
+  const kv = (pairs) => h("dl", { class: "kv" }, pairs.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", {}, v)]));
+  const port = location.port || (location.protocol === "https:" ? "443" : "80");
+  const connection = kv([
+    ["Download client", state],
+    ["Type", "Transmission"],
+    ["Host", location.hostname],
+    ["Port", port],
+    ["Use SSL", location.protocol === "https:" ? "Yes" : "No"],
+    ["URL base", data.url_base],
+    ["Username", data.username],
+    ["Password", data.password_set ? "set" : h("span", { class: "warn-text", text: "not set" })],
+    ["Download folder", h("span", { class: "name", text: data.download_dir })],
+  ]);
+
+  const seen = data.clients_seen.length
+    ? kv(data.clients_seen.map((c) => [c.agent, relative(c.last_contact)]))
+    : h("p", { class: "muted", text: "No Radarr or Sonarr has connected since the daemon started." });
+
+  const counts = h(
+    "dl",
+    { class: "counts four" },
+    ITEM_STATES.map(([key, label]) => h("div", {}, h("dt", { text: label }), h("dd", { text: String(data.items[key] || 0) }))),
+  );
+
+  const servers = data.servers.length
+    ? h("div", { class: "stack" }, data.servers.map(arrServer))
+    : h("p", { class: "muted", text: "No servers configured. Add [[arr.servers]] to the config file to blocklist failed releases." });
+
+  const hint = data.enabled
+    ? "In Radarr or Sonarr, add a Transmission download client with these details and a category."
+    : "Set enabled = true and a password under [arr] in the config file, then restart.";
+
+  return [
+    h("p", { class: "muted", text: hint }),
+    connection,
+    h("h3", { class: "sub", text: "Items" }),
+    counts,
+    h("h3", { class: "sub", text: "Last contact" }),
+    seen,
+    h("h3", { class: "sub", text: "Servers" }),
+    servers,
+    h("p", { class: "muted spaced", text: "The password and API keys are never shown here. Change them in the config file or environment." }),
+  ];
+}
+
+function arrServer(s) {
+  const result = h("p", { class: "muted", role: "status" });
+  const button = h("button", { type: "button", class: "btn" }, "Test");
+  button.onclick = async () => {
+    button.disabled = true;
+    result.className = "muted";
+    result.textContent = "Testing…";
+    try {
+      const r = await testArrServer(s.index);
+      if (r.ok) {
+        result.className = "";
+        result.replaceChildren(h("span", { class: "dot ok" }), `Connected to ${r.app} ${r.version}`);
+      } else {
+        result.className = "error-text";
+        result.textContent = `${TEST_REASONS[r.reason] || r.reason}: ${r.detail}`;
+      }
+    } catch (e) {
+      if (e.status === 401 || e.status === 429) return;
+      result.className = "error-text";
+      result.textContent = reason(e);
+    } finally {
+      if (button.isConnected) button.disabled = false;
+    }
+  };
+  const name = s.kind === "radarr" ? "Radarr" : "Sonarr";
+  return h(
+    "div",
+    {},
+    h(
+      "div",
+      { class: "form-foot" },
+      h("span", {}, h("strong", { text: name }), " ", h("span", { class: "badge", text: s.category || "no category" })),
+      button,
+    ),
+    h("p", { class: "muted name", text: `${s.url}${s.api_key_set ? "" : " (no API key)"}` }),
+    result,
   );
 }
 

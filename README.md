@@ -13,6 +13,7 @@ A high-performance Rust-based CLI tool for Put.io with support for downloads, tr
 - **Smart Filtering**: Whitelist/blacklist patterns with glob support
 - **Executable Guard**: Executables and installers on Put.io (`.exe`, `.msi`, `.bat`, ...) are never downloaded; configurable with `blocked_extensions`
 - **Transfer Management**: Add torrents from files or magnet links
+- **Radarr / Sonarr**: acts as their Transmission download client: Put.io transfer, local download, progress, completion and blocklisting of failed releases ([details](#radarr-and-sonarr))
 - **Watch Mode**: Automatically upload .torrent and .magnet files from watched directories with smart deduplication
 - **Post-Processing**: Archive or delete processed torrent files after upload
 - **Advanced Daemon**: Unified daemon with live log-level changes and graceful worker scaling
@@ -576,6 +577,9 @@ H = histogram.
 | `putio_sync_disk_free_bytes` | gauge | — | Free space for the download folder; absent if unreadable |
 | `putio_sync_disk_total_bytes` | gauge | — | Size of the download folder's filesystem; absent if unreadable |
 | `putio_sync_transfers_stalled` | gauge | — | Put.io transfers with no new bytes for `[transfers] stall_threshold_hours` (`daemon` only) |
+| `putio_sync_arr_rpc_requests_total` | counter | `method`, `outcome` | Transmission RPC requests from Radarr/Sonarr; `outcome` is `ok`, `error` or `auth_failed` |
+| `putio_sync_arr_items` | gauge | `state` | Radarr/Sonarr items by state: `putio`, `local`, `done`, `failed` |
+| `putio_sync_arr_blocklist_total` | counter | `outcome` | Calls asking Radarr/Sonarr to blocklist a failed release: `ok`, `not_found`, `error` |
 | `putio_sync_start_time_seconds` | gauge | — | Process start, Unix seconds |
 | `putio_sync_build_info` | gauge (=1) | `version`, `commit` | Build identity |
 
@@ -736,8 +740,8 @@ watch folder must exist before the watcher can be enabled.
 
 ### HTTP API
 
-All routes except `/health`, `/`, `/assets/*`, `/auth/status` and `/auth/login` need
-the token. Errors are `{"error": "...", "details": "..."}`.
+All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
+`/transmission/rpc` (Basic auth, see [Radarr and Sonarr](#radarr-and-sonarr)) need the token. Errors are `{"error": "...", "details": "..."}`.
 
 | Route | Purpose |
 |---|---|
@@ -765,9 +769,81 @@ the token. Errors are `{"error": "...", "details": "..."}`.
 | `GET /history/stats`, `GET /stats/{downloads,transfers,disk}` | Totals |
 | `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications}` | Settings (see above) |
 | `GET /local/watcher/status`, `GET /local/workers` | Watcher and worker state |
+| `GET /arr` | The Radarr / Sonarr card: enabled, username, URL base, download folder, last contact, servers, item counts. Never the password or API keys |
+| `POST /arr/servers/{index}/test` | Test one `[[arr.servers]]` entry → `{"ok": true, "app", "version"}` or `{"ok": false, "reason", "detail"}` |
 
 The legacy `/api/*` placeholder routes are removed, and no CORS headers are sent: the
 UI is served from the same origin, and non-browser clients are unaffected.
+
+## Radarr and Sonarr
+
+putio-sync can be a download client for Radarr and Sonarr. It answers the Transmission RPC
+at `/transmission/rpc` on the API port, so the apps add it as a **Transmission** client. They
+send it magnets and .torrent files; putio-sync adds each to Put.io, downloads the result, and
+reports progress and completion with the local path, so the apps import it themselves.
+
+### Setup
+
+1. In `config.toml`:
+
+   ```toml
+   [arr]
+   enabled = true
+   # password = "..."   # or PUTIO_SYNC_ARR_PASSWORD (preferred)
+   ```
+
+   Then restart. The client needs the API listener and the database (the `daemon` has both).
+2. In Radarr or Sonarr, open Settings → Download Clients → + → Transmission and set:
+   - Host: the putio-sync machine. Port: `15432`. URL Base: `/transmission/`.
+   - Username: `putio-sync`. Password: the one from step 1.
+   - Category: for example `radarr` or `sonarr`.
+3. Click Test. Settings in the web UI shows the values to enter, and when each app last
+   connected.
+
+### How it works
+
+- The category picks the folder. A Sonarr item with category `sonarr` goes to Put.io's
+  `sonarr` folder (created if missing) and is downloaded to `<target_directory>/sonarr/`.
+  That is also the path the app imports from. Categories may be nested, like `movies/4k`.
+- Progress counts in two halves: the first half is Put.io's transfer, the second the local
+  download. The item is complete once every file is on disk.
+- The usual download rules apply: blocked extensions, the filters and the queue.
+- When the app removes an item, putio-sync cancels the transfer. When the item had finished,
+  or the app asked to delete data, it also deletes the files on Put.io. Deleting data also
+  removes the local files.
+- A Put.io error, or a release with only blocked files (for example just an `.exe`), shows as
+  an error in the app's queue.
+- Put.io is checked at most every 20 seconds while an app is polling.
+
+### Blocklisting failed releases
+
+Radarr and Sonarr show a Transmission item with an error as a warning; they don't blocklist
+it or search again on their own. To have putio-sync do it, add the app with its API key (Settings → General in the app):
+
+```toml
+[[arr.servers]]
+kind = "sonarr"                     # or "radarr"
+url = "http://192.168.1.10:8989"
+category = "sonarr"                 # the category set on the download client
+# api_key = "..."                   # or PUTIO_SYNC_SONARR_API_KEY / PUTIO_SYNC_RADARR_API_KEY
+```
+
+When an item fails, putio-sync finds it in that app's queue, removes it and blocklists the
+release, so the app searches again. Failed calls are retried, up to 5 times. Use the Test
+button in Settings to check the URL and key.
+
+### Paths and the blackhole
+
+- If Radarr/Sonarr see the download folder under another path, for example a different Docker
+  mount, add a Remote Path Mapping in the app from putio-sync's folder to theirs.
+- The torrent watcher keeps working. A Torrent Blackhole client pointed at a watched folder can
+  stay as a fallback at a lower priority. Blackhole items don't report progress or failures.
+
+### Secrets
+
+The password and API keys come from the config file or the env variables above, which win.
+They are never logged or sent back by the API. The UI shows only whether each one is set. A
+settings save from the UI keeps the ones in the file and never writes env-only values.
 
 ## Advanced Features
 
@@ -1415,6 +1491,8 @@ The Docker image uses the following directories:
 - `PUTIO_SYNC_API_TOKEN` - Token for the web UI and API (required to use them)
 - `PUTIO_SYNC_API_LISTEN`, `PUTIO_SYNC_API_BIND` - see [Web UI](#web-ui)
 - `PUTIO_SYNC_METRICS_*` - see [Verbosity](#verbosity)
+- `PUTIO_SYNC_ARR_PASSWORD`, `PUTIO_SYNC_RADARR_API_KEY`, `PUTIO_SYNC_SONARR_API_KEY` - see
+  [Radarr and Sonarr](#radarr-and-sonarr)
 - `TZ` - Time zone for the daily empty-folder cleanup's `run_at` (UTC if unset)
 
 ### Ports

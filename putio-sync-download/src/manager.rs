@@ -198,6 +198,52 @@ pub struct SyncStats {
     pub files_blocked: usize,
 }
 
+/// What `enqueue_tree_report` did with one file
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeDecision {
+    /// Added to the download queue
+    Queued,
+    /// Already downloaded or already in the queue
+    Known,
+    /// Its extension is blocked; not downloaded
+    Blocked(String),
+    /// Adding it to the queue failed
+    Failed,
+}
+
+impl TreeDecision {
+    /// The file will be (or already is) downloaded
+    pub fn accepted(&self) -> bool {
+        matches!(self, TreeDecision::Queued | TreeDecision::Known)
+    }
+}
+
+/// One file of a tree and what happened to it
+#[derive(Debug, Clone)]
+pub struct TreeFile {
+    /// Put.io file id
+    pub file_id: i64,
+    /// Put.io file name
+    pub name: String,
+    /// Bytes
+    pub size: i64,
+    /// Folder below the target directory it downloads into
+    pub relative_path: String,
+    /// What happened to it
+    pub decision: TreeDecision,
+}
+
+/// Result of [`DownloadManager::enqueue_tree_report`]
+#[derive(Debug, Clone, Default)]
+pub struct TreeReport {
+    /// Counts, as the folder sync reports them
+    pub stats: SyncStats,
+    /// Every file of the tree
+    pub files: Vec<TreeFile>,
+    /// The root's name on disk (sanitised), unless the root is the Put.io root
+    pub root_name: Option<String>,
+}
+
 /// Worker statistics for bandwidth tracking
 #[derive(Debug, Clone)]
 pub struct WorkerStats {
@@ -1076,7 +1122,15 @@ impl DownloadManager {
     /// Files keep their Put.io path relative to the root, so a folder queued from the UI
     /// lands where the sync would put it.
     pub async fn enqueue_tree(&self, root_id: i64) -> DownloadResult<SyncStats> {
+        Ok(self.enqueue_tree_report(root_id).await?.stats)
+    }
+
+    /// [`Self::enqueue_tree`], also returning what happened to each file and the
+    /// root's name on disk. The *arr download client (feature 011) uses it to know which
+    /// files an item waits for.
+    pub async fn enqueue_tree_report(&self, root_id: i64) -> DownloadResult<TreeReport> {
         let mut stats = SyncStats::default();
+        let mut report_files = Vec::new();
 
         // Require database for queue-based downloads
         let db = self.database.as_ref().ok_or_else(|| {
@@ -1084,8 +1138,8 @@ impl DownloadManager {
         })?;
 
         // List the tree from Put.io (root folder 0 for the sync)
-        let files_with_paths = match self.list_tree(root_id).await {
-            Ok(files) => files,
+        let (files_with_paths, root_name) = match self.list_tree(root_id).await {
+            Ok(listed) => listed,
             Err(e) => {
                 error!(root_id, error = %error_chain(&e), "Failed to list files from Put.io");
                 return Err(e);
@@ -1110,7 +1164,11 @@ impl DownloadManager {
 
         if stats.total_files == 0 {
             debug!("No files found on Put.io");
-            return Ok(stats);
+            return Ok(TreeReport {
+                stats,
+                files: report_files,
+                root_name,
+            });
         }
 
         info!("Found {} files on Put.io", stats.total_files);
@@ -1121,8 +1179,18 @@ impl DownloadManager {
 
         // Check which files need to be added to queue
         for (file, relative_path) in downloadable_files {
+            let mut decide = |decision: TreeDecision| {
+                report_files.push(TreeFile {
+                    file_id: file.id,
+                    name: file.name.clone(),
+                    size: file.size,
+                    relative_path: relative_path.clone(),
+                    decision,
+                });
+            };
             if let Some(ext) = blocked_extension(&file.name, &blocked) {
                 stats.files_blocked += 1;
+                decide(TreeDecision::Blocked(ext.clone()));
                 let first_time = self
                     .blocked_warned
                     .lock()
@@ -1148,6 +1216,7 @@ impl DownloadManager {
                         file.name, file.id
                     );
                     stats.files_skipped += 1;
+                    decide(TreeDecision::Known);
                     continue;
                 }
                 Ok(_) => {
@@ -1171,6 +1240,7 @@ impl DownloadManager {
                         file.name, file.id, queue_item.status
                     );
                     stats.files_skipped += 1;
+                    decide(TreeDecision::Known);
                     continue;
                 }
                 Ok(None) => {
@@ -1203,6 +1273,7 @@ impl DownloadManager {
             {
                 Ok(_) => {
                     stats.files_downloaded += 1; // Renamed but means "added to queue"
+                    decide(TreeDecision::Queued);
                     debug!("Added to queue: {}", file.name);
                     if transfers.is_none() {
                         transfers = Some(self.transfers_by_file().await);
@@ -1216,6 +1287,7 @@ impl DownloadManager {
                 }
                 Err(e) => {
                     stats.files_failed += 1;
+                    decide(TreeDecision::Failed);
                     error!("Failed to add {} to queue: {}", file.name, e);
                 }
             }
@@ -1226,7 +1298,11 @@ impl DownloadManager {
             stats.files_downloaded, stats.files_skipped, stats.files_blocked, stats.files_failed
         );
 
-        Ok(stats)
+        Ok(TreeReport {
+            stats,
+            files: report_files,
+            root_name,
+        })
     }
 
     /// Process next item from the download queue
@@ -1541,9 +1617,12 @@ impl DownloadManager {
 
     /// List `root_id` for `enqueue_tree`: everything under a folder, or a one-element
     /// list for a file. Paths are relative to the Put.io root.
-    async fn list_tree(&self, root_id: i64) -> DownloadResult<Vec<(FileEntry, String)>> {
+    async fn list_tree(
+        &self,
+        root_id: i64,
+    ) -> DownloadResult<(Vec<(FileEntry, String)>, Option<String>)> {
         if root_id == 0 {
-            return self.list_all_files(0, String::new()).await;
+            return Ok((self.list_all_files(0, String::new()).await?, None));
         }
 
         let root = self
@@ -1553,11 +1632,12 @@ impl DownloadManager {
             .map_err(DownloadError::ClientError)?
             .file;
         let parent_path = self.folder_path(root.parent_id).await?;
+        let root_name = Some(sanitize_filename(&root.name));
         if root.file_type == "FOLDER" {
             let path = join_path(&parent_path, &sanitize_filename(&root.name));
-            self.list_all_files(root.id, path).await
+            Ok((self.list_all_files(root.id, path).await?, root_name))
         } else {
-            Ok(vec![(root, parent_path)])
+            Ok((vec![(root, parent_path)], root_name))
         }
     }
 
