@@ -47,7 +47,7 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - Interrupted downloads resume, download settings from the config are
   honoured, and failed transfers can be retried (feature 004).
 - Problems seen in the live NAS logs (feature 002).
-- The Docker image builds again with the Radarr/Sonarr crate.
+- The Docker image builds again with the Radarr/Sonarr and doctor crates.
 
 ### Changed
 
