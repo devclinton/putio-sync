@@ -100,6 +100,15 @@ label_enum!(
 );
 
 label_enum!(
+    /// What a folder rule did with a file.
+    RuleDecision {
+        Blocked => "blocked",
+        Skipped => "skipped",
+        Deleted => "deleted",
+    }
+);
+
+label_enum!(
     /// Download queue row state.
     QueueState {
         Pending => "pending",

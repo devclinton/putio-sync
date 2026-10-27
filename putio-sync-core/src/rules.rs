@@ -1,0 +1,831 @@
+//! Per-folder file rules (feature 009)
+//!
+//! A rule is attached to a folder path relative to the Put.io root, which is also the
+//! folder under `target_directory` the files land in. It applies to that folder and
+//! everything below it. For each setting the deepest rule on a file's path that sets it
+//! wins; settings no rule sets come from `[download]` (research R2).
+//!
+//! The type filter is folded from the root down (R3): the global `blocked_extensions`
+//! is the start, a rule's preset replaces the inherited filter, its `allow` extensions
+//! are then allowed and its `block` extensions blocked.
+
+use crate::config::DownloadConfig;
+use crate::error::{CoreError, CoreResult};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt;
+use std::path::Path;
+
+/// One folder rule (`[[download.rules]]`). Every setting is optional; an unset one is
+/// inherited from the parent folders or `[download]`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FolderRule {
+    /// Folder path relative to the Put.io root, e.g. `Movies/Kids`
+    pub path: String,
+    /// Preset that replaces the inherited type filter
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    /// Extensions allowed on top of the preset or inherited filter
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow: Vec<String>,
+    /// Extensions blocked on top of the preset or inherited filter; wins over `allow`
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub block: Vec<String>,
+    /// Download nothing below this folder
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip: Option<bool>,
+    /// Delete files the type filter blocks from Put.io
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_blocked: Option<bool>,
+    /// Per-folder `delete_after_download`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_after_download: Option<bool>,
+    /// Per-folder `skip_existing`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_existing: Option<bool>,
+}
+
+impl FolderRule {
+    /// True when the rule sets nothing, so it can be dropped
+    pub fn is_empty(&self) -> bool {
+        self.preset.is_none()
+            && self.allow.is_empty()
+            && self.block.is_empty()
+            && self.skip.is_none()
+            && self.delete_blocked.is_none()
+            && self.delete_after_download.is_none()
+            && self.skip_existing.is_none()
+    }
+}
+
+/// A named type filter (`[download.presets.<name>]`): an allow list (`only`) or a block
+/// list (`block`, used when `only` is absent)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Preset {
+    /// Only these extensions are downloaded
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub only: Option<Vec<String>>,
+    /// These extensions are not downloaded
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub block: Vec<String>,
+}
+
+/// A preset that ships with putio-sync; a `[download.presets]` entry with its name
+/// replaces it
+#[derive(Debug)]
+pub struct BuiltinPreset {
+    /// Config name
+    pub name: &'static str,
+    /// Name shown in the UI
+    pub label: &'static str,
+    /// Allow list, or `None` for a block list
+    pub only: Option<&'static [&'static str]>,
+    /// Block list
+    pub block: &'static [&'static str],
+}
+
+impl BuiltinPreset {
+    /// The preset as a config value
+    pub fn preset(&self) -> Preset {
+        Preset {
+            only: self.only.map(strings),
+            block: strings(self.block),
+        }
+    }
+}
+
+fn strings(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| s.to_string()).collect()
+}
+
+/// The built-in presets, in the order the UI lists them
+pub const BUILTIN_PRESETS: &[BuiltinPreset] = &[
+    BuiltinPreset {
+        name: "video",
+        label: "Video only",
+        only: Some(&[
+            "mkv", "mp4", "m4v", "avi", "mov", "wmv", "mpg", "mpeg", "ts", "m2ts", "webm", "flv",
+            "srt", "sub", "idx", "ass", "ssa", "vtt",
+        ]),
+        block: &[],
+    },
+    BuiltinPreset {
+        name: "audio",
+        label: "Audio only",
+        only: Some(&[
+            "mp3", "flac", "m4a", "m4b", "aac", "ogg", "opus", "wav", "wma", "alac", "ape", "aiff",
+            "cue",
+        ]),
+        block: &[],
+    },
+    BuiltinPreset {
+        name: "ebooks",
+        label: "Ebooks only",
+        only: Some(&[
+            "epub", "mobi", "azw", "azw3", "pdf", "cbz", "cbr", "djvu", "fb2",
+        ]),
+        block: &[],
+    },
+    BuiltinPreset {
+        name: "no-binaries",
+        label: "No binaries",
+        only: None,
+        // The default `blocked_extensions` plus libraries, packages and scripts
+        block: &[
+            "exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs", "js", "jar", "ps1", "lnk",
+            "apk", "dmg", "pkg", "dll", "so", "bin", "deb", "rpm", "appimage", "run", "sh", "app",
+        ],
+    },
+    BuiltinPreset {
+        name: "everything",
+        label: "Everything",
+        only: None,
+        block: &[],
+    },
+];
+
+/// The built-in preset called `name`
+pub fn builtin(name: &str) -> Option<&'static BuiltinPreset> {
+    BUILTIN_PRESETS.iter().find(|p| p.name == name)
+}
+
+/// The UI name of a preset: the built-in label, or the config name
+pub fn preset_label(name: &str) -> String {
+    builtin(name).map_or_else(|| name.to_string(), |p| p.label.to_string())
+}
+
+/// A Put.io name as it appears in a download path: `/ \ : * ? " < > |` become `_`.
+/// The download manager builds `relative_path` with this, so rule paths match it.
+pub fn sanitize_name(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c => c,
+        })
+        .collect()
+}
+
+fn invalid(message: String) -> CoreError {
+    CoreError::ConfigError(message)
+}
+
+/// Normalise a rule path: split on `/`, drop empty segments, sanitise each segment.
+/// The root (empty), `.` and `..` are refused.
+pub fn normalize_path(path: &str) -> CoreResult<String> {
+    let segments: Vec<&str> = path
+        .split('/')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if segments.is_empty() {
+        return Err(invalid(
+            "A folder rule needs a folder path; the root uses the [download] settings".into(),
+        ));
+    }
+    if segments.iter().any(|s| *s == "." || *s == "..") {
+        return Err(invalid(format!(
+            "Folder rule path '{path}' must not contain '.' or '..'"
+        )));
+    }
+    Ok(segments
+        .iter()
+        .map(|s| sanitize_name(s))
+        .collect::<Vec<_>>()
+        .join("/"))
+}
+
+/// Normalise an extension: leading `.` stripped, lowercased. Empty ones and ones with a
+/// slash or whitespace are refused.
+pub fn normalize_extension(ext: &str) -> CoreResult<String> {
+    let e = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+    if e.is_empty() || e.contains(['/', '\\']) || e.chars().any(char::is_whitespace) {
+        return Err(invalid(format!("Invalid extension '{ext}'")));
+    }
+    Ok(e)
+}
+
+/// Preset names: `[a-z0-9][a-z0-9_-]{0,31}`
+pub fn valid_preset_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let first_ok = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    first_ok
+        && name.len() <= 32
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
+
+fn check_extensions(list: &[String], what: &str) -> CoreResult<()> {
+    for ext in list {
+        normalize_extension(ext).map_err(|e| invalid(format!("{what}: {e}")))?;
+    }
+    Ok(())
+}
+
+/// Check a preset's name and lists
+pub fn validate_preset(name: &str, preset: &Preset) -> CoreResult<()> {
+    if !valid_preset_name(name) {
+        return Err(invalid(format!(
+            "Invalid preset name '{name}': use lowercase letters, digits, '-' and '_' (up to 32)"
+        )));
+    }
+    let what = format!("Preset {name}");
+    match &preset.only {
+        Some(_) if !preset.block.is_empty() => Err(invalid(format!(
+            "{what}: set either only or block, not both"
+        ))),
+        Some(only) if only.is_empty() => Err(invalid(format!(
+            "{what}: only must list at least one extension"
+        ))),
+        Some(only) => check_extensions(only, &what),
+        None => check_extensions(&preset.block, &what),
+    }
+}
+
+/// Check `[[download.rules]]` and `[download.presets]`: preset names and lists, rule
+/// paths (unique after normalising), extensions and preset references
+pub fn validate(rules: &[FolderRule], presets: &BTreeMap<String, Preset>) -> CoreResult<()> {
+    for (name, preset) in presets {
+        validate_preset(name, preset)?;
+    }
+    let mut seen = HashSet::new();
+    for rule in rules {
+        let path = normalize_path(&rule.path)?;
+        let what = format!("Folder rule {path}");
+        if !seen.insert(path.clone()) {
+            return Err(invalid(format!("Two folder rules for {path}")));
+        }
+        if let Some(name) = &rule.preset {
+            if builtin(name).is_none() && !presets.contains_key(name) {
+                return Err(invalid(format!("{what}: unknown preset '{name}'")));
+            }
+        }
+        check_extensions(&rule.allow, &what)?;
+        check_extensions(&rule.block, &what)?;
+    }
+    Ok(())
+}
+
+/// The rule names a user preset is used by
+pub fn rules_using<'a>(rules: &'a [FolderRule], preset: &str) -> Vec<&'a str> {
+    rules
+        .iter()
+        .filter(|r| r.preset.as_deref() == Some(preset))
+        .map(|r| r.path.as_str())
+        .collect()
+}
+
+/// The lowercased last extension of a file name (`a.mkv.exe` → `exe`; `.exe` has none)
+pub fn extension(name: &str) -> Option<String> {
+    Some(Path::new(name).extension()?.to_str()?.to_ascii_lowercase())
+}
+
+/// Which extensions a folder downloads
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct TypeFilter {
+    /// Allow list; `None` allows everything not blocked
+    pub only: Option<BTreeSet<String>>,
+    /// Never downloaded; wins over `only`
+    pub blocked: BTreeSet<String>,
+}
+
+fn ext_set(list: &[String]) -> BTreeSet<String> {
+    list.iter()
+        .filter_map(|e| normalize_extension(e).ok())
+        .collect()
+}
+
+impl TypeFilter {
+    fn from_preset(preset: &Preset) -> Self {
+        Self {
+            only: preset.only.as_deref().map(ext_set),
+            blocked: ext_set(&preset.block),
+        }
+    }
+
+    /// Why this filter refuses `name`, if it does
+    fn refuses(&self, name: &str, preset: Option<&str>) -> Option<Reason> {
+        let ext = extension(name);
+        if let Some(e) = ext.as_ref().filter(|e| self.blocked.contains(*e)) {
+            return Some(Reason::Blocked {
+                extension: e.clone(),
+            });
+        }
+        match &self.only {
+            Some(only) if !ext.as_ref().is_some_and(|e| only.contains(e)) => {
+                Some(Reason::NotAllowed {
+                    extension: ext,
+                    preset: preset.map(str::to_string),
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
+/// A value and the rule path it came from (`None`: the `[download]` settings)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Sourced<T> {
+    /// The value
+    pub value: T,
+    /// Rule path, or `None` for the global settings
+    pub from: Option<String>,
+}
+
+impl<T> Sourced<T> {
+    fn global(value: T) -> Self {
+        Self { value, from: None }
+    }
+
+    fn set(&mut self, value: Option<T>, path: &str) {
+        if let Some(value) = value {
+            self.value = value;
+            self.from = Some(path.to_string());
+        }
+    }
+}
+
+/// The settings in force in one folder after inheritance
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Effective {
+    /// Type filter and the deepest rule that changed it
+    pub filter: Sourced<TypeFilter>,
+    /// The preset in force, if any rule on the path set one
+    pub preset: Sourced<Option<String>>,
+    /// Download nothing here
+    pub skip: Sourced<bool>,
+    /// Delete type-blocked files from Put.io
+    pub delete_blocked: Sourced<bool>,
+    /// Delete from Put.io after a verified download
+    pub delete_after_download: Sourced<bool>,
+    /// Skip files that already exist locally
+    pub skip_existing: Sourced<bool>,
+}
+
+impl Effective {
+    /// What happens to a file called `name` in this folder
+    pub fn decide(&self, name: &str) -> Decision {
+        if self.skip.value {
+            return Decision::Skipped {
+                rule: self.skip.from.clone(),
+            };
+        }
+        match self
+            .filter
+            .value
+            .refuses(name, self.preset.value.as_deref())
+        {
+            Some(reason) => Decision::Blocked {
+                reason,
+                rule: self.filter.from.clone(),
+            },
+            None => Decision::Download,
+        }
+    }
+}
+
+/// Why the type filter refused a file
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reason {
+    /// The filter is an allow list without this extension
+    NotAllowed {
+        /// The file's extension, if it has one
+        extension: Option<String>,
+        /// The preset in force
+        preset: Option<String>,
+    },
+    /// The extension is blocked
+    Blocked {
+        /// The file's extension
+        extension: String,
+    },
+}
+
+impl fmt::Display for Reason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Reason::Blocked { extension } => write!(f, "extension {extension} is blocked"),
+            Reason::NotAllowed { extension, preset } => {
+                match extension {
+                    Some(e) => write!(f, "extension {e} is not allowed")?,
+                    None => write!(f, "no extension; not allowed")?,
+                }
+                match preset {
+                    Some(p) => write!(f, " by {}", preset_label(p)),
+                    None => Ok(()),
+                }
+            }
+        }
+    }
+}
+
+/// What a rule does with one file
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Decision {
+    /// Download it
+    Download,
+    /// The type filter refuses it
+    Blocked {
+        /// Why
+        reason: Reason,
+        /// The rule path that set the filter, `None` for `[download]`
+        rule: Option<String>,
+    },
+    /// Its folder is skipped
+    Skipped {
+        /// The rule path that set `skip`
+        rule: Option<String>,
+    },
+}
+
+impl Decision {
+    /// The deciding rule path, `None` for the global settings (or a download)
+    pub fn rule(&self) -> Option<&str> {
+        match self {
+            Decision::Download => None,
+            Decision::Blocked { rule, .. } | Decision::Skipped { rule } => rule.as_deref(),
+        }
+    }
+
+    /// The reason in words, empty for a download
+    pub fn reason(&self) -> String {
+        match self {
+            Decision::Download => String::new(),
+            Decision::Blocked { reason, .. } => reason.to_string(),
+            Decision::Skipped { .. } => "folder is skipped".to_string(),
+        }
+    }
+}
+
+/// `[download]` rules ready to resolve: the global settings, the rules by normalised
+/// path and the presets (built-ins with config overrides)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleSet {
+    blocked: Vec<String>,
+    delete_after_download: bool,
+    skip_existing: bool,
+    rules: HashMap<String, FolderRule>,
+    presets: BTreeMap<String, Preset>,
+}
+
+impl Default for RuleSet {
+    fn default() -> Self {
+        Self::from_config(&DownloadConfig::default())
+    }
+}
+
+impl RuleSet {
+    /// Build from `[download]`. Invalid entries (refused by `validate` at load and on
+    /// save) are left out rather than failing.
+    pub fn from_config(config: &DownloadConfig) -> Self {
+        let mut presets: BTreeMap<String, Preset> = BUILTIN_PRESETS
+            .iter()
+            .map(|p| (p.name.to_string(), p.preset()))
+            .collect();
+        presets.extend(config.presets.clone());
+        let rules = config
+            .rules
+            .iter()
+            .filter_map(|rule| {
+                let path = normalize_path(&rule.path).ok()?;
+                Some((
+                    path.clone(),
+                    FolderRule {
+                        path,
+                        ..rule.clone()
+                    },
+                ))
+            })
+            .collect();
+        Self {
+            blocked: config.blocked_extensions.clone(),
+            delete_after_download: config.delete_after_download,
+            skip_existing: config.skip_existing,
+            rules,
+            presets,
+        }
+    }
+
+    /// True when no folder rule exists
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+
+    /// The settings in force in `folder_path` (relative to the Put.io root, `""` for it)
+    pub fn resolve(&self, folder_path: &str) -> Effective {
+        let mut effective = Effective {
+            filter: Sourced::global(TypeFilter {
+                only: None,
+                blocked: ext_set(&self.blocked),
+            }),
+            preset: Sourced::global(None),
+            skip: Sourced::global(false),
+            delete_blocked: Sourced::global(false),
+            delete_after_download: Sourced::global(self.delete_after_download),
+            skip_existing: Sourced::global(self.skip_existing),
+        };
+        if self.rules.is_empty() {
+            return effective;
+        }
+        let mut prefix = String::new();
+        for segment in folder_path.split('/').filter(|s| !s.is_empty()) {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(segment);
+            if let Some(rule) = self.rules.get(&prefix) {
+                self.apply(&mut effective, rule, &prefix);
+            }
+        }
+        effective
+    }
+
+    fn apply(&self, effective: &mut Effective, rule: &FolderRule, path: &str) {
+        let filter = &mut effective.filter;
+        let mut changed = false;
+        if let Some(name) = &rule.preset {
+            if let Some(preset) = self.presets.get(name) {
+                filter.value = TypeFilter::from_preset(preset);
+                effective.preset.set(Some(Some(name.clone())), path);
+                changed = true;
+            }
+        }
+        for ext in ext_set(&rule.allow) {
+            filter.value.blocked.remove(&ext);
+            if let Some(only) = filter.value.only.as_mut() {
+                only.insert(ext);
+            }
+            changed = true;
+        }
+        for ext in ext_set(&rule.block) {
+            filter.value.blocked.insert(ext);
+            changed = true;
+        }
+        if changed {
+            filter.from = Some(path.to_string());
+        }
+        effective.skip.set(rule.skip, path);
+        effective.delete_blocked.set(rule.delete_blocked, path);
+        effective
+            .delete_after_download
+            .set(rule.delete_after_download, path);
+        effective.skip_existing.set(rule.skip_existing, path);
+    }
+
+    /// What happens to `name` in `folder_path`
+    pub fn decide(&self, folder_path: &str, name: &str) -> Decision {
+        self.resolve(folder_path).decide(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(rules: Vec<FolderRule>) -> DownloadConfig {
+        DownloadConfig {
+            rules,
+            ..DownloadConfig::default()
+        }
+    }
+
+    fn rule(path: &str) -> FolderRule {
+        FolderRule {
+            path: path.to_string(),
+            ..FolderRule::default()
+        }
+    }
+
+    fn preset_rule(path: &str, preset: &str) -> FolderRule {
+        FolderRule {
+            preset: Some(preset.to_string()),
+            ..rule(path)
+        }
+    }
+
+    fn set(rules: Vec<FolderRule>) -> RuleSet {
+        RuleSet::from_config(&config(rules))
+    }
+
+    fn downloads(rules: &RuleSet, folder: &str, name: &str) -> bool {
+        rules.decide(folder, name) == Decision::Download
+    }
+
+    #[test]
+    fn no_rules_is_the_global_blocklist() {
+        let rules = set(vec![]);
+        assert!(!downloads(&rules, "Movies", "setup.exe"));
+        assert!(downloads(&rules, "Movies", "info.nfo"));
+        assert!(downloads(&rules, "", "README"));
+        let d = rules.decide("Movies", "setup.exe");
+        assert_eq!(d.rule(), None);
+        assert_eq!(d.reason(), "extension exe is blocked");
+    }
+
+    #[test]
+    fn preset_applies_to_the_folder_and_below() {
+        let rules = set(vec![preset_rule("Movies", "video")]);
+        assert!(downloads(&rules, "Movies/Film (2020)", "film.MKV"));
+        assert!(downloads(&rules, "Movies", "film.srt"));
+        assert!(!downloads(&rules, "Movies/Film (2020)", "info.nfo"));
+        assert!(!downloads(&rules, "Movies", "README"));
+        assert!(downloads(&rules, "Music", "info.nfo"));
+        // Not a prefix match on names
+        assert!(downloads(&rules, "Movies2", "info.nfo"));
+        let d = rules.decide("Movies/Film", "info.nfo");
+        assert_eq!(d.rule(), Some("Movies"));
+        assert_eq!(d.reason(), "extension nfo is not allowed by Video only");
+        assert_eq!(
+            rules.decide("Movies", "README").reason(),
+            "no extension; not allowed by Video only"
+        );
+    }
+
+    #[test]
+    fn deeper_rule_wins() {
+        let rules = set(vec![
+            preset_rule("Movies", "video"),
+            preset_rule("Movies/Extras", "everything"),
+        ]);
+        assert!(downloads(&rules, "Movies/Extras", "notes.txt"));
+        assert!(downloads(&rules, "Movies/Extras/a", "tool.exe"));
+        assert!(!downloads(&rules, "Movies", "notes.txt"));
+    }
+
+    #[test]
+    fn allow_alone_unblocks_a_global_extension() {
+        let rules = set(vec![FolderRule {
+            allow: vec![".EXE".into()],
+            ..rule("Software")
+        }]);
+        assert!(downloads(&rules, "Software", "tool.exe"));
+        assert!(!downloads(&rules, "Software", "setup.msi"));
+        assert!(!downloads(&rules, "Other", "tool.exe"));
+    }
+
+    #[test]
+    fn block_alone_keeps_the_inherited_filter() {
+        let rules = set(vec![FolderRule {
+            block: vec!["nfo".into()],
+            ..rule("Movies")
+        }]);
+        assert!(!downloads(&rules, "Movies", "info.nfo"));
+        assert!(!downloads(&rules, "Movies", "setup.exe"));
+        assert!(downloads(&rules, "Movies", "film.mkv"));
+    }
+
+    #[test]
+    fn preset_plus_allow_and_block() {
+        let rules = set(vec![FolderRule {
+            allow: vec!["jpg".into()],
+            block: vec!["wav".into()],
+            ..preset_rule("Music", "audio")
+        }]);
+        assert!(downloads(&rules, "Music/Album", "cover.jpg"));
+        assert!(downloads(&rules, "Music/Album", "01.flac"));
+        assert!(!downloads(&rules, "Music/Album", "01.wav"));
+        assert!(!downloads(&rules, "Music/Album", "info.txt"));
+    }
+
+    #[test]
+    fn last_extension_counts() {
+        let rules = set(vec![preset_rule("Movies", "video")]);
+        assert!(!downloads(&rules, "Movies", "a.mkv.exe"));
+        assert!(!downloads(&rules, "Movies", ".mkv"));
+    }
+
+    #[test]
+    fn skip_and_unskip() {
+        let rules = set(vec![
+            FolderRule {
+                skip: Some(true),
+                ..rule("Seeding")
+            },
+            FolderRule {
+                skip: Some(false),
+                ..rule("Seeding/Keep")
+            },
+        ]);
+        assert_eq!(
+            rules.decide("Seeding/x", "film.mkv"),
+            Decision::Skipped {
+                rule: Some("Seeding".into())
+            }
+        );
+        assert!(downloads(&rules, "Seeding/Keep", "film.mkv"));
+        assert!(!downloads(&rules, "Seeding/Keep", "setup.exe"));
+    }
+
+    #[test]
+    fn settings_inherit_one_by_one_with_sources() {
+        let rules = set(vec![
+            FolderRule {
+                delete_after_download: Some(true),
+                delete_blocked: Some(true),
+                ..preset_rule("Movies", "video")
+            },
+            FolderRule {
+                delete_after_download: Some(false),
+                ..rule("Movies/Kids")
+            },
+        ]);
+        let e = rules.resolve("Movies/Kids/Film");
+        assert_eq!(e.preset.value.as_deref(), Some("video"));
+        assert_eq!(e.preset.from.as_deref(), Some("Movies"));
+        assert_eq!(e.filter.from.as_deref(), Some("Movies"));
+        assert!(e.delete_blocked.value);
+        assert_eq!(e.delete_blocked.from.as_deref(), Some("Movies"));
+        assert!(!e.delete_after_download.value);
+        assert_eq!(e.delete_after_download.from.as_deref(), Some("Movies/Kids"));
+        assert!(e.skip_existing.value);
+        assert_eq!(e.skip_existing.from, None);
+        let root = rules.resolve("");
+        assert!(!root.delete_after_download.value);
+        assert_eq!(root.filter.from, None);
+    }
+
+    #[test]
+    fn user_presets_and_overrides() {
+        let mut cfg = config(vec![
+            preset_rule("Comics", "comics"),
+            preset_rule("Movies", "video"),
+        ]);
+        cfg.presets.insert(
+            "comics".into(),
+            Preset {
+                only: Some(vec!["cbz".into()]),
+                block: vec![],
+            },
+        );
+        cfg.presets.insert(
+            "video".into(),
+            Preset {
+                only: Some(vec!["m2ts".into()]),
+                block: vec![],
+            },
+        );
+        let rules = RuleSet::from_config(&cfg);
+        assert!(downloads(&rules, "Comics", "a.cbz"));
+        assert!(!downloads(&rules, "Comics", "a.cbr"));
+        assert!(downloads(&rules, "Movies", "a.m2ts"));
+        assert!(!downloads(&rules, "Movies", "a.mkv"));
+        assert_eq!(
+            rules.decide("Comics", "a.cbr").reason(),
+            "extension cbr is not allowed by comics"
+        );
+    }
+
+    #[test]
+    fn rule_paths_are_normalised() {
+        let rules = set(vec![preset_rule("/Movies//Kids: 2/", "video")]);
+        assert!(!downloads(&rules, "Movies/Kids_ 2", "info.nfo"));
+        assert_eq!(normalize_path(" a / b ").unwrap(), "a/b");
+        assert!(normalize_path("/").is_err());
+        assert!(normalize_path("a/../b").is_err());
+        assert!(normalize_path("./a").is_err());
+    }
+
+    #[test]
+    fn validation() {
+        let presets = BTreeMap::new();
+        assert!(validate(&[preset_rule("Movies", "video")], &presets).is_ok());
+        let err = |rules: &[FolderRule], presets: &BTreeMap<String, Preset>| {
+            validate(rules, presets).unwrap_err().to_string()
+        };
+        assert!(err(&[preset_rule("Movies", "nope")], &presets).contains("unknown preset 'nope'"));
+        assert!(err(&[rule("Movies"), rule("/Movies/")], &presets).contains("Two folder rules"));
+        assert!(err(&[rule("")], &presets).contains("needs a folder path"));
+        let bad_ext = FolderRule {
+            allow: vec!["a b".into()],
+            ..rule("Movies")
+        };
+        assert!(err(&[bad_ext], &presets).contains("Folder rule Movies"));
+
+        let one = |name: &str, preset: Preset| BTreeMap::from([(name.to_string(), preset)]);
+        let both = Preset {
+            only: Some(vec!["a".into()]),
+            block: vec!["b".into()],
+        };
+        assert!(err(&[], &one("x", both)).contains("not both"));
+        let empty = Preset {
+            only: Some(vec![]),
+            block: vec![],
+        };
+        assert!(err(&[], &one("x", empty)).contains("at least one"));
+        assert!(err(&[], &one("Bad Name", Preset::default())).contains("Invalid preset name"));
+        assert!(validate(
+            &[preset_rule("C", "comics")],
+            &one("comics", Preset::default())
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn builtins_are_valid() {
+        for p in BUILTIN_PRESETS {
+            validate_preset(p.name, &p.preset()).unwrap();
+        }
+        assert_eq!(preset_label("no-binaries"), "No binaries");
+        assert_eq!(preset_label("comics"), "comics");
+    }
+}

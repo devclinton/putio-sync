@@ -130,6 +130,43 @@ reverse_sort = false
 blocked_extensions = ["exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs",
                       "js", "jar", "ps1", "lnk", "apk", "dmg", "pkg"]
 
+# ----------------------------------------------------------------------------
+# Folder rules (feature 009)
+# ----------------------------------------------------------------------------
+# A rule applies to a folder, given as a path relative to the Put.io root (the
+# same path the files get under target_directory), and to everything below it.
+# Every setting is optional; for each one the deepest rule that sets it wins, and
+# settings no rule sets come from this [download] section. The type filter starts
+# from blocked_extensions at the root: a rule's preset replaces the inherited
+# filter, then its allow/block extensions are added.
+#
+#   preset                 video, audio, ebooks, no-binaries, everything, or your own
+#   allow / block          extra extensions on top of the preset
+#   skip                   download nothing in this folder
+#   delete_blocked         delete files the rule blocks from Put.io (one call per sync)
+#   delete_after_download  / skip_existing: override the settings above
+#
+# The web UI sets rules from the Put.io page and previews them before saving.
+#
+# [[download.rules]]
+# path = "Shows"
+# preset = "video"
+# allow = ["srt"]
+#
+# [[download.rules]]
+# path = "Shows/Old"
+# skip = true
+#
+# [[download.rules]]
+# path = "Books"
+# preset = "ebooks"
+# delete_blocked = true
+
+# Presets: your own, or a built-in name to change its list. Set either `only`
+# (an allow list) or `block` (everything except these).
+# [download.presets.comics]
+# only = ["cbz", "cbr"]
+
 # Bandwidth limit in bytes per second
 # Limits download speed to prevent overwhelming the network
 # Examples:

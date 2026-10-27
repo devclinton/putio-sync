@@ -2,6 +2,7 @@
 //! (feature 004, R12).
 
 use putio_sync_client::PutioApiClient;
+use putio_sync_core::rules::RuleSet;
 use putio_sync_db::Database;
 use putio_sync_download::{DownloadConfig, DownloadManager, TreeDecision};
 use std::sync::Arc;
@@ -76,7 +77,10 @@ async fn setup() -> (
     ));
     let config = DownloadConfig {
         target_directory: dir.path().to_path_buf(),
-        blocked_extensions: vec!["exe".to_string()],
+        rules: RuleSet::from_config(&putio_sync_core::config::DownloadConfig {
+            blocked_extensions: vec!["exe".to_string()],
+            ..Default::default()
+        }),
         ..DownloadConfig::default()
     };
     let manager = DownloadManager::new(client, db.clone(), config);

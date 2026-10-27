@@ -109,7 +109,7 @@ pub async fn execute_download(
         retry_initial_delay_secs: old_config.retry_initial_delay_secs,
         workers: workers_count,
         delete_after_download,
-        blocked_extensions: old_config.blocked_extensions.clone(),
+        rules: putio_sync_core::rules::RuleSet::from_config(&old_config),
     };
     let delete_empty_folders_flag = delete_empty_folders.unwrap_or(old_config.delete_empty_folders);
     let sort_order = if let Some(s) = sort {

@@ -50,9 +50,8 @@ No schema change. The latest report is kept in memory.
 
 **Constraints**:
 
-- The whole UI stays under 160 KB, and `doctor.js` stays at or under 9 KB (R15). The budget
-  was 150 KB; merging after the UI redesign (012) and the arr page (011) left no room for the
-  Doctor page, so the user raised it to 160 KB.
+- The whole UI stays inside the `ui_assets` budget, and `doctor.js` stays at or under 9 KB
+  (R15). The budget was 150 KB when this was planned; feature 009 raised it to 200 KB.
 - Checks are read-only.
 - No secrets go in the report, the logs or the metrics.
 - Metric labels are bounded.

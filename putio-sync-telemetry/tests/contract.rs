@@ -18,6 +18,7 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_last_success_timestamp_seconds",
     "putio_sync_last_sync_files",
     "putio_sync_files_blocked_total",
+    "putio_sync_rule_decisions_total",
     "putio_sync_queue_items",
     "putio_sync_downloads_active",
     "putio_sync_download_workers",
@@ -130,6 +131,7 @@ fn record_everything(t: &Telemetry) {
         ],
     );
     t.sync_file_blocked();
+    t.sync_rule_decision(RuleDecision::Deleted);
     {
         let _active = t.download_active();
         t.download_bytes(4096);
@@ -187,6 +189,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v
         }
         "trigger" => strs(CleanupTrigger::ALL, CleanupTrigger::as_str),
+        "decision" => strs(RuleDecision::ALL, RuleDecision::as_str),
         other => panic!("unexpected label {}", other),
     }
 }

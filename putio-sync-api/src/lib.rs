@@ -231,6 +231,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/local/watcher", create_local_watcher_router())
         .nest("/local/workers", create_local_workers_router())
         .nest("/settings", create_settings_router())
+        .nest("/rules", routes::system::rules::router())
         .nest("/stats", create_stats_router())
         .nest("/history", create_history_router())
         .nest("/doctor", routes::system::doctor::router())
