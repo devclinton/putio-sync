@@ -179,6 +179,42 @@ interface name (`eth0`, `tailscale0`) so a changing IP does not matter, IPv6,
 and a separate address for `/metrics`. Settable from the UI, with a warning
 before saving an address that would lock the UI out.
 
+### 038 Processing pipeline and its view
+
+Every item goes through a pipeline of steps, and the UI shows where it is:
+
+Pre-download hooks → Downloading → Pre-processing hooks → Generating
+subtitles → Translating (one branch per language, run in parallel, for
+example Japanese and Spanish) → Post-processing hooks → Notifications.
+
+- The Queue page shows each item's current step and progress. Expanding an
+  item shows the whole pipeline as a timeline: each step's state (waiting,
+  running, done, failed, skipped), how long it took, and its log; the
+  translation branches side by side. Failed steps can be retried on their
+  own. Finished items keep their timeline in History.
+- Steps that are not configured are skipped, so the plain pipeline is just
+  Downloading. Subtitles (025), translation (026) and hooks (027) plug in as
+  steps, so this lands before them or with 025.
+- The pipeline is the same for items from Radarr/Sonarr, the watch folder and
+  plain sync.
+
+Radarr and Sonarr must not import an item before its pipeline is done:
+
+- Transmission mode (preferred): the item reports as still downloading, at
+  under 100%, until the last step that changes files (subtitles,
+  translation, post-processing hooks) has finished. Radarr/Sonarr then see it
+  complete and import video and subtitles together. The extra steps show in
+  their queue as the item's status message.
+- Watch-folder (blackhole) mode: work happens in a hidden staging folder on
+  the same disk, and the finished folder is moved into place in one rename,
+  so a folder scan never sees a half-finished item.
+- Subtitles are named `<video>.<lang>.srt` so Radarr/Sonarr import them as
+  extra files (with `srt` in "Import Extra Files"). If Bazarr already handles
+  subtitles, the subtitle steps can be turned off per category.
+- A failed optional step (for example one translation) does not hold the
+  import back forever: after a set number of retries the item completes
+  without it, and the failure shows on the item and in notifications.
+
 ## Queued: packaging
 
 - **Minimal runtime image** on Docker Hardened Images (dhi.io), plus a
