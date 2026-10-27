@@ -100,6 +100,14 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         get("/history"),
         get("/history/stats"),
         get("/status"),
+        get("/doctor"),
+        post("/doctor/run"),
+        post("/doctor/fixes/dead_queue_rows.remove/preview"),
+        (
+            Method::POST,
+            "/doctor/fixes/dead_queue_rows.remove/apply",
+            Some(json!({ "items": ["1"], "confirm": true })),
+        ),
         get("/arr"),
         post("/arr/servers/0/test"),
         // Unknown paths fall through to the protected fallback

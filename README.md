@@ -58,6 +58,11 @@ This project is organized as a Cargo workspace with specialized crates following
   - Worker scaling on settings changes from the API
   - Worker pool management
 
+- **putio-sync-doctor**: Health checks and safe fixes
+  - Read-only checks of the Put.io account, the sync state, this machine and the connection
+  - Fixes that check again before acting; the ones that delete need confirmation
+  - Shared by the `doctor` command, the API and the daemon's scheduled runs
+
 - **putio-sync-core**: Shared utilities
   - Configuration management
   - File filtering and sorting
@@ -319,6 +324,24 @@ Options:
 It prints each folder (id, path, age) and a summary line, and asks before deleting unless
 `--yes`. It talks to Put.io directly, so the daemon need not be running. The exit code is
 non-zero when the run fails or any delete fails.
+
+### `doctor`
+
+Run the health checks and print a report. See [Doctor](#doctor) for what is checked.
+
+```bash
+putio-sync doctor [OPTIONS]
+
+Options:
+  --json                    Print the report (or the fix result) as JSON on stdout
+  --fix <ID>                Preview and apply one fix, e.g. dead_queue_rows.remove
+  --dry-run                 With --fix: show what it would act on; change nothing
+  -y, --yes                 With --fix: skip the confirmation prompt
+```
+
+It needs no running daemon and never creates a database. Logs go to stderr, so `--json`
+output is clean. Exit codes: 0 ok, 1 warning, 2 problem, 3 the doctor could not run. A
+fix that deletes asks first, and with `--json` it needs `--yes` or `--dry-run`.
 
 ### `create`
 
@@ -583,6 +606,10 @@ H = histogram.
 | `putio_sync_disk_free_bytes` | gauge | — | Free space for the download folder; absent if unreadable |
 | `putio_sync_disk_total_bytes` | gauge | — | Size of the download folder's filesystem; absent if unreadable |
 | `putio_sync_transfers_stalled` | gauge | — | Put.io transfers with no new bytes for `[transfers] stall_threshold_hours` (`daemon` only) |
+| `putio_sync_doctor_check_status` | gauge | `check` | Doctor check result: 0 ok, 1 warning, 2 problem, -1 skipped (`daemon` only) |
+| `putio_sync_doctor_check_items` | gauge | `check` | Items the check found at its last run |
+| `putio_sync_doctor_last_run_timestamp_seconds` | gauge | — | Unix time the last doctor run finished; absent until the first |
+| `putio_sync_doctor_last_run_duration_seconds` | gauge | — | Duration of the last doctor run |
 | `putio_sync_arr_rpc_requests_total` | counter | `method`, `outcome` | Transmission RPC requests from Radarr/Sonarr; `outcome` is `ok`, `error` or `auth_failed` |
 | `putio_sync_arr_items` | gauge | `state` | Radarr/Sonarr items by state: `putio`, `local`, `done`, `failed` |
 | `putio_sync_arr_blocklist_total` | counter | `outcome` | Calls asking Radarr/Sonarr to blocklist a failed release: `ok`, `not_found`, `error` |
@@ -603,6 +630,7 @@ Label values are fixed sets, listed in
 | Watch cleanups | `increase(putio_sync_watch_cleanups_total[7d])` |
 | DB errors | `increase(putio_sync_db_errors_total[1d])` |
 | Transfers stuck | `putio_sync_transfers_stalled > 0` |
+| Doctor problems | `putio_sync_doctor_check_status == 2` |
 
 ## Web UI
 
@@ -633,6 +661,8 @@ as well as a desktop. The pages:
   their files stay in the account.
 - **History**: downloads and deletions, filtered by action and by name.
 - **Stats**: charts of what was downloaded and when (see [Stats page](#stats-page)).
+- **Doctor**: the latest health report with **Run now** and one-click fixes; a fix that
+  deletes lists what it will touch and asks first (see [Doctor](#doctor)).
 - **Settings**: download, watcher, logging and notification settings (see
   [Settings from the UI](#settings-from-the-ui)). The API token and Put.io
   credentials are never shown.
@@ -775,6 +805,10 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `GET /history/stats`, `GET /stats/{downloads,transfers,disk}` | Totals |
 | `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications}` | Settings (see above) |
 | `GET /local/watcher/status`, `GET /local/workers` | Watcher and worker state |
+| `GET /doctor` | The latest doctor report; 404 before the first run |
+| `POST /doctor/run` | Run every check now and answer with the report (a run already going is joined, not repeated) |
+| `POST /doctor/fixes/{fix}/preview` | Check again and list the items the fix would act on; changes nothing |
+| `POST /doctor/fixes/{fix}/apply` | `{"items": ["key", ...], "confirm": true}` → `{"done", "skipped", "failed", "check"}`. Only items that still qualify are touched. 400 without `confirm` for a fix that deletes, 404 for an unknown fix, 409 while an empty-folder cleanup runs |
 | `GET /arr` | The Radarr / Sonarr card: enabled, username, URL base, download folder, last contact, servers, item counts. Never the password or API keys |
 | `POST /arr/servers/{index}/test` | Test one `[[arr.servers]]` entry → `{"ok": true, "app", "version"}` or `{"ok": false, "reason", "detail"}` |
 | `GET /rules` | Folder rules, presets (built-in and your own, with the rules using each) and the global defaults |
@@ -933,6 +967,64 @@ The daily run deletes (it has no dry run) and is not caught up if the daemon was
 `run_at`. "Local" is the process's time zone: in Docker set `TZ` (e.g.
 `TZ=Europe/London`), otherwise it is UTC. Only one run happens at a time; each removed
 folder is logged with its id, path and age.
+
+### Doctor
+
+The doctor runs read-only health checks and reports each one as OK, warning, problem or
+skipped, in plain English with a suggestion. Run it with `putio-sync doctor`, on the web
+UI's **Doctor** page (`#/doctor`, with **Run now**), or with `POST /doctor/run`. The
+daemon also runs it 2 minutes after it starts and then every `interval_minutes`.
+
+| Area | Check | Warning / problem when |
+|---|---|---|
+| Put.io | Put.io sign-in | The token is rejected (problem) |
+| | Put.io storage | 90% used (warning), 98% (problem) |
+| | Transfers | A transfer is stalled (warning; needs the daemon) or failed (problem) |
+| | Empty folders | The empty-folder cleanup would remove something |
+| | Duplicate files | Files of 1 MB or more with the same name and size |
+| | Leftover .torrent files | A .torrent file in the account matches no transfer |
+| | Watch folder | A watched file waited over an hour without becoming a transfer |
+| Sync | Queue entries for deleted files | A queue row points at a file Put.io no longer has |
+| | Failing downloads | A download failed 3 or more times |
+| | Leftover partial downloads | A `.downloading` file older than an hour that no download owns |
+| This machine | Download folder | The folder is missing or not writable (problem) |
+| | Disk space | Under 10% free, or less than the queue needs (warning); under 2% (problem) |
+| | Database | SQLite's integrity check fails (problem) |
+| | Config file | Unknown keys, or settings that are probably a mistake |
+| Connection | Put.io reachability | Put.io can't be reached (problem), errors or is slow (warning) |
+| | Rate limit | Under 10% of requests left, or Put.io is limiting now |
+| | Clock | This machine's clock is over 60 s off Put.io's (warning), 300 s (problem) |
+
+Fixes, on the check's line in the UI or with `putio-sync doctor --fix <id>`:
+
+| Fix | Does | Asks first |
+|---|---|---|
+| `transfers.retry` | Retries failed transfers | No |
+| `transfers.readd` | Cancels stalled transfers and adds their magnet again | Yes |
+| `empty_folders.clean` | Runs the empty-folder cleanup, after a dry run shows the same folders | Yes |
+| `dead_queue_rows.remove` | Removes queue rows for files deleted from Put.io | Yes |
+| `failing_downloads.requeue` | Puts failing downloads back in the queue | No |
+| `orphan_partials.delete` | Deletes leftover partial files inside the download folder | Yes |
+
+Every fix checks again first and acts only on the listed items that still qualify; the
+rest are reported as skipped. The report never includes the token or magnet links.
+
+```toml
+[doctor]
+enabled = true          # scheduled runs in the daemon; manual runs always work
+interval_minutes = 60   # values below 5 count as 5
+```
+
+The daemon publishes each check's result as `putio_sync_doctor_check_status`. An example
+alert:
+
+```yaml
+- alert: PutioSyncDoctorProblem
+  expr: putio_sync_doctor_check_status == 2
+  for: 2h
+  annotations:
+    summary: "putio-sync doctor: {{ $labels.check }} has a problem"
+```
 
 ### Streaming Downloads
 

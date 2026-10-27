@@ -184,6 +184,23 @@ impl<'a> DownloadRepository<'a> {
         Ok(downloads)
     }
 
+    /// Downloads that failed, or are unfinished after at least `min_retries` retries,
+    /// leaving out files that later completed (doctor, feature 010)
+    pub async fn failing(&self, min_retries: i64) -> DbResult<Vec<Download>> {
+        sqlx::query_as::<_, Download>(
+            r#"
+            SELECT * FROM downloads
+            WHERE (status = 'failed' OR (status != 'completed' AND retry_count >= ?))
+              AND file_id NOT IN (SELECT file_id FROM downloads WHERE status = 'completed')
+            ORDER BY id ASC
+            "#,
+        )
+        .bind(min_retries)
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::History, "Failed to list failing downloads"))
+    }
+
     /// Delete a download record
     pub async fn delete(&self, id: i64) -> DbResult<()> {
         debug!("Deleting download {}", id);

@@ -10,6 +10,7 @@ use putio_sync_client::PutioApiClient;
 use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::Database;
+use putio_sync_doctor::Doctor;
 use putio_sync_download::{DownloadConfig, DownloadManager};
 use putio_sync_file_manager::watcher::WatcherConfig;
 use putio_sync_file_manager::TorrentWatcher;
@@ -123,6 +124,8 @@ pub struct PutioDaemon {
     cleanup: Option<Arc<EmptyFolderCleanup>>,
     /// Stalled-transfer verdicts, fed by the stall check task and read by the API
     stall_tracker: Arc<StallTracker>,
+    /// Scheduled health checks (shared with the API)
+    doctor: Option<Arc<Doctor>>,
 }
 
 impl PutioDaemon {
@@ -136,6 +139,7 @@ impl PutioDaemon {
             download_mode: None,
             file_watcher: None,
             cleanup: None,
+            doctor: None,
         }
     }
 
@@ -143,6 +147,13 @@ impl PutioDaemon {
     /// should be given to the API so manual and daily runs never overlap.
     pub fn with_cleanup(mut self, cleanup: Arc<EmptyFolderCleanup>) -> Self {
         self.cleanup = Some(cleanup);
+        self
+    }
+
+    /// Run `doctor`'s checks every `[doctor] interval_minutes` while enabled. The same
+    /// doctor should be given to the API so its page shows the scheduled runs.
+    pub fn with_doctor(mut self, doctor: Arc<Doctor>) -> Self {
+        self.doctor = Some(doctor);
         self
     }
 
@@ -332,6 +343,10 @@ impl PutioDaemon {
             .cleanup
             .clone()
             .map(|cleanup| tokio::spawn(crate::schedule::run_daily(cleanup)));
+        let doctor_task = self
+            .doctor
+            .clone()
+            .map(|doctor| tokio::spawn(putio_sync_doctor::run_scheduled(doctor)));
         // Spawn the stall check task (feature 007): flags Put.io transfers whose bytes stop
         let interval = self.config.read().await.stall_check_interval;
         let stall_task = self.client.clone().map(|client| {
@@ -381,6 +396,22 @@ impl PutioDaemon {
             }
             _ => info!("  - Empty-folder cleanup task: disabled"),
         }
+        match (&doctor_task, &self.doctor) {
+            (Some(_), Some(doctor)) => {
+                let settings = doctor.settings();
+                info!(
+                    "  - Doctor task: running (every {} min after a {}s delay, {})",
+                    settings.interval().as_secs() / 60,
+                    putio_sync_doctor::STARTUP_DELAY.as_secs(),
+                    if settings.enabled {
+                        "enabled"
+                    } else {
+                        "currently disabled"
+                    }
+                );
+            }
+            _ => info!("  - Doctor task: disabled"),
+        }
         info!("Press Ctrl+C to stop");
 
         // Wait for shutdown signal
@@ -404,6 +435,9 @@ impl PutioDaemon {
             task.abort();
         }
         if let Some(task) = stall_task {
+            task.abort();
+        }
+        if let Some(task) = doctor_task {
             task.abort();
         }
 

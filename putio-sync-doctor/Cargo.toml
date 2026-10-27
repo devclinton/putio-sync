@@ -1,0 +1,31 @@
+[package]
+name = "putio-sync-doctor"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Health checks and safe fixes for putio-sync (feature 010)"
+
+[dependencies]
+putio-sync-core = { path = "../putio-sync-core" }
+putio-sync-client = { path = "../putio-sync-client" }
+putio-sync-db = { path = "../putio-sync-db" }
+putio-sync-download = { path = "../putio-sync-download" }
+putio-sync-telemetry = { path = "../putio-sync-telemetry" }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+futures-util = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+mockito = "1.2"
+tempfile = "3.8"
+filetime = "0.2"
+reqwest = { workspace = true }
+toml = { workspace = true }
