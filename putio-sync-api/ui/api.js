@@ -109,3 +109,13 @@ export function logout() {
 export function syncNow() {
   return post("/local/sync");
 }
+
+/** The Radarr / Sonarr download client: connection details, servers, item counts. */
+export function arrStatus() {
+  return get("/arr");
+}
+
+/** Test the *arr server at `index`. Resolves with `{ok, app, version}` or `{ok: false, reason, detail}`. */
+export function testArrServer(index) {
+  return post(`/arr/servers/${index}/test`);
+}

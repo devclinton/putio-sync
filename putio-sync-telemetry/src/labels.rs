@@ -132,6 +132,60 @@ label_enum!(
 );
 
 label_enum!(
+    /// Transmission RPC method a Radarr/Sonarr request called (feature 011).
+    ArrMethod {
+        SessionGet => "session_get",
+        TorrentAdd => "torrent_add",
+        TorrentGet => "torrent_get",
+        TorrentRemove => "torrent_remove",
+        TorrentSet => "torrent_set",
+        Other => "other",
+    }
+);
+
+label_enum!(
+    /// Outcome of one Transmission RPC request.
+    ArrOutcome {
+        Ok => "ok",
+        Error => "error",
+        AuthFailed => "auth_failed",
+    }
+);
+
+label_enum!(
+    /// Where a Radarr/Sonarr item is.
+    ArrItemState {
+        Putio => "putio",
+        Local => "local",
+        Done => "done",
+        Failed => "failed",
+    }
+);
+
+label_enum!(
+    /// Outcome of one *arr blocklist call.
+    BlocklistOutcome {
+        Ok => "ok",
+        NotFound => "not_found",
+        Error => "error",
+    }
+);
+
+impl ArrMethod {
+    /// Map a Transmission method name; unknown names are `Other`.
+    pub fn from_method(method: &str) -> ArrMethod {
+        match method {
+            "session-get" => ArrMethod::SessionGet,
+            "torrent-add" => ArrMethod::TorrentAdd,
+            "torrent-get" => ArrMethod::TorrentGet,
+            "torrent-remove" => ArrMethod::TorrentRemove,
+            "torrent-set" => ArrMethod::TorrentSet,
+            _ => ArrMethod::Other,
+        }
+    }
+}
+
+label_enum!(
     /// How much the metrics output contains.
     Detail {
         Basic => "basic",

@@ -60,13 +60,19 @@ enum Mode {
 }
 
 async fn build(api_token: Option<&str>, with_db: bool) -> TestApp {
-    build_with(api_token, with_db, Mode::Server).await
+    build_with(api_token, with_db, Mode::Server, |_| {}).await
 }
 
-async fn build_with(api_token: Option<&str>, with_db: bool, mode: Mode) -> TestApp {
+async fn build_with(
+    api_token: Option<&str>,
+    with_db: bool,
+    mode: Mode,
+    customize: impl FnOnce(&mut Config),
+) -> TestApp {
     let putio = mockito::Server::new_async().await;
     let dir = tempfile::tempdir().unwrap();
-    let config = test_config(&dir, api_token);
+    let mut config = test_config(&dir, api_token);
+    customize(&mut config);
     let config_path = dir.path().join("config.toml");
     config.save(&config_path).unwrap();
 
@@ -129,7 +135,12 @@ pub async fn test_daemon_app(with_watcher: bool) -> TestApp {
     } else {
         Mode::Daemon
     };
-    build_with(Some(API_TOKEN), true, mode).await
+    build_with(Some(API_TOKEN), true, mode, |_| {}).await
+}
+
+/// App with a token, a database, and `customize` applied to its config
+pub async fn test_app_with(customize: impl FnOnce(&mut Config)) -> TestApp {
+    build_with(Some(API_TOKEN), true, Mode::Server, customize).await
 }
 
 /// App with no API token configured
