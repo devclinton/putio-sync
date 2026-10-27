@@ -197,3 +197,101 @@ async fn index_has_no_inline_script() {
         );
     }
 }
+
+// ---- Theme contrast (feature 012) ---------------------------------------------
+
+/// `#rrggbb` → relative luminance (WCAG 2)
+fn luminance(hex: &str) -> f64 {
+    let channel = |i: usize| {
+        let v = f64::from(u8::from_str_radix(&hex[i..i + 2], 16).unwrap()) / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5)
+}
+
+fn contrast(a: &str, b: &str) -> f64 {
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// Every `--name: light-dark(#light, #dark)` in the rules of `css` for `:root` and
+/// `[data-accent="..."]`, keyed by selector; a rule with a selector list counts for each
+fn theme_rules(
+    css: &str,
+) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, [String; 2]>> {
+    let mut rules = std::collections::BTreeMap::new();
+    for block in css.split('}') {
+        let Some((selector, body)) = block.split_once('{') else {
+            continue;
+        };
+        let selector = selector.rsplit("*/").next().unwrap();
+        let mut tokens = std::collections::BTreeMap::new();
+        for decl in body.split(';') {
+            let Some((name, value)) = decl.split_once(':') else {
+                continue;
+            };
+            let Some(args) = value.trim().strip_prefix("light-dark(") else {
+                continue;
+            };
+            let (light, dark) = args.trim_end_matches(')').split_once(',').unwrap();
+            let (light, dark) = (light.trim(), dark.trim());
+            if light.len() == 7 && light.starts_with('#') && dark.len() == 7 {
+                let name = name.trim().trim_start_matches("--").to_string();
+                tokens.insert(name, [light.to_string(), dark.to_string()]);
+            }
+        }
+        for part in selector.split(',').map(str::trim) {
+            if part == ":root" || part.starts_with("[data-accent=") {
+                let rule: &mut std::collections::BTreeMap<_, _> =
+                    rules.entry(part.to_string()).or_default();
+                rule.extend(tokens.clone());
+            }
+        }
+    }
+    rules
+}
+
+#[tokio::test]
+async fn theme_contrast_meets_aa() {
+    let app = test_app().await;
+    let css = body_text(public_get(&app, "/assets/app.css").await).await;
+    let rules = theme_rules(&css);
+    let root = rules.get(":root").expect(":root tokens");
+    let accents: Vec<&String> = rules.keys().filter(|k| *k != ":root").collect();
+    assert!(accents.len() >= 6, "accents: {accents:?}");
+
+    let mut failures = Vec::new();
+    for selector in std::iter::once(&":root".to_string()).chain(accents) {
+        let mut theme = root.clone();
+        theme.extend(rules[selector].clone());
+        for (mode, i) in [("light", 0), ("dark", 1)] {
+            let get = |name: &str| -> &str {
+                &theme
+                    .get(name)
+                    .unwrap_or_else(|| panic!("{selector} has no --{name}"))[i]
+            };
+            let mut pairs = Vec::new();
+            for fg in ["text", "muted", "accent", "ok", "warn", "bad"] {
+                for bg in ["bg", "surface", "surface-2"] {
+                    pairs.push((fg, bg));
+                }
+            }
+            pairs.push(("on-accent", "accent"));
+            for (fg, bg) in pairs {
+                let ratio = contrast(get(fg), get(bg));
+                if ratio < 4.5 {
+                    failures.push(format!("{selector} {mode}: --{fg} on --{bg} = {ratio:.2}"));
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "below WCAG AA:\n{}",
+        failures.join("\n")
+    );
+}

@@ -3,7 +3,7 @@
 // completed rows and cancelling a download ask first.
 
 import { del, get, post, syncNow } from "../api.js";
-import { confirm, h, poll, toast } from "../app.js";
+import { confirm, empty, h, poll, toast } from "../app.js";
 import { bytes, duration, percent, relative, speed, utc } from "../format.js";
 
 const REFRESH_MS = 3000;
@@ -215,7 +215,7 @@ function renderQueue(res) {
   // The minute keeps the "Added" ages fresh when nothing else changes
   swap("queue", { items, minute: Math.floor(Date.now() / 60000) }, () => {
     if (items.length === 0) {
-      return [h("h2", { text: "Queue" }), h("p", { class: "muted", text: "Nothing is queued." })];
+      return [h("h2", { text: "Queue" }), empty("Nothing is queued", "New files in watched Put.io folders are added on the next sync.")];
     }
     const last = items.length - 1;
     const rows = items.map((item, index) => queueRow(item, index, last));
@@ -308,7 +308,7 @@ function renderDownloads(res) {
   // Bytes and speed change every poll; the table is rebuilt, focus is kept by `swap`
   swap("downloads", list, () => {
     if (list.length === 0) {
-      return [h("h2", { text: "Active downloads" }), h("p", { class: "muted", text: "Nothing is downloading." })];
+      return [h("h2", { text: "Active downloads" }), empty("Nothing is downloading", "Queued files start here when a download slot is free.")];
     }
     const rows = list.map((d) => {
       const pct = d.total_bytes ? (100 * d.bytes_downloaded) / d.total_bytes : 0;
