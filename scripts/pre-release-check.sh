@@ -106,18 +106,18 @@ fi
 # Check 2: Changelog
 section "Changelog"
 
-if grep -q "## \[${VERSION}\]" putio-sync-cli/CHANGELOG.md; then
+if grep -q "## \[${VERSION}\]" CHANGELOG.md; then
     success "Changelog entry for ${VERSION} exists"
 
     # Check for "Unreleased" entries
-    if grep -q "## \[Unreleased\]" putio-sync-cli/CHANGELOG.md; then
-        if [ "$(sed -n '/## \[Unreleased\]/,/## \[/p' putio-sync-cli/CHANGELOG.md | wc -l)" -gt 3 ]; then
+    if grep -q "## \[Unreleased\]" CHANGELOG.md; then
+        if [ "$(sed -n '/## \[Unreleased\]/,/## \[/p' CHANGELOG.md | wc -l)" -gt 3 ]; then
             warning "Unreleased section has content - consider moving to ${VERSION}"
         fi
     fi
 else
     error "No changelog entry for ${VERSION} found"
-    info "  Add an entry in putio-sync-cli/CHANGELOG.md"
+    info "  Add an entry in CHANGELOG.md"
 fi
 
 # Check 3: Git status

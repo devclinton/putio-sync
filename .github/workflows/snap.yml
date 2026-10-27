@@ -119,6 +119,8 @@ jobs:
             else
               echo "Not published: the SNAPCRAFT_TOKEN secret is not set. The snap is attached as an artifact."
             fi
+            echo ""
+            bash scripts/build-notes.sh "${{ github.event_name == 'release' && steps.get_version.outputs.version || '' }}"
           } >> $GITHUB_STEP_SUMMARY
 
   test-snap:
