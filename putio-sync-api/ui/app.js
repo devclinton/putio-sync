@@ -137,8 +137,17 @@ function mount(name, params) {
   document.getElementById("signout").hidden = name === "login";
 
   view.replaceChildren();
+  enter();
   current = PAGES[name];
   current.mount(view, params);
+}
+
+// One entrance per page change; app.css only animates it without reduced motion.
+let enterTimer = null;
+function enter() {
+  clearTimeout(enterTimer);
+  view.classList.add("enter");
+  enterTimer = setTimeout(() => view.classList.remove("enter"), 500);
 }
 
 /** Show the sign-in page; `params` may carry `reason` and `retryAfter`. */
@@ -153,6 +162,41 @@ export function afterLogin() {
   const last = remembered();
   navigate(last && !last.startsWith("#/login") ? last : "#/status");
 }
+
+/**
+ * An empty state: what would be here, and how it gets filled. Use it in place of
+ * an empty table or list.
+ */
+export function empty(title, hint = null) {
+  return h("div", { class: "empty" }, h("strong", { text: title }), hint ? h("p", { text: hint }) : null);
+}
+
+// ---- Appearance -------------------------------------------------------------
+
+const MODE_LABELS = { system: "System", light: "Light", dark: "Dark" };
+const modeButton = document.getElementById("mode");
+
+function showMode() {
+  const label = MODE_LABELS[window.appearance.get().mode];
+  modeButton.firstElementChild.textContent = label;
+  modeButton.setAttribute("aria-label", `Appearance: ${label}`);
+}
+
+let themingTimer = null;
+document.addEventListener("appearancechange", () => {
+  showMode();
+  // Fade colours across the page for this change only
+  clearTimeout(themingTimer);
+  document.documentElement.classList.add("theming");
+  themingTimer = setTimeout(() => document.documentElement.classList.remove("theming"), 350);
+});
+
+modeButton.addEventListener("click", () => {
+  const modes = window.appearance.MODES;
+  const next = modes[(modes.indexOf(window.appearance.get().mode) + 1) % modes.length];
+  window.appearance.set({ mode: next });
+});
+showMode();
 
 // ---- Polling ----------------------------------------------------------------
 

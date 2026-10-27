@@ -26,7 +26,7 @@ use chrono::{Duration, Timelike, Utc};
 use putio_sync_api::{extract_download_config, router, AppState};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::cleanup::EmptyFolderCleanup;
-use putio_sync_core::config::{AuthConfig, Config};
+use putio_sync_core::config::{ArrConfig, ArrKind, ArrServer, AuthConfig, Config};
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::models::{DownloadSource, HistoryAction, Origin, QueueStatus, SourceType};
 use putio_sync_db::Database;
@@ -453,6 +453,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut putio = mockito::Server::new_async().await;
     let _mocks = mock_putio(&mut putio).await;
+    // Sonarr answers the Settings card's connection test on the same mock server
+    let _sonarr = putio
+        .mock("GET", "/api/v3/system/status")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"appName":"Sonarr","version":"4.0.15.2941"}"#)
+        .create_async()
+        .await;
 
     let dir = tempfile::tempdir()?;
     let mut config = Config {
@@ -462,6 +470,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     config.download.target_directory = dir.path().to_path_buf();
     config.download.blocked_extensions = vec!["exe".to_string()];
     config.api.auth_token = Some(API_TOKEN.to_string());
+    config.arr = ArrConfig {
+        enabled: true,
+        password: Some("mock-arr-password".to_string()),
+        servers: vec![
+            ArrServer {
+                kind: ArrKind::Sonarr,
+                url: putio.url(),
+                api_key: Some("mock-sonarr-key".to_string()),
+                category: "sonarr".to_string(),
+            },
+            ArrServer {
+                kind: ArrKind::Radarr,
+                url: "http://127.0.0.1:7878".to_string(),
+                api_key: None,
+                category: "radarr".to_string(),
+            },
+        ],
+        ..Default::default()
+    };
     let config_path = dir.path().join("config.toml");
     config.save(&config_path)?;
     // An unknown key for the doctor's config check
@@ -550,6 +577,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .with_stall_tracker(tracker)
     .with_cleanup(cleanup)
     .with_doctor(Arc::new(doctor));
+    if let Some(arr) = &state.arr {
+        arr.service
+            .contacts()
+            .record(Some("Sonarr/4.0.15.2941 (ubuntu 22.04)"));
+    }
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     let addr = listener.local_addr()?;

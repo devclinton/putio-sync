@@ -17,7 +17,28 @@ pub struct UploadResponse {
     pub transfer: Option<Transfer>,
 }
 
+/// `POST /files/create-folder` body
+#[derive(Debug, serde::Serialize)]
+struct CreateFolderRequest<'a> {
+    name: &'a str,
+    parent_id: i64,
+}
+
+/// `POST /files/create-folder` reply
+#[derive(Debug, Deserialize)]
+struct CreateFolderResponse {
+    file: FileEntry,
+}
+
 impl PutioApiClient {
+    /// Create a folder named `name` in `parent_id` (0 for the root)
+    pub async fn create_folder(&self, name: &str, parent_id: i64) -> ClientResult<FileEntry> {
+        let body = CreateFolderRequest { name, parent_id };
+        let response: ApiResponse<CreateFolderResponse> =
+            self.post("/files/create-folder", &body).await?;
+        Ok(response.data.file)
+    }
+
     /// List files in a folder
     ///
     /// # Arguments
@@ -118,7 +139,6 @@ impl PutioApiClient {
         file_path: &Path,
         parent_id: Option<i64>,
     ) -> ClientResult<UploadResponse> {
-        use reqwest::multipart::{Form, Part};
         use tokio::fs::File as TokioFile;
         use tokio::io::AsyncReadExt;
 
@@ -138,6 +158,22 @@ impl PutioApiClient {
             .and_then(|s| s.to_str())
             .unwrap_or("file")
             .to_string();
+
+        self.upload_bytes(&filename, buffer, parent_id).await
+    }
+
+    /// Upload `bytes` as a file named `filename`. A `.torrent` name makes Put.io start a
+    /// transfer from it (see [`Self::add_transfer_torrent`]).
+    pub async fn upload_bytes(
+        &self,
+        filename: &str,
+        bytes: Vec<u8>,
+        parent_id: Option<i64>,
+    ) -> ClientResult<UploadResponse> {
+        use reqwest::multipart::{Form, Part};
+
+        let filename = filename.to_string();
+        let buffer = bytes;
 
         // Determine MIME type based on file extension
         let mime_type = if filename.ends_with(".torrent") {
@@ -375,5 +411,76 @@ mod tests {
 
         assert_eq!(response.transfer.unwrap().id, 7);
         mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_create_folder() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/files/create-folder")
+            .match_header("authorization", "Bearer test_token")
+            .match_body(mockito::Matcher::Json(
+                serde_json::json!({"name": "sonarr", "parent_id": 0}),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"status":"OK","file":{"id":42,"name":"sonarr","size":0,"file_type":"FOLDER","parent_id":0,"content_type":"application/x-directory","is_folder":true}}"#,
+            )
+            .create_async()
+            .await;
+
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        let folder = client.create_folder("sonarr", 0).await.unwrap();
+
+        assert_eq!(folder.id, 42);
+        assert_eq!(folder.name, "sonarr");
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_add_transfer_torrent_uploads_bytes() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/files/upload")
+            .match_body(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::Regex("d8:announce".to_string()),
+                mockito::Matcher::Regex(r#"filename="release.torrent""#.to_string()),
+                mockito::Matcher::Regex("name=\"parent_id\"\r\n\r\n42".to_string()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"status":"OK","transfer":{"id":8,"name":"t","status":"IN_QUEUE","created_at":"2026-10-26T08:00:00","save_parent_id":42,"is_private":false}}"#,
+            )
+            .create_async()
+            .await;
+
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        let transfer = client
+            .add_transfer_torrent("release.torrent", b"d8:announce3:urle".to_vec(), Some(42))
+            .await
+            .unwrap();
+
+        assert_eq!(transfer.id, 8);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_add_transfer_torrent_without_transfer_is_an_error() {
+        let mut server = Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/files/upload")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status":"OK"}"#)
+            .create_async()
+            .await;
+
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        assert!(client
+            .add_transfer_torrent("x.torrent", b"junk".to_vec(), None)
+            .await
+            .is_err());
     }
 }

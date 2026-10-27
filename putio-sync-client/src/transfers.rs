@@ -112,6 +112,22 @@ impl PutioApiClient {
         }
     }
 
+    /// Add a transfer from .torrent bytes, uploaded as `filename` (which should end in
+    /// `.torrent`) into `parent_id`
+    pub async fn add_transfer_torrent(
+        &self,
+        filename: &str,
+        bytes: Vec<u8>,
+        parent_id: Option<i64>,
+    ) -> ClientResult<Transfer> {
+        let upload_response = self.upload_bytes(filename, bytes, parent_id).await?;
+        upload_response.transfer.ok_or_else(|| {
+            crate::error::ClientError::ApiError(
+                "File was uploaded but no transfer was created. The file might not be a valid torrent.".to_string(),
+            )
+        })
+    }
+
     /// List all transfers
     ///
     /// # Examples

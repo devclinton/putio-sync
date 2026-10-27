@@ -35,6 +35,9 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_empty_folder_delete_failures_total",
     "putio_sync_empty_folder_last_success_timestamp_seconds",
     "putio_sync_transfers_stalled",
+    "putio_sync_arr_rpc_requests_total",
+    "putio_sync_arr_items",
+    "putio_sync_arr_blocklist_total",
     "putio_sync_db_errors_total",
     "putio_sync_disk_free_bytes",
     "putio_sync_disk_total_bytes",
@@ -144,6 +147,9 @@ fn record_everything(t: &Telemetry) {
     t.empty_folder_run(CleanupTrigger::Schedule, SyncResult::Success);
     t.empty_folders_deleted(3);
     t.empty_folder_delete_failed();
+    t.arr_rpc_request(ArrMethod::TorrentAdd, ArrOutcome::AuthFailed);
+    t.set_arr_items(ArrItemState::Done, 2);
+    t.arr_blocklist(BlocklistOutcome::Error);
     t.set_transfers_stalled(2);
     t.db_error(DbOp::Queue);
     t.set_queue_counts(&[(QueueState::Pending, 2)]);
@@ -161,7 +167,13 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v.extend(strs(DbOp::ALL, DbOp::as_str));
             v
         }
-        "outcome" => strs(ApiOutcome::ALL, ApiOutcome::as_str),
+        "outcome" => {
+            let mut v = strs(ApiOutcome::ALL, ApiOutcome::as_str);
+            v.extend(strs(ArrOutcome::ALL, ArrOutcome::as_str));
+            v.extend(strs(BlocklistOutcome::ALL, BlocklistOutcome::as_str));
+            v
+        }
+        "method" => strs(ArrMethod::ALL, ArrMethod::as_str),
         "reason" => {
             let mut v = strs(RetryReason::ALL, RetryReason::as_str);
             v.extend(strs(FailReason::ALL, FailReason::as_str));
@@ -169,7 +181,11 @@ fn closed_set(label: &str) -> Vec<&'static str> {
         }
         "result" => strs(SyncResult::ALL, SyncResult::as_str),
         "kind" => strs(SyncKind::ALL, SyncKind::as_str),
-        "state" => strs(QueueState::ALL, QueueState::as_str),
+        "state" => {
+            let mut v = strs(QueueState::ALL, QueueState::as_str);
+            v.extend(strs(ArrItemState::ALL, ArrItemState::as_str));
+            v
+        }
         "trigger" => strs(CleanupTrigger::ALL, CleanupTrigger::as_str),
         other => panic!("unexpected label {}", other),
     }
@@ -398,4 +414,43 @@ fn doctor_metrics() {
 
     t.doctor_check("dead_queue_rows", 0.0, 0);
     assert_eq!(status("dead_queue_rows"), Some(0.0));
+}
+
+/// Feature 011: the *arr families start at 0 for every label value
+#[test]
+fn arr_metrics() {
+    let t = Telemetry::new();
+    let rpc = |method, outcome| {
+        t.sample(
+            "putio_sync_arr_rpc_requests_total",
+            &[("method", method), ("outcome", outcome)],
+        )
+    };
+    assert_eq!(rpc("torrent_add", "auth_failed"), Some(0.0));
+    assert_eq!(
+        t.sample("putio_sync_arr_items", &[("state", "failed")]),
+        Some(0.0)
+    );
+    assert_eq!(
+        t.sample(
+            "putio_sync_arr_blocklist_total",
+            &[("outcome", "not_found")]
+        ),
+        Some(0.0)
+    );
+
+    t.arr_rpc_request(ArrMethod::from_method("torrent-add"), ArrOutcome::Ok);
+    t.arr_rpc_request(ArrMethod::from_method("port-test"), ArrOutcome::Error);
+    t.set_arr_items(ArrItemState::Local, 3);
+    t.arr_blocklist(BlocklistOutcome::Ok);
+    assert_eq!(rpc("torrent_add", "ok"), Some(1.0));
+    assert_eq!(rpc("other", "error"), Some(1.0));
+    assert_eq!(
+        t.sample("putio_sync_arr_items", &[("state", "local")]),
+        Some(3.0)
+    );
+    assert_eq!(
+        t.sample("putio_sync_arr_blocklist_total", &[("outcome", "ok")]),
+        Some(1.0)
+    );
 }

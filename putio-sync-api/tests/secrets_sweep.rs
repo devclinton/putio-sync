@@ -108,6 +108,8 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
             "/doctor/fixes/dead_queue_rows.remove/apply",
             Some(json!({ "items": ["1"], "confirm": true })),
         ),
+        get("/arr"),
+        post("/arr/servers/0/test"),
         // Unknown paths fall through to the protected fallback
         get("/robots.txt"),
     ]
@@ -333,4 +335,67 @@ async fn no_tracker_passkey_in_responses_or_sources() {
     let text = body_text(app.get("/stats/summary?range=24h").await).await;
     assert!(text.contains("tracker.example.org"), "{text}");
     assert!(!text.contains(PASSKEY), "{text}");
+}
+
+/// The download client's password and the *arr API keys never reach a response or a
+/// log line (feature 011, Constitution VI)
+#[tokio::test]
+async fn no_arr_secret_in_responses_or_logs() {
+    const ARR_PASSWORD: &str = "arr-secret-password";
+    const ARR_KEY: &str = "0123456789abcdefarrkey";
+    let logs = captured_logs();
+    let mut arr = mockito::Server::new_async().await;
+    arr.mock("GET", "/api/v3/system/status")
+        .with_status(401)
+        .create_async()
+        .await;
+    let arr_url = arr.url();
+    let app = common::test_app_with(|config| {
+        config.arr = putio_sync_core::config::ArrConfig {
+            enabled: true,
+            password: Some(ARR_PASSWORD.to_string()),
+            servers: vec![
+                putio_sync_core::config::ArrServer {
+                    kind: putio_sync_core::config::ArrKind::Sonarr,
+                    url: arr_url,
+                    api_key: Some(ARR_KEY.to_string()),
+                    category: "sonarr".to_string(),
+                },
+                putio_sync_core::config::ArrServer {
+                    kind: putio_sync_core::config::ArrKind::Radarr,
+                    url: "http://127.0.0.1:9".to_string(),
+                    api_key: Some(ARR_KEY.to_string()),
+                    category: "radarr".to_string(),
+                },
+            ],
+            ..Default::default()
+        };
+    })
+    .await;
+
+    let mut texts = Vec::new();
+    for path in ["/arr/servers/0/test", "/arr/servers/1/test"] {
+        texts.push(body_text(app.post_json(path, json!({})).await).await);
+    }
+    texts.push(body_text(app.get("/arr").await).await);
+    texts.push(body_text(app.get("/settings/download").await).await);
+    for auth in ["Basic Zm9vOmJhcg==", "Basic !!!"] {
+        let request = axum::http::Request::builder()
+            .method(Method::POST)
+            .uri("/transmission/rpc")
+            .header("Authorization", auth)
+            .body(axum::body::Body::from("{}"))
+            .unwrap();
+        texts.push(body_text(app.send(request).await).await);
+    }
+    // The config file on disk keeps them, as the operator wrote it
+    let on_disk = std::fs::read_to_string(app._dir.path().join("config.toml")).unwrap();
+    assert!(on_disk.contains(ARR_KEY));
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let logs = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
+    for text in texts.iter().chain([&logs]) {
+        assert!(!text.contains(ARR_PASSWORD), "{text}");
+        assert!(!text.contains(ARR_KEY), "{text}");
+    }
 }

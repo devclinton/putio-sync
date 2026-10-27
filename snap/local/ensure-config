@@ -1,0 +1,17 @@
+#!/bin/sh
+# Writes a starter $SNAP_COMMON/config.toml from the shipped example on first
+# use, downloading to $SNAP_COMMON/downloads. Does nothing once it exists or
+# when the caller can't write there (the CLI run without sudo).
+set -eu
+
+config="$SNAP_COMMON/config.toml"
+downloads="$SNAP_COMMON/downloads"
+
+if [ ! -f "$config" ] && [ -w "$SNAP_COMMON" ]; then
+    mkdir -p "$downloads"
+    sed -e "s|^target_directory = .*|target_directory = \"$downloads\"|" \
+        -e "s|^local_path = .*|local_path = \"$downloads\"|" \
+        -e 's|^token = "YOUR_OAUTH_TOKEN_HERE"|# token = "YOUR_OAUTH_TOKEN_HERE"|' \
+        "$SNAP/share/config.example.toml" > "$config"
+    chmod 600 "$config"
+fi
