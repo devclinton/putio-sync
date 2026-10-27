@@ -2,6 +2,8 @@
 
 A high-performance Rust-based CLI tool for Put.io with support for downloads, transfers, and file management.
 
+What changed in each build is in [CHANGELOG.md](CHANGELOG.md); planned work is in [ROADMAP.md](ROADMAP.md).
+
 ## Features
 
 - **Fast Downloads**: Concurrent downloads with configurable workers
