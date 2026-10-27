@@ -61,6 +61,20 @@ pub fn init(verbosity: u8, quiet: bool) {
         .init();
 }
 
+/// Log to stderr only, so a command's stdout stays machine-readable (`doctor`)
+pub fn init_stderr(level: &str) {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_target(false)
+                .with_ansi(atty::is(atty::Stream::Stderr) && std::env::var("NO_COLOR").is_err()),
+        )
+        .init();
+}
+
 /// Check if the terminal supports colored output
 fn supports_color() -> bool {
     // Check if we're in a TTY and not in certain CI environments

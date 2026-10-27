@@ -73,7 +73,9 @@ pub mod error;
 pub mod files;
 pub mod models;
 pub mod path;
+pub mod probe;
 pub mod transfers;
+pub mod walk;
 
 // Re-export main types at crate root for convenience
 pub use auth::{AuthConfig, AuthMethod};
@@ -86,3 +88,6 @@ pub use models::{
     AccountInfo, AccountInfoResponse, ApiError, ApiResponse, DiskInfo, FileEntry, FileResponse,
     FilesListResponse, Transfer, TransferResponse, TransfersListResponse,
 };
+pub use probe::AccountProbe;
+pub use transfers::{ReaddError, Readded};
+pub use walk::{FileWalk, WalkError, WalkedFile};

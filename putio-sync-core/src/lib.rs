@@ -19,6 +19,9 @@ pub mod cleanup;
 /// Configuration management
 pub mod config;
 
+/// Config file warnings for the doctor
+pub mod config_lint;
+
 /// Error types and result aliases
 pub mod error;
 

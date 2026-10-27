@@ -63,6 +63,7 @@ async fn update<V: Serialize>(
             .map_err(|e| ApiError::InternalError(format!("Failed to persist config: {}", e)))?;
     }
     let changed = changed_fields(&view(&config), &view(&candidate));
+    state.doctor.configure(&candidate);
     *config = candidate;
     Ok(changed)
 }

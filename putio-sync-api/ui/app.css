@@ -666,3 +666,15 @@ button.brow:hover { background: var(--surface-2); }
   .seg { width: 100%; }
   .seg .btn { flex: 1 1 0; padding: 0 4px; }
 }
+
+/* Doctor page */
+
+.doctor-check { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--border); }
+.doctor-check:first-of-type { border-top: 0; padding-top: 0; }
+.doctor-check > .badge { min-width: 72px; text-align: center; margin-top: 2px; }
+.doctor-body { min-width: 0; flex: 1; }
+.doctor-body > p { margin: 0 0 4px; }
+.doctor-body details { margin: 4px 0; }
+.doctor-body summary { cursor: pointer; color: var(--muted); }
+.doctor-body ul { margin: 6px 0; padding-left: 20px; max-height: 320px; overflow: auto; }
+.doctor-body .toolbar { margin-top: 6px; }

@@ -18,6 +18,7 @@ use prometheus::{
 pub mod api;
 pub mod cleanup;
 pub mod db;
+pub mod doctor;
 pub mod download;
 pub mod gauges;
 pub mod labels;
@@ -73,6 +74,12 @@ pub struct Telemetry {
     // Label-less vec: absent until the first successful run
     pub(crate) empty_folder_last_success: GaugeVec,
     pub(crate) transfers_stalled: IntGauge,
+
+    // Feature 010; absent until the first doctor run
+    pub(crate) doctor_check_status: GaugeVec,
+    pub(crate) doctor_check_items: IntGaugeVec,
+    pub(crate) doctor_last_run: GaugeVec,
+    pub(crate) doctor_last_duration: GaugeVec,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -180,6 +187,38 @@ impl Telemetry {
                 "transfers_stalled",
                 "Put.io transfers with no progress for the stall threshold, at the last check.",
             ))
+            .unwrap(),
+            doctor_check_status: GaugeVec::new(
+                opts(
+                    "doctor_check_status",
+                    "Doctor check result: 0 ok, 1 warning, 2 problem, -1 skipped.",
+                ),
+                &["check"],
+            )
+            .unwrap(),
+            doctor_check_items: IntGaugeVec::new(
+                opts(
+                    "doctor_check_items",
+                    "Items a doctor check found at its last run.",
+                ),
+                &["check"],
+            )
+            .unwrap(),
+            doctor_last_run: GaugeVec::new(
+                opts(
+                    "doctor_last_run_timestamp_seconds",
+                    "Unix time the last doctor run finished.",
+                ),
+                &[],
+            )
+            .unwrap(),
+            doctor_last_duration: GaugeVec::new(
+                opts(
+                    "doctor_last_run_duration_seconds",
+                    "Duration of the last doctor run.",
+                ),
+                &[],
+            )
             .unwrap(),
             downloads_active: IntGauge::with_opts(opts(
                 "downloads_active",
@@ -345,6 +384,10 @@ impl Telemetry {
             Box::new(self.empty_folder_delete_failures.clone()),
             Box::new(self.empty_folder_last_success.clone()),
             Box::new(self.transfers_stalled.clone()),
+            Box::new(self.doctor_check_status.clone()),
+            Box::new(self.doctor_check_items.clone()),
+            Box::new(self.doctor_last_run.clone()),
+            Box::new(self.doctor_last_duration.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
             Box::new(self.disk_total.clone()),
