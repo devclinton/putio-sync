@@ -70,6 +70,115 @@ A way to tell the empty-folder cleanup and the doctor to leave a folder
 alone: a "keep" toggle on the Put.io page and in folder rules, plus ignore
 patterns in Settings. Kept folders show in the cleanup preview with the reason.
 
+### 022 Stream mode with DLNA
+
+A mode that leaves media on Put.io instead of downloading it. putio-sync
+manages the files on Put.io and serves them to the home network as a DLNA
+media server, so TVs and players can browse and play them. It streams from
+Put.io on demand, using Put.io's MP4 conversions where a player needs them.
+
+### 023 Organise TV shows on Put.io
+
+For stream mode: move finished downloads into a `Show/Season NN/` layout on
+Put.io, with episodes named `Show - SNNEMM - Title`. Names are matched from the
+release name, with a preview before anything moves and an undo.
+
+### 024 Organise movies on Put.io
+
+The same for movies: `Movie (Year)/Movie (Year).ext`, with extras and samples
+kept apart or removed.
+
+### 025 Subtitles
+
+Fetch subtitles for downloaded video in the languages the user picks: first
+from what Put.io already finds on OpenSubtitles, then, when none exist and
+automatic transcription is on, by sending the audio to a Whisper server.
+putio-sync does not run Whisper itself; it calls any server with the
+OpenAI-style transcription API (faster-whisper-server/speaches, whisper.cpp's
+server), set by URL. Subtitles are saved next to the video as `.<lang>.srt`.
+
+### 026 Subtitle translation
+
+Translate subtitles into the languages wanted through an LLM: a base URL,
+model and optional API key, using the OpenAI-compatible chat API so Ollama,
+Open WebUI, LM Studio and hosted APIs all work. Subtitles are translated in
+chunks with timestamps kept exactly, and a test button checks the connection
+and model.
+
+### 027 Event hooks
+
+Run a command or call a webhook on events: download finished or failed,
+transfer added, finished or failed, sync run complete, Put.io storage low. The
+event is sent as JSON (stdin for commands, the body for webhooks), so hooks can
+be written in any language, Python and Go included. Hooks have a timeout, their
+output is logged, and a failing hook never stops a sync.
+
+### 028 Lua plugins
+
+Embedded Lua scripts for small in-process logic: custom file filters, rename
+rules and folder rules, and handlers for the events from 027. Scripts get a
+small, documented API and run with limits on time and memory.
+
+### 029 WebAssembly plugins
+
+Sandboxed plugins compiled to WebAssembly, so they can be written in Go
+(TinyGo), Rust, JavaScript and other languages. Same events and API as 028,
+with permissions per plugin (network, file paths) and install from a file or
+URL.
+
+### 030 Notifications
+
+Send notifications for finished, failed and stuck downloads, failed transfers,
+low Put.io storage and doctor problems to Telegram, Discord, Pushover, ntfy and
+email (SMTP). Each channel picks its events, has a test button, and repeats
+are grouped so one bad night does not send a hundred messages.
+
+### 031 Media server refresh
+
+After a download lands, tell Plex to rescan just that folder, so new episodes
+and movies show up within seconds. Then Jellyfin and Emby. Includes signing
+in to Plex, choosing the library, and mapping paths when the media server sees
+the folder under a different path.
+
+### 032 Bandwidth schedules
+
+Download speed limits by time of day and day of week (for example unlimited
+from 01:00 to 07:00, 5 MB/s otherwise), plus a one-click "pause" or "slow" for
+an hour. The current limit shows on the Status page.
+
+### 033 Put.io storage management
+
+Show Put.io storage use and what fills it. Warn when free space is low, and
+optionally delete the oldest files that are already downloaded and verified
+until a target amount is free, with a preview and a list of what was deleted.
+
+### 034 Download verification
+
+Check each finished download against Put.io's CRC32 (or size where there is
+none), re-download files that do not match, and offer a "verify everything"
+run for files already downloaded. Results show in History and in the doctor.
+
+### 035 Mobile app
+
+The web UI wrapped with Capacitor as an iOS and Android app: connect to a
+putio-sync server by address or QR code, push notifications for the events
+from 030, and share links or torrent files from other apps straight to Put.io.
+
+### 036 Tailscale awareness
+
+Detect Tailscale on the host and offer to listen on the tailnet address only,
+use Tailscale identity to sign in (the user and node from Tailscale, so no
+password inside the tailnet), and show the MagicDNS name and HTTPS address in
+the UI and the mobile app. It should work with `tailscale serve`, and with
+Tailscale in a sidecar container.
+
+### 037 Listen address and interface
+
+`[api] bind` takes one `ip:port` today. Allow several addresses, binding by
+interface name (`eth0`, `tailscale0`) so a changing IP does not matter, IPv6,
+and a separate address for `/metrics`. Settable from the UI, with a warning
+before saving an address that would lock the UI out.
+
 ## Queued: packaging
 
 - **Minimal runtime image** on Docker Hardened Images (dhi.io), plus a
