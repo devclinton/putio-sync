@@ -1,6 +1,5 @@
 //! Download manager for orchestrating downloads
 
-use crate::blocklist::{blocked_extension, default_blocked_extensions};
 use crate::error::{DownloadError, DownloadResult};
 use crate::files::{check_resume, cleanup_partial, create_temp_path};
 use crate::progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
@@ -9,9 +8,10 @@ use crate::sync_status::{SyncOutcome, SyncRequestError, SyncStatus};
 use crate::utils::retry_with_stall_detection;
 use putio_sync_client::models::Transfer;
 use putio_sync_client::{error_chain, FileEntry, PutioApiClient};
+use putio_sync_core::rules::{extension, Decision, Effective, RuleSet};
 use putio_sync_db::models::{DownloadSource, DownloadStatus, Origin, SourceType};
 use putio_sync_db::Database;
-use putio_sync_telemetry::{self as telemetry, SyncKind, SyncResult};
+use putio_sync_telemetry::{self as telemetry, RuleDecision, SyncKind, SyncResult};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -41,8 +41,23 @@ pub struct DownloadConfig {
     pub workers: usize,
     /// Delete files from Put.io after successful download
     pub delete_after_download: bool,
-    /// Lowercase extensions (without the dot) that are never downloaded
-    pub blocked_extensions: Vec<String>,
+    /// Folder rules with the global `blocked_extensions` as the root filter
+    pub rules: RuleSet,
+}
+
+impl DownloadConfig {
+    /// The rules in force in `folder_path` (relative to the Put.io root). Settings no
+    /// folder rule sets take this config's `delete_after_download` and `skip_existing`.
+    pub fn effective(&self, folder_path: &str) -> Effective {
+        let mut effective = self.rules.resolve(folder_path);
+        if effective.delete_after_download.from.is_none() {
+            effective.delete_after_download.value = self.delete_after_download;
+        }
+        if effective.skip_existing.from.is_none() {
+            effective.skip_existing.value = self.skip_existing;
+        }
+        effective
+    }
 }
 
 impl Default for DownloadConfig {
@@ -56,7 +71,7 @@ impl Default for DownloadConfig {
             retry_initial_delay_secs: 2,
             workers: 1,
             delete_after_download: false,
-            blocked_extensions: default_blocked_extensions(),
+            rules: RuleSet::default(),
         }
     }
 }
@@ -76,7 +91,7 @@ impl From<&putio_sync_core::config::DownloadConfig> for DownloadConfig {
             retry_initial_delay_secs: settings.retry_initial_delay_secs,
             workers: settings.workers,
             delete_after_download: settings.delete_after_download,
-            blocked_extensions: settings.blocked_extensions.clone(),
+            rules: RuleSet::from_config(settings),
         }
     }
 }
@@ -194,8 +209,10 @@ pub struct SyncStats {
     pub files_skipped: usize,
     /// Files that failed to download
     pub files_failed: usize,
-    /// Files skipped because their extension is blocked
+    /// Files blocked or skipped by a folder rule or the blocked-extension list
     pub files_blocked: usize,
+    /// Type-blocked files deleted from Put.io by `delete_blocked`
+    pub files_deleted: usize,
 }
 
 /// What `enqueue_tree_report` did with one file
@@ -205,8 +222,10 @@ pub enum TreeDecision {
     Queued,
     /// Already downloaded or already in the queue
     Known,
-    /// Its extension is blocked; not downloaded
+    /// A folder rule's type filter refuses it; holds its extension (empty if none)
     Blocked(String),
+    /// A folder rule skips its folder
+    Skipped,
     /// Adding it to the queue failed
     Failed,
 }
@@ -243,6 +262,43 @@ pub struct TreeReport {
     /// The root's name on disk (sanitised), unless the root is the Put.io root
     pub root_name: Option<String>,
 }
+
+/// One file a rule keeps from being downloaded, in a preview
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewItem {
+    /// Put.io file id
+    pub file_id: i64,
+    /// File name
+    pub name: String,
+    /// Folder path relative to the Put.io root
+    pub path: String,
+    /// Blocked or skipped, with the deciding rule
+    pub decision: Decision,
+    /// The file would be deleted from Put.io
+    pub would_delete: bool,
+}
+
+/// What rules would do under a folder (`preview_rules`); nothing is changed
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RulePreview {
+    /// Files listed
+    pub files: usize,
+    /// Files that would be downloaded
+    pub download: usize,
+    /// Files the type filter blocks
+    pub blocked: usize,
+    /// Files in skipped folders
+    pub skipped: usize,
+    /// Blocked files that would be deleted from Put.io
+    pub would_delete: usize,
+    /// Blocked and skipped files, the first `PREVIEW_ITEMS`
+    pub items: Vec<PreviewItem>,
+    /// More blocked or skipped files than `items` holds
+    pub truncated: bool,
+}
+
+/// How many files a preview lists
+pub const PREVIEW_ITEMS: usize = 200;
 
 /// Worker statistics for bandwidth tracking
 #[derive(Debug, Clone)]
@@ -303,8 +359,8 @@ pub struct DownloadManager {
     workers: Arc<RwLock<HashMap<usize, WorkerInfo>>>,
     /// Next worker ID counter
     next_worker_id: Arc<RwLock<usize>>,
-    /// Blocked file IDs already warned about, so each is logged once per process
-    blocked_warned: Arc<Mutex<HashSet<i64>>>,
+    /// File IDs a rule already decided, so each is logged and recorded once per process
+    decided: Arc<Mutex<HashSet<i64>>>,
     /// State of the folder sync, for the status page
     sync_status: Arc<RwLock<SyncStatus>>,
     /// Wakes `run_sync_loop` for "sync now"
@@ -334,7 +390,7 @@ impl DownloadManager {
             overall_progress,
             workers: Arc::new(RwLock::new(HashMap::new())),
             next_worker_id: Arc::new(RwLock::new(0)),
-            blocked_warned: Arc::new(Mutex::new(HashSet::new())),
+            decided: Arc::new(Mutex::new(HashSet::new())),
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
         }
@@ -359,7 +415,7 @@ impl DownloadManager {
             overall_progress,
             workers: Arc::new(RwLock::new(HashMap::new())),
             next_worker_id: Arc::new(RwLock::new(0)),
-            blocked_warned: Arc::new(Mutex::new(HashSet::new())),
+            decided: Arc::new(Mutex::new(HashSet::new())),
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
         }
@@ -704,7 +760,7 @@ impl DownloadManager {
             }
         }
 
-        if config.skip_existing && target_path.exists() {
+        if config.effective(&file.relative_path).skip_existing.value && target_path.exists() {
             info!("Skipping existing file: {}", filename);
             return Ok(DownloadOperationResult {
                 file_id,
@@ -1175,7 +1231,11 @@ impl DownloadManager {
 
         let downloads_repo = db.downloads();
         let queue_repo = db.queue();
-        let blocked = self.config.read().await.blocked_extensions.clone();
+        let config = self.config.read().await.clone();
+        // Rules resolved once per folder
+        let mut folders: HashMap<String, Effective> = HashMap::new();
+        // Type-blocked files to delete from Put.io, in one call after the loop
+        let mut to_delete = Vec::new();
 
         // Check which files need to be added to queue
         for (file, relative_path) in downloadable_files {
@@ -1188,23 +1248,26 @@ impl DownloadManager {
                     decision,
                 });
             };
-            if let Some(ext) = blocked_extension(&file.name, &blocked) {
+            let rules = folders
+                .entry(relative_path.clone())
+                .or_insert_with(|| config.effective(&relative_path));
+            let decision = rules.decide(&file.name);
+            if decision != Decision::Download {
                 stats.files_blocked += 1;
-                decide(TreeDecision::Blocked(ext.clone()));
-                let first_time = self
-                    .blocked_warned
-                    .lock()
-                    .map(|mut warned| warned.insert(file.id))
-                    .unwrap_or(true);
-                if first_time {
-                    telemetry::sync::file_blocked();
-                    warn!(
-                        file_id = file.id,
-                        name = %file.name,
-                        extension = %ext,
-                        "Blocked file not downloaded"
-                    );
+                decide(match decision {
+                    Decision::Skipped { .. } => TreeDecision::Skipped,
+                    _ => TreeDecision::Blocked(extension(&file.name).unwrap_or_default()),
+                });
+                if matches!(decision, Decision::Blocked { .. }) && rules.delete_blocked.value {
+                    to_delete.push((
+                        file.id,
+                        file.name.clone(),
+                        relative_path.clone(),
+                        decision.clone(),
+                    ));
                 }
+                self.note_decision(db, file.id, &file.name, &relative_path, &decision)
+                    .await;
                 continue;
             }
 
@@ -1275,6 +1338,7 @@ impl DownloadManager {
                     stats.files_downloaded += 1; // Renamed but means "added to queue"
                     decide(TreeDecision::Queued);
                     debug!("Added to queue: {}", file.name);
+                    self.forget_decision(db, file.id).await;
                     if transfers.is_none() {
                         transfers = Some(self.transfers_by_file().await);
                     }
@@ -1293,9 +1357,15 @@ impl DownloadManager {
             }
         }
 
+        stats.files_deleted = self.delete_blocked(db, to_delete).await;
+
         info!(
-            "Sync complete - Queued: {}, Skipped: {}, Blocked: {}, Failed: {}",
-            stats.files_downloaded, stats.files_skipped, stats.files_blocked, stats.files_failed
+            "Sync complete - Queued: {}, Skipped: {}, Blocked: {}, Deleted: {}, Failed: {}",
+            stats.files_downloaded,
+            stats.files_skipped,
+            stats.files_blocked,
+            stats.files_deleted,
+            stats.files_failed
         );
 
         Ok(TreeReport {
@@ -1303,6 +1373,199 @@ impl DownloadManager {
             files: report_files,
             root_name,
         })
+    }
+
+    /// Log, count and record a rule decision the first time this process sees the file
+    async fn note_decision(
+        &self,
+        db: &Database,
+        file_id: i64,
+        name: &str,
+        folder: &str,
+        decision: &Decision,
+    ) {
+        let first_time = self
+            .decided
+            .lock()
+            .map(|mut decided| decided.insert(file_id))
+            .unwrap_or(true);
+        if !first_time {
+            return;
+        }
+        let kind = match decision {
+            Decision::Skipped { .. } => RuleDecision::Skipped,
+            _ => RuleDecision::Blocked,
+        };
+        let rule = decision.rule();
+        let reason = decision.reason();
+        telemetry::sync::file_blocked();
+        telemetry::sync::rule_decision(kind);
+        match kind {
+            RuleDecision::Skipped => warn!(
+                file_id,
+                name = %name,
+                folder = %folder,
+                rule = rule.unwrap_or("global"),
+                reason = %reason,
+                "Skipped file not downloaded"
+            ),
+            _ => warn!(
+                file_id,
+                name = %name,
+                folder = %folder,
+                rule = rule.unwrap_or("global"),
+                reason = %reason,
+                "Blocked file not downloaded"
+            ),
+        }
+        if let Err(e) = db
+            .rule_decisions()
+            .record(file_id, name, folder, kind, &reason, rule)
+            .await
+        {
+            warn!(file_id, error = %e, "Failed to record rule decision");
+        }
+    }
+
+    /// A file is queued after all: drop its decision so a later block is noted again
+    async fn forget_decision(&self, db: &Database, file_id: i64) {
+        let was_decided = self
+            .decided
+            .lock()
+            .map(|mut decided| decided.remove(&file_id))
+            .unwrap_or(true);
+        if was_decided {
+            if let Err(e) = db.rule_decisions().remove(file_id).await {
+                warn!(file_id, error = %e, "Failed to remove rule decision");
+            }
+        }
+    }
+
+    /// Delete type-blocked files from Put.io in one call, leaving any that are queued.
+    /// Returns how many were deleted.
+    async fn delete_blocked(
+        &self,
+        db: &Database,
+        candidates: Vec<(i64, String, String, Decision)>,
+    ) -> usize {
+        let mut files = Vec::new();
+        for candidate in candidates {
+            match db.queue().get_by_file_id(candidate.0).await {
+                Ok(None) => files.push(candidate),
+                Ok(Some(_)) => debug!(file_id = candidate.0, "Blocked file is queued; not deleted"),
+                Err(e) => {
+                    warn!(file_id = candidate.0, error = %e, "Queue check failed; not deleted")
+                }
+            }
+        }
+        if files.is_empty() {
+            return 0;
+        }
+        let ids: Vec<i64> = files.iter().map(|f| f.0).collect();
+        if let Err(e) = self.client.delete_files(ids).await {
+            warn!(count = files.len(), error = %error_chain(&e), "Failed to delete blocked files from Put.io");
+            return 0;
+        }
+        for (file_id, name, folder, decision) in &files {
+            let rule = decision.rule();
+            let reason = decision.reason();
+            telemetry::sync::rule_decision(RuleDecision::Deleted);
+            info!(
+                file_id,
+                name = %name,
+                folder = %folder,
+                rule = rule.unwrap_or("global"),
+                reason = %reason,
+                "Deleted blocked file from Put.io"
+            );
+            if let Err(e) = db
+                .rule_decisions()
+                .record(*file_id, name, folder, RuleDecision::Deleted, &reason, rule)
+                .await
+            {
+                warn!(file_id, error = %e, "Failed to record rule decision");
+            }
+        }
+        files.len()
+    }
+
+    /// What `config`'s rules would do under a Put.io folder (`0` = root) or with a single
+    /// file. Lists the tree; downloads, deletes and records nothing.
+    pub async fn preview_rules(
+        &self,
+        folder_id: i64,
+        config: &DownloadConfig,
+    ) -> DownloadResult<RulePreview> {
+        let mut preview = RulePreview::default();
+        let mut folders: HashMap<String, Effective> = HashMap::new();
+        for (file, path) in self.list_tree(folder_id).await?.0 {
+            if file.file_type == "FOLDER" {
+                continue;
+            }
+            preview.files += 1;
+            let rules = folders
+                .entry(path.clone())
+                .or_insert_with(|| config.effective(&path));
+            let decision = rules.decide(&file.name);
+            let would_delete = match &decision {
+                Decision::Download => {
+                    preview.download += 1;
+                    continue;
+                }
+                Decision::Skipped { .. } => {
+                    preview.skipped += 1;
+                    false
+                }
+                Decision::Blocked { .. } => {
+                    preview.blocked += 1;
+                    rules.delete_blocked.value && !self.is_queued(file.id).await
+                }
+            };
+            if would_delete {
+                preview.would_delete += 1;
+            }
+            if preview.items.len() < PREVIEW_ITEMS {
+                preview.items.push(PreviewItem {
+                    file_id: file.id,
+                    name: file.name,
+                    path,
+                    decision,
+                    would_delete,
+                });
+            } else {
+                preview.truncated = true;
+            }
+        }
+        Ok(preview)
+    }
+
+    async fn is_queued(&self, file_id: i64) -> bool {
+        match &self.database {
+            Some(db) => matches!(db.queue().get_by_file_id(file_id).await, Ok(Some(_))),
+            None => false,
+        }
+    }
+
+    /// Path of a Put.io folder relative to the root, as rules and downloads use it: `""`
+    /// for the root (`0`). A file is refused.
+    pub async fn putio_folder_path(&self, folder_id: i64) -> DownloadResult<String> {
+        if folder_id == 0 {
+            return Ok(String::new());
+        }
+        let folder = self
+            .client
+            .get_file_details(folder_id)
+            .await
+            .map_err(DownloadError::ClientError)?
+            .file;
+        if folder.file_type != "FOLDER" {
+            return Err(DownloadError::InvalidInput(format!(
+                "{} is a file, not a folder",
+                folder.name
+            )));
+        }
+        let parent = self.folder_path(folder.parent_id).await?;
+        Ok(join_path(&parent, &sanitize_filename(&folder.name)))
     }
 
     /// Process next item from the download queue
@@ -1368,7 +1631,11 @@ impl DownloadManager {
                         info!("Successfully downloaded: {}", file_info.name);
 
                         // Delete from Put.io if configured
-                        if config.delete_after_download {
+                        if config
+                            .effective(&queue_item.relative_path)
+                            .delete_after_download
+                            .value
+                        {
                             info!(
                                 "Deleting file from Put.io: {} (ID: {})",
                                 file_info.name, file_id

@@ -5,7 +5,9 @@
 
 use crate::error::{CoreError, CoreResult};
 use crate::path_utils::expand_path;
+use crate::rules::{FolderRule, Preset};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -456,6 +458,12 @@ pub struct DownloadConfig {
     /// A missing key uses the default list; `[]` disables the guard.
     #[serde(default = "default_blocked_extensions")]
     pub blocked_extensions: Vec<String>,
+    /// Per-folder rules (`[[download.rules]]`); folders below a rule inherit it
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<FolderRule>,
+    /// User presets and built-in overrides (`[download.presets.<name>]`)
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub presets: BTreeMap<String, Preset>,
 }
 
 /// Watch configuration
@@ -609,6 +617,8 @@ impl Default for DownloadConfig {
             retry_initial_delay_secs: 1,         // Start with 1 second delay
             delete_empty_folders: true,          // Delete empty folders by default
             blocked_extensions: default_blocked_extensions(),
+            rules: Vec::new(),
+            presets: BTreeMap::new(),
         }
     }
 }
@@ -958,6 +968,7 @@ impl Config {
             }
         }
 
+        crate::rules::validate(&self.download.rules, &self.download.presets)?;
         self.cleanup.validate()?;
         self.arr.validate()?;
 
@@ -1549,9 +1560,7 @@ fn edit_table(document: &mut toml_edit::Table, before: &toml::Table, after: &tom
                     continue;
                 }
                 None => {
-                    let mut table = toml_edit::Table::new();
-                    edit_table(&mut table, &empty, new_table);
-                    document.insert(key, toml_edit::Item::Table(table));
+                    document.insert(key, toml_edit::Item::Table(new_edit_table(new_table)));
                     continue;
                 }
                 // `api = { ... }`: edited key by key too, so its token stays
@@ -1564,6 +1573,38 @@ fn edit_table(document: &mut toml_edit::Table, before: &toml::Table, after: &tom
                     continue;
                 }
                 // Any other value: replaced whole below
+                Some(_) => {}
+            }
+        }
+        // `[[key]]` entries: edited in place by index, extra ones appended, surplus removed
+        if let Some(new_tables) = tables_of(new) {
+            let old_tables = old.and_then(tables_of).unwrap_or_default();
+            match document.get_mut(key) {
+                Some(toml_edit::Item::ArrayOfTables(array)) => {
+                    for (i, new_table) in new_tables.iter().enumerate() {
+                        match array.get_mut(i) {
+                            Some(table) => edit_table(
+                                table,
+                                old_tables.get(i).copied().unwrap_or(&empty),
+                                new_table,
+                            ),
+                            None => array.push(new_edit_table(new_table)),
+                        }
+                    }
+                    while array.len() > new_tables.len() {
+                        array.remove(array.len() - 1);
+                    }
+                    continue;
+                }
+                None => {
+                    let mut array = toml_edit::ArrayOfTables::new();
+                    for new_table in new_tables {
+                        array.push(new_edit_table(new_table));
+                    }
+                    document.insert(key, toml_edit::Item::ArrayOfTables(array));
+                    continue;
+                }
+                // `key = [{ ... }]`: replaced whole below
                 Some(_) => {}
             }
         }
@@ -1584,6 +1625,26 @@ fn edit_table(document: &mut toml_edit::Table, before: &toml::Table, after: &tom
             document.remove(key);
         }
     }
+}
+
+/// A new document table holding `table`; its header is left out when it holds only
+/// tables (`[download.presets]` above `[download.presets.x]`)
+fn new_edit_table(table: &toml::Table) -> toml_edit::Table {
+    let mut edited = toml_edit::Table::new();
+    edited.set_implicit(true);
+    edit_table(&mut edited, &toml::Table::new(), table);
+    edited
+}
+
+/// The tables of a non-empty array holding only tables (a `[[...]]` array)
+fn tables_of(value: &toml::Value) -> Option<Vec<&toml::Table>> {
+    let toml::Value::Array(items) = value else {
+        return None;
+    };
+    if items.is_empty() {
+        return None;
+    }
+    items.iter().map(|item| item.as_table()).collect()
 }
 
 /// A `toml` value as a `toml_edit` one (tables become inline tables)
@@ -1707,6 +1768,8 @@ mod tests {
                 retry_initial_delay_secs: 1,
                 delete_empty_folders: true,
                 blocked_extensions: default_blocked_extensions(),
+                rules: Vec::new(),
+                presets: BTreeMap::new(),
             },
             watch: WatchConfig {
                 enabled: false,
@@ -2641,6 +2704,97 @@ mod save_keeping_file_credentials_tests {
         config.cleanup.min_age_hours = MAX_CLEANUP_MIN_AGE_HOURS + 1;
         let err = config.validate().unwrap_err().to_string();
         assert!(err.contains("min_age_hours"), "{err}");
+    }
+
+    fn rule(path: &str, preset: Option<&str>) -> FolderRule {
+        FolderRule {
+            path: path.to_string(),
+            preset: preset.map(str::to_string),
+            ..FolderRule::default()
+        }
+    }
+
+    /// `[[download.rules]]` and `[download.presets.x]`: added as tables, edited in place,
+    /// removed; comments, other keys and the credentials stay
+    #[test]
+    fn rules_are_added_edited_and_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let before = write_hand_edited(&path);
+
+        let mut memory = loaded(&before);
+        memory.download.rules = vec![rule("Movies", Some("video")), rule("Music", Some("audio"))];
+        memory.download.presets.insert(
+            "comics".to_string(),
+            Preset {
+                only: Some(vec!["cbz".to_string()]),
+                block: vec![],
+            },
+        );
+        memory.save_keeping_file_credentials(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches("[[download.rules]]").count(), 2, "{text}");
+        assert!(text.contains("[download.presets.comics]"), "{text}");
+        assert!(!text.contains("[download.presets]\n"), "{text}");
+        assert!(text.contains("# How many at once"), "{text}");
+        assert!(text.contains("# from `login`"), "{text}");
+        assert_eq!(loaded(&text).download.rules, memory.download.rules);
+
+        // A comment on the second rule survives an edit of the first
+        fs::write(
+            &path,
+            text.replace("path = \"Music\"", "path = \"Music\" # mine"),
+        )
+        .unwrap();
+        let mut memory = loaded(&fs::read_to_string(&path).unwrap());
+        memory.download.rules[0].preset = Some("everything".to_string());
+        memory.download.rules[0].delete_blocked = Some(true);
+        memory.save_keeping_file_credentials(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("path = \"Music\" # mine"), "{text}");
+        let saved = written(&path);
+        assert_eq!(
+            saved.download.rules[0].preset.as_deref(),
+            Some("everything")
+        );
+        assert_eq!(saved.download.rules[0].delete_blocked, Some(true));
+        assert_eq!(saved.auth.unwrap().token.as_deref(), Some("file-putio"));
+
+        // Removing one, then all
+        let mut memory = loaded(&text);
+        memory.download.rules.remove(0);
+        memory.save_keeping_file_credentials(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches("[[download.rules]]").count(), 1, "{text}");
+        assert_eq!(
+            written(&path).download.rules,
+            vec![rule("Music", Some("audio"))]
+        );
+        let mut memory = loaded(&text);
+        memory.download.rules.clear();
+        memory.download.presets.clear();
+        memory.save_keeping_file_credentials(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("download.rules"), "{text}");
+        assert!(!text.contains("comics"), "{text}");
+        assert!(text.contains("# How many at once"), "{text}");
+    }
+
+    /// Rules are validated at load
+    #[test]
+    fn bad_rules_are_refused() {
+        let mut config = Config::default();
+        config.download.rules = vec![rule("Movies", Some("nope"))];
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("unknown preset 'nope'"), "{err}");
+        config.download.rules = vec![rule("Movies", None), rule("/Movies", None)];
+        assert!(config.validate().is_err());
+        config.download.rules = vec![rule("Movies", Some("video"))];
+        config
+            .download
+            .presets
+            .insert("Bad".to_string(), Preset::default());
+        assert!(config.validate().is_err());
     }
 
     /// A file without `[cleanup]` gains the section on save; comments elsewhere stay

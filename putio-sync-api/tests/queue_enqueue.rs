@@ -63,7 +63,7 @@ async fn folder_is_queued_with_counts() {
     assert_eq!(response.status(), StatusCode::ACCEPTED);
     assert_eq!(
         body_json(response).await,
-        json!({ "found": 3, "queued": 1, "skipped": 1, "blocked": 1, "failed": 0 })
+        json!({ "found": 3, "queued": 1, "skipped": 1, "blocked": 1, "failed": 0, "deleted": 0 })
     );
 
     let item = app.db().queue().get_by_file_id(1).await.unwrap().unwrap();
@@ -79,7 +79,7 @@ async fn single_file_is_queued() {
     assert_eq!(response.status(), StatusCode::ACCEPTED);
     assert_eq!(
         body_json(response).await,
-        json!({ "found": 1, "queued": 1, "skipped": 0, "blocked": 0, "failed": 0 })
+        json!({ "found": 1, "queued": 1, "skipped": 0, "blocked": 0, "failed": 0, "deleted": 0 })
     );
 }
 

@@ -35,7 +35,8 @@ buckets (s): 1, 5, 15, 60, 300, 900, 1800, 3600, 7200. Sync buckets (s): 1, 5, 1
 | `putio_sync_last_sync_duration_seconds` | gauge | — | Duration of the latest run |
 | `putio_sync_last_success_timestamp_seconds` | gauge | — | Unix time the last successful run finished; absent until the first one |
 | `putio_sync_last_sync_files` | gauge | `kind` | Counts from the latest run |
-| `putio_sync_files_blocked_total` | counter | — | Files skipped by the blocked-extension list (warned once per file id) |
+| `putio_sync_files_blocked_total` | counter | — | Files blocked or skipped by a folder rule or the blocked-extension list (warned once per file id) |
+| `putio_sync_rule_decisions_total` | counter | `decision` (blocked, skipped, deleted) | Folder rule decisions (feature 009) |
 
 ### Queue and downloads
 

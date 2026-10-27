@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 
 use putio_sync_core::config::DownloadConfig as DownloadSettings;
+use putio_sync_core::rules::{FolderRule, RuleSet};
 use putio_sync_download::DownloadConfig;
 
 /// Settings with every manager field away from both crates' defaults
@@ -19,6 +20,11 @@ fn non_default_settings() -> DownloadSettings {
         max_retries: 9,
         retry_initial_delay_secs: 11,
         blocked_extensions: vec!["exe".to_string(), "iso".to_string()],
+        rules: vec![FolderRule {
+            path: "Movies".to_string(),
+            preset: Some("video".to_string()),
+            ..FolderRule::default()
+        }],
         ..DownloadSettings::default()
     }
 }
@@ -38,9 +44,11 @@ fn every_manager_field_comes_from_settings() {
             retry_initial_delay_secs: 11,
             workers: 7,
             delete_after_download: true,
-            blocked_extensions: vec!["exe".to_string(), "iso".to_string()],
+            rules: RuleSet::from_config(&settings),
         }
     );
+    assert!(config.rules.decide("", "a.iso") != putio_sync_core::rules::Decision::Download);
+    assert!(config.rules.decide("Movies", "a.nfo") != putio_sync_core::rules::Decision::Download);
 }
 
 #[test]
