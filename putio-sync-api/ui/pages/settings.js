@@ -1,4 +1,4 @@
-// Settings page: the download, watcher, Put.io cleanup, logging and notification groups
+// Settings page: appearance (this browser only, via theme.js), then the download, watcher, Put.io cleanup, logging and notification groups
 // as forms built from each GET body. Save PUTs the whole group and shows the API's
 // message verbatim; a 400 shows its error under the form. Tokens are shown only as set /
 // not set. The Radarr / Sonarr card is read-only, with a connection test per server.
@@ -91,6 +91,7 @@ export function mount(el) {
     h(
       "div",
       { class: "stack" },
+      appearance(),
       h("section", { class: "card" }, h("h2", { text: "Credentials" }), secrets, h("p", { class: "muted spaced", text: "Tokens and passwords are never shown here. Change them in the config file or environment." })),
       arrCard(mine),
       GROUPS.map((g) => group(g, mine)),
@@ -114,6 +115,33 @@ export function mount(el) {
 
 export function unmount() {
   seq += 1;
+  document.removeEventListener("appearancechange", syncAppearance);
+}
+
+// ---- Appearance (feature 012) -----------------------------------------------
+
+const MODE_NAMES = { system: "System", light: "Light", dark: "Dark" };
+let appearanceForm = null;
+
+/** Mode and accent radios; a change applies at once and is saved in this browser. */
+function appearance() {
+  const { MODES, ACCENTS } = window.appearance;
+  const radio = (name, value, label, attrs = {}) =>
+    h("label", attrs, h("input", { type: "radio", name, value, onchange: () => window.appearance.set({ [name]: value }) }), h("span", { text: label }));
+  appearanceForm = h(
+    "form",
+    { class: "appearance-grid", onsubmit: (ev) => ev.preventDefault() },
+    h("fieldset", { class: "choice" }, h("legend", { text: "Mode" }), h("div", { class: "seg-control" }, MODES.map((m) => radio("mode", m, MODE_NAMES[m])))),
+    h("fieldset", { class: "choice swatches" }, h("legend", { text: "Accent" }), ACCENTS.map((a) => radio("accent", a, a[0].toUpperCase() + a.slice(1), { dataset: { accent: a } }))),
+  );
+  syncAppearance();
+  document.addEventListener("appearancechange", syncAppearance);
+  return h("section", { class: "card" }, h("h2", { text: "Appearance" }), appearanceForm, h("p", { class: "muted spaced", text: "Saved in this browser only." }));
+}
+
+function syncAppearance() {
+  const now = window.appearance.get();
+  for (const input of appearanceForm.querySelectorAll("input")) input.checked = now[input.name] === input.value;
 }
 
 // ---- One group --------------------------------------------------------------
@@ -262,7 +290,7 @@ function arrBody(data) {
 
   const counts = h(
     "dl",
-    { class: "counts four" },
+    { class: "counts" },
     ITEM_STATES.map(([key, label]) => h("div", {}, h("dt", { text: label }), h("dd", { text: String(data.items[key] || 0) }))),
   );
 
