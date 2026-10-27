@@ -69,8 +69,11 @@ pub struct EnqueueResponse {
     pub found: usize,
     pub queued: usize,
     pub skipped: usize,
+    /// Blocked or skipped by a folder rule
     pub blocked: usize,
     pub failed: usize,
+    /// Blocked files deleted from Put.io by `delete_blocked` (feature 009)
+    pub deleted: usize,
 }
 
 /// Create the queue router
@@ -158,6 +161,7 @@ async fn enqueue(
             skipped: stats.files_skipped,
             blocked: stats.files_blocked,
             failed: stats.files_failed,
+            deleted: stats.files_deleted,
         }),
     ))
 }

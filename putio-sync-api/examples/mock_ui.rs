@@ -17,15 +17,21 @@
 //! disabled) or `#/transfers` for the bulk actions. On `#/transfers`, Clear completed
 //! finds 2 (one completed, one seeding), Clear failed 1, Clear all finished 3. Every
 //! mocked delete, cancel and clean succeeds, but the listings don't change.
+//! Feature 009: `Shows` has a "Video only" rule, so `Example.Show.S01E01.nfo` there shows
+//! as blocked; `Movies` and `Movies/Extras` start with the global settings. Recently
+//! blocked on Settings holds a seeded `setup.exe`. The config file (path printed at
+//! start) begins with a comment that rule saves must keep.
 
 use chrono::{Duration, Timelike, Utc};
 use putio_sync_api::{extract_download_config, router, AppState};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{ArrConfig, ArrKind, ArrServer, AuthConfig, Config};
+use putio_sync_core::rules::FolderRule;
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::models::{DownloadSource, HistoryAction, Origin, QueueStatus, SourceType};
 use putio_sync_db::Database;
 use putio_sync_download::DownloadManager;
+use putio_sync_telemetry::RuleDecision;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -137,6 +143,8 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         "VIDEO",
         SHOWS,
     );
+    // Blocked by the Shows "Video only" rule (feature 009)
+    let nfo = file(202, "Example.Show.S01E01.nfo", 4_096, "TEXT", SHOWS);
 
     let transfers = transfers();
 
@@ -207,7 +215,7 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
         json_mock("POST", "/transfers/clean".into(), json!({ "status": "OK" }).to_string()),
     ];
     for f in [
-        &movies, &shows, &extras, &readme, &big, &setup, &sintel, &episode,
+        &movies, &shows, &extras, &readme, &big, &setup, &sintel, &episode, &nfo,
     ] {
         mocks.push(json_mock(
             "GET",
@@ -218,7 +226,7 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
 
     // The Shows listing answers after 3 s, so a "sync now" (which walks every folder)
     // stays in progress long enough to see it and to try a second one
-    let shows_listing = listing(shows.clone(), vec![episode.clone()]);
+    let shows_listing = listing(shows.clone(), vec![episode.clone(), nfo.clone()]);
     mocks.push(
         server
             .mock("GET", format!("/files/list?parent_id={SHOWS}").as_str())
@@ -441,8 +449,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
         ..Default::default()
     };
+    config.download.rules = vec![FolderRule {
+        path: "Shows".to_string(),
+        preset: Some("video".to_string()),
+        ..Default::default()
+    }];
     let config_path = dir.path().join("config.toml");
     config.save(&config_path)?;
+    // A comment UI saves must keep (save_keeping_file_credentials edits in place)
+    let saved = std::fs::read_to_string(&config_path)?;
+    std::fs::write(
+        &config_path,
+        format!("# Seeded by mock_ui: UI saves keep this comment\n{saved}"),
+    )?;
 
     let db = Arc::new(Database::new(dir.path().join(".putiosync.db")).await?);
     let queue = db.queue();
@@ -485,6 +504,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     seed_history(&db).await?;
     seed_stats(&db).await?;
+    db.rule_decisions()
+        .record(
+            102,
+            "setup.exe",
+            "Movies",
+            RuleDecision::Blocked,
+            "extension exe is blocked",
+            None,
+        )
+        .await?;
 
     let client = Arc::new(PutioApiClient::with_base_url(
         PUTIO_TOKEN.to_string(),
@@ -492,6 +521,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let manager =
         DownloadManager::new(client.clone(), db.clone(), extract_download_config(&config));
+    let config_path_shown = config_path.clone();
     let state = AppState::new(
         config,
         Some(config_path),
@@ -510,6 +540,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     let addr = listener.local_addr()?;
     println!("Open http://{addr}/ and sign in with token: {API_TOKEN}");
+    println!("Config file: {}", config_path_shown.display());
     println!("Mocked Put.io at {}; press Ctrl+C to stop.", putio.url());
 
     axum::serve(

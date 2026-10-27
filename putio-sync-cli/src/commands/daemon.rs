@@ -162,12 +162,13 @@ pub async fn execute_daemon(
     info!("  Archive directory: {:?}", daemon_config.archive_dir);
     info!(
         "  Blocked extensions: {}",
-        if download.blocked_extensions.is_empty() {
+        if config.download.blocked_extensions.is_empty() {
             "none".to_string()
         } else {
-            download.blocked_extensions.join(", ")
+            config.download.blocked_extensions.join(", ")
         }
     );
+    info!("  Folder rules: {}", config.download.rules.len());
     info!(
         "  Empty-folder cleanup: {} (daily at {}, min age {}h)",
         if config.cleanup.enabled {
@@ -308,7 +309,7 @@ mod tests {
                 retry_initial_delay_secs: 6,
                 workers: 5,
                 delete_after_download: true,
-                blocked_extensions: vec!["iso".to_string()],
+                rules: putio_sync_core::rules::RuleSet::from_config(&config.download),
             }
         );
         assert_eq!(

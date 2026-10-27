@@ -57,7 +57,12 @@ impl Harness {
         ));
         let config = DownloadConfig {
             target_directory: dir.path().join("downloads"),
-            blocked_extensions: vec!["exe".to_string()],
+            rules: putio_sync_core::rules::RuleSet::from_config(
+                &putio_sync_core::config::DownloadConfig {
+                    blocked_extensions: vec!["exe".to_string()],
+                    ..Default::default()
+                },
+            ),
             ..DownloadConfig::default()
         };
         let downloads = Arc::new(DownloadManager::new(client.clone(), db.clone(), config));

@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::{global, unix_now, SyncKind, SyncResult, Telemetry};
+use crate::{global, unix_now, RuleDecision, SyncKind, SyncResult, Telemetry};
 
 impl Telemetry {
     /// Record a finished sync run and the latest per-kind file counts. A success also
@@ -24,9 +24,16 @@ impl Telemetry {
         }
     }
 
-    /// Count a file skipped by the blocked-extension list (call once per file id).
+    /// Count a file blocked or skipped by a rule (call once per file id).
     pub fn sync_file_blocked(&self) {
         self.files_blocked.inc();
+    }
+
+    /// Count a folder rule decision.
+    pub fn sync_rule_decision(&self, decision: RuleDecision) {
+        self.rule_decisions
+            .with_label_values(&[decision.as_str()])
+            .inc();
     }
 }
 
@@ -38,4 +45,9 @@ pub fn record_run(result: SyncResult, elapsed: Duration, counts: &[(SyncKind, us
 /// Count a blocked file on the global instance.
 pub fn file_blocked() {
     global().sync_file_blocked();
+}
+
+/// Count a folder rule decision on the global instance.
+pub fn rule_decision(decision: RuleDecision) {
+    global().sync_rule_decision(decision);
 }
