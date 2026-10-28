@@ -1236,6 +1236,11 @@ impl DownloadManager {
         let mut folders: HashMap<String, Effective> = HashMap::new();
         // Type-blocked files to delete from Put.io, in one call after the loop
         let mut to_delete = Vec::new();
+        // Transfers whose release check waits for Put.io (feature 042, research R8)
+        let gated = self.gated_transfers(db).await;
+        if !gated.is_empty() {
+            transfers = Some(self.transfers_by_file().await);
+        }
 
         // Check which files need to be added to queue
         for (file, relative_path) in downloadable_files {
@@ -1248,6 +1253,20 @@ impl DownloadManager {
                     decision,
                 });
             };
+            if !gated.is_empty() {
+                let transfer = transfers
+                    .as_ref()
+                    .and_then(|t| matching_transfer(file.id, &parents, t));
+                if transfer.is_some_and(|t| gated.contains(&t.id)) {
+                    debug!(
+                        file_id = file.id,
+                        "Skipping file until its release is checked"
+                    );
+                    stats.files_skipped += 1;
+                    decide(TreeDecision::Known);
+                    continue;
+                }
+            }
             let rules = folders
                 .entry(relative_path.clone())
                 .or_insert_with(|| config.effective(&relative_path));
@@ -1868,6 +1887,25 @@ impl DownloadManager {
 
     /// Put.io transfers keyed by the file or folder they produced (feature 006, R4).
     /// A failed listing leaves every source unknown rather than failing the sync.
+    /// Transfer ids with a pending release check; one cheap query when there are none
+    async fn gated_transfers(&self, db: &Database) -> HashSet<i64> {
+        let releases = db.releases();
+        match releases.has_pending().await {
+            Ok(false) => HashSet::new(),
+            Ok(true) => match releases.pending_transfer_ids().await {
+                Ok(ids) => ids.into_iter().collect(),
+                Err(e) => {
+                    warn!(error = %e, "Failed to list pending release checks");
+                    HashSet::new()
+                }
+            },
+            Err(e) => {
+                warn!(error = %e, "Failed to look up pending release checks");
+                HashSet::new()
+            }
+        }
+    }
+
     async fn transfers_by_file(&self) -> HashMap<i64, Transfer> {
         match self.client.list_transfers().await {
             Ok(response) => response

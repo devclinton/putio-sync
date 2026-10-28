@@ -79,6 +79,10 @@ Delete failures are logged and retried at the next pass. This reuses the client 
 
 **Why**: what a cancel leaves behind isn't documented. Doing both steps works either way.
 
+As built (T017), the delete runs first, then the cancel and the clean. A cancelled transfer may
+leave the list, and a failed delete must still find the transfer next pass to retry. Cancel and
+clean failures are only logged, since the files are gone by then.
+
 ## R5. Public .torrent caches
 
 **Decision**: the cache list is a config list of URL templates, with `{HASH}` (upper-case hex)
@@ -95,6 +99,12 @@ Probe results (2026-10-28):
 | zoink.ch | 404. |
 | thetorrent.org, torrent.cd | No DNS. Dead. |
 | btdig | A search engine, not a cache. |
+| torcache.net, watercache.nanobytes.org | No DNS. Dead (re-probed 2026-10-28). |
+| magnet2torrent.com | An upload form, not a cache. |
+
+Re-probed on 2026-10-28 when fallback caches were asked for: itorrents.net is still the only
+working HTTP cache. A real second source would be fetching the info dict from peers over the
+DHT (BEP 9 `ut_metadata`), which is out of scope here and proposed as its own feature.
 
 How each lookup works:
 
