@@ -38,6 +38,7 @@ pub mod error;
 pub mod history;
 pub mod models;
 pub mod queue;
+pub mod releases;
 pub mod schema;
 pub mod sources;
 pub mod stats;
@@ -49,6 +50,7 @@ pub use downloads::DownloadRepository;
 pub use error::{DbError, DbResult};
 pub use history::HistoryRepository;
 pub use queue::{QueueRepository, QueueStats};
+pub use releases::{CheckState, NewCheck, NewReport, PendingCheck, ReleasesRepository, ReportKind};
 pub use sources::SourcesRepository;
 pub use stats::{ExtensionStats, StatsRepository};
 pub use torrents::ProcessedTorrentsRepository;
@@ -165,6 +167,11 @@ impl Database {
         ArrRepository::new(&self.pool)
     }
 
+    /// Get the release pre-check repository (feature 042)
+    pub fn releases(&self) -> ReleasesRepository<'_> {
+        ReleasesRepository::new(&self.pool)
+    }
+
     /// Get a rule decisions repository (feature 009)
     pub fn rule_decisions(&self) -> RuleDecisionsRepository<'_> {
         RuleDecisionsRepository::new(&self.pool)
@@ -262,6 +269,15 @@ impl Database {
             (
                 schema::CREATE_RULE_DECISIONS_TABLE,
                 "Failed to create rule_decisions table",
+            ),
+            // Release pre-check (feature 042)
+            (
+                schema::CREATE_RELEASE_CHECKS_TABLE,
+                "Failed to create release_checks table",
+            ),
+            (
+                schema::CREATE_RELEASE_REPORTS_TABLE,
+                "Failed to create release_reports table",
             ),
         ] {
             sqlx::query(sql)

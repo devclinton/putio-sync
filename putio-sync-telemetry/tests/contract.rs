@@ -39,6 +39,13 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_arr_rpc_requests_total",
     "putio_sync_arr_items",
     "putio_sync_arr_blocklist_total",
+    "putio_sync_precheck_total",
+    "putio_sync_precheck_avoided_bytes_total",
+    "putio_sync_precheck_cache_lookups_total",
+    "putio_sync_precheck_cache_lookup_seconds",
+    "putio_sync_precheck_fallback_total",
+    "putio_sync_precheck_fallback_putio_bytes_total",
+    "putio_sync_release_flags_total",
     "putio_sync_db_errors_total",
     "putio_sync_disk_free_bytes",
     "putio_sync_disk_total_bytes",
@@ -152,6 +159,17 @@ fn record_everything(t: &Telemetry) {
     t.arr_rpc_request(ArrMethod::TorrentAdd, ArrOutcome::AuthFailed);
     t.set_arr_items(ArrItemState::Done, 2);
     t.arr_blocklist(BlocklistOutcome::Error);
+    t.precheck(
+        PrecheckSource::Torrent,
+        PrecheckStage::Before,
+        PrecheckOutcome::Rejected,
+    );
+    t.precheck_avoided(PrecheckStage::Before, 1_500_000_000);
+    t.precheck_caches(&["itorrents.net".to_string()]);
+    t.precheck_cache_lookup("itorrents.net", LookupResult::Found);
+    t.precheck_lookup_time(Duration::from_millis(300));
+    t.precheck_fallback(FallbackResult::Rejected, 1024);
+    t.release_flag(FlagKind::Fake);
     t.set_transfers_stalled(2);
     t.db_error(DbOp::Queue);
     t.set_queue_counts(&[(QueueState::Pending, 2)]);
@@ -173,16 +191,30 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             let mut v = strs(ApiOutcome::ALL, ApiOutcome::as_str);
             v.extend(strs(ArrOutcome::ALL, ArrOutcome::as_str));
             v.extend(strs(BlocklistOutcome::ALL, BlocklistOutcome::as_str));
+            v.extend(strs(PrecheckOutcome::ALL, PrecheckOutcome::as_str));
             v
         }
+        "source" => strs(PrecheckSource::ALL, PrecheckSource::as_str),
+        "stage" => strs(PrecheckStage::ALL, PrecheckStage::as_str),
+        // Host names from the config's cache list
+        "cache" => vec!["itorrents.net"],
         "method" => strs(ArrMethod::ALL, ArrMethod::as_str),
         "reason" => {
             let mut v = strs(RetryReason::ALL, RetryReason::as_str);
             v.extend(strs(FailReason::ALL, FailReason::as_str));
             v
         }
-        "result" => strs(SyncResult::ALL, SyncResult::as_str),
-        "kind" => strs(SyncKind::ALL, SyncKind::as_str),
+        "result" => {
+            let mut v = strs(SyncResult::ALL, SyncResult::as_str);
+            v.extend(strs(LookupResult::ALL, LookupResult::as_str));
+            v.extend(strs(FallbackResult::ALL, FallbackResult::as_str));
+            v
+        }
+        "kind" => {
+            let mut v = strs(SyncKind::ALL, SyncKind::as_str);
+            v.extend(strs(FlagKind::ALL, FlagKind::as_str));
+            v
+        }
         "state" => {
             let mut v = strs(QueueState::ALL, QueueState::as_str);
             v.extend(strs(ArrItemState::ALL, ArrItemState::as_str));
@@ -454,6 +486,69 @@ fn arr_metrics() {
     );
     assert_eq!(
         t.sample("putio_sync_arr_blocklist_total", &[("outcome", "ok")]),
+        Some(1.0)
+    );
+}
+
+/// Feature 042: the pre-check families start at 0 for every closed label value, and the
+/// cache series once the cache list is known
+#[test]
+fn precheck_metrics() {
+    let t = Telemetry::new();
+    let check = |source, stage, outcome| {
+        t.sample(
+            "putio_sync_precheck_total",
+            &[("source", source), ("stage", stage), ("outcome", outcome)],
+        )
+    };
+    assert_eq!(check("watch_magnet", "putio", "unknown"), Some(0.0));
+    assert_eq!(
+        t.sample("putio_sync_release_flags_total", &[("kind", "not_fake")]),
+        Some(0.0)
+    );
+    let lookups = |result| {
+        t.sample(
+            "putio_sync_precheck_cache_lookups_total",
+            &[("cache", "itorrents.net"), ("result", result)],
+        )
+    };
+    assert_eq!(lookups("timeout"), None);
+    t.precheck_caches(&["itorrents.net".to_string()]);
+    assert_eq!(lookups("timeout"), Some(0.0));
+
+    t.precheck(
+        PrecheckSource::Url,
+        PrecheckStage::Before,
+        PrecheckOutcome::Rejected,
+    );
+    t.precheck_avoided(PrecheckStage::Before, 2048);
+    t.precheck_cache_lookup("itorrents.net", LookupResult::WrongHash);
+    t.precheck_fallback(FallbackResult::Passed, 999);
+    t.precheck_fallback(FallbackResult::Rejected, 1000);
+    t.release_flag(FlagKind::Fake);
+    assert_eq!(check("url", "before", "rejected"), Some(1.0));
+    assert_eq!(
+        t.sample(
+            "putio_sync_precheck_avoided_bytes_total",
+            &[("stage", "before")]
+        ),
+        Some(2048.0)
+    );
+    assert_eq!(lookups("wrong_hash"), Some(1.0));
+    assert_eq!(
+        t.sample(
+            "putio_sync_precheck_fallback_total",
+            &[("result", "passed")]
+        ),
+        Some(1.0)
+    );
+    // Only rejected fallbacks count their Put.io bytes
+    assert_eq!(
+        t.sample("putio_sync_precheck_fallback_putio_bytes_total", &[]),
+        Some(1000.0)
+    );
+    assert_eq!(
+        t.sample("putio_sync_release_flags_total", &[("kind", "fake")]),
         Some(1.0)
     );
 }

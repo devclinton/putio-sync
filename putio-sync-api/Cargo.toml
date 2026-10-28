@@ -19,6 +19,7 @@ putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-file-manager = { path = "../putio-sync-file-manager" }
 putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 putio-sync-arr = { path = "../putio-sync-arr" }
+putio-sync-precheck = { path = "../putio-sync-precheck" }
 
 # Web framework
 axum = "0.7"
