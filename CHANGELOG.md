@@ -14,6 +14,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Metrics for putio-sync's own CPU, memory, threads, open files and disk I/O
+  (`putio_sync_process_*`, Linux and Docker only), and
+  `putio_sync_sync_in_progress`, which is 1 while a sync runs (feature 041).
 - A Doctor page that checks the Put.io account and the sync setup: sign-in,
   storage, failed or stalled transfers, empty folders, duplicate files and
   leftover .torrent files, with one-click fixes (feature 010).
