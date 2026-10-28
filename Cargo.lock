@@ -2114,6 +2114,7 @@ dependencies = [
  "putio-sync-doctor",
  "putio-sync-download",
  "putio-sync-file-manager",
+ "putio-sync-precheck",
  "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",
@@ -2139,11 +2140,13 @@ dependencies = [
  "putio-sync-core",
  "putio-sync-db",
  "putio-sync-download",
+ "putio-sync-precheck",
  "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sha1",
+ "sqlx",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -2341,6 +2344,23 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "putio-sync-precheck"
+version = "0.1.1"
+dependencies = [
+ "mockito",
+ "putio-sync-client",
+ "putio-sync-core",
+ "putio-sync-telemetry",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha1",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

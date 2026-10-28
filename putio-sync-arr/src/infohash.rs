@@ -1,6 +1,7 @@
 //! The BitTorrent info hash of a magnet link or a .torrent file: the id Radarr and
 //! Sonarr compute themselves and look items up by (research R4)
 
+#[cfg(test)]
 use sha1::{Digest, Sha1};
 
 /// The `btih` hash of a magnet link as 40 lowercase hex characters, and its `dn` name
@@ -87,81 +88,8 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// The info hash of a .torrent file (SHA-1 of the bencoded `info` dictionary, byte for
-/// byte as in the file) and its `info.name`. `None` when it isn't a valid torrent.
-pub fn from_torrent(bytes: &[u8]) -> Option<(String, Option<String>)> {
-    if bytes.first() != Some(&b'd') {
-        return None;
-    }
-    let mut pos = 1;
-    while bytes.get(pos)? != &b'e' {
-        let (key, after_key) = read_string(bytes, pos)?;
-        let end = skip_value(bytes, after_key, 0)?;
-        if key == b"info" {
-            if bytes.get(after_key) != Some(&b'd') {
-                return None;
-            }
-            let info = &bytes[after_key..end];
-            let hash = hex(&Sha1::digest(info));
-            return Some((hash, info_name(info)));
-        }
-        pos = end;
-    }
-    None
-}
-
-/// `name` (or `name.utf-8`) of an info dictionary
-fn info_name(info: &[u8]) -> Option<String> {
-    let mut pos = 1;
-    let mut name = None;
-    while info.get(pos)? != &b'e' {
-        let (key, after_key) = read_string(info, pos)?;
-        let end = skip_value(info, after_key, 0)?;
-        if key == b"name.utf-8" || (key == b"name" && name.is_none()) {
-            if let Some((value, _)) = read_string(info, after_key) {
-                name = Some(String::from_utf8_lossy(value).into_owned());
-            }
-        }
-        pos = end;
-    }
-    name.filter(|n| !n.trim().is_empty())
-}
-
-/// A bencoded byte string at `pos`: its bytes and the position after it
-fn read_string(bytes: &[u8], pos: usize) -> Option<(&[u8], usize)> {
-    let colon = pos + bytes.get(pos..)?.iter().position(|&b| b == b':')?;
-    let digits = std::str::from_utf8(&bytes[pos..colon]).ok()?;
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let len: usize = digits.parse().ok()?;
-    let start = colon + 1;
-    let end = start.checked_add(len)?;
-    Some((bytes.get(start..end)?, end))
-}
-
-/// The position after the bencoded value at `pos`
-fn skip_value(bytes: &[u8], pos: usize, depth: usize) -> Option<usize> {
-    // Real torrents nest a few levels; this bounds recursion on hostile input
-    if depth > 64 {
-        return None;
-    }
-    match *bytes.get(pos)? {
-        b'i' => {
-            let end = pos + bytes.get(pos..)?.iter().position(|&b| b == b'e')?;
-            Some(end + 1)
-        }
-        b'l' | b'd' => {
-            let mut p = pos + 1;
-            while *bytes.get(p)? != b'e' {
-                p = skip_value(bytes, p, depth + 1)?;
-            }
-            Some(p + 1)
-        }
-        b'0'..=b'9' => read_string(bytes, pos).map(|(_, end)| end),
-        _ => None,
-    }
-}
+/// The info hash of a .torrent file and its `info.name`, now read by the pre-check crate
+pub use putio_sync_precheck::metainfo::info_hash as from_torrent;
 
 #[cfg(test)]
 mod tests {

@@ -134,8 +134,8 @@ pub struct NewArrItem<'a> {
     pub name: &'a str,
     /// Normalised category
     pub category: &'a str,
-    /// Put.io transfer id
-    pub transfer_id: i64,
+    /// Put.io transfer id; `None` for an item rejected before Put.io (042)
+    pub transfer_id: Option<i64>,
     /// Put.io status at creation
     pub putio_status: &'a str,
     /// Size Put.io reported, 0 while unknown
@@ -462,7 +462,7 @@ mod tests {
             hash,
             name: "Show.S01E01",
             category: "sonarr",
-            transfer_id: 77,
+            transfer_id: Some(77),
             putio_status: "IN_QUEUE",
             total_size: 0,
         }

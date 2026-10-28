@@ -180,6 +180,61 @@ label_enum!(
     }
 );
 
+label_enum!(
+    /// Where a pre-checked release came from (feature 042).
+    PrecheckSource {
+        Torrent => "torrent",
+        Url => "url",
+        Magnet => "magnet",
+        WatchTorrent => "watch_torrent",
+        WatchMagnet => "watch_magnet",
+    }
+);
+
+label_enum!(
+    /// Where a release's file list was checked.
+    PrecheckStage {
+        Before => "before",
+        Putio => "putio",
+    }
+);
+
+label_enum!(
+    /// Outcome of one pre-check; `unknown` when no file list could be had.
+    PrecheckOutcome {
+        Passed => "passed",
+        Rejected => "rejected",
+        Unknown => "unknown",
+    }
+);
+
+label_enum!(
+    /// Result of one .torrent cache lookup.
+    LookupResult {
+        Found => "found",
+        NotFound => "not_found",
+        Timeout => "timeout",
+        WrongHash => "wrong_hash",
+        Error => "error",
+    }
+);
+
+label_enum!(
+    /// How a magnet that went to Put.io unchecked turned out.
+    FallbackResult {
+        Passed => "passed",
+        Rejected => "rejected",
+    }
+);
+
+label_enum!(
+    /// An operator's flag on a release.
+    FlagKind {
+        Fake => "fake",
+        NotFake => "not_fake",
+    }
+);
+
 impl ArrMethod {
     /// Map a Transmission method name; unknown names are `Other`.
     pub fn from_method(method: &str) -> ArrMethod {

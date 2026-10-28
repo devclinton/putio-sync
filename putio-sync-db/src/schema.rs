@@ -161,6 +161,57 @@ CREATE TABLE IF NOT EXISTS rule_decisions (
 )
 "#;
 
+/// SQL to create the release_checks table (feature 042): one row per release pre-check
+pub const CREATE_RELEASE_CHECKS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS release_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hash TEXT,
+    name TEXT NOT NULL,
+    source TEXT NOT NULL CHECK(source IN ('torrent', 'url', 'magnet', 'watch_torrent', 'watch_magnet')),
+    category TEXT,
+    watch_folder TEXT,
+    stage TEXT NOT NULL CHECK(stage IN ('before', 'putio')),
+    state TEXT NOT NULL CHECK(state IN ('passed', 'rejected', 'pending')),
+    lookup TEXT CHECK(lookup IN ('found', 'not_found', 'timeout', 'wrong_hash', 'error', 'off')),
+    lookup_cache TEXT,
+    transfer_id INTEGER,
+    total_size INTEGER NOT NULL DEFAULT 0,
+    putio_bytes INTEGER NOT NULL DEFAULT 0,
+    reason TEXT,
+    checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP
+)
+"#;
+
+/// SQL to create the release_reports table (feature 042): one row per rejection and per
+/// operator flag. Never a magnet, URL, API key or .torrent bytes.
+pub const CREATE_RELEASE_REPORTS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS release_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL CHECK(kind IN ('rejected', 'flagged_fake', 'flagged_not_fake')),
+    check_id INTEGER,
+    arr_hash TEXT,
+    file_id INTEGER,
+    transfer_id INTEGER,
+    source TEXT,
+    category TEXT,
+    watch_folder TEXT,
+    stage TEXT,
+    name TEXT NOT NULL,
+    hash TEXT,
+    total_size INTEGER,
+    file_count INTEGER,
+    types TEXT NOT NULL DEFAULT '[]',
+    largest_wanted INTEGER,
+    min_size INTEGER,
+    tracker_hosts TEXT NOT NULL DEFAULT '[]',
+    is_private INTEGER NOT NULL DEFAULT 0,
+    reason TEXT,
+    note TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"#;
+
 /// SQL to create performance indexes
 /// These indexes optimize common query patterns
 pub const CREATE_INDEXES: &str = r#"
@@ -190,6 +241,12 @@ CREATE INDEX IF NOT EXISTS idx_processed_torrents_timestamp ON processed_torrent
 
 -- Index for the newest rule decisions
 CREATE INDEX IF NOT EXISTS idx_rule_decisions_decided_at ON rule_decisions(decided_at);
+
+-- Release pre-check (feature 042): the sync gate's pending lookup, ranges and transfers
+CREATE INDEX IF NOT EXISTS idx_release_checks_pending ON release_checks(state) WHERE state = 'pending';
+CREATE INDEX IF NOT EXISTS idx_release_checks_checked_at ON release_checks(checked_at);
+CREATE INDEX IF NOT EXISTS idx_release_checks_transfer_id ON release_checks(transfer_id);
+CREATE INDEX IF NOT EXISTS idx_release_reports_created_at ON release_reports(created_at);
 "#;
 
 #[cfg(test)]

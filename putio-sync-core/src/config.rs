@@ -77,6 +77,9 @@ pub struct Config {
     /// Scheduled doctor runs (feature 010)
     #[serde(default)]
     pub doctor: DoctorConfig,
+    /// Release pre-check (feature 042)
+    #[serde(default)]
+    pub precheck: PrecheckConfig,
 }
 
 /// `[doctor]`: how often the daemon runs the doctor's checks (feature 010). The CLI and
@@ -103,6 +106,109 @@ impl DoctorConfig {
     /// Time between scheduled runs
     pub fn interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_minutes.max(5) * 60)
+    }
+}
+
+/// The default magnet lookup cache (research R3)
+pub const DEFAULT_PRECHECK_CACHE: &str = "https://itorrents.net/torrent/{HASH}.torrent";
+
+/// `[precheck]`: read a release's file list before it reaches Put.io and reject it when
+/// no file is a wanted type of at least the minimum size (feature 042)
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct PrecheckConfig {
+    /// Default for every *arr category and the watch folder
+    pub enabled: bool,
+    /// Check, log and count, but never reject or delete (Constitution IV)
+    pub dry_run: bool,
+    /// The largest wanted file must be at least this big
+    pub min_size_mb: u64,
+    /// Count archives (`.rar`, `.7z`, split parts) as wanted
+    pub allow_archives: bool,
+    /// Look magnets up in `caches` before adding them
+    pub magnet_lookup: bool,
+    /// Total time for all caches, 1..=30
+    pub lookup_timeout_secs: u64,
+    /// .torrent cache URLs with `{HASH}` (upper case) or `{hash}` (lower case)
+    pub caches: Vec<String>,
+    /// Per *arr category (the folder below the download dir)
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub categories: BTreeMap<String, PrecheckOverride>,
+    /// Per `[watch].paths` entry
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub watch: BTreeMap<String, PrecheckOverride>,
+}
+
+/// Settings one category or watch folder changes; unset ones come from `[precheck]`
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct PrecheckOverride {
+    /// Check this folder at all
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Its minimum size
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_size_mb: Option<u64>,
+    /// Its archive setting
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_archives: Option<bool>,
+}
+
+impl Default for PrecheckConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            dry_run: false,
+            min_size_mb: 50,
+            allow_archives: false,
+            magnet_lookup: true,
+            lookup_timeout_secs: 10,
+            caches: vec![DEFAULT_PRECHECK_CACHE.to_string()],
+            categories: BTreeMap::new(),
+            watch: BTreeMap::new(),
+        }
+    }
+}
+
+impl PrecheckConfig {
+    /// Check the ranges and cache URLs. A `watch` key that is not in `watch_paths` is
+    /// only a warning, so removing a watch path doesn't break startup.
+    pub fn validate(&self, watch_paths: &[PathBuf]) -> CoreResult<()> {
+        let sizes = std::iter::once(("precheck.min_size_mb", self.min_size_mb)).chain(
+            self.categories
+                .values()
+                .chain(self.watch.values())
+                .filter_map(|o| o.min_size_mb)
+                .map(|v| ("precheck override min_size_mb", v)),
+        );
+        for (setting, value) in sizes {
+            if value > 100_000 {
+                return Err(invalid(setting, &value.to_string(), "0..=100000"));
+            }
+        }
+        if !(1..=30).contains(&self.lookup_timeout_secs) {
+            return Err(invalid(
+                "precheck.lookup_timeout_secs",
+                &self.lookup_timeout_secs.to_string(),
+                "1..=30",
+            ));
+        }
+        for cache in &self.caches {
+            let http = cache.starts_with("http://") || cache.starts_with("https://");
+            if !http || !(cache.contains("{HASH}") || cache.contains("{hash}")) {
+                return Err(invalid(
+                    "precheck cache",
+                    cache,
+                    "an http(s):// URL containing {HASH} or {hash}",
+                ));
+            }
+        }
+        for key in self.watch.keys() {
+            if !watch_paths.iter().any(|p| p == Path::new(key)) {
+                tracing::warn!(path = %key, "[precheck.watch] names a path not in [watch].paths");
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1001,6 +1107,7 @@ impl Config {
         crate::rules::validate(&self.download.rules, &self.download.presets)?;
         self.cleanup.validate()?;
         self.arr.validate()?;
+        self.precheck.validate(&self.watch.paths)?;
 
         Ok(())
     }
@@ -1238,6 +1345,7 @@ impl ConfigBuilder {
             transfers: TransfersConfig::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
+            precheck: PrecheckConfig::default(),
         }
     }
 }
@@ -1493,6 +1601,36 @@ impl Config {
             password,
             servers,
         })
+    }
+}
+
+impl Config {
+    /// Resolve `[precheck]`, applying `PUTIO_SYNC_PRECHECK_ENABLED` and
+    /// `PUTIO_SYNC_PRECHECK_MAGNET_LOOKUP`. An empty variable counts as unset.
+    pub fn resolve_precheck(&self) -> CoreResult<PrecheckConfig> {
+        self.precheck.validate(&self.watch.paths)?;
+        let mut out = self.precheck.clone();
+        for (name, setting, field) in [
+            (
+                "PUTIO_SYNC_PRECHECK_ENABLED",
+                "precheck.enabled",
+                &mut out.enabled,
+            ),
+            (
+                "PUTIO_SYNC_PRECHECK_MAGNET_LOOKUP",
+                "precheck.magnet_lookup",
+                &mut out.magnet_lookup,
+            ),
+        ] {
+            if let Some(v) = std::env::var(name).ok().filter(|v| !v.is_empty()) {
+                *field = match v.as_str() {
+                    "true" | "1" => true,
+                    "false" | "0" => false,
+                    _ => return Err(invalid(setting, &v, "true, false, 1, 0")),
+                };
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -1818,6 +1956,7 @@ mod tests {
             transfers: TransfersConfig::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
+            precheck: PrecheckConfig::default(),
         }
     }
 
@@ -3005,5 +3144,108 @@ category = "movies"
         assert!(text.contains("workers = 9"));
         assert!(!text.contains("memory-pass"));
         assert!(text.contains(TWO_SERVERS.trim()));
+    }
+}
+
+#[cfg(test)]
+mod precheck_tests {
+    use super::*;
+
+    /// Serialises tests that change the `[precheck]` env overrides
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    const VARS: [&str; 2] = [
+        "PUTIO_SYNC_PRECHECK_ENABLED",
+        "PUTIO_SYNC_PRECHECK_MAGNET_LOOKUP",
+    ];
+
+    fn with_env<R>(vars: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        for v in VARS {
+            std::env::remove_var(v);
+        }
+        for (k, v) in vars {
+            std::env::set_var(k, v);
+        }
+        let out = f();
+        for v in VARS {
+            std::env::remove_var(v);
+        }
+        out
+    }
+
+    fn error(text: &str) -> String {
+        let config: Config = toml::from_str(text).unwrap();
+        match config.precheck.validate(&config.watch.paths) {
+            Err(CoreError::ConfigError(msg)) => msg,
+            other => panic!("expected a config error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn defaults() {
+        let p = Config::default().precheck;
+        assert!(p.enabled);
+        assert!(!p.dry_run);
+        assert_eq!(p.min_size_mb, 50);
+        assert!(!p.allow_archives);
+        assert!(p.magnet_lookup);
+        assert_eq!(p.lookup_timeout_secs, 10);
+        assert_eq!(p.caches, vec![DEFAULT_PRECHECK_CACHE.to_string()]);
+        assert!(p.validate(&[]).is_ok());
+    }
+
+    #[test]
+    fn overrides_parse() {
+        let config: Config = toml::from_str(
+            "[precheck]\nmin_size_mb = 80\n\n[precheck.categories.software]\nenabled = false\n\n[precheck.watch.\"/watch/tv\"]\nmin_size_mb = 100\n",
+        )
+        .unwrap();
+        assert_eq!(config.precheck.min_size_mb, 80);
+        assert_eq!(config.precheck.categories["software"].enabled, Some(false));
+        assert_eq!(config.precheck.watch["/watch/tv"].min_size_mb, Some(100));
+        // A watch key that is not a watch path only warns
+        assert!(config.precheck.validate(&[]).is_ok());
+    }
+
+    #[test]
+    fn validation() {
+        assert!(error("[precheck]\nmin_size_mb = 100001\n").contains("0..=100000"));
+        assert!(error("[precheck.categories.tv]\nmin_size_mb = 200000\n").contains("0..=100000"));
+        assert!(error("[precheck]\nlookup_timeout_secs = 0\n").contains("1..=30"));
+        assert!(error("[precheck]\nlookup_timeout_secs = 31\n").contains("1..=30"));
+        assert!(error("[precheck]\ncaches = [\"ftp://x/{HASH}\"]\n").contains("precheck cache"));
+        assert!(error("[precheck]\ncaches = [\"https://x/a.torrent\"]\n").contains("{HASH}"));
+        let ok: Config =
+            toml::from_str("[precheck]\ncaches = [\"https://c.example/{hash}.torrent\"]\n")
+                .unwrap();
+        assert!(ok.validate().is_ok());
+    }
+
+    #[test]
+    fn env_overrides() {
+        let config = Config::default();
+        let p = with_env(
+            &[
+                ("PUTIO_SYNC_PRECHECK_ENABLED", "0"),
+                ("PUTIO_SYNC_PRECHECK_MAGNET_LOOKUP", ""),
+            ],
+            || config.resolve_precheck().unwrap(),
+        );
+        assert!(!p.enabled);
+        assert!(p.magnet_lookup);
+        let err = with_env(&[("PUTIO_SYNC_PRECHECK_MAGNET_LOOKUP", "no")], || {
+            config.resolve_precheck().unwrap_err().to_string()
+        });
+        assert!(err.contains("precheck.magnet_lookup 'no'"), "{err}");
+    }
+
+    /// FR-006: the check rejects archives; the sync's block list stays as it was
+    #[test]
+    fn blocked_extensions_unchanged() {
+        for ext in ["7z", "zip", "rar"] {
+            assert!(!DEFAULT_BLOCKED_EXTENSIONS.contains(&ext), "{ext}");
+        }
+        assert_eq!(DEFAULT_BLOCKED_EXTENSIONS.len(), 15);
     }
 }

@@ -7,9 +7,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use putio_sync_client::{error_chain, PutioApiClient};
-use putio_sync_core::config::{normalize_arr_category, ArrSettings};
-use putio_sync_db::{ArrItem, ArrState, BlocklistState, Database, NewArrItem, PutioProgress};
+use putio_sync_core::config::{normalize_arr_category, ArrSettings, PrecheckConfig};
+use putio_sync_core::rules::RuleSet;
+use putio_sync_db::{
+    ArrItem, ArrState, BlocklistState, CheckState, Database, NewArrItem, NewCheck, NewReport,
+    PutioProgress, ReportKind,
+};
 use putio_sync_download::{DownloadManager, TreeDecision};
+use putio_sync_precheck::fetch::{self, Fetched};
+use putio_sync_precheck::policy::Key;
+use putio_sync_precheck::{
+    Metainfo, Outcome, Policy, PrecheckSource, Prechecker, Reason, Stage, Traits,
+};
 use putio_sync_telemetry::arr as metrics;
 use putio_sync_telemetry::labels::{ArrItemState, BlocklistOutcome};
 use serde_json::Value;
@@ -26,8 +35,8 @@ use crate::view::{self, LocalProgress};
 /// How often a poll may refresh from Put.io (research R7)
 pub const REFRESH_INTERVAL: Duration = Duration::from_secs(20);
 
-/// Largest .torrent fetched from a URL
-const MAX_TORRENT_BYTES: usize = 10 * 1024 * 1024;
+/// How long an add may take before the *arr's 15 s RPC timeout (042 research R6)
+const ADD_BUDGET: Duration = Duration::from_secs(14);
 
 /// Blocklist calls tried before giving up
 const MAX_BLOCKLIST_ATTEMPTS: i64 = 5;
@@ -90,6 +99,14 @@ impl From<putio_sync_db::DbError> for ArrError {
     }
 }
 
+/// A release being added, for [`ArrService::reject`]
+struct Release<'a> {
+    hash: &'a str,
+    name: Option<String>,
+    category: &'a str,
+    source: PrecheckSource,
+}
+
 /// The torrent bytes or magnet to hand to Put.io
 enum Payload {
     Magnet(String),
@@ -104,6 +121,10 @@ pub struct ArrService {
     settings: ArrSettings,
     target: PathBuf,
     http: reqwest::Client,
+    /// For .torrent URLs: stops at a redirect to `magnet:`
+    fetch_http: reqwest::Client,
+    /// The release pre-check (042); `None` leaves it off
+    precheck: Option<Prechecker>,
     contacts: Contacts,
     /// Serialises adds so two of the same hash can't race
     add_lock: Mutex<()>,
@@ -129,11 +150,19 @@ impl ArrService {
             settings,
             target,
             http: reqwest::Client::new(),
+            fetch_http: fetch::client(),
+            precheck: None,
             contacts: Contacts::default(),
             add_lock: Mutex::new(()),
             last_refresh: Mutex::new(None),
             blocklist_lock: Mutex::new(()),
         }
+    }
+
+    /// Check releases before they reach Put.io (042), with `[precheck]` and the 009 rules
+    pub fn with_precheck(mut self, config: PrecheckConfig, rules: RuleSet) -> Self {
+        self.precheck = Some(Prechecker::new(config, rules));
+        self
     }
 
     /// The resolved `[arr]` settings
@@ -190,11 +219,18 @@ impl ArrService {
         download_dir: Option<&str>,
     ) -> Result<AddOutcome, ArrError> {
         let category = self.category_for(download_dir)?;
-        let (hash, name, payload) = match source {
-            AddSource::Magnet(magnet) => magnet_payload(magnet)?,
-            AddSource::Url(url) if url.starts_with("magnet:") => magnet_payload(url)?,
-            AddSource::Url(url) => torrent_payload(self.fetch_torrent(&url).await?)?,
-            AddSource::Metainfo(bytes) => torrent_payload(bytes)?,
+        let deadline = Instant::now() + ADD_BUDGET;
+        let ((hash, name, payload), source) = match source {
+            AddSource::Magnet(magnet) => (magnet_payload(magnet)?, PrecheckSource::Magnet),
+            AddSource::Url(url) if url.starts_with("magnet:") => {
+                (magnet_payload(url)?, PrecheckSource::Magnet)
+            }
+            AddSource::Url(url) => match fetch::fetch(&self.fetch_http, &url, deadline).await {
+                Ok(Fetched::Torrent(bytes)) => (torrent_payload(bytes)?, PrecheckSource::Url),
+                Ok(Fetched::Magnet(magnet)) => (magnet_payload(magnet)?, PrecheckSource::Magnet),
+                Err(_) => return Err(ArrError::InvalidTorrent),
+            },
+            AddSource::Metainfo(bytes) => (torrent_payload(bytes)?, PrecheckSource::Torrent),
         };
 
         let _guard = self.add_lock.lock().await;
@@ -203,6 +239,20 @@ impl ArrService {
             debug!(hash = %hash, "arr item already tracked");
             return Ok(AddOutcome::Duplicate(existing));
         }
+
+        let passed = match self.precheck(&payload, &category, source) {
+            Some((Outcome::Rejected(meta, reason), policy)) => {
+                let release = Release {
+                    hash: &hash,
+                    name,
+                    category: &category,
+                    source,
+                };
+                return self.reject(release, meta, reason, &policy).await;
+            }
+            Some((Outcome::Passed(meta), _)) => Some(meta),
+            Some((Outcome::Unknown { .. }, _)) | None => None,
+        };
 
         let parent = self.category_folder(&category).await?;
         let added = match payload {
@@ -226,12 +276,27 @@ impl ArrService {
             hash: &hash,
             name: &name,
             category: &category,
-            transfer_id: transfer.id,
+            transfer_id: Some(transfer.id),
             putio_status: &transfer.status,
             total_size: transfer.size.unwrap_or(0),
         })
         .await?;
         info!(hash = %hash, name = %name, transfer_id = transfer.id, "arr item added");
+        if let Some(meta) = passed {
+            let total = meta.as_ref().map_or(0, Metainfo::total_size);
+            self.record_check(&NewCheck {
+                hash: Some(&hash),
+                name: &name,
+                source: source.as_str(),
+                category: Some(&category),
+                stage: Stage::Before.as_str(),
+                state: Some(CheckState::Passed),
+                transfer_id: Some(transfer.id),
+                total_size: total as i64,
+                ..NewCheck::default()
+            })
+            .await;
+        }
         self.update_gauge().await;
 
         let item = repo
@@ -241,34 +306,120 @@ impl ArrService {
         Ok(AddOutcome::Added(item))
     }
 
-    /// Fetch a .torrent from an http(s) URL, capped at 10 MB. The URL is never logged:
-    /// indexer URLs carry API keys.
-    async fn fetch_torrent(&self, url: &str) -> Result<Vec<u8>, ArrError> {
-        if !(url.starts_with("http://") || url.starts_with("https://")) {
-            return Err(ArrError::InvalidTorrent);
-        }
-        let failed = |what: &str| {
-            warn!(reason = what, "Could not fetch the .torrent URL");
-            ArrError::InvalidTorrent
+    /// Check a .torrent before Put.io, with the policy that was used. `None` when the
+    /// check is off for the category, or for a magnet (looked up in a later story).
+    fn precheck(
+        &self,
+        payload: &Payload,
+        category: &str,
+        source: PrecheckSource,
+    ) -> Option<(Outcome, Policy)> {
+        let precheck = self.precheck.as_ref()?;
+        let Payload::Torrent(bytes) = payload else {
+            return None;
         };
-        let mut response = self
-            .http
-            .get(url)
-            .timeout(Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|_| failed("request failed"))?;
-        if !response.status().is_success() {
-            return Err(failed("bad status"));
+        let policy = precheck.policy(category, Key::Category(category));
+        if !policy.enabled {
+            return None;
         }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| failed("read failed"))? {
-            if bytes.len() + chunk.len() > MAX_TORRENT_BYTES {
-                return Err(failed("too large"));
+        Some((precheck.check(bytes, &policy, source), policy))
+    }
+
+    /// A release that failed the check: listed as failed with no Put.io transfer, and
+    /// blocklisted like any failed item (042 research R7)
+    async fn reject(
+        &self,
+        release: Release<'_>,
+        meta: Option<Metainfo>,
+        reason: Reason,
+        policy: &Policy,
+    ) -> Result<AddOutcome, ArrError> {
+        let Release {
+            hash,
+            name,
+            category,
+            source,
+        } = release;
+        let name = name
+            .or_else(|| meta.as_ref().map(|m| m.name.clone()))
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| hash.to_string());
+        let total = meta.as_ref().map_or(0, Metainfo::total_size) as i64;
+        let message = reason.message(Stage::Before);
+
+        let repo = self.db.arr();
+        repo.insert(&NewArrItem {
+            hash,
+            name: &name,
+            category,
+            transfer_id: None,
+            putio_status: "",
+            total_size: total,
+        })
+        .await?;
+        let blocklist = self.blocklist_server(category).is_some();
+        repo.set_state(hash, ArrState::Failed, Some(&message), blocklist)
+            .await?;
+
+        let check_id = self
+            .record_check(&NewCheck {
+                hash: Some(hash),
+                name: &name,
+                source: source.as_str(),
+                category: Some(category),
+                stage: Stage::Before.as_str(),
+                state: Some(CheckState::Rejected),
+                total_size: total,
+                reason: Some(reason.key()),
+                ..NewCheck::default()
+            })
+            .await;
+        let traits = meta.as_ref().map(|m| Traits::of(m, policy));
+        let types = traits.as_ref().map_or("[]".to_string(), Traits::types_json);
+        let hosts = traits
+            .as_ref()
+            .map_or("[]".to_string(), Traits::tracker_hosts_json);
+        let report = NewReport {
+            kind: ReportKind::Rejected,
+            check_id,
+            arr_hash: Some(hash),
+            source: Some(source.as_str()),
+            category: Some(category),
+            stage: Some(Stage::Before.as_str()),
+            name: &name,
+            hash: Some(hash),
+            total_size: Some(total),
+            file_count: traits.as_ref().map(|t| t.file_count as i64),
+            types: &types,
+            largest_wanted: traits.as_ref().map(|t| t.largest_wanted as i64),
+            min_size: Some(policy.min_size as i64),
+            tracker_hosts: &hosts,
+            is_private: meta.as_ref().is_some_and(|m| m.private),
+            reason: Some(reason.key()),
+            ..NewReport::default()
+        };
+        if let Err(e) = self.db.releases().insert_report(&report).await {
+            warn!(hash, error = %e, "Failed to record release report");
+        }
+        warn!(hash, name = %name, error = %message, "arr item failed");
+        self.update_gauge().await;
+
+        let item = repo
+            .get_by_hash(hash)
+            .await?
+            .ok_or_else(|| ArrError::Internal("added item missing".to_string()))?;
+        Ok(AddOutcome::Added(item))
+    }
+
+    /// Write a `release_checks` row. A failure is logged: the add goes on.
+    async fn record_check(&self, check: &NewCheck<'_>) -> Option<i64> {
+        match self.db.releases().insert_check(check).await {
+            Ok(id) => Some(id),
+            Err(e) => {
+                warn!(hash = ?check.hash, error = %e, "Failed to record release check");
+                None
             }
-            bytes.extend_from_slice(&chunk);
         }
-        Ok(bytes)
     }
 
     /// The Put.io folder id for a category, creating missing segments under the root
@@ -334,18 +485,13 @@ impl ArrService {
             }
         };
 
-        let needs_putio = items
-            .iter()
-            .any(|i| i.state == ArrState::Putio || recoverable(i));
+        let needs_putio = items.iter().any(follows_putio);
         if needs_putio {
             match self.client.list_transfers().await {
                 Ok(listing) => {
                     let transfers: HashMap<i64, _> =
                         listing.transfers.into_iter().map(|t| (t.id, t)).collect();
-                    for item in items
-                        .iter()
-                        .filter(|i| i.state == ArrState::Putio || recoverable(i))
-                    {
+                    for item in items.iter().filter(|i| follows_putio(i)) {
                         if let Err(e) = self.follow_transfer(item, &transfers).await {
                             warn!(hash = %item.hash, error = %e, "Failed to update arr item");
                         }
@@ -661,6 +807,15 @@ impl ArrService {
             }
         }
 
+        // A check still waiting for Put.io would hold the sync gate (042 data-model "States")
+        if let Err(e) = self
+            .db
+            .releases()
+            .resolve_pending_by_hash(&item.hash, Reason::Gone.key())
+            .await
+        {
+            warn!(hash = %item.hash, error = %e, "Failed to resolve release checks");
+        }
         repo.delete(&item.hash).await?;
         self.update_gauge().await;
         Ok(())
@@ -697,6 +852,11 @@ impl ArrService {
             Err(e) => debug!(error = %e, "Failed to count arr items"),
         }
     }
+}
+
+/// An item a refresh follows on Put.io. Items rejected before Put.io have no transfer.
+fn follows_putio(item: &ArrItem) -> bool {
+    item.transfer_id.is_some() && (item.state == ArrState::Putio || recoverable(item))
 }
 
 /// A failed item whose transfer may come back (it failed on Put.io, not locally)

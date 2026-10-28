@@ -5,7 +5,7 @@ use std::sync::Arc;
 use mockito::{Matcher, Mock, ServerGuard};
 use putio_sync_arr::{AddOutcome, AddSource, ArrError, ArrService, ItemId};
 use putio_sync_client::PutioApiClient;
-use putio_sync_core::config::{ArrKind, ArrServer, ArrSettings};
+use putio_sync_core::config::{ArrKind, ArrServer, ArrSettings, PrecheckConfig, PrecheckOverride};
 use putio_sync_db::models::DownloadStatus;
 use putio_sync_db::{ArrState, BlocklistState, Database};
 use putio_sync_download::{DownloadConfig, DownloadManager};
@@ -647,4 +647,321 @@ async fn remove_unfinished_item_keeps_putio_files_and_drops_queue() {
     assert!(h.db.arr().get_by_hash(HASH).await.unwrap().is_none());
     assert!(h.db.queue().get_by_file_id(1).await.unwrap().is_none());
     delete.assert_async().await;
+}
+
+// --- Release pre-check (feature 042) ---
+
+const MB: u64 = 1024 * 1024;
+
+/// A multi-file .torrent named `name` with `files` as (path, size)
+fn torrent(name: &str, files: &[(&str, u64)]) -> Vec<u8> {
+    let mut list = String::new();
+    for (path, size) in files {
+        list.push_str(&format!("d6:lengthi{size}e4:pathl{}:{path}ee", path.len()));
+    }
+    format!(
+        "d4:infod5:filesl{list}e4:name{}:{name}12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee",
+        name.len()
+    )
+    .into_bytes()
+}
+
+fn hash_of(bytes: &[u8]) -> String {
+    putio_sync_precheck::metainfo::info_hash(bytes).unwrap().0
+}
+
+/// (source, stage, state, reason) of each `release_checks` row, oldest first
+async fn checks(db: &Database) -> Vec<(String, String, String, Option<String>)> {
+    sqlx::query_as("SELECT source, stage, state, reason FROM release_checks ORDER BY id")
+        .fetch_all(db.pool())
+        .await
+        .unwrap()
+}
+
+impl Harness {
+    fn checked(&self, servers: Vec<ArrServer>, cfg: PrecheckConfig) -> ArrService {
+        self.service(servers).with_precheck(
+            cfg,
+            putio_sync_core::rules::RuleSet::from_config(
+                &putio_sync_core::config::DownloadConfig::default(),
+            ),
+        )
+    }
+
+    /// The `sonarr` folder exists, and one upload into it is expected
+    async fn upload_expected(&mut self) -> Mock {
+        self.json(
+            "GET",
+            "/files/list?parent_id=0",
+            format!(
+                r#"{{"files":[{}],"parent":{},"status":"OK"}}"#,
+                entry(CATEGORY_FOLDER, "sonarr", "FOLDER", 0, 0),
+                entry(0, "root", "FOLDER", 0, 0)
+            ),
+        )
+        .await;
+        self.putio
+            .mock("POST", "/files/upload")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{"transfer":{},"status":"OK"}}"#,
+                transfer("IN_QUEUE", 0, None, None)
+            ))
+            .expect(1)
+            .create_async()
+            .await
+    }
+}
+
+fn sonarr(url: String) -> ArrServer {
+    ArrServer {
+        kind: ArrKind::Sonarr,
+        url,
+        api_key: Some("sonarr-key".to_string()),
+        category: "sonarr".to_string(),
+    }
+}
+
+#[tokio::test]
+async fn fake_torrents_never_reach_putio() {
+    let mut h = Harness::new().await;
+    let upload = h.upload_expected().await;
+    let arr = mockito::Server::new_async().await;
+    let service = h.checked(vec![sonarr(arr.url())], PrecheckConfig::default());
+    let dir = format!("{}/sonarr", h.target().display());
+
+    let exe = torrent(
+        "Show.S01E03.1080p",
+        &[("Show.S01E03.exe", 1500 * MB), ("readme.txt", 1000)],
+    );
+    let seven = torrent("Show.S01E04.1080p", &[("Show.S01E04.7z", 900 * MB)]);
+    let real = torrent("Show.S01E05.1080p", &[("Show.S01E05.mkv", 2048 * MB)]);
+
+    for (bytes, error) in [
+        (
+            &exe,
+            "rejected before Put.io: no video file (found .exe, .txt)",
+        ),
+        (&seven, "rejected before Put.io: no video file (found .7z)"),
+    ] {
+        let AddOutcome::Added(item) = service
+            .add(AddSource::Metainfo(bytes.clone()), Some(&dir))
+            .await
+            .unwrap()
+        else {
+            panic!("expected a new item");
+        };
+        assert_eq!(item.hash, hash_of(bytes));
+        assert_eq!(item.transfer_id, None);
+        assert_eq!(item.state, ArrState::Failed);
+        assert_eq!(item.error.as_deref(), Some(error));
+        assert_eq!(item.blocklist, BlocklistState::Pending);
+    }
+    let AddOutcome::Added(item) = service
+        .add(AddSource::Metainfo(real.clone()), Some(&dir))
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(item.transfer_id, Some(TRANSFER));
+    upload.assert_async().await;
+
+    let rows = checks(&h.db).await;
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "torrent".into(),
+                "before".into(),
+                "rejected".into(),
+                Some("no_wanted".into())
+            ),
+            (
+                "torrent".into(),
+                "before".into(),
+                "rejected".into(),
+                Some("no_wanted".into())
+            ),
+            ("torrent".into(), "before".into(), "passed".into(), None),
+        ]
+    );
+    let (types, hosts, count): (String, String, i64) = sqlx::query_as(
+        "SELECT types, tracker_hosts, file_count FROM release_reports ORDER BY id LIMIT 1",
+    )
+    .fetch_one(h.db.pool())
+    .await
+    .unwrap();
+    assert!(types.starts_with(r#"[{"ext":"exe","count":1,"#), "{types}");
+    assert_eq!(hosts, "[]");
+    assert_eq!(count, 2);
+
+    // A rejected item has no transfer to follow, and removing it calls no Put.io API
+    service.remove(&hash_of(&exe), true).await.unwrap();
+    assert!(h
+        .db
+        .arr()
+        .get_by_hash(&hash_of(&exe))
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn rejected_item_is_blocklisted_once() {
+    let mut h = Harness::new().await;
+    let exe = torrent("Show.S01E03.1080p", &[("Show.S01E03.exe", 1500 * MB)]);
+    let hash = hash_of(&exe);
+    let mut arr = mockito::Server::new_async().await;
+    let queue = arr
+        .mock("GET", "/api/v3/queue/details")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"[{{"id":9,"downloadId":"{}"}}]"#,
+            hash.to_uppercase()
+        ))
+        .expect(1)
+        .create_async()
+        .await;
+    let delete = arr
+        .mock(
+            "DELETE",
+            "/api/v3/queue/9?removeFromClient=true&blocklist=true",
+        )
+        .with_status(200)
+        .expect(1)
+        .create_async()
+        .await;
+    // No Put.io call at all: neither a transfer list nor an upload
+    let list = h.transfers(&[]).await.expect(0);
+    let service = h.checked(vec![sonarr(arr.url())], PrecheckConfig::default());
+    let dir = format!("{}/sonarr", h.target().display());
+    service
+        .add(AddSource::Metainfo(exe), Some(&dir))
+        .await
+        .unwrap();
+
+    service.refresh().await;
+    service.refresh().await;
+    let item = h.db.arr().get_by_hash(&hash).await.unwrap().unwrap();
+    assert_eq!(item.blocklist, BlocklistState::Done);
+    queue.assert_async().await;
+    delete.assert_async().await;
+    list.assert_async().await;
+}
+
+#[tokio::test]
+async fn url_is_fetched_and_checked() {
+    let h = Harness::new().await;
+    let mut indexer = mockito::Server::new_async().await;
+    let exe = torrent("Movie.2026.1080p", &[("Movie.2026.exe", 1500 * MB)]);
+    let _t = indexer
+        .mock("GET", "/download?apikey=secret")
+        .with_body(exe.clone())
+        .create_async()
+        .await;
+    let service = h.checked(vec![], PrecheckConfig::default());
+    let AddOutcome::Added(item) = service
+        .add(
+            AddSource::Url(format!("{}/download?apikey=secret", indexer.url())),
+            None,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(item.hash, hash_of(&exe));
+    assert_eq!(item.state, ArrState::Failed);
+    assert_eq!(
+        checks(&h.db).await,
+        vec![(
+            "url".into(),
+            "before".into(),
+            "rejected".into(),
+            Some("no_wanted".into())
+        )]
+    );
+}
+
+#[tokio::test]
+async fn small_video_and_unreadable_list_are_rejected() {
+    let h = Harness::new().await;
+    let service = h.checked(vec![], PrecheckConfig::default());
+    let small = torrent("Sample", &[("sample.mkv", 12 * MB)]);
+    let AddOutcome::Added(item) = service.add(AddSource::Metainfo(small), None).await.unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(
+        item.error.as_deref(),
+        Some("rejected before Put.io: only a small video (12 MB, minimum 50 MB)")
+    );
+
+    // The info dict hashes, but has no file list
+    let no_files =
+        b"d4:infod4:name3:abc12:piece lengthi1e6:pieces20:aaaaaaaaaaaaaaaaaaaaee".to_vec();
+    let AddOutcome::Added(item) = service
+        .add(AddSource::Metainfo(no_files), None)
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(
+        item.error.as_deref(),
+        Some("rejected before Put.io: not a valid .torrent")
+    );
+}
+
+#[tokio::test]
+async fn category_with_the_check_off_goes_to_putio() {
+    let mut h = Harness::new().await;
+    let upload = h.upload_expected().await;
+    let mut cfg = PrecheckConfig::default();
+    cfg.categories.insert(
+        "sonarr".to_string(),
+        PrecheckOverride {
+            enabled: Some(false),
+            ..PrecheckOverride::default()
+        },
+    );
+    let service = h.checked(vec![], cfg);
+    let dir = format!("{}/sonarr", h.target().display());
+    let exe = torrent("Tool", &[("setup.exe", 1500 * MB)]);
+    let AddOutcome::Added(item) = service
+        .add(AddSource::Metainfo(exe), Some(&dir))
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(item.transfer_id, Some(TRANSFER));
+    assert!(checks(&h.db).await.is_empty());
+    upload.assert_async().await;
+}
+
+#[tokio::test]
+async fn dry_run_logs_but_sends_to_putio() {
+    let mut h = Harness::new().await;
+    let upload = h.upload_expected().await;
+    let cfg = PrecheckConfig {
+        dry_run: true,
+        ..PrecheckConfig::default()
+    };
+    let service = h.checked(vec![], cfg);
+    let dir = format!("{}/sonarr", h.target().display());
+    let exe = torrent("Show.S01E03.1080p", &[("Show.S01E03.exe", 1500 * MB)]);
+    let AddOutcome::Added(item) = service
+        .add(AddSource::Metainfo(exe), Some(&dir))
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(item.transfer_id, Some(TRANSFER));
+    assert_eq!(item.state, ArrState::Putio);
+    upload.assert_async().await;
 }
