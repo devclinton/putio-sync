@@ -194,7 +194,7 @@ and check it. A miss falls back to Put.io.
 rejected, and a real one passes. A miss creates a Put.io transfer and a `pending` check row. A
 wrong-hash body is ignored.
 
-- [ ] T013 [P] [US2] Test, then add `putio-sync-precheck/src/lookup.rs`: `lookup(hash, cfg) ->
+- [X] T013 [P] [US2] Test, then add `putio-sync-precheck/src/lookup.rs`: `lookup(hash, cfg) ->
   Found(Metainfo, cache_host) | Missed(LookupResult)`.
   - Try the caches in order within `lookup_timeout_secs` in total, with each body capped at
     2 MB.
@@ -209,7 +209,7 @@ wrong-hash body is ignored.
     the limit (`timeout`, and the call returns within limit + 1 s); off.
   - For SC-002, each test asserts the mock's request count: one GET per cache tried and nothing
     else. A found lookup reads only the body it parses.
-- [ ] T014 [US2] Test, then handle magnets in `ArrService::add` (`Magnet`, `Url` starting with
+- [X] T014 [US2] Test, then handle magnets in `ArrService::add` (`Magnet`, `Url` starting with
   `magnet:`, and `Fetched::Magnet`):
   - found: check as in T010 with `source=magnet`, recording `lookup` and `lookup_cache`;
   - missed: add to Put.io as today, insert `release_checks` with `state=pending`, the `lookup`

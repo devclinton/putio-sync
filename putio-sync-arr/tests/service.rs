@@ -965,3 +965,235 @@ async fn dry_run_logs_but_sends_to_putio() {
     assert_eq!(item.state, ArrState::Putio);
     upload.assert_async().await;
 }
+
+// --- Magnets looked up in caches (042 T014) ---
+
+fn magnet_for(hash: &str, name: &str) -> String {
+    format!("magnet:?xt=urn:btih:{}&dn={name}", hash.to_uppercase())
+}
+
+/// (lookup, lookup_cache, state, transfer_id) of each `release_checks` row
+async fn lookups(db: &Database) -> Vec<(Option<String>, Option<String>, String, Option<i64>)> {
+    sqlx::query_as(
+        "SELECT lookup, lookup_cache, state, transfer_id FROM release_checks ORDER BY id",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap()
+}
+
+fn with_caches(caches: Vec<String>) -> PrecheckConfig {
+    PrecheckConfig {
+        caches,
+        ..PrecheckConfig::default()
+    }
+}
+
+/// A server that accepts connections and never answers
+async fn hanging() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            held.push(socket);
+        }
+    });
+    format!("http://{addr}/{{HASH}}.torrent")
+}
+
+#[tokio::test]
+async fn magnet_found_fake_is_rejected_and_not_asked_again() {
+    let h = Harness::new().await;
+    let exe = torrent("Show.S01E03.1080p", &[("Show.S01E03.exe", 1500 * MB)]);
+    let hash = hash_of(&exe);
+    let mut cache = mockito::Server::new_async().await;
+    let hit = cache
+        .mock(
+            "GET",
+            format!("/t/{}.torrent", hash.to_uppercase()).as_str(),
+        )
+        .with_body(exe)
+        .expect(1)
+        .create_async()
+        .await;
+    let service = h.checked(
+        vec![],
+        with_caches(vec![format!("{}/t/{{HASH}}.torrent", cache.url())]),
+    );
+    let magnet = magnet_for(&hash, "Show.S01E03.1080p");
+
+    let AddOutcome::Added(item) = service
+        .add(AddSource::Magnet(magnet.clone()), None)
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(item.transfer_id, None);
+    assert_eq!(
+        item.error.as_deref(),
+        Some("rejected before Put.io: no video file (found .exe)")
+    );
+    assert_eq!(
+        lookups(&h.db).await,
+        vec![(
+            Some("found".into()),
+            Some("127.0.0.1".into()),
+            "rejected".into(),
+            None
+        )]
+    );
+
+    // Re-added: the existing failed item, with no cache request
+    let again = service.add(AddSource::Magnet(magnet), None).await.unwrap();
+    assert!(matches!(again, AddOutcome::Duplicate(i) if i.id == item.id));
+    hit.assert_async().await;
+}
+
+#[tokio::test]
+async fn magnet_found_real_and_missed_go_to_putio() {
+    let mut h = Harness::new().await;
+    let real = torrent("Show.S01E01", &[("Show.S01E01.mkv", 2048 * MB)]);
+    let real_hash = hash_of(&real);
+    let mut cache = mockito::Server::new_async().await;
+    let _hit = cache
+        .mock(
+            "GET",
+            format!("/t/{}.torrent", real_hash.to_uppercase()).as_str(),
+        )
+        .with_body(real)
+        .create_async()
+        .await;
+    let miss = cache
+        .mock(
+            "GET",
+            format!("/t/{}.torrent", HASH.to_uppercase()).as_str(),
+        )
+        .with_status(404)
+        .expect(1)
+        .create_async()
+        .await;
+    h.category_created().await;
+    let added = h
+        .putio
+        .mock("POST", "/transfers/add")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"transfer":{},"status":"OK"}}"#,
+            transfer("IN_QUEUE", 0, None, None)
+        ))
+        .expect(2)
+        .create_async()
+        .await;
+    let service = h.checked(
+        vec![],
+        with_caches(vec![format!("{}/t/{{HASH}}.torrent", cache.url())]),
+    );
+    let dir = format!("{}/sonarr", h.target().display());
+
+    service
+        .add(
+            AddSource::Magnet(magnet_for(&real_hash, "Show.S01E01")),
+            Some(&dir),
+        )
+        .await
+        .unwrap();
+    service
+        .add(AddSource::Magnet(magnet()), Some(&dir))
+        .await
+        .unwrap();
+    assert_eq!(
+        lookups(&h.db).await,
+        vec![
+            (
+                Some("found".into()),
+                Some("127.0.0.1".into()),
+                "passed".into(),
+                Some(TRANSFER)
+            ),
+            (
+                Some("not_found".into()),
+                None,
+                "pending".into(),
+                Some(TRANSFER)
+            ),
+        ]
+    );
+    assert!(h.db.releases().has_pending().await.unwrap());
+    added.assert_async().await;
+    miss.assert_async().await;
+}
+
+/// SC-003: the add answers inside the *arr's 15 s timeout while every cache hangs
+#[tokio::test]
+async fn hanging_caches_fall_back_within_the_deadline() {
+    let mut h = Harness::new().await;
+    h.category_created().await;
+    let added = h.transfer_added().await;
+    let cfg = PrecheckConfig {
+        lookup_timeout_secs: 30,
+        caches: vec![hanging().await, hanging().await],
+        ..PrecheckConfig::default()
+    };
+    let service = h.checked(vec![], cfg);
+    let dir = format!("{}/sonarr", h.target().display());
+    let started = std::time::Instant::now();
+    service
+        .add(AddSource::Magnet(magnet()), Some(&dir))
+        .await
+        .unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+    assert_eq!(
+        lookups(&h.db).await,
+        vec![(
+            Some("timeout".into()),
+            None,
+            "pending".into(),
+            Some(TRANSFER)
+        )]
+    );
+    added.assert_async().await;
+}
+
+/// An indexer that waits 12 s and then redirects to a magnet: the lookup gets what is left
+#[tokio::test]
+async fn slow_redirect_to_magnet_still_answers_in_time() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut h = Harness::new().await;
+    h.category_created().await;
+    let added = h.transfer_added().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let location = magnet();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = socket.read(&mut buf).await;
+        tokio::time::sleep(std::time::Duration::from_secs(12)).await;
+        let reply = format!(
+            "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        socket.write_all(reply.as_bytes()).await.unwrap();
+    });
+    let service = h.checked(vec![], with_caches(vec![hanging().await]));
+    let dir = format!("{}/sonarr", h.target().display());
+    let started = std::time::Instant::now();
+    service
+        .add(
+            AddSource::Url(format!("http://{addr}/download?apikey=secret")),
+            Some(&dir),
+        )
+        .await
+        .unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+    let rows: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT source, lookup FROM release_checks")
+            .fetch_all(h.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(rows, vec![("magnet".into(), Some("timeout".into()))]);
+    added.assert_async().await;
+}

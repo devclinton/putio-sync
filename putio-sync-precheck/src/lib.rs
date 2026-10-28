@@ -2,15 +2,19 @@
 //! and rejects it when no file is a wanted type of at least the minimum size.
 
 pub mod fetch;
+pub mod lookup;
 pub mod metainfo;
 pub mod policy;
 pub mod report;
 pub mod rule;
 
+pub use lookup::{Lookup, Missed};
 pub use metainfo::{Metainfo, ReleaseFile};
 pub use putio_sync_telemetry::{PrecheckSource, PrecheckStage};
 pub use report::Traits;
 pub use rule::{Policy, Reason, Stage, Verdict};
+
+use std::time::Duration;
 
 use putio_sync_core::config::PrecheckConfig;
 use putio_sync_core::rules::RuleSet;
@@ -42,12 +46,17 @@ pub struct Checked {
 pub struct Prechecker {
     config: PrecheckConfig,
     rules: RuleSet,
+    lookup_http: reqwest::Client,
 }
 
 impl Prechecker {
     pub fn new(config: PrecheckConfig, rules: RuleSet) -> Self {
         metrics::caches(&cache_hosts(&config.caches));
-        Self { config, rules }
+        Self {
+            config,
+            rules,
+            lookup_http: lookup::client(),
+        }
     }
 
     pub fn config(&self) -> &PrecheckConfig {
@@ -84,6 +93,43 @@ impl Prechecker {
         }
         let checked = Self::check_bytes(bytes, policy);
         self.decide(checked, source, Stage::Before)
+    }
+
+    /// Check a file list found in a cache before Put.io, as [`Prechecker::check`] does
+    pub fn check_meta(&self, meta: Metainfo, policy: &Policy, source: PrecheckSource) -> Outcome {
+        let verdict = rule::evaluate(policy, &meta.files);
+        let checked = Checked {
+            meta: Some(meta),
+            verdict,
+        };
+        self.decide(checked, source, Stage::Before)
+    }
+
+    /// Look a magnet up in the caches within `limit`, capped at `lookup_timeout_secs`.
+    /// With `magnet_lookup` off no request is made. Under 1 s gives a timeout unasked.
+    pub async fn lookup(&self, hash: &str, limit: Duration) -> Lookup {
+        if !self.config.magnet_lookup {
+            return Lookup::Missed(Missed::Off);
+        }
+        let limit = limit.min(Duration::from_secs(self.config.lookup_timeout_secs));
+        if limit < Duration::from_secs(1) {
+            return Lookup::Missed(Missed::Failed(putio_sync_telemetry::LookupResult::Timeout));
+        }
+        lookup::lookup(&self.lookup_http, hash, &self.config.caches, limit).await
+    }
+
+    /// Log and count a magnet that goes to Put.io unchecked
+    pub fn unknown(&self, hash: &str, name: &str, source: PrecheckSource, missed: Missed) {
+        info!(
+            hash,
+            name,
+            source = source.as_str(),
+            stage = Stage::Before.as_str(),
+            outcome = "unknown",
+            lookup = missed.as_str(),
+            "Release not checked before Put.io"
+        );
+        metrics::check(source, PrecheckStage::Before, PrecheckOutcome::Unknown);
     }
 
     /// Log, count and apply `dry_run` to a verdict
