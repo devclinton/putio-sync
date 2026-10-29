@@ -24,7 +24,7 @@ synthetic, and the hold pass takes `now` as an argument so no test sleeps.
 
 ## Phase 2: Foundational (blocks every story)
 
-- [ ] T002 [P] Test, then add three keys to `PrecheckConfig` in `putio-sync-core/src/config.rs`:
+- [X] T002 [P] Test, then add three keys to `PrecheckConfig` in `putio-sync-core/src/config.rs`:
   - `hold_magnet_secs: u64` default `300`, range `0..=3600`, `0` = holding off;
   - `hold_retry_secs: u64` default `30`, range `10..=600`;
   - `first_lookup_secs: u64` default `3`, range `1..=lookup_timeout_secs`;
@@ -34,7 +34,7 @@ synthetic, and the hold pass takes `now` as an argument so no test sleeps.
   - no env overrides (data-model.md).
   - Tests next to 042's `[precheck]` config tests: defaults, each range edge, and
     `first_lookup_secs > lookup_timeout_secs` rejected.
-- [ ] T003 [P] Test, then add the `held_magnets` table and `HeldRepository`:
+- [X] T003 [P] Test, then add the `held_magnets` table and `HeldRepository`:
   - `putio-sync-db/src/schema.rs`: `CREATE_HELD_MAGNETS_TABLE` exactly as data-model.md
     (`hash TEXT PRIMARY KEY`, `magnet TEXT NOT NULL`,
     `source TEXT NOT NULL CHECK(source IN ('magnet', 'url', 'watch_magnet'))`, `category`,
@@ -48,13 +48,13 @@ synthetic, and the hold pass takes `now` as an argument so no test sleeps.
   - The `magnet` column is never in a `Debug` impl that gets logged: redact it in `Held`'s
     `Debug`.
   - Tests in `held.rs`: insert/due ordering, reschedule, delete, a duplicate hash refused.
-- [ ] T004 [P] Test, then add two settle methods to `putio-sync-db/src/releases.rs`:
+- [X] T004 [P] Test, then add two settle methods to `putio-sync-db/src/releases.rs`:
   - `settle_held(id, state, lookup, lookup_cache, total_size, reason, transfer_id)`: sets the
     fields and `resolved_at`, only `WHERE id = ? AND state = 'pending'`;
   - `set_check_transfer(id, transfer_id)`: leaves the row `pending`, so 042's
     `pending_checks` picks it up.
   - Tests in the module's test block, next to `pending_checks_resolve_once`.
-- [ ] T005 [P] Add the metric families from contracts/api.md in
+- [X] T005 [P] Add the metric families from contracts/api.md in
   `putio-sync-telemetry/src/lib.rs`:
   - `putio_sync_precheck_held_total{result}` with `result` in `found_passed`,
     `found_rejected`, `ran_out`, `removed`, `unchecked`;
@@ -63,7 +63,7 @@ synthetic, and the hold pass takes `now` as an argument so no test sleeps.
   - an `ask` label (`first`, `retry`) on 042's `putio_sync_precheck_cache_lookups_total`,
     updating its existing call sites to pass `first`.
   - Add all of them to the telemetry contract test.
-- [ ] T006 Factor the tail of `ArrService::add` in `putio-sync-arr/src/service.rs` (category
+- [X] T006 Factor the tail of `ArrService::add` in `putio-sync-arr/src/service.rs` (category
   folder, add transfer, record) into `send_to_putio(item, magnet_or_torrent, check)`, with no
   behaviour change. 042's tests in `putio-sync-arr/tests/service.rs` must pass unchanged.
 
@@ -75,7 +75,8 @@ synthetic, and the hold pass takes `now` as an argument so no test sleeps.
 later. The add makes no Put.io call; after `release_held(now + 30 s)` a fake is failed and
 blocklisted with no Put.io call, and a real release is added to Put.io.
 
-- [ ] T007 [US1] Write the tests in a new `putio-sync-arr/tests/hold.rs`, reusing the harness
+- [X] T007 [US1] (Built in a 043 section of `putio-sync-arr/tests/service.rs`, sharing its
+  harness.) Write the tests in a new `putio-sync-arr/tests/hold.rs`, reusing the harness
   from `putio-sync-arr/tests/service.rs` (move shared helpers into `tests/common/mod.rs` if both
   files need them). Each must fail first:
   - holding on, first ask 404: `torrent-add` succeeds, no `transfers/add` request, one
@@ -90,23 +91,23 @@ blocklisted with no Put.io call, and a real release is added to Put.io.
   - a re-ask with the wrong hash counts as a miss;
   - `dry_run`: a fake found on re-ask goes to Put.io and is logged "would reject";
   - holding off (`hold_magnet_secs = 0`): 042's behaviour, no hold row.
-- [ ] T008 [US1] Add the `Held` branch to `ArrService::add` and `precheck` in
+- [X] T008 [US1] Add the `Held` branch to `ArrService::add` and `precheck` in
   `putio-sync-arr/src/service.rs`: on `Lookup::Missed` with `holding()` and the release eligible
   (FR-002: category checked, not private), insert the arr item (`transfer_id = None`,
   `state = Putio`, `putio_status = "HELD"`), the pending check (`stage = before`, no transfer,
   `lookup` = the first result) and the hold row (`next_at = now + hold_retry_secs`,
   `until_at = now + hold_magnet_secs`), then answer as for any add. A URL that redirected to a
   magnet stores the magnet, `source = url`.
-- [ ] T009 [US1] Add `ArrService::release_held(now)` in `putio-sync-arr/src/service.rs`,
+- [X] T009 [US1] Add `ArrService::release_held(now)` in `putio-sync-arr/src/service.rs`,
   following the table in plan.md "Hold pass": take `held().due(now, …)` oldest first and
   handle one at a time; re-ask with `lookup(hash, lookup_timeout_secs)`; on found, run
   `check_meta` and either `send_to_putio` (pass or dry-run reject) or the 042 reject tail on the
   existing item (`set_state(Failed)`, blocklist, report); settle the check with `settle_held`; on
   `until_at`, `send_to_putio` and `set_check_transfer`. Count each outcome (T005) and log
   `hash`, `name`, `attempt`, `result`, never the magnet.
-- [ ] T010 [US1] A refused Put.io add during the hold pass fails the item with Put.io's message
+- [X] T010 [US1] A refused Put.io add during the hold pass fails the item with Put.io's message
   and deletes the hold row (FR-014). Add the test to `tests/hold.rs` first.
-- [ ] T011 [US1] Spawn the hold ticker in `putio-sync-api/src/lib.rs` where `ArrRpc` is built:
+- [X] T011 [US1] Spawn the hold ticker in `putio-sync-api/src/lib.rs` where `ArrRpc` is built:
   a `tokio::time::interval(10 s)` loop calling `service.release_held(Utc::now())`, first tick
   immediately (covers FR-009's expired-during-restart case). Keep it to glue; the logic stays
   in `arr`.
@@ -118,12 +119,12 @@ blocklisted with no Put.io call, and a real release is added to Put.io.
 **Independent test**: a mockito cache that stalls; the add returns in about 3 s with holding
 on, and after the full `lookup_timeout_secs` with holding off.
 
-- [ ] T012 [US2] Tests in `putio-sync-arr/tests/hold.rs`, each failing first: a stalling cache
+- [X] T012 [US2] Tests in `putio-sync-arr/tests/hold.rs`, each failing first: a stalling cache
   with holding on returns within `first_lookup_secs` + 1 s and holds the magnet with
   `last_lookup = timeout`; holding off keeps 042's limit; a fast hit with holding on is checked
   at add time as in 042. Use small test values (`first_lookup_secs = 1`,
   `lookup_timeout_secs = 3`) so the suite stays fast.
-- [ ] T013 [US2] In `ArrService::precheck` (`putio-sync-arr/src/service.rs`), use
+- [X] T013 [US2] In `ArrService::precheck` (`putio-sync-arr/src/service.rs`), use
   `min(first_lookup_secs, lookup_timeout_secs, left)` as the lookup limit when `holding()`,
   else 042's limit. Record the lookup with `ask = first`; `release_held` uses `ask = retry`.
 
@@ -134,21 +135,22 @@ on, and after the full `lookup_timeout_secs` with holding off.
 **Independent test**: hold a magnet, build a new `ArrService` on the same database, and see the
 hold continue; remove a held item through the Transmission API and see no Put.io call.
 
-- [ ] T014 [P] [US3] Test, then map `putio_status == "HELD"` in `putio-sync-arr/src/view.rs`
+- [X] T014 [P] [US3] Test, then map `putio_status == "HELD"` in `putio-sync-arr/src/view.rs`
   to `status: 3`, `percentDone: 0`, `error: 0`, `errorString: ""`, `eta: -1`,
   `isFinished: false` (contracts/api.md). Unit test in the module.
-- [ ] T015 [US3] Tests in `putio-sync-arr/tests/hold.rs`, then the fix in `ArrService::remove`:
+- [X] T015 [US3] Tests in `putio-sync-arr/tests/hold.rs`, then the fix in `ArrService::remove`:
   removing a held item makes no Put.io call, deletes the hold row, closes the check `gone`, and
   counts `removed`. A second `torrent-add` of a held hash is 042's duplicate.
-- [ ] T016 [US3] Restart test in `putio-sync-arr/tests/hold.rs`: hold, drop the service, build a
+- [X] T016 [US3] Restart test in `putio-sync-arr/tests/hold.rs`: hold, drop the service, build a
   new one on the same database; `release_held` continues the schedule, and a hold whose
   `until_at` passed is sent to Put.io on the first pass.
-- [ ] T017 [US3] Test, then FR-013 in `release_held`: if precheck is now off, or the category is
+- [X] T017 [US3] Test, then FR-013 in `release_held`: if precheck is now off, or the category is
   no longer checked, `send_to_putio` and settle the check `passed` with `reason = unchecked`,
   counted `unchecked`.
-- [ ] T018 [P] [US3] Add the `held` object (`since`, `until`, `attempts`, `last_lookup`) to each
+- [X] T018 [P] [US3] (Built as a `held` list on `GET /arr`, which has no item list; see
+  contracts/api.md.) Add the `held` object (`since`, `until`, `attempts`, `last_lookup`) to each
   held item in `GET /arr` (`putio-sync-api/src/routes/arr.rs`), never the magnet. Route test.
-- [ ] T019 [P] [US3] In `putio-sync-api/ui/pages/queue.js`, show held items as "Waiting for file
+- [X] T019 [P] [US3] In `putio-sync-api/ui/pages/queue.js`, show held items as "Waiting for file
   list (n min left)". Seed one in `putio-sync-api/examples/mock_ui.rs`.
 
 ## Phase 6: User Story 4 - Watch-folder magnets are held too (P3)
@@ -172,22 +174,22 @@ hold continue; remove a held item through the Transmission API and see no Put.io
 
 **Independent test**: drive holds to each outcome, then read `/stats/releases` and `/metrics`.
 
-- [ ] T022 [US5] Test, then add the `held` block (`now`, `found`, `ran_out`, `removed`,
+- [ ] T022 **Blocked until 042 T020 (`/stats/releases`) is built.** [US5] Test, then add the `held` block (`now`, `found`, `ran_out`, `removed`,
   `median_found_secs`) to `GET /stats/releases` in
   `putio-sync-api/src/routes/system/stats.rs`, read from `release_checks` (settled rows with a
   `stage = before` and a `checked_at`→`resolved_at` gap) and `held().count()`. Add the query to
   `putio-sync-db/src/releases.rs`.
-- [ ] T023 [P] [US5] Add a "Held magnets" tile in `putio-sync-api/ui/pages/stats.js`, in its
+- [ ] T023 **Blocked until 042 T021 (the stats tiles) is built.** [P] [US5] Add a "Held magnets" tile in `putio-sync-api/ui/pages/stats.js`, in its
   own render function next to 042's "Magnet lookups" tile.
 
 ## Phase 8: Polish
 
-- [ ] T024 [P] Add the three keys to the `precheck` block of `GET/PUT /settings`
+- [ ] T024 **Blocked until 042 T025 (the Release check card) is built.** [P] Add the three keys to the `precheck` block of `GET/PUT /settings`
   (`putio-sync-api/src/routes/system/settings.rs`) and to 042's "Release check" card in
   `putio-sync-api/ui/pages/settings.js`. Test that a save keeps the file's comments.
-- [ ] T025 [P] Document the keys in `config.example.toml` and the README's pre-check section:
+- [ ] T025 **Blocked until 042 T027 (the `[precheck]` docs) is built.** [P] Document the keys in `config.example.toml` and the README's pre-check section:
   what holding does, the delay it adds to magnet-only releases, and that it contacts nothing new.
-- [ ] T026 [P] Add a `CHANGELOG.md` entry, and mark 043 in `ROADMAP.md` as shipped (move it out
+- [X] T026 [P] Add a `CHANGELOG.md` entry, and mark 043 in `ROADMAP.md` as shipped (move it out
   of the queue).
 - [ ] T027 Run `TMPDIR=<scratchpad> make ci` and fix everything. Run the quickstart's manual
   steps on the NAS after deploy.

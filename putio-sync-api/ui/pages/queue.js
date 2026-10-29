@@ -22,7 +22,7 @@ let timer = null;
 let seq = 0;
 let items = [];
 let els = null;
-let shown = { downloads: null, queue: null };
+let shown = { downloads: null, queue: null, held: null };
 let watchingSync = false;
 let flags = null;
 let flagged = { ids: null, version: 0 };
@@ -37,8 +37,9 @@ export function mount(el) {
     syncBtn: h("button", { type: "button", class: "btn btn-primary", onclick: onSync }, "Sync now"),
     downloads: h("section", { class: "card wide" }),
     queue: h("section", { class: "card wide" }),
+    held: h("section", { class: "card wide", hidden: true }),
   };
-  shown = { downloads: null, queue: null };
+  shown = { downloads: null, queue: null, held: null };
   watchingSync = false;
   items = [];
   flags = null;
@@ -50,7 +51,7 @@ export function mount(el) {
       h("div", {}, h("h1", { text: "Queue" }), els.summary, els.sync),
       h("div", { class: "toolbar" }, els.pause, els.resume, els.clear, els.syncBtn),
     ),
-    h("div", { class: "stack" }, els.downloads, els.queue),
+    h("div", { class: "stack" }, els.downloads, els.held, els.queue),
   );
   timer = poll(load, REFRESH_MS);
 }
@@ -66,10 +67,12 @@ export function unmount() {
 
 async function load() {
   const mine = ++seq;
-  const [queue, downloads, status] = await Promise.all([
+  const [queue, downloads, status, arr] = await Promise.all([
     get("/local/queue").catch(failure),
     get("/local/downloads").catch(failure),
     watchingSync ? get("/status").catch(() => null) : null,
+    // Magnets held before Put.io (043); a failure only hides the section
+    get("/arr").catch(() => null),
   ]);
   if (mine !== seq || !els) return; // a newer load already rendered, or page left
   for (const r of [queue, downloads]) if (r && r.failed && passUp(r.err)) throw r.err;
@@ -83,6 +86,7 @@ async function load() {
   renderQueue(queue);
   renderDownloads(downloads);
   if (status && status.sync) renderSync(status.sync);
+  renderHeld((arr && arr.held) || []);
 }
 
 /** Keep a failed section's error so the other section still renders. */
@@ -314,6 +318,46 @@ function queueRow(item, index, last) {
 function reflag() {
   flagged.ids = null;
   load().catch(() => {});
+}
+
+/** "Waiting for file list (n min left)": magnets held until a cache has their file list. */
+function renderHeld(list) {
+  els.held.hidden = list.length === 0;
+  swap("held", { list, minute: Math.floor(Date.now() / 60000) }, () => {
+    if (list.length === 0) return [];
+    const rows = list.map((m) => {
+      const left = Math.max(0, Math.ceil((Date.parse(m.until) - Date.now()) / 60000));
+      return h(
+        "tr",
+        {},
+        h("td", { class: "name-cell name", "data-label": "Name", text: m.name }),
+        h("td", { "data-label": "State" }, h("span", { class: "badge warn", text: `Waiting for file list (${left} min left)` })),
+        h("td", { class: "num right", "data-label": "Asks", text: String(m.attempts) }),
+        h("td", { "data-label": "Held", text: relative(m.since) }),
+      );
+    });
+    return [
+      h("h2", { text: `Waiting for a file list (${list.length})` }),
+      h("p", { class: "muted", text: "Magnet links no cache knew yet. Each is asked about again, then sent to Put.io." }),
+      h(
+        "table",
+        { class: "table" },
+        h(
+          "thead",
+          {},
+          h(
+            "tr",
+            {},
+            h("th", { text: "Name" }),
+            h("th", { text: "State" }),
+            h("th", { class: "right", text: "Asks" }),
+            h("th", { text: "Held" }),
+          ),
+        ),
+        h("tbody", {}, rows),
+      ),
+    ];
+  });
 }
 
 function renderDownloads(res) {

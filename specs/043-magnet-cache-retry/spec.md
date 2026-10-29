@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-28
 
-**Status**: Planned (spec, research, plan and tasks; not built)
+**Status**: In progress (US1–US3 built on 042; US4 and the US5 stats tile wait for 042 US4 and US5)
 
 **Input**: User description: "Peer metadata fallback for magnet pre-check (follow-up to 042):
 when the [precheck] caches lookup misses for a magnet link, fetch the info dictionary (file list)

@@ -218,7 +218,32 @@ fn build_arr(
             service
         }
     };
-    Some(routes::arr::ArrRpc::new(Arc::new(service)))
+    let service = Arc::new(service);
+    spawn_hold_ticker(&service);
+    Some(routes::arr::ArrRpc::new(service))
+}
+
+/// How often held magnets are looked at (043); each has its own next ask time
+const HOLD_TICK: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Ask the caches again about held magnets that are due. Outside a runtime (some unit
+/// tests build the state without one) nothing runs.
+fn spawn_hold_ticker(service: &Arc<putio_sync_arr::ArrService>) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let service = Arc::downgrade(service);
+    runtime.spawn(async move {
+        let mut tick = tokio::time::interval(HOLD_TICK);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            let Some(service) = service.upgrade() else {
+                return;
+            };
+            service.release_held(putio_sync_arr::unix_now()).await;
+        }
+    });
 }
 
 /// Build the router for `state`: protected routes behind the auth middleware, plus the

@@ -290,6 +290,34 @@ impl<'a> ArrRepository<'a> {
             .map_err(tracked(DbOp::Other, "Failed to list arr categories"))
     }
 
+    /// A held magnet went to Put.io (feature 043): store its transfer and Put.io's view
+    /// of it. `false` when the item is gone.
+    pub async fn set_transfer(
+        &self,
+        hash: &str,
+        transfer_id: i64,
+        progress: &PutioProgress<'_>,
+    ) -> DbResult<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE arr_items SET
+                transfer_id = ?, putio_status = ?, putio_percent = ?, putio_eta = ?,
+                total_size = COALESCE(?, total_size), updated_at = CURRENT_TIMESTAMP
+            WHERE hash = ?
+            "#,
+        )
+        .bind(transfer_id)
+        .bind(progress.status)
+        .bind(progress.percent.clamp(0, 100))
+        .bind(progress.eta)
+        .bind(progress.size)
+        .bind(hash)
+        .execute(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to set arr item transfer"))?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Store Put.io's view of the transfer. A known size replaces `total_size`.
     pub async fn update_putio(&self, hash: &str, progress: &PutioProgress<'_>) -> DbResult<()> {
         sqlx::query(

@@ -17,23 +17,24 @@ While held, `torrent-get` lists it with `status: 3` (queued for download), `perc
 After the hold it reports as any other item: a Put.io transfer, or the 042 reject
 (`status: 0`, `error: 3`, `errorString: "rejected before Put.io: …"`).
 
-## Arr items list (the Queue page's source)
+## `GET /arr`: new `held` list (the Queue page's source)
 
-Each item gains an optional `held` object, present only while the item is held:
+`GET /arr` has counts, not items, so the held magnets are a list of their own, the oldest first,
+empty when none are held. Never the magnet:
 
 ```json
-"held": {"since": "2026-10-28T10:00:00Z", "until": "2026-10-28T10:05:00Z",
-         "attempts": 4, "last_lookup": "timeout"}
+"held": [{"hash": "…", "name": "Show.S01E04.1080p", "since": "2026-10-28T10:00:00Z",
+          "until": "2026-10-28T10:05:00Z", "attempts": 4, "last_lookup": "timeout"}]
 ```
 
-## `GET /stats/releases`: new `held` block
+## `GET /stats/releases`: new `held` block (waits for 042 T020)
 
 ```json
 "held": {"now": 2, "found": 15, "ran_out": 1, "removed": 0,
          "median_found_secs": 150}
 ```
 
-## `GET /settings` and `PUT /settings`: three new keys in `precheck`
+## `GET /settings` and `PUT /settings`: three new keys in `precheck` (waits for 042 T025)
 
 ```json
 "precheck": { "…": "…", "hold_magnet_secs": 300, "hold_retry_secs": 30, "first_lookup_secs": 3 }
@@ -50,4 +51,5 @@ Validation errors use 042's format, for example
 | `putio_sync_precheck_held` | gauge | none |
 | `putio_sync_precheck_held_seconds` | histogram | `result` (same values); buckets 30, 60, 120, 180, 300, 600 |
 
-042's `putio_sync_precheck_cache_lookups_total` gains an `ask` label: `first` or `retry`.
+042's cache lookup metrics are unchanged: a re-ask counts as any lookup. The planned `ask`
+label was dropped; `putio_sync_precheck_held_total` already tells first asks from re-asks.

@@ -168,6 +168,7 @@ pub async fn get_arr(State(state): State<AppState>) -> Result<Json<Value>, ApiEr
 
     let mut items = json!({ "putio": 0, "local": 0, "done": 0, "failed": 0 });
     let mut clients_seen = Vec::new();
+    let mut held = Vec::new();
     let download_dir = match arr {
         Some(arr) => {
             for (state, n) in arr
@@ -184,6 +185,24 @@ pub async fn get_arr(State(state): State<AppState>) -> Result<Json<Value>, ApiEr
                 .snapshot()
                 .into_iter()
                 .map(|(agent, at)| json!({ "agent": agent, "last_contact": at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true) }))
+                .collect();
+            // Never the magnet
+            held = arr
+                .service
+                .held()
+                .await
+                .map_err(|e| ApiError::InternalError(e.to_string()))?
+                .into_iter()
+                .map(|(name, h)| {
+                    json!({
+                        "hash": h.hash,
+                        "name": name,
+                        "since": unix_rfc3339(h.held_at),
+                        "until": unix_rfc3339(h.until_at),
+                        "attempts": h.attempts,
+                        "last_lookup": h.last_lookup,
+                    })
+                })
                 .collect();
             arr.service.download_dir()
         }
@@ -218,7 +237,14 @@ pub async fn get_arr(State(state): State<AppState>) -> Result<Json<Value>, ApiEr
         "clients_seen": clients_seen,
         "servers": servers,
         "items": items,
+        "held": held,
     })))
+}
+
+/// Unix seconds as `2026-10-28T10:00:00Z`
+fn unix_rfc3339(secs: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp(secs, 0)
+        .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
 }
 
 /// `POST /arr/servers/{index}/test`

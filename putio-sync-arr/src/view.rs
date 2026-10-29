@@ -6,6 +6,8 @@ use std::path::Path;
 use putio_sync_db::{ArrItem, ArrState};
 use serde_json::{json, Value};
 
+use crate::service::HELD;
+
 /// Transmission status codes the *arr apps read
 const STATUS_STOPPED: i64 = 0;
 const STATUS_QUEUED: i64 = 3;
@@ -61,7 +63,10 @@ fn left_until_done(item: &ArrItem, local: &LocalProgress) -> i64 {
 
 fn status(item: &ArrItem) -> i64 {
     match item.state {
-        ArrState::Putio if item.putio_status.as_deref() == Some("IN_QUEUE") => STATUS_QUEUED,
+        // Held before Put.io (043) reads as queued, as Put.io's own queue does
+        ArrState::Putio if matches!(item.putio_status.as_deref(), Some("IN_QUEUE" | HELD)) => {
+            STATUS_QUEUED
+        }
         ArrState::Putio | ArrState::Local => STATUS_DOWNLOADING,
         ArrState::Done | ArrState::Failed => STATUS_STOPPED,
     }
@@ -165,6 +170,22 @@ mod tests {
         let v = torrent(&i, &LocalProgress::default(), target());
         assert_eq!(v["status"], STATUS_QUEUED);
         assert_eq!(v["eta"], -1);
+    }
+
+    #[test]
+    fn held_reads_as_queued_with_no_error() {
+        let mut i = item(ArrState::Putio);
+        i.transfer_id = None;
+        i.putio_status = Some(HELD.into());
+        i.total_size = 0;
+        i.putio_eta = None;
+        let v = torrent(&i, &LocalProgress::default(), target());
+        assert_eq!(v["status"], STATUS_QUEUED);
+        assert_eq!(v["percentDone"], 0.0);
+        assert_eq!(v["error"], 0);
+        assert_eq!(v["errorString"], "");
+        assert_eq!(v["eta"], -1);
+        assert_eq!(v["isFinished"], false);
     }
 
     #[test]

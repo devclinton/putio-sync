@@ -224,8 +224,9 @@ to Put.io unchecked as 042 does today. With holding on, the first ask gets
 3 s instead of 10 s. Research found itorrents.net fetches hashes it doesn't
 have: 16 of 17 first-time misses were there a few minutes later.
 
-Spec, research and plan are in `specs/043-magnet-cache-retry`. Needs 042
-merged first. Fetching the file list from BitTorrent peers (DHT) was
+Spec, research and plan are in `specs/043-magnet-cache-retry`. Holding,
+the short first ask and the Queue page are built on 042's branch; watch
+folders, the stats tile and the settings card wait for the same parts of 042. Fetching the file list from BitTorrent peers (DHT) was
 researched and deferred: it reveals the NAS's IP to the swarm and costs about
 93 crates.
 
