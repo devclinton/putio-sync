@@ -586,6 +586,7 @@ H = histogram.
 | `putio_sync_last_sync_files` | gauge | `kind` | Counts from the latest run |
 | `putio_sync_files_blocked_total` | counter | — | Files blocked or skipped by a folder rule or the blocked-extension list (once per file id) |
 | `putio_sync_rule_decisions_total` | counter | `decision` | Folder rule decisions: `blocked`, `skipped`, `deleted` (from Put.io) |
+| `putio_sync_sync_in_progress` | gauge | — | 1 while a sync run is in progress, else 0 |
 | `putio_sync_queue_items` | gauge | `state` | Queue rows by state, refreshed every 15 s and at startup |
 | `putio_sync_downloads_active` | gauge | — | Downloads in progress |
 | `putio_sync_download_workers` | gauge | — | Configured worker count |
@@ -617,6 +618,19 @@ H = histogram.
 | `putio_sync_arr_blocklist_total` | counter | `outcome` | Calls asking Radarr/Sonarr to blocklist a failed release: `ok`, `not_found`, `error` |
 | `putio_sync_start_time_seconds` | gauge | — | Process start, Unix seconds |
 | `putio_sync_build_info` | gauge (=1) | `version`, `commit` | Build identity |
+| `putio_sync_process_cpu_seconds_total` | counter | — | CPU time used (user + system); `rate()` gives cores in use |
+| `putio_sync_process_resident_memory_bytes` | gauge | — | Memory in use (RSS) |
+| `putio_sync_process_virtual_memory_bytes` | gauge | — | Memory reserved (virtual size) |
+| `putio_sync_process_threads` | gauge | — | OS threads |
+| `putio_sync_process_open_fds` | gauge | — | Open files and sockets |
+| `putio_sync_process_max_fds` | gauge | — | Soft open-file limit; absent when unlimited |
+| `putio_sync_process_disk_read_bytes_total` | counter | — | Bytes read from storage |
+| `putio_sync_process_disk_written_bytes_total` | counter | — | Bytes written to storage |
+
+The `putio_sync_process_*` figures are read from `/proc` at each scrape, so they exist on
+Linux only (including the Docker image). Elsewhere they are absent, and putio-sync logs one
+warning, `Process metrics unavailable`, at the first scrape. A figure the kernel hides, such
+as disk I/O in some containers, is left out on its own.
 
 Label values are fixed sets, listed in
 [specs/003-telemetry-prometheus/data-model.md](specs/003-telemetry-prometheus/data-model.md#closed-label-sets).
@@ -633,6 +647,8 @@ Label values are fixed sets, listed in
 | DB errors | `increase(putio_sync_db_errors_total[1d])` |
 | Transfers stuck | `putio_sync_transfers_stalled > 0` |
 | Doctor problems | `putio_sync_doctor_check_status == 2` |
+| CPU in use (cores) | `rate(putio_sync_process_cpu_seconds_total[5m])` |
+| Memory in use | `putio_sync_process_resident_memory_bytes` |
 
 ## Web UI
 
