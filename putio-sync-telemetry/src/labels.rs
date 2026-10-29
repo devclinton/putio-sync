@@ -130,6 +130,18 @@ label_enum!(
 );
 
 label_enum!(
+    /// What happened to a file that already existed locally (feature 040).
+    ExistingOutcome {
+        Skipped => "skipped",
+        Resumed => "resumed",
+        Restarted => "restarted",
+        Overwritten => "overwritten",
+        SavedAs => "saved_as",
+        Refused => "refused",
+    }
+);
+
+label_enum!(
     /// Database area, by the module that ran the query.
     DbOp {
         Queue => "queue",

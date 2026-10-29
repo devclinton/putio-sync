@@ -186,6 +186,51 @@ pub async fn stream_download(
     bandwidth_limit_bytes_per_sec: Option<u64>,
     resume_from_byte: Option<u64>,
 ) -> DownloadResult<StreamDownloadResult> {
+    let result = stream_to_temp(
+        client,
+        url,
+        target_path,
+        filename,
+        expected_size,
+        buffer_size_mb,
+        bandwidth_limit_bytes_per_sec,
+        resume_from_byte,
+    )
+    .await?;
+    finish_download(&result.final_path, target_path).await?;
+    Ok(StreamDownloadResult {
+        final_path: target_path.to_path_buf(),
+        ..result
+    })
+}
+
+/// Atomically rename a verified hidden `.downloading` file to its final path
+pub async fn finish_download(temp_path: &Path, target_path: &Path) -> DownloadResult<()> {
+    tokio::fs::rename(temp_path, target_path)
+        .await
+        .map_err(|e| {
+            DownloadError::IoError(std::io::Error::new(
+                e.kind(),
+                format!("Failed to rename download file: {}", e),
+            ))
+        })?;
+    info!("Download saved to {}", target_path.display());
+    Ok(())
+}
+
+/// [`stream_download`] without the final rename: the file stays at its hidden
+/// `.downloading` path, returned as `final_path`, so the caller can check it first.
+#[allow(clippy::too_many_arguments)]
+pub async fn stream_to_temp(
+    client: &PutioApiClient,
+    url: &str,
+    target_path: &Path,
+    filename: &str,
+    expected_size: Option<u64>,
+    buffer_size_mb: usize,
+    bandwidth_limit_bytes_per_sec: Option<u64>,
+    resume_from_byte: Option<u64>,
+) -> DownloadResult<StreamDownloadResult> {
     let buffer_size = buffer_size_mb * 1024 * 1024;
 
     if let Some(resume_from) = resume_from_byte {
@@ -535,25 +580,15 @@ pub async fn stream_download(
         }
     }
 
-    // Atomically rename to final path
-    tokio::fs::rename(&temp_path, target_path)
-        .await
-        .map_err(|e| {
-            DownloadError::IoError(std::io::Error::new(
-                e.kind(),
-                format!("Failed to rename download file: {}", e),
-            ))
-        })?;
-
     info!(
         "Successfully downloaded {} bytes to {}",
         bytes_downloaded,
-        target_path.display()
+        temp_path.display()
     );
 
     Ok(StreamDownloadResult {
         bytes_downloaded,
-        final_path: target_path.to_path_buf(),
+        final_path: temp_path,
         success: true,
     })
 }

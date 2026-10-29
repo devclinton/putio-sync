@@ -23,7 +23,7 @@ use axum::{
     routing::{get, post, put},
     Json, Router,
 };
-use putio_sync_core::config::Config;
+use putio_sync_core::config::{Config, ExistingFile};
 use putio_sync_core::rules::{
     self, normalize_extension, normalize_path, Decision, Effective, FolderRule, Preset,
     BUILTIN_PRESETS,
@@ -59,6 +59,10 @@ pub struct RuleBody {
     pub skip: Option<bool>,
     pub delete_blocked: Option<bool>,
     pub delete_after_download: Option<bool>,
+    /// `None` = use the global setting (feature 040)
+    pub on_existing: Option<ExistingFile>,
+    /// Replaced by `on_existing`; still read from an old UI tab, never sent
+    #[serde(skip_serializing)]
     pub skip_existing: Option<bool>,
 }
 
@@ -71,7 +75,8 @@ impl RuleBody {
             skip: rule.skip,
             delete_blocked: rule.delete_blocked,
             delete_after_download: rule.delete_after_download,
-            skip_existing: rule.skip_existing,
+            on_existing: rule.existing(),
+            skip_existing: None,
         }
     }
 
@@ -86,7 +91,8 @@ impl RuleBody {
             skip: self.skip,
             delete_blocked: self.delete_blocked,
             delete_after_download: self.delete_after_download,
-            skip_existing: self.skip_existing,
+            on_existing: self.on_existing.or(self.skip_existing.map(Into::into)),
+            skip_existing: None,
         })
     }
 }
@@ -127,7 +133,7 @@ pub struct EffectiveView {
     pub skip: SourcedView<bool>,
     pub delete_blocked: SourcedView<bool>,
     pub delete_after_download: SourcedView<bool>,
-    pub skip_existing: SourcedView<bool>,
+    pub on_existing: SourcedView<ExistingFile>,
 }
 
 impl From<Effective> for EffectiveView {
@@ -148,7 +154,7 @@ impl From<Effective> for EffectiveView {
             skip: part(e.skip),
             delete_blocked: part(e.delete_blocked),
             delete_after_download: part(e.delete_after_download),
-            skip_existing: part(e.skip_existing),
+            on_existing: part(e.on_existing),
         }
     }
 }
@@ -171,7 +177,7 @@ pub struct PresetView {
 pub struct GlobalView {
     pub blocked_extensions: Vec<String>,
     pub delete_after_download: bool,
-    pub skip_existing: bool,
+    pub on_existing: ExistingFile,
 }
 
 /// Body of `GET /rules`
@@ -226,12 +232,22 @@ fn presets_view(config: &Config) -> Vec<PresetView> {
 
 fn rules_view(config: &Config) -> RulesResponse {
     RulesResponse {
-        rules: config.download.rules.clone(),
+        // An old `skip_existing` shows as the `on_existing` it maps to
+        rules: config
+            .download
+            .rules
+            .iter()
+            .map(|rule| FolderRule {
+                on_existing: rule.existing(),
+                skip_existing: None,
+                ..rule.clone()
+            })
+            .collect(),
         presets: presets_view(config),
         global: GlobalView {
             blocked_extensions: config.download.blocked_extensions.clone(),
             delete_after_download: config.download.delete_after_download,
-            skip_existing: config.download.skip_existing,
+            on_existing: config.download.on_existing(),
         },
     }
 }
