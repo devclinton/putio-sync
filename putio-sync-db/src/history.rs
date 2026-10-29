@@ -67,6 +67,24 @@ impl<'a> HistoryRepository<'a> {
         Ok(result.last_insert_rowid())
     }
 
+    /// Record where a history row's download was written and what happened to a file
+    /// that already existed there (feature 040)
+    pub async fn set_outcome(
+        &self,
+        id: i64,
+        local_path: Option<&str>,
+        outcome: Option<&str>,
+    ) -> DbResult<()> {
+        sqlx::query("UPDATE download_history SET local_path = ?, outcome = ? WHERE id = ?")
+            .bind(local_path)
+            .bind(outcome)
+            .bind(id)
+            .execute(self.pool)
+            .await
+            .map_err(tracked(DbOp::History, "Failed to set history outcome"))?;
+        Ok(())
+    }
+
     /// Insert a finished download with an explicit finish time (UTC). Used to seed
     /// tests and the mock UI with history spread over time (feature 006, R10).
     pub async fn insert_download_at(
@@ -271,6 +289,30 @@ mod tests {
         assert_eq!(rows[0].timestamp, "2026-03-04 05:06:07");
         assert_eq!(rows[0].extension.as_deref(), Some("mkv"));
         assert_eq!(rows[0].action, "downloaded");
+    }
+
+    #[tokio::test]
+    async fn outcome_and_local_path_round_trip() {
+        let (_temp_dir, db) = setup_test_db().await;
+        let repo = HistoryRepository::new(db.pool());
+        let old = repo
+            .insert(1, "Old.mkv", 10, HistoryAction::Downloaded, None, None)
+            .await
+            .unwrap();
+        let new = repo
+            .insert(2, "Movie.mkv", 10, HistoryAction::Downloaded, None, None)
+            .await
+            .unwrap();
+        repo.set_outcome(new, Some("/dl/Movie (1).mkv"), Some("saved_as"))
+            .await
+            .unwrap();
+
+        let rows = repo.query(None, 10, 0, None).await.unwrap();
+        let row = |id| rows.iter().find(|r| r.id == id).unwrap();
+        assert_eq!(row(new).local_path.as_deref(), Some("/dl/Movie (1).mkv"));
+        assert_eq!(row(new).outcome.as_deref(), Some("saved_as"));
+        assert_eq!(row(old).local_path, None);
+        assert_eq!(row(old).outcome, None);
     }
 
     #[tokio::test]

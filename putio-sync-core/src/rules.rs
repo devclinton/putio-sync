@@ -9,7 +9,7 @@
 //! is the start, a rule's preset replaces the inherited filter, its `allow` extensions
 //! are then allowed and its `block` extensions blocked.
 
-use crate::config::DownloadConfig;
+use crate::config::{DownloadConfig, ExistingFile};
 use crate::error::{CoreError, CoreResult};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -40,7 +40,10 @@ pub struct FolderRule {
     /// Per-folder `delete_after_download`
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delete_after_download: Option<bool>,
-    /// Per-folder `skip_existing`
+    /// Per-folder `on_existing`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_existing: Option<ExistingFile>,
+    /// Per-folder `skip_existing`, replaced by `on_existing` and still read
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip_existing: Option<bool>,
 }
@@ -54,7 +57,13 @@ impl FolderRule {
             && self.skip.is_none()
             && self.delete_blocked.is_none()
             && self.delete_after_download.is_none()
+            && self.on_existing.is_none()
             && self.skip_existing.is_none()
+    }
+
+    /// This rule's choice for existing files: `on_existing`, else the old `skip_existing`
+    pub fn existing(&self) -> Option<ExistingFile> {
+        self.on_existing.or(self.skip_existing.map(Into::into))
     }
 }
 
@@ -358,8 +367,8 @@ pub struct Effective {
     pub delete_blocked: Sourced<bool>,
     /// Delete from Put.io after a verified download
     pub delete_after_download: Sourced<bool>,
-    /// Skip files that already exist locally
-    pub skip_existing: Sourced<bool>,
+    /// What to do when a file already exists locally
+    pub on_existing: Sourced<ExistingFile>,
 }
 
 impl Effective {
@@ -463,7 +472,7 @@ impl Decision {
 pub struct RuleSet {
     blocked: Vec<String>,
     delete_after_download: bool,
-    skip_existing: bool,
+    on_existing: ExistingFile,
     rules: HashMap<String, FolderRule>,
     presets: BTreeMap<String, Preset>,
 }
@@ -500,7 +509,7 @@ impl RuleSet {
         Self {
             blocked: config.blocked_extensions.clone(),
             delete_after_download: config.delete_after_download,
-            skip_existing: config.skip_existing,
+            on_existing: config.on_existing(),
             rules,
             presets,
         }
@@ -522,7 +531,7 @@ impl RuleSet {
             skip: Sourced::global(false),
             delete_blocked: Sourced::global(false),
             delete_after_download: Sourced::global(self.delete_after_download),
-            skip_existing: Sourced::global(self.skip_existing),
+            on_existing: Sourced::global(self.on_existing),
         };
         if self.rules.is_empty() {
             return effective;
@@ -569,7 +578,7 @@ impl RuleSet {
         effective
             .delete_after_download
             .set(rule.delete_after_download, path);
-        effective.skip_existing.set(rule.skip_existing, path);
+        effective.on_existing.set(rule.existing(), path);
     }
 
     /// What happens to `name` in `folder_path`
@@ -737,11 +746,34 @@ mod tests {
         assert_eq!(e.delete_blocked.from.as_deref(), Some("Movies"));
         assert!(!e.delete_after_download.value);
         assert_eq!(e.delete_after_download.from.as_deref(), Some("Movies/Kids"));
-        assert!(e.skip_existing.value);
-        assert_eq!(e.skip_existing.from, None);
+        assert_eq!(e.on_existing.value, ExistingFile::Resume);
+        assert_eq!(e.on_existing.from, None);
         let root = rules.resolve("");
         assert!(!root.delete_after_download.value);
         assert_eq!(root.filter.from, None);
+    }
+
+    #[test]
+    fn on_existing_nearest_rule_wins_and_old_key_maps() {
+        let rules = set(vec![
+            FolderRule {
+                on_existing: Some(ExistingFile::KeepBoth),
+                ..rule("Backups")
+            },
+            FolderRule {
+                skip_existing: Some(false),
+                ..rule("Backups/Daily")
+            },
+        ]);
+        let e = rules.resolve("Backups/Weekly");
+        assert_eq!(e.on_existing.value, ExistingFile::KeepBoth);
+        assert_eq!(e.on_existing.from.as_deref(), Some("Backups"));
+        let e = rules.resolve("Backups/Daily/Mon");
+        assert_eq!(e.on_existing.value, ExistingFile::Overwrite);
+        assert_eq!(e.on_existing.from.as_deref(), Some("Backups/Daily"));
+        let e = rules.resolve("Movies");
+        assert_eq!(e.on_existing.value, ExistingFile::Resume);
+        assert_eq!(e.on_existing.from, None);
     }
 
     #[test]

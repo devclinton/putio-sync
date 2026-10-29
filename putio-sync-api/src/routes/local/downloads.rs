@@ -36,6 +36,8 @@ pub struct DownloadProgressResponse {
     pub total_bytes: u64,
     pub speed_bps: f64,
     pub eta_seconds: Option<u64>,
+    /// "downloading", or "checking" while a local file's checksum is read (feature 040)
+    pub phase: &'static str,
 }
 
 /// Active downloads list response
@@ -92,6 +94,9 @@ async fn start_download(
         file_size: file_info.size as u64,
         download_url: state.client.get_download_url(file_info.id),
         relative_path: request.relative_path.unwrap_or_default(),
+        crc32: file_info.crc32.clone(),
+        save_as: None,
+        fixed_path: false,
     };
 
     // Start download in background
@@ -149,6 +154,7 @@ async fn list_downloads(
             total_bytes: d.file_size,
             speed_bps: d.speed_bps,
             eta_seconds: d.eta_seconds,
+            phase: d.phase,
         })
         .collect();
 
@@ -183,6 +189,7 @@ async fn get_download_progress(
             total_bytes: d.file_size,
             speed_bps: d.speed_bps,
             eta_seconds: d.eta_seconds,
+            phase: d.phase,
         })),
         None => Err(ApiError::NotFound(format!(
             "Download {} not found (not currently downloading)",

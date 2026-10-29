@@ -14,7 +14,8 @@ fn non_default_settings() -> DownloadSettings {
         workers: 7,
         target_directory: PathBuf::from("/srv/putio"),
         buffer_size_mb: 48,
-        skip_existing: true,
+        on_existing: Some(putio_sync_core::config::ExistingFile::KeepBoth),
+        resume_enabled: false,
         delete_after_download: true,
         bandwidth_limit_bytes_per_sec: Some(1_048_576),
         max_retries: 9,
@@ -37,7 +38,8 @@ fn every_manager_field_comes_from_settings() {
         config,
         DownloadConfig {
             target_directory: PathBuf::from("/srv/putio"),
-            skip_existing: true,
+            on_existing: putio_sync_core::config::ExistingFile::KeepBoth,
+            resume_enabled: false,
             buffer_size_mb: 48,
             bandwidth_limit_bytes_per_sec: Some(1_048_576),
             max_retries: 9,
@@ -56,7 +58,11 @@ fn defaults_follow_config_toml_defaults() {
     let settings = DownloadSettings::default();
     let config = DownloadConfig::from(&settings);
     assert_eq!(config.workers, settings.workers);
-    assert!(config.skip_existing);
+    assert_eq!(
+        config.on_existing,
+        putio_sync_core::config::ExistingFile::Resume
+    );
+    assert!(config.resume_enabled);
     assert_eq!(config.bandwidth_limit_bytes_per_sec, None);
     assert_eq!(config.max_retries, settings.max_retries);
     assert_eq!(

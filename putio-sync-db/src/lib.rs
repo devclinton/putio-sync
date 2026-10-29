@@ -231,6 +231,17 @@ impl Database {
         // Migrate: Add relative_path column to download_queue if it doesn't exist
         self.migrate_add_relative_path_column().await?;
 
+        // Existing-file handling (feature 040)
+        for (table, column, declaration) in [
+            ("download_queue", "save_as", "TEXT"),
+            ("download_queue", "fixed_path", "INTEGER NOT NULL DEFAULT 0"),
+            ("download_history", "local_path", "TEXT"),
+            ("download_history", "outcome", "TEXT"),
+        ] {
+            self.add_column_if_missing(table, column, declaration)
+                .await?;
+        }
+
         // Create processed_torrents table
         sqlx::query(schema::CREATE_PROCESSED_TORRENTS_TABLE)
             .execute(&self.pool)
@@ -309,6 +320,33 @@ impl Database {
         }
     }
 
+    /// `ALTER TABLE table ADD COLUMN column declaration`, unless the column exists
+    async fn add_column_if_missing(
+        &self,
+        table: &str,
+        column: &str,
+        declaration: &str,
+    ) -> DbResult<()> {
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?")
+                .bind(table)
+                .bind(column)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(tracked(DbOp::Migrate, "Failed to read table columns"))?;
+        if count > 0 {
+            return Ok(());
+        }
+        sqlx::query(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {declaration}"
+        ))
+        .execute(&self.pool)
+        .await
+        .map_err(tracked(DbOp::Migrate, "Failed to add column"))?;
+        info!(table, column, "Added database column");
+        Ok(())
+    }
+
     /// Close the database connection
     pub async fn close(self) -> DbResult<()> {
         self.pool.close().await;
@@ -342,6 +380,43 @@ mod tests {
         assert!(db_path.parent().unwrap().exists());
 
         db.close().await.unwrap();
+    }
+
+    /// Feature 040 columns reach a database made before them, and a re-run keeps them
+    #[tokio::test]
+    async fn existing_file_columns_are_added_once() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db = Database::new(&db_path).await.unwrap();
+        sqlx::query("ALTER TABLE download_queue DROP COLUMN save_as")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE download_history DROP COLUMN outcome")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        db.close().await.unwrap();
+
+        for _ in 0..2 {
+            let db = Database::new(&db_path).await.unwrap();
+            for (table, column) in [
+                ("download_queue", "save_as"),
+                ("download_queue", "fixed_path"),
+                ("download_history", "local_path"),
+                ("download_history", "outcome"),
+            ] {
+                let (count,): (i64,) =
+                    sqlx::query_as("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?")
+                        .bind(table)
+                        .bind(column)
+                        .fetch_one(db.pool())
+                        .await
+                        .unwrap();
+                assert_eq!(count, 1, "{table}.{column}");
+            }
+            db.close().await.unwrap();
+        }
     }
 
     #[tokio::test]

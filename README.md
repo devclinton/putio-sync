@@ -245,8 +245,9 @@ Options:
   -d, --dir <PATH>          Download directory [default: from config]
   -w, --workers <N>         Number of concurrent workers [default: from config]
   --buffer-size <SIZE>      Buffer size for streaming (e.g., 16MB) [default: from config]
-  --no-resume               Disable resume of partial downloads
-  --skip-existing           Skip files already downloaded
+  --no-resume               Start partial downloads over instead of resuming them
+  --on-existing <CHOICE>    A file already on disk: resume, overwrite, keep-both [default: from config]
+  --skip-existing           Same as --on-existing resume
   --delete-after            Delete from Put.io after download
   --sort <ORDER>            Sort order: by-date, by-name, by-extension, by-size
   --reverse                 Reverse sort order
@@ -484,8 +485,38 @@ Configure download behavior including streaming buffer size and resume support:
 [download]
 buffer_size_mb = 16        # Stream buffer size for downloads
 resume_enabled = true      # Enable automatic resume
-skip_existing = true       # Skip files that already exist locally
+on_existing = "resume"     # A file already on disk: resume, overwrite or keep_both
 ```
+
+### When a file already exists
+
+If a file is already at its local path and the download history does not list it as
+done, `[download] on_existing` decides what happens:
+
+| Choice | What is on disk | Result |
+|---|---|---|
+| `resume` (default) | Same size and CRC32 as on Put.io | Skipped, and recorded as downloaded |
+| | Smaller | Continued from where it stops, then checked against Put.io's CRC32; a mismatch downloads it again from the start |
+| | Larger, or same size with another CRC32 | Kept; the new file is saved as `name (1).ext` |
+| `overwrite` | Anything | Downloaded again; the old file is replaced only once the new copy is complete |
+| `keep_both` | A complete copy | Skipped |
+| | Anything else | Kept; the new file is saved as `name (1).ext`, `name (2).ext`, … |
+
+- Complete means the same size as on Put.io, and the same CRC32 when Put.io has one. The
+  check reads the local file once; the Queue page shows "Checking" meanwhile.
+- A folder at the file's path is never touched: the download fails with an error.
+- A numbered name is kept on the queue row, so a restart resumes the same file.
+- Radarr/Sonarr download-client items never get a numbered name, since those apps expect
+  the file at its own path: they overwrite instead.
+- `resume_enabled = false` (or `--no-resume`) starts partial files over instead of
+  continuing them.
+- `skip_existing` is replaced and still read: `true` is `resume`, `false` is `overwrite`. A
+  save from the web UI writes `on_existing` and removes it.
+- `--on-existing` sets it for one `download` or `daemon` run; folder rules can set it per
+  folder.
+- History shows the path a file was saved to when it differs, and a badge for resumed,
+  restarted, overwritten and saved-as files; `putio_sync_existing_files_total` counts each
+  outcome.
 
 ### Basic Configuration
 
@@ -499,7 +530,7 @@ workers = 2
 target_directory = "~/Downloads/putio"  # Supports ~, absolute, and relative paths
 buffer_size_mb = 16                     # Stream buffer size for downloads
 resume_enabled = true                   # Enable automatic resume
-skip_existing = true                    # Skip files that already exist
+on_existing = "resume"                  # Skip complete files, continue partial ones
 delete_after_download = true            # Clean up Put.io after successful downloads
 progress_style = "per-file"             # Progress bar style
 sort_order = "by-date"                  # File sorting order
@@ -593,6 +624,7 @@ H = histogram.
 | `putio_sync_downloads_failed_total` | counter | `reason` | Downloads that ended in failure |
 | `putio_sync_downloaded_bytes_total` | counter | — | Bytes written to disk; `rate()` gives throughput |
 | `putio_sync_download_duration_seconds` | H | — | Time per completed download |
+| `putio_sync_existing_files_total` | counter | `outcome` | A file already at its path: `skipped`, `resumed`, `restarted`, `overwritten`, `saved_as`, `refused` |
 | `putio_sync_worker_state` | gauge | `worker` | **detailed only.** 0 idle, 1 downloading |
 | `putio_sync_worker_inflight_bytes` | gauge | `worker` | **detailed only.** Bytes written so far for the current file |
 | `putio_sync_watch_scans_total` | counter | — | Watch-folder scans |
@@ -762,7 +794,7 @@ daemon's download manager and watcher:
 | Group | Applies live | Needs a restart |
 |---|---|---|
 | Logging | `level`, `module_filters`, within 10 s (ignored while `RUST_LOG` is set) | `console_format`, `console_enabled`, `file_*` |
-| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `skip_existing`, `delete_after_download`, `blocked_extensions`, for the next download | `target_directory` (new downloads go there at once, but the queue database and disk figures stay on the startup folder), and the rest of the group |
+| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, for the next download | `target_directory` (new downloads go there at once, but the queue database and disk figures stay on the startup folder), and the rest of the group |
 | Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Notifications | — | everything |
@@ -908,7 +940,7 @@ no rule sets comes from `[download]`.
 | `allow`, `block` | Extra extensions on top of the preset |
 | `skip` | Download nothing in this folder |
 | `delete_blocked` | Delete the files this rule blocks from Put.io, with one call per sync |
-| `delete_after_download`, `skip_existing` | Override the `[download]` values for this folder |
+| `delete_after_download`, `on_existing` | Override the `[download]` values for this folder (an old rule's `skip_existing` is still read) |
 
 The type filter starts at the root with `blocked_extensions`. A rule's preset
 replaces the filter it inherits; its `allow` and `block` extensions apply after that.
@@ -1124,7 +1156,7 @@ putio-sync daemon --watch-only --watch ~/Downloads/torrents --delete-torrents
 
 > **Daemon flag support:** `--download-interval` sets how often Put.io is synced (default
 > 300 s), and `--watch-interval` sets how often watch folders are scanned and the queue is
-> worked. `--filter`, `--skip-existing`, `--delete-after`, `--delete-empty-folders`,
+> worked. `--on-existing` and `--skip-existing` apply. `--filter`, `--delete-after`, `--delete-empty-folders`,
 > `--watch-only`, `--download-only`, `--archive-dir` and `--delete-torrents` are currently
 > ignored in daemon mode, with a warning at startup; use `config.toml` instead
 > (`watch.archive_directory`, `watch.delete_after_upload`, `download.delete_after_download`). The effective settings
@@ -1173,14 +1205,12 @@ applies live and what needs a restart.
 At startup, `daemon` and `server` (its API and its `--download` thread) give the download
 manager every `[download]` setting it has: `target_directory`, `workers`,
 `buffer_size_mb`, `bandwidth_limit_bytes_per_sec`, `max_retries`,
-`retry_initial_delay_secs`, `skip_existing`, `delete_after_download` and
-`blocked_extensions`. The other `[download]` keys (`resume_enabled`, `chunk_size_mb`,
+`retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download` and
+`blocked_extensions`. The other `[download]` keys (`chunk_size_mb`,
 `progress_style`, sorting, glob patterns, `delete_empty_folders`) are read by the
 one-off `download` command only. Before this, `daemon` ignored the bandwidth limit and
 retry settings and always skipped files that already existed; it now follows
-`skip_existing`, which defaults to `true` (the old behaviour). An explicit
-`skip_existing = false` now really re-downloads and overwrites existing files, so remove
-that line or set it to `true` unless you want that.
+`on_existing` (see [When a file already exists](#when-a-file-already-exists)).
 
 #### Stalled transfers
 
@@ -1272,7 +1302,7 @@ token = "YOUR_OAUTH_TOKEN"
 [download]
 workers = 4
 target_directory = "~/Downloads/putio"
-skip_existing = true
+on_existing = "resume"
 delete_after_download = true
 progress_style = "none"  # Better for daemon mode
 whitelist_patterns = "*.mkv,*.mp4,*.avi,*.mp3,*.flac"

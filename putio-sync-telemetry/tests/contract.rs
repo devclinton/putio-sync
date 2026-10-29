@@ -24,6 +24,7 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_download_workers",
     "putio_sync_downloads_completed_total",
     "putio_sync_downloads_failed_total",
+    "putio_sync_existing_files_total",
     "putio_sync_downloaded_bytes_total",
     "putio_sync_download_duration_seconds",
     "putio_sync_watch_scans_total",
@@ -141,6 +142,7 @@ fn record_everything(t: &Telemetry) {
     }
     t.download_completed(Duration::from_secs(2));
     t.download_failed(FailReason::Integrity);
+    t.download_existing(ExistingOutcome::SavedAs);
     t.watch_scan();
     t.watch_uploaded();
     t.watch_cleaned_up();
@@ -173,6 +175,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             let mut v = strs(ApiOutcome::ALL, ApiOutcome::as_str);
             v.extend(strs(ArrOutcome::ALL, ArrOutcome::as_str));
             v.extend(strs(BlocklistOutcome::ALL, BlocklistOutcome::as_str));
+            v.extend(strs(ExistingOutcome::ALL, ExistingOutcome::as_str));
             v
         }
         "method" => strs(ArrMethod::ALL, ArrMethod::as_str),

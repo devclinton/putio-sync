@@ -45,7 +45,9 @@ impl DownloadError {
             DownloadError::HttpError(e) if e.status().is_some() => FailReason::Http,
             DownloadError::HttpError(_) => FailReason::Network,
             DownloadError::IoError(_) => FailReason::Io,
-            DownloadError::ApiError(msg) if msg.starts_with("Size mismatch") => {
+            DownloadError::ApiError(msg)
+                if msg.starts_with("Size mismatch") || msg.starts_with("Checksum mismatch") =>
+            {
                 FailReason::Integrity
             }
             DownloadError::ApiError(msg) if msg.starts_with("HTTP error") => FailReason::Http,
