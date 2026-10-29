@@ -383,21 +383,26 @@ items. A CSV/JSON export.
 
 ## Phase 9: Polish
 
-- [ ] T025 [P] Add a "Release check" card to `putio-sync-api/ui/pages/settings.js`, in its own
+- [X] T025 [P] Add a "Release check" card to `putio-sync-api/ui/pages/settings.js`, in its own
   render function, with the `precheck` block from `GET/PUT /settings`
   (`putio-sync-api/src/routes/system/settings.rs`):
   - global settings, including a `dry_run` toggle labelled "Check only (don't reject or delete)",
     the cache list, and per-category and per-watch overrides;
   - a read-only `effective` table showing where the wanted types come from (FR-020).
   - Test that a save keeps the file's comments.
-- [ ] T026 [P] In `putio-sync-daemon/src/daemon.rs`, prune both release tables at startup and
+  - Done as its own route, `GET/PUT /settings/precheck`, like the other groups. Watch rows have
+    `wanted: null` (only Put.io can name the upload folder's rule). The card extends `form()`
+    with an `extra` hook for the override tables.
+- [X] T026 [P] In `putio-sync-daemon/src/daemon.rs`, prune both release tables at startup and
   daily (rows older than 400 days).
-- [ ] T027 [P] Document `[precheck]` in `config.example.toml` (each key, the cache list, the
+  - The first tick runs at startup, then every 24 hours.
+- [X] T027 [P] Document `[precheck]` in `config.example.toml` (each key, the cache list, the
   privacy note, `dry_run`), and add a README section covering the rule, the sources, the metrics,
   the `/stats/releases` and `/releases` routes, and how to flag.
-- [ ] T028 [P] Add a `CHANGELOG.md` entry, and a ROADMAP.md note on the 042 entry if the roadmap
+- [X] T028 [P] Add a `CHANGELOG.md` entry, and a ROADMAP.md note on the 042 entry if the roadmap
   lists it.
-- [ ] T029 Run `TMPDIR=<scratchpad> make ci` and fix everything. Run the quickstart's mock UI
+  - ROADMAP.md has no 042 entry, so only the CHANGELOG changed.
+- [X] T029 Run `TMPDIR=<scratchpad> make ci` and fix everything. Run the quickstart's mock UI
   steps 1–4.
 
 ## Dependencies

@@ -118,10 +118,14 @@ Downloads the reports.
   `tracker_hosts` is joined with `;`.
 - Headers: `Content-Disposition: attachment; filename="putio-sync-releases-<range>.<ext>"`.
 
-## `GET /settings` and `PUT /settings`: new `precheck` block
+## `GET /settings/precheck` and `PUT /settings/precheck`
+
+The settings API has one route per group, so `[precheck]` is its own group, like
+`/settings/cleanup`. A PUT body leaves out `effective`; a missing field takes its default.
+Every change needs a restart.
 
 ```json
-"precheck": {
+{
   "enabled": true, "dry_run": false, "min_size_mb": 50, "allow_archives": false,
   "magnet_lookup": true, "lookup_timeout_secs": 10,
   "caches": ["https://itorrents.net/torrent/{HASH}.torrent"],
@@ -129,9 +133,11 @@ Downloads the reports.
   "watch": {"/watch/tv": {"min_size_mb": 100}},
   "effective": [
     {"kind": "category", "key": "sonarr", "enabled": true, "min_size_mb": 50,
-     "wanted": ["mkv", "mp4", "…"], "wanted_from": null},
+     "allow_archives": false, "wanted": ["mkv", "mp4", "…"], "wanted_from": null},
     {"kind": "category", "key": "lidarr", "enabled": true, "min_size_mb": 50,
-     "wanted": ["flac", "mp3", "…"], "wanted_from": "lidarr"}
+     "allow_archives": false, "wanted": ["flac", "mp3", "…"], "wanted_from": "lidarr"},
+    {"kind": "watch", "key": "/watch/tv", "enabled": true, "min_size_mb": 100,
+     "allow_archives": false, "wanted": null, "wanted_from": null}
   ]
 }
 ```
@@ -141,4 +147,6 @@ Downloads the reports.
   seen in `arr_items`, and the keys in `categories`.
 - `wanted_from` names the 009 rule path the wanted types come from, or `null` for the video
   default.
+- A watch folder's rows have `wanted: null`: its wanted types come from the rule on the Put.io
+  folder it uploads to, which only Put.io can name.
 - A save keeps the file's comments, as 009 does.

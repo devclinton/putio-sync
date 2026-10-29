@@ -282,6 +282,14 @@ impl<'a> ArrRepository<'a> {
         Ok(rows.iter().map(item_from_row).collect())
     }
 
+    /// The categories items have used, sorted
+    pub async fn categories(&self) -> DbResult<Vec<String>> {
+        sqlx::query_scalar("SELECT DISTINCT category FROM arr_items ORDER BY category")
+            .fetch_all(self.pool)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to list arr categories"))
+    }
+
     /// Store Put.io's view of the transfer. A known size replaces `total_size`.
     pub async fn update_putio(&self, hash: &str, progress: &PutioProgress<'_>) -> DbResult<()> {
         sqlx::query(
