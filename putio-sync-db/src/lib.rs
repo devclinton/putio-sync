@@ -35,6 +35,7 @@ pub mod arr;
 pub mod decisions;
 pub mod downloads;
 pub mod error;
+pub mod held;
 pub mod history;
 pub mod models;
 pub mod queue;
@@ -48,11 +49,12 @@ pub use arr::{ArrItem, ArrRepository, ArrState, BlocklistState, NewArrItem, Puti
 pub use decisions::{RuleDecisionRecord, RuleDecisionsRepository};
 pub use downloads::DownloadRepository;
 pub use error::{DbError, DbResult};
+pub use held::{Held, HeldRepository, NewHeld};
 pub use history::HistoryRepository;
 pub use queue::{QueueRepository, QueueStats};
 pub use releases::{
-    CheckState, FlagUndo, NewCheck, NewReport, PendingCheck, ReleaseStats, ReleasesRepository,
-    ReportKind, ReportRow,
+    CheckState, FlagUndo, HeldSettle, NewCheck, NewReport, PendingCheck, ReleaseStats,
+    ReleasesRepository, ReportKind, ReportRow,
 };
 pub use sources::SourcesRepository;
 pub use stats::{ExtensionStats, StatsRepository};
@@ -175,6 +177,11 @@ impl Database {
         ReleasesRepository::new(&self.pool)
     }
 
+    /// Get the held magnets repository (feature 043)
+    pub fn held(&self) -> HeldRepository<'_> {
+        HeldRepository::new(&self.pool)
+    }
+
     /// Get a rule decisions repository (feature 009)
     pub fn rule_decisions(&self) -> RuleDecisionsRepository<'_> {
         RuleDecisionsRepository::new(&self.pool)
@@ -292,6 +299,11 @@ impl Database {
             (
                 schema::CREATE_RELEASE_REPORTS_TABLE,
                 "Failed to create release_reports table",
+            ),
+            // Held magnets (feature 043)
+            (
+                schema::CREATE_HELD_MAGNETS_TABLE,
+                "Failed to create held_magnets table",
             ),
         ] {
             sqlx::query(sql)

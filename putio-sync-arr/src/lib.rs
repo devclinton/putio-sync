@@ -11,4 +11,6 @@ pub mod view;
 
 pub use arr_api::{ArrApi, ArrApiError, SystemStatus};
 pub use contact::Contacts;
-pub use service::{AddOutcome, AddSource, ArrError, ArrService, ItemId, REFRESH_INTERVAL};
+pub use service::{
+    unix_now, AddOutcome, AddSource, ArrError, ArrService, ItemId, HELD, REFRESH_INTERVAL,
+};

@@ -646,7 +646,7 @@ impl TorrentWatchCore {
                     (precheck.check_meta(meta, &policy, source), Some(cache))
                 }
                 Lookup::Missed(missed) => {
-                    precheck.unknown(&hash, &name, source, missed);
+                    precheck.unknown(&hash, &name, source, missed.as_str());
                     let outcome = Outcome::Unknown {
                         hash: hash.clone(),
                         name: Some(name.clone()),

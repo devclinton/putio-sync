@@ -4,14 +4,14 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use putio_sync_client::{error_chain, PutioApiClient};
 use putio_sync_core::config::{normalize_arr_category, ArrSettings, PrecheckConfig};
 use putio_sync_core::rules::RuleSet;
 use putio_sync_db::{
-    ArrItem, ArrState, BlocklistState, CheckState, Database, NewArrItem, NewCheck, NewReport,
-    PendingCheck, PutioProgress, ReportKind,
+    ArrItem, ArrState, BlocklistState, CheckState, Database, Held, HeldSettle, NewArrItem,
+    NewCheck, NewHeld, NewReport, PendingCheck, PutioProgress, ReportKind,
 };
 use putio_sync_download::{DownloadManager, TreeDecision};
 use putio_sync_precheck::fetch::{self, Fetched};
@@ -21,7 +21,8 @@ use putio_sync_precheck::{
     Lookup, Metainfo, Outcome, Policy, PrecheckSource, Prechecker, Reason, Stage, Traits,
 };
 use putio_sync_telemetry::arr as metrics;
-use putio_sync_telemetry::labels::{ArrItemState, BlocklistOutcome};
+use putio_sync_telemetry::labels::{ArrItemState, BlocklistOutcome, HoldResult};
+use putio_sync_telemetry::precheck as precheck_metrics;
 use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -41,6 +42,19 @@ const ADD_BUDGET: Duration = Duration::from_secs(14);
 
 /// Blocklist calls tried before giving up
 const MAX_BLOCKLIST_ATTEMPTS: i64 = 5;
+
+/// `putio_status` of a magnet held before Put.io (043)
+pub const HELD: &str = "HELD";
+
+/// Held magnets asked about in one pass, one at a time
+const HOLD_BATCH: i64 = 20;
+
+/// Seconds since the Unix epoch, the hold's clock
+pub fn unix_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
 
 /// What `torrent-add` was given
 #[derive(Debug, Clone)]
@@ -203,6 +217,27 @@ impl ArrService {
         view::download_dir(&self.target, "")
     }
 
+    /// The magnets held before Put.io (043), the oldest first, each with its item's name
+    pub async fn held(&self) -> Result<Vec<(String, Held)>, ArrError> {
+        let names: HashMap<String, String> = self
+            .db
+            .arr()
+            .list()
+            .await?
+            .into_iter()
+            .filter(is_held)
+            .map(|i| (i.hash, i.name))
+            .collect();
+        Ok(self
+            .db
+            .held()
+            .list()
+            .await?
+            .into_iter()
+            .filter_map(|h| Some((names.get(&h.hash)?.clone(), h)))
+            .collect())
+    }
+
     /// Number of items in each state
     pub async fn counts(&self) -> Result<Vec<(ArrState, i64)>, ArrError> {
         Ok(self.db.arr().counts_by_state().await?)
@@ -282,21 +317,21 @@ impl ArrService {
             }
             other => other,
         };
+        if let (Some(checked), Payload::Magnet(magnet)) = (&checked, &payload) {
+            if matches!(checked.outcome, Outcome::Unknown { .. }) && self.holding() {
+                let release = Release {
+                    hash: &hash,
+                    name,
+                    category: &category,
+                    source,
+                    lookup: checked.lookup,
+                    cache: None,
+                };
+                return self.hold(release, magnet).await;
+            }
+        }
 
-        let parent = self.category_folder(&category).await?;
-        let added = match payload {
-            Payload::Magnet(magnet) => {
-                self.client
-                    .add_transfer_url(&magnet, Some(parent), None)
-                    .await
-            }
-            Payload::Torrent(bytes) => {
-                self.client
-                    .add_transfer_torrent(&format!("{}.torrent", hash), bytes, Some(parent))
-                    .await
-            }
-        };
-        let transfer = added.map_err(|e| ArrError::Refused(error_chain(&e)))?;
+        let transfer = self.send_to_putio(&hash, &category, payload).await?;
 
         let name = name
             .or_else(|| Some(transfer.name.clone()).filter(|n| !n.trim().is_empty()))
@@ -344,6 +379,362 @@ impl ArrService {
         Ok(AddOutcome::Added(item))
     }
 
+    /// Create the Put.io transfer in the category's folder
+    async fn send_to_putio(
+        &self,
+        hash: &str,
+        category: &str,
+        payload: Payload,
+    ) -> Result<putio_sync_client::Transfer, ArrError> {
+        let parent = self.category_folder(category).await?;
+        let added = match payload {
+            Payload::Magnet(magnet) => {
+                self.client
+                    .add_transfer_url(&magnet, Some(parent), None)
+                    .await
+            }
+            Payload::Torrent(bytes) => {
+                self.client
+                    .add_transfer_torrent(&format!("{}.torrent", hash), bytes, Some(parent))
+                    .await
+            }
+        };
+        added.map_err(|e| ArrError::Refused(error_chain(&e)))
+    }
+
+    /// Whether a magnet missed in the caches is held and asked about again (043)
+    fn holding(&self) -> bool {
+        self.precheck.as_ref().is_some_and(|p| p.config().holding())
+    }
+
+    /// Hold a magnet no cache had: listed as queued with no Put.io transfer until a later
+    /// ask finds its file list or the hold runs out (043 US1)
+    async fn hold(&self, release: Release<'_>, magnet: &str) -> Result<AddOutcome, ArrError> {
+        let Release {
+            hash,
+            name,
+            category,
+            source,
+            lookup,
+            ..
+        } = release;
+        let config = self
+            .precheck
+            .as_ref()
+            .map(Prechecker::config)
+            .ok_or_else(|| ArrError::Internal("hold without precheck".to_string()))?;
+        let name = name
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| hash.to_string());
+        let repo = self.db.arr();
+        repo.insert(&NewArrItem {
+            hash,
+            name: &name,
+            category,
+            transfer_id: None,
+            putio_status: HELD,
+            total_size: 0,
+        })
+        .await?;
+        let check_id = self
+            .record_check(&NewCheck {
+                hash: Some(hash),
+                name: &name,
+                source: source.as_str(),
+                category: Some(category),
+                stage: Stage::Before.as_str(),
+                lookup,
+                ..NewCheck::default()
+            })
+            .await;
+        let now = unix_now();
+        let until = now + config.hold_magnet_secs as i64;
+        let held = self.db.held();
+        held.insert(&NewHeld {
+            hash,
+            magnet,
+            source: source.as_str(),
+            category: Some(category),
+            watch_folder: None,
+            check_id,
+            last_lookup: lookup,
+            held_at: now,
+            next_at: (now + config.hold_retry_secs as i64).min(until),
+            until_at: until,
+        })
+        .await?;
+        info!(
+            hash,
+            name = %name,
+            lookup = lookup.unwrap_or(""),
+            hold_secs = config.hold_magnet_secs,
+            "Magnet held until a cache has its file list"
+        );
+        self.update_held_gauge().await;
+        self.update_gauge().await;
+
+        let item = repo
+            .get_by_hash(hash)
+            .await?
+            .ok_or_else(|| ArrError::Internal("held item missing".to_string()))?;
+        Ok(AddOutcome::Added(item))
+    }
+
+    /// Ask the caches again about each held magnet that is due at `now` (Unix seconds),
+    /// the longest-waiting first, one at a time. Each ends the hold or schedules the
+    /// next ask.
+    pub async fn release_held(&self, now: i64) {
+        let due = match self.db.held().due(now, HOLD_BATCH).await {
+            Ok(due) => due,
+            Err(e) => {
+                warn!(error = %e, "Failed to list held magnets");
+                return;
+            }
+        };
+        if due.is_empty() {
+            return;
+        }
+        for held in &due {
+            if let Err(e) = self.release_one(held, now).await {
+                warn!(hash = %held.hash, error = %e, "Failed to release held magnet");
+            }
+        }
+        self.update_held_gauge().await;
+        self.update_gauge().await;
+    }
+
+    /// One held magnet's turn
+    async fn release_one(&self, held: &Held, now: i64) -> Result<(), ArrError> {
+        let Some(item) = self.held_item(&held.hash).await? else {
+            self.db.held().delete(&held.hash).await?;
+            return Ok(());
+        };
+        let source = PrecheckSource::ALL
+            .iter()
+            .copied()
+            .find(|s| s.as_str() == held.source)
+            .unwrap_or(PrecheckSource::Magnet);
+        let category = held.category.clone().unwrap_or_default();
+        let checker = self.precheck.as_ref().and_then(|p| {
+            let policy = p.policy(&category, Key::Category(&category));
+            policy.enabled.then_some((p, policy))
+        });
+        // The check is off for the category now: send it on as it is (FR-013)
+        let Some((precheck, policy)) = checker else {
+            return self.end_hold(held, &item, HoldEnd::Unchecked, now).await;
+        };
+        let config = precheck.config();
+        if !config.holding() {
+            return self.end_hold(held, &item, HoldEnd::RanOut, now).await;
+        }
+
+        let limit = Duration::from_secs(config.lookup_timeout_secs);
+        match precheck.lookup(&held.hash, limit).await {
+            Lookup::Found { meta, cache } => match precheck.check_meta(meta, &policy, source) {
+                Outcome::Passed(meta) => {
+                    let total = meta.as_ref().map_or(0, Metainfo::total_size) as i64;
+                    let end = HoldEnd::Found { cache, total };
+                    self.end_hold(held, &item, end, now).await
+                }
+                Outcome::Rejected(meta, reason) => {
+                    self.reject_held(held, &item, source, meta, reason, &policy, cache, now)
+                        .await
+                }
+                Outcome::Unknown { .. } => Ok(()),
+            },
+            Lookup::Missed(_) if now >= held.until_at => {
+                self.end_hold(held, &item, HoldEnd::RanOut, now).await
+            }
+            Lookup::Missed(missed) => {
+                let next = (now + config.hold_retry_secs as i64).min(held.until_at);
+                debug!(hash = %held.hash, lookup = missed.as_str(), next, "Held magnet still missing");
+                self.db
+                    .held()
+                    .reschedule(&held.hash, next, missed.as_str())
+                    .await?;
+                Ok(())
+            }
+        }
+    }
+
+    /// The item of a held magnet, while it is still held
+    async fn held_item(&self, hash: &str) -> Result<Option<ArrItem>, ArrError> {
+        let item = self.db.arr().get_by_hash(hash).await?;
+        Ok(item.filter(is_held))
+    }
+
+    /// Send a held magnet to Put.io and settle its check. A refused add fails the item
+    /// with Put.io's message.
+    async fn end_hold(
+        &self,
+        held: &Held,
+        item: &ArrItem,
+        end: HoldEnd,
+        now: i64,
+    ) -> Result<(), ArrError> {
+        // Removing a held item takes the same lock, so neither runs half-way
+        let _guard = self.add_lock.lock().await;
+        if self.held_item(&held.hash).await?.is_none() {
+            self.db.held().delete(&held.hash).await?;
+            return Ok(());
+        }
+        let category = held.category.as_deref().unwrap_or("");
+        let payload = Payload::Magnet(held.magnet.clone());
+        let repo = self.db.arr();
+        let releases = self.db.releases();
+        let result = match self.send_to_putio(&held.hash, category, payload).await {
+            Ok(transfer) => {
+                let progress = PutioProgress {
+                    status: &transfer.status,
+                    percent: 0,
+                    eta: None,
+                    size: transfer.size,
+                };
+                repo.set_transfer(&held.hash, transfer.id, &progress)
+                    .await?;
+                let settle = |state, lookup, cache, total, reason| HeldSettle {
+                    state,
+                    lookup,
+                    lookup_cache: cache,
+                    total_size: total,
+                    reason,
+                    transfer_id: Some(transfer.id),
+                };
+                let (result, settled) = match &end {
+                    HoldEnd::Found { cache, total } => {
+                        let found = settle(
+                            CheckState::Passed,
+                            Some("found"),
+                            Some(cache.as_str()),
+                            *total,
+                            None,
+                        );
+                        (HoldResult::FoundPassed, Some(found))
+                    }
+                    HoldEnd::Unchecked => {
+                        let off = settle(CheckState::Passed, None, None, 0, Some("unchecked"));
+                        (HoldResult::Unchecked, Some(off))
+                    }
+                    HoldEnd::RanOut => (HoldResult::RanOut, None),
+                };
+                if let Some(id) = held.check_id {
+                    let written = match settled {
+                        Some(settle) => releases.settle_held(id, &settle).await,
+                        // Checked on Put.io once its files are there (042 US3)
+                        None => releases.set_check_transfer(id, transfer.id).await,
+                    };
+                    if let Err(e) = written {
+                        warn!(hash = %held.hash, error = %e, "Failed to settle held release check");
+                    }
+                }
+                if let (HoldEnd::RanOut, Some(precheck)) = (&end, &self.precheck) {
+                    let lookup = held.last_lookup.as_deref().unwrap_or("");
+                    precheck.unknown(&held.hash, &item.name, PrecheckSource::Magnet, lookup);
+                }
+                info!(
+                    hash = %held.hash,
+                    name = %item.name,
+                    transfer_id = transfer.id,
+                    result = result.as_str(),
+                    attempts = held.attempts,
+                    "Held magnet sent to Put.io"
+                );
+                result
+            }
+            Err(e) => {
+                let message = e.to_string();
+                repo.set_state(&held.hash, ArrState::Failed, Some(&message), false)
+                    .await?;
+                if let Err(e) = releases
+                    .resolve_pending_by_hash(&held.hash, "putio_refused")
+                    .await
+                {
+                    warn!(hash = %held.hash, error = %e, "Failed to settle held release check");
+                }
+                warn!(hash = %held.hash, name = %item.name, error = %message, "arr item failed");
+                match end {
+                    HoldEnd::Found { .. } => HoldResult::FoundPassed,
+                    HoldEnd::Unchecked => HoldResult::Unchecked,
+                    HoldEnd::RanOut => HoldResult::RanOut,
+                }
+            }
+        };
+        self.db.held().delete(&held.hash).await?;
+        precheck_metrics::hold_ended(result, held_for(held, now));
+        Ok(())
+    }
+
+    /// A later ask found a file list that fails the check: fail the item as an add would
+    /// have (042 reject), with no Put.io call
+    #[allow(clippy::too_many_arguments)]
+    async fn reject_held(
+        &self,
+        held: &Held,
+        item: &ArrItem,
+        source: PrecheckSource,
+        meta: Option<Metainfo>,
+        reason: Reason,
+        policy: &Policy,
+        cache: String,
+        now: i64,
+    ) -> Result<(), ArrError> {
+        let _guard = self.add_lock.lock().await;
+        if self.held_item(&held.hash).await?.is_none() {
+            self.db.held().delete(&held.hash).await?;
+            return Ok(());
+        }
+        let category = held.category.as_deref().unwrap_or("");
+        let total = meta.as_ref().map_or(0, Metainfo::total_size) as i64;
+        let message = reason.message(Stage::Before);
+        let blocklist = self.blocklist_server(category).is_some();
+        self.db
+            .arr()
+            .set_state(&held.hash, ArrState::Failed, Some(&message), blocklist)
+            .await?;
+        if let Some(id) = held.check_id {
+            let settle = HeldSettle {
+                state: CheckState::Rejected,
+                lookup: Some("found"),
+                lookup_cache: Some(&cache),
+                total_size: total,
+                reason: Some(reason.key()),
+                transfer_id: None,
+            };
+            if let Err(e) = self.db.releases().settle_held(id, &settle).await {
+                warn!(hash = %held.hash, error = %e, "Failed to settle held release check");
+            }
+        }
+        let release = Release {
+            hash: &held.hash,
+            name: Some(item.name.clone()),
+            category,
+            source,
+            lookup: None,
+            cache: None,
+        };
+        self.record_report(
+            &release,
+            &item.name,
+            held.check_id,
+            meta.as_ref(),
+            &reason,
+            policy,
+        )
+        .await;
+        warn!(hash = %held.hash, name = %item.name, error = %message, "arr item failed");
+        self.db.held().delete(&held.hash).await?;
+        precheck_metrics::hold_ended(HoldResult::FoundRejected, held_for(held, now));
+        Ok(())
+    }
+
+    /// Set the held magnets gauge
+    async fn update_held_gauge(&self) {
+        match self.db.held().count().await {
+            Ok(n) => precheck_metrics::set_held(n),
+            Err(e) => debug!(error = %e, "Failed to count held magnets"),
+        }
+    }
+
     /// Check a release before Put.io. A magnet is looked up in the caches with the time
     /// left before `deadline`. `None` when the check is off for the category.
     async fn precheck(
@@ -363,7 +754,12 @@ impl ArrService {
         let (outcome, lookup, cache) = match payload {
             Payload::Torrent(bytes) => (precheck.check(bytes, &policy, source), None, None),
             Payload::Magnet(_) => {
-                let left = deadline.saturating_duration_since(Instant::now());
+                let mut left = deadline.saturating_duration_since(Instant::now());
+                let holding = precheck.config().holding();
+                if holding {
+                    // A miss is held and asked again, so the first ask is short (043 US2)
+                    left = left.min(Duration::from_secs(precheck.config().first_lookup_secs));
+                }
                 let found = precheck.lookup(hash, left).await;
                 let result = found.as_str();
                 match found {
@@ -373,7 +769,9 @@ impl ArrService {
                         Some(cache),
                     ),
                     Lookup::Missed(missed) => {
-                        precheck.unknown(hash, name.unwrap_or(hash), source, missed);
+                        if !holding {
+                            precheck.unknown(hash, name.unwrap_or(hash), source, missed.as_str());
+                        }
                         let outcome = Outcome::Unknown {
                             hash: hash.to_string(),
                             name: name.map(str::to_string),
@@ -444,33 +842,16 @@ impl ArrService {
                 ..NewCheck::default()
             })
             .await;
-        let traits = meta.as_ref().map(|m| Traits::of(m, policy));
-        let types = traits.as_ref().map_or("[]".to_string(), Traits::types_json);
-        let hosts = traits
-            .as_ref()
-            .map_or("[]".to_string(), Traits::tracker_hosts_json);
-        let report = NewReport {
-            kind: ReportKind::Rejected,
-            check_id,
-            arr_hash: Some(hash),
-            source: Some(source.as_str()),
-            category: Some(category),
-            stage: Some(Stage::Before.as_str()),
-            name: &name,
-            hash: Some(hash),
-            total_size: Some(total),
-            file_count: traits.as_ref().map(|t| t.file_count as i64),
-            types: &types,
-            largest_wanted: traits.as_ref().map(|t| t.largest_wanted as i64),
-            min_size: Some(policy.min_size as i64),
-            tracker_hosts: &hosts,
-            is_private: meta.as_ref().is_some_and(|m| m.private),
-            reason: Some(reason.key()),
-            ..NewReport::default()
+        let release = Release {
+            hash,
+            name: None,
+            category,
+            source,
+            lookup,
+            cache,
         };
-        if let Err(e) = self.db.releases().insert_report(&report).await {
-            warn!(hash, error = %e, "Failed to record release report");
-        }
+        self.record_report(&release, &name, check_id, meta.as_ref(), &reason, policy)
+            .await;
         warn!(hash, name = %name, error = %message, "arr item failed");
         self.update_gauge().await;
 
@@ -479,6 +860,46 @@ impl ArrService {
             .await?
             .ok_or_else(|| ArrError::Internal("added item missing".to_string()))?;
         Ok(AddOutcome::Added(item))
+    }
+
+    /// Write the `release_reports` row of a rejection. A failure is logged.
+    async fn record_report(
+        &self,
+        release: &Release<'_>,
+        name: &str,
+        check_id: Option<i64>,
+        meta: Option<&Metainfo>,
+        reason: &Reason,
+        policy: &Policy,
+    ) {
+        let hash = release.hash;
+        let traits = meta.map(|m| Traits::of(m, policy));
+        let types = traits.as_ref().map_or("[]".to_string(), Traits::types_json);
+        let hosts = traits
+            .as_ref()
+            .map_or("[]".to_string(), Traits::tracker_hosts_json);
+        let report = NewReport {
+            kind: ReportKind::Rejected,
+            check_id,
+            arr_hash: Some(hash),
+            source: Some(release.source.as_str()),
+            category: Some(release.category),
+            stage: Some(Stage::Before.as_str()),
+            name,
+            hash: Some(hash),
+            total_size: Some(meta.map_or(0, Metainfo::total_size) as i64),
+            file_count: traits.as_ref().map(|t| t.file_count as i64),
+            types: &types,
+            largest_wanted: traits.as_ref().map(|t| t.largest_wanted as i64),
+            min_size: Some(policy.min_size as i64),
+            tracker_hosts: &hosts,
+            is_private: meta.is_some_and(|m| m.private),
+            reason: Some(reason.key()),
+            ..NewReport::default()
+        };
+        if let Err(e) = self.db.releases().insert_report(&report).await {
+            warn!(hash, error = %e, "Failed to record release report");
+        }
     }
 
     /// Write a `release_checks` row. A failure is logged: the add goes on.
@@ -1020,6 +1441,15 @@ impl ArrService {
             delete_local,
             "arr item removed"
         );
+        if is_held(&item) {
+            // Never on Put.io: end the hold under the lock its release takes (043 US3)
+            let _guard = self.add_lock.lock().await;
+            if let Some(held) = self.db.held().get(&item.hash).await? {
+                self.db.held().delete(&item.hash).await?;
+                precheck_metrics::hold_ended(HoldResult::Removed, held_for(&held, unix_now()));
+                self.update_held_gauge().await;
+            }
+        }
 
         if let Some(transfer_id) = item.transfer_id {
             if let Err(e) = self.client.cancel_transfers(vec![transfer_id]).await {
@@ -1104,6 +1534,28 @@ impl ArrService {
             Err(e) => debug!(error = %e, "Failed to count arr items"),
         }
     }
+}
+
+/// A magnet held before Put.io (043)
+fn is_held(item: &ArrItem) -> bool {
+    item.transfer_id.is_none()
+        && item.state == ArrState::Putio
+        && item.putio_status.as_deref() == Some(HELD)
+}
+
+/// How long a magnet was held
+fn held_for(held: &Held, now: i64) -> Duration {
+    Duration::from_secs((now - held.held_at).max(0) as u64)
+}
+
+/// How a hold ends with a Put.io transfer
+enum HoldEnd {
+    /// A later ask found a passing file list
+    Found { cache: String, total: i64 },
+    /// The hold ran out, or holding was turned off: checked on Put.io (042 US3)
+    RanOut,
+    /// The check is off for the category
+    Unchecked,
 }
 
 /// An item a refresh follows on Put.io. Items rejected before Put.io have no transfer.

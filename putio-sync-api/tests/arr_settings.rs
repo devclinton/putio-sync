@@ -67,6 +67,61 @@ async fn enabled_lists_servers_without_keys() {
     );
 }
 
+/// 043: a held magnet is listed with its hold, never its magnet
+#[tokio::test]
+async fn held_magnets_are_listed_without_the_magnet() {
+    let app = test_app_with(|config| {
+        config.arr = ArrConfig {
+            enabled: true,
+            password: Some("pw".into()),
+            ..ArrConfig::default()
+        };
+    })
+    .await;
+    let db = app.db.as_ref().unwrap();
+    let hash = "c12fe1c06bba254a9dc9f519b335aa7c1367a88a";
+    db.arr()
+        .insert(&putio_sync_db::NewArrItem {
+            hash,
+            name: "Show.S01E04",
+            category: "sonarr",
+            transfer_id: None,
+            putio_status: putio_sync_arr::HELD,
+            total_size: 0,
+        })
+        .await
+        .unwrap();
+    db.held()
+        .insert(&putio_sync_db::NewHeld {
+            hash,
+            magnet: "magnet:?xt=urn:btih:secret-magnet",
+            source: "magnet",
+            category: Some("sonarr"),
+            watch_folder: None,
+            check_id: None,
+            last_lookup: Some("timeout"),
+            held_at: 1_793_181_600,
+            next_at: 1_793_181_630,
+            until_at: 1_793_181_900,
+        })
+        .await
+        .unwrap();
+
+    let body = body_json(app.get("/arr").await).await;
+    assert_eq!(
+        body["held"],
+        json!([{
+            "hash": hash,
+            "name": "Show.S01E04",
+            "since": "2026-10-28T10:00:00Z",
+            "until": "2026-10-28T10:05:00Z",
+            "attempts": 1,
+            "last_lookup": "timeout",
+        }])
+    );
+    assert!(!body.to_string().contains("magnet:"));
+}
+
 #[tokio::test]
 async fn server_test_results() {
     let mut arr = mockito::Server::new_async().await;

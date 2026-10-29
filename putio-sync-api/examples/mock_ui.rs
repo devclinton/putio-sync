@@ -373,6 +373,38 @@ async fn seed_history(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
 /// About 120 days of downloads for the Stats page: mostly evenings, more at weekends,
 /// a mix of file types, sources (two public trackers, one private, URL, unknown) and
 /// origins (two watch folders, manual, Put.io)
+/// A magnet held before Put.io (043), for the Queue page's "Waiting for file list". Its
+/// one ask is 12 minutes out, so the mock never reaches a cache.
+async fn seed_held(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
+    let hash = "4f1c9a3e2b7d6c5a8e9f0b1c2d3e4f5a6b7c8d9e";
+    db.arr()
+        .insert(&putio_sync_db::NewArrItem {
+            hash,
+            name: "Show.S02E05.1080p.WEB",
+            category: "sonarr",
+            transfer_id: None,
+            putio_status: putio_sync_arr::HELD,
+            total_size: 0,
+        })
+        .await?;
+    let now = Utc::now().timestamp();
+    db.held()
+        .insert(&putio_sync_db::NewHeld {
+            hash,
+            magnet: "magnet:?xt=urn:btih:4f1c9a3e2b7d6c5a8e9f0b1c2d3e4f5a6b7c8d9e",
+            source: "magnet",
+            category: Some("sonarr"),
+            watch_folder: None,
+            check_id: None,
+            last_lookup: Some("not_found"),
+            held_at: now - 90,
+            next_at: now + 720,
+            until_at: now + 720,
+        })
+        .await?;
+    Ok(())
+}
+
 async fn seed_stats(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     // (extension, minimum size, size spread)
     const KINDS: [(&str, i64, i64); 9] = [
@@ -876,6 +908,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     seed_history(&db).await?;
     seed_stats(&db).await?;
     seed_releases(&db).await?;
+    seed_held(&db).await?;
     seed_partial(dir.path())?;
     db.rule_decisions()
         .record(

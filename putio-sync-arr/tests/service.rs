@@ -982,9 +982,11 @@ async fn lookups(db: &Database) -> Vec<(Option<String>, Option<String>, String, 
     .unwrap()
 }
 
+/// 042's behaviour: a miss goes to Put.io at once (043's hold is off)
 fn with_caches(caches: Vec<String>) -> PrecheckConfig {
     PrecheckConfig {
         caches,
+        hold_magnet_secs: 0,
         ..PrecheckConfig::default()
     }
 }
@@ -1135,6 +1137,7 @@ async fn hanging_caches_fall_back_within_the_deadline() {
     let cfg = PrecheckConfig {
         lookup_timeout_secs: 30,
         caches: vec![hanging().await, hanging().await],
+        hold_magnet_secs: 0,
         ..PrecheckConfig::default()
     };
     let service = h.checked(vec![], cfg);
@@ -1394,4 +1397,290 @@ async fn fallback_gone_errored_or_cancelled_is_not_counted_fake() {
             .unwrap();
         assert_eq!(reports, 0, "{error}");
     }
+}
+
+// --- Magnets held and asked again (043) ---
+
+/// Holding on, at its defaults
+fn holding(cache: &ServerGuard) -> PrecheckConfig {
+    PrecheckConfig {
+        caches: vec![format!("{}/t/{{HASH}}.torrent", cache.url())],
+        ..PrecheckConfig::default()
+    }
+}
+
+/// A cache answer for `hash`
+async fn cache_answer(cache: &mut ServerGuard, hash: &str, status: usize, body: Vec<u8>) -> Mock {
+    cache
+        .mock(
+            "GET",
+            format!("/t/{}.torrent", hash.to_uppercase()).as_str(),
+        )
+        .with_status(status)
+        .with_body(body)
+        .create_async()
+        .await
+}
+
+/// No transfer may be created
+async fn no_transfer(h: &mut Harness) -> Mock {
+    h.putio
+        .mock("POST", "/transfers/add")
+        .expect(0)
+        .create_async()
+        .await
+}
+
+async fn reports(db: &Database) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM release_reports")
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+}
+
+/// Add `magnet` to `sonarr`; the item is held with no Put.io call
+async fn add_held(h: &Harness, service: &ArrService, magnet: String) -> putio_sync_db::ArrItem {
+    let dir = format!("{}/sonarr", h.target().display());
+    let AddOutcome::Added(item) = service
+        .add(AddSource::Magnet(magnet), Some(&dir))
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(item.transfer_id, None);
+    assert_eq!(item.state, ArrState::Putio);
+    assert_eq!(item.putio_status.as_deref(), Some(putio_sync_arr::HELD));
+    assert_eq!(item.error, None);
+    assert_eq!(h.db.held().count().await.unwrap(), 1);
+    item
+}
+
+#[tokio::test]
+async fn held_magnet_found_later_goes_to_putio_after_a_restart() {
+    let mut h = Harness::new().await;
+    let real = torrent("Show.S01E01", &[("Show.S01E01.mkv", 2048 * MB)]);
+    let hash = hash_of(&real);
+    let mut cache = mockito::Server::new_async().await;
+    let miss = cache_answer(&mut cache, &hash, 404, vec![]).await;
+    let service = h.checked(vec![], holding(&cache));
+    let none = no_transfer(&mut h).await;
+    add_held(&h, &service, magnet_for(&hash, "Show.S01E01")).await;
+    assert_eq!(
+        lookups(&h.db).await,
+        vec![(Some("not_found".into()), None, "pending".into(), None)]
+    );
+    // Not due yet: nothing is asked
+    service.release_held(putio_sync_arr::unix_now()).await;
+    none.assert_async().await;
+    none.remove_async().await;
+    miss.remove_async().await;
+
+    // A new service on the same database (a restart) carries on with the hold
+    let _hit = cache_answer(&mut cache, &hash, 200, real).await;
+    h.category_created().await;
+    let added = h.transfer_added().await;
+    let service = h.checked(vec![], holding(&cache));
+    service.release_held(putio_sync_arr::unix_now() + 30).await;
+
+    let item = h.db.arr().get_by_hash(&hash).await.unwrap().unwrap();
+    assert_eq!(item.transfer_id, Some(TRANSFER));
+    assert_eq!(item.putio_status.as_deref(), Some("IN_QUEUE"));
+    assert_eq!(
+        lookups(&h.db).await,
+        vec![(
+            Some("found".into()),
+            Some("127.0.0.1".into()),
+            "passed".into(),
+            Some(TRANSFER)
+        )]
+    );
+    assert_eq!(h.db.held().count().await.unwrap(), 0);
+    assert!(!h.db.releases().has_pending().await.unwrap());
+    added.assert_async().await;
+}
+
+#[tokio::test]
+async fn held_magnet_found_fake_fails_without_putio() {
+    let mut h = Harness::new().await;
+    let exe = torrent("Show.S01E03.1080p", &[("Show.S01E03.exe", 1500 * MB)]);
+    let hash = hash_of(&exe);
+    let mut cache = mockito::Server::new_async().await;
+    let miss = cache_answer(&mut cache, &hash, 404, vec![]).await;
+    let none = no_transfer(&mut h).await;
+    let service = h.checked(vec![], holding(&cache));
+    add_held(&h, &service, magnet_for(&hash, "Show.S01E03.1080p")).await;
+    miss.remove_async().await;
+    cache_answer(&mut cache, &hash, 200, exe).await;
+
+    service.release_held(putio_sync_arr::unix_now() + 30).await;
+    let item = h.db.arr().get_by_hash(&hash).await.unwrap().unwrap();
+    assert_eq!(item.state, ArrState::Failed);
+    assert_eq!(item.transfer_id, None);
+    assert_eq!(
+        item.error.as_deref(),
+        Some("rejected before Put.io: no video file (found .exe)")
+    );
+    assert_eq!(
+        checks(&h.db).await,
+        vec![(
+            "magnet".into(),
+            "before".into(),
+            "rejected".into(),
+            Some("no_wanted".into())
+        )]
+    );
+    assert_eq!(reports(&h.db).await, 1);
+    assert_eq!(h.db.held().count().await.unwrap(), 0);
+    none.assert_async().await;
+}
+
+#[tokio::test]
+async fn held_magnet_dry_run_goes_to_putio() {
+    let mut h = Harness::new().await;
+    let exe = torrent("Show.S01E03.1080p", &[("Show.S01E03.exe", 1500 * MB)]);
+    let hash = hash_of(&exe);
+    let mut cache = mockito::Server::new_async().await;
+    let miss = cache_answer(&mut cache, &hash, 404, vec![]).await;
+    let cfg = PrecheckConfig {
+        dry_run: true,
+        ..holding(&cache)
+    };
+    let service = h.checked(vec![], cfg);
+    add_held(&h, &service, magnet_for(&hash, "Show.S01E03.1080p")).await;
+    miss.remove_async().await;
+    cache_answer(&mut cache, &hash, 200, exe).await;
+    h.category_created().await;
+    let added = h.transfer_added().await;
+
+    service.release_held(putio_sync_arr::unix_now() + 30).await;
+    let item = h.db.arr().get_by_hash(&hash).await.unwrap().unwrap();
+    assert_eq!(item.transfer_id, Some(TRANSFER));
+    assert_eq!(checks(&h.db).await[0].2, "passed");
+    assert_eq!(reports(&h.db).await, 0);
+    added.assert_async().await;
+}
+
+#[tokio::test]
+async fn held_magnet_still_missing_waits_then_runs_out() {
+    let mut h = Harness::new().await;
+    let mut cache = mockito::Server::new_async().await;
+    let miss = cache
+        .mock(
+            "GET",
+            format!("/t/{}.torrent", HASH.to_uppercase()).as_str(),
+        )
+        .with_status(404)
+        .expect(3)
+        .create_async()
+        .await;
+    let none = no_transfer(&mut h).await;
+    let service = h.checked(vec![], holding(&cache));
+    add_held(&h, &service, magnet()).await;
+    let now = putio_sync_arr::unix_now();
+
+    service.release_held(now + 30).await;
+    let held = h.db.held().get(HASH).await.unwrap().unwrap();
+    assert_eq!(held.attempts, 2);
+    assert_eq!(held.next_at, now + 60);
+    assert_eq!(held.last_lookup.as_deref(), Some("not_found"));
+    none.assert_async().await;
+    none.remove_async().await;
+
+    // The last ask misses too: on to Put.io, checked there (042 US3)
+    h.category_created().await;
+    let added = h.transfer_added().await;
+    service.release_held(now + 300).await;
+    let item = h.db.arr().get_by_hash(HASH).await.unwrap().unwrap();
+    assert_eq!(item.transfer_id, Some(TRANSFER));
+    assert_eq!(
+        lookups(&h.db).await,
+        vec![(
+            Some("not_found".into()),
+            None,
+            "pending".into(),
+            Some(TRANSFER)
+        )]
+    );
+    assert_eq!(h.db.held().count().await.unwrap(), 0);
+    added.assert_async().await;
+    // The first ask, the one at +30 s and the last
+    miss.assert_async().await;
+}
+
+#[tokio::test]
+async fn held_magnet_with_precheck_off_goes_on_unchecked() {
+    let mut h = Harness::new().await;
+    let mut cache = mockito::Server::new_async().await;
+    cache_answer(&mut cache, HASH, 404, vec![]).await;
+    let service = h.checked(vec![], holding(&cache));
+    add_held(&h, &service, magnet()).await;
+
+    h.category_created().await;
+    let added = h.transfer_added().await;
+    let service = h.service(vec![]);
+    service.release_held(putio_sync_arr::unix_now() + 30).await;
+    assert_eq!(
+        checks(&h.db).await,
+        vec![(
+            "magnet".into(),
+            "before".into(),
+            "passed".into(),
+            Some("unchecked".into())
+        )]
+    );
+    assert_eq!(h.db.held().count().await.unwrap(), 0);
+    added.assert_async().await;
+}
+
+#[tokio::test]
+async fn removing_a_held_magnet_never_calls_putio() {
+    let mut h = Harness::new().await;
+    let mut cache = mockito::Server::new_async().await;
+    cache_answer(&mut cache, HASH, 404, vec![]).await;
+    let none = no_transfer(&mut h).await;
+    let cancel = h
+        .putio
+        .mock("POST", "/transfers/cancel")
+        .expect(0)
+        .create_async()
+        .await;
+    let service = h.checked(vec![], holding(&cache));
+    add_held(&h, &service, magnet()).await;
+
+    service.remove(HASH, true).await.unwrap();
+    assert!(h.db.arr().get_by_hash(HASH).await.unwrap().is_none());
+    assert_eq!(h.db.held().count().await.unwrap(), 0);
+    assert_eq!(
+        checks(&h.db).await,
+        vec![(
+            "magnet".into(),
+            "before".into(),
+            "rejected".into(),
+            Some("gone".into())
+        )]
+    );
+    service.release_held(putio_sync_arr::unix_now() + 300).await;
+    none.assert_async().await;
+    cancel.assert_async().await;
+}
+
+/// 043 US2: with holding on, a stalling cache holds the add only `first_lookup_secs`
+#[tokio::test]
+async fn stalling_cache_is_asked_briefly_when_holding() {
+    let h = Harness::new().await;
+    let cfg = PrecheckConfig {
+        lookup_timeout_secs: 3,
+        first_lookup_secs: 1,
+        caches: vec![hanging().await],
+        ..PrecheckConfig::default()
+    };
+    let service = h.checked(vec![], cfg);
+    let started = std::time::Instant::now();
+    add_held(&h, &service, magnet()).await;
+    assert!(started.elapsed() < std::time::Duration::from_millis(2500));
+    assert_eq!(
+        lookups(&h.db).await,
+        vec![(Some("timeout".into()), None, "pending".into(), None)]
+    );
 }

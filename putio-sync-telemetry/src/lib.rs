@@ -35,6 +35,8 @@ pub use labels::*;
 const API_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0];
 const DOWNLOAD_BUCKETS: &[f64] = &[1.0, 5.0, 15.0, 60.0, 300.0, 900.0, 1800.0, 3600.0, 7200.0];
 const LOOKUP_BUCKETS: &[f64] = &[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0];
+/// How long a magnet was held (043)
+const HOLD_BUCKETS: &[f64] = &[30.0, 60.0, 120.0, 180.0, 300.0, 600.0];
 const SYNC_BUCKETS: &[f64] = &[1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0];
 
 /// Every metric family, registered in one registry.
@@ -98,6 +100,10 @@ pub struct Telemetry {
     pub(crate) precheck_fallback: IntCounterVec,
     pub(crate) precheck_fallback_putio_bytes: IntCounter,
     pub(crate) release_flags: IntCounterVec,
+    // Feature 043
+    pub(crate) precheck_held: IntCounterVec,
+    pub(crate) precheck_held_now: IntGauge,
+    pub(crate) precheck_held_seconds: HistogramVec,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -426,6 +432,28 @@ impl Telemetry {
                 &["kind"],
             )
             .unwrap(),
+            precheck_held: IntCounterVec::new(
+                opts(
+                    "precheck_held_total",
+                    "Magnets held for a later cache ask, by how the hold ended.",
+                ),
+                &["result"],
+            )
+            .unwrap(),
+            precheck_held_now: IntGauge::with_opts(opts(
+                "precheck_held",
+                "Magnets held now, waiting for a cache to have their file list.",
+            ))
+            .unwrap(),
+            precheck_held_seconds: HistogramVec::new(
+                hopts(
+                    "precheck_held_seconds",
+                    "How long a magnet was held, by how the hold ended.",
+                    HOLD_BUCKETS,
+                ),
+                &["result"],
+            )
+            .unwrap(),
 
             db_errors: IntCounterVec::new(
                 opts("db_errors_total", "Database errors."),
@@ -509,6 +537,9 @@ impl Telemetry {
             Box::new(self.precheck_cache_lookup_seconds.clone()),
             Box::new(self.precheck_fallback.clone()),
             Box::new(self.precheck_fallback_putio_bytes.clone()),
+            Box::new(self.precheck_held.clone()),
+            Box::new(self.precheck_held_now.clone()),
+            Box::new(self.precheck_held_seconds.clone()),
             Box::new(self.release_flags.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
@@ -588,6 +619,9 @@ impl Telemetry {
         }
         for k in FlagKind::ALL {
             self.release_flags.with_label_values(&[k.as_str()]);
+        }
+        for r in HoldResult::ALL {
+            self.precheck_held.with_label_values(&[r.as_str()]);
         }
         for op in DbOp::ALL {
             self.db_errors.with_label_values(&[op.as_str()]);

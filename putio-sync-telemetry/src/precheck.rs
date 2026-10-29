@@ -4,8 +4,8 @@
 use std::time::Duration;
 
 use crate::{
-    global, FallbackResult, FlagKind, LookupResult, PrecheckOutcome, PrecheckSource, PrecheckStage,
-    Telemetry,
+    global, FallbackResult, FlagKind, HoldResult, LookupResult, PrecheckOutcome, PrecheckSource,
+    PrecheckStage, Telemetry,
 };
 
 impl Telemetry {
@@ -56,6 +56,21 @@ impl Telemetry {
         }
     }
 
+    /// Count a hold that ended, and observe how long it took.
+    pub fn precheck_hold_ended(&self, result: HoldResult, held: Duration) {
+        self.precheck_held
+            .with_label_values(&[result.as_str()])
+            .inc();
+        self.precheck_held_seconds
+            .with_label_values(&[result.as_str()])
+            .observe(held.as_secs_f64());
+    }
+
+    /// Set the number of magnets held now.
+    pub fn set_precheck_held(&self, count: i64) {
+        self.precheck_held_now.set(count);
+    }
+
     /// Count one operator flag.
     pub fn release_flag(&self, kind: FlagKind) {
         self.release_flags.with_label_values(&[kind.as_str()]).inc();
@@ -90,6 +105,16 @@ pub fn lookup_time(elapsed: Duration) {
 /// Count a fallback's check on Put.io on the global instance.
 pub fn fallback(result: FallbackResult, putio_bytes: u64) {
     global().precheck_fallback(result, putio_bytes);
+}
+
+/// Count an ended hold on the global instance.
+pub fn hold_ended(result: HoldResult, held: Duration) {
+    global().precheck_hold_ended(result, held);
+}
+
+/// Set the held gauge on the global instance.
+pub fn set_held(count: i64) {
+    global().set_precheck_held(count);
 }
 
 /// Count a flag on the global instance.
