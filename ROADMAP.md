@@ -215,6 +215,20 @@ Radarr and Sonarr must not import an item before its pipeline is done:
   import back forever: after a set number of retries the item completes
   without it, and the failure shows on the item and in notifications.
 
+### 043 Magnet metadata from peers
+
+Follow-up to 042. When no .torrent cache has a magnet's file list, get it
+from BitTorrent peers (DHT and `ut_metadata`) within the add's time limit,
+so the release is checked before Put.io downloads it. Metadata only: no
+pieces, no seeding, no listening port, no trackers. Opt-in and off by
+default, because it shows the NAS's IP and the info hash to DHT nodes and
+peers. The settings screen and `docs/` must say so.
+
+Spec and research are in `specs/043-magnet-peer-metadata`. Research found a
+cheaper first step: itorrents.net fetches hashes it doesn't have, so asking
+it again a few minutes later found 16 of 17 first-time misses. Wait for
+042's fallback counters, then pick: re-ask the cache, peers, or both.
+
 ## Queued: packaging
 
 - **Minimal runtime image** on Docker Hardened Images (dhi.io), plus a
