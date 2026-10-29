@@ -25,8 +25,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   that isn't found goes to Put.io, and its files are checked there before
   any reach the NAS: a fake is deleted from Put.io and fails with "(checked
   on Put.io)". Watch-folder `.torrent` and `.magnet` files are checked the
-  same way: a fake isn't uploaded and is renamed `<file>.rejected`
-  (feature 042).
+  same way: a fake isn't uploaded and is renamed `<file>.rejected`. The Stats
+  page shows how many releases were rejected and the bytes kept off the NAS,
+  split by where they were checked and why, and how many magnets were found in
+  a cache or sent to Put.io, with the fakes among those. History lists the
+  rejected releases with the reason, and `GET /releases/reports` downloads
+  them as JSON or CSV (feature 042).
 - A Doctor page that checks the Put.io account and the sync setup: sign-in,
   storage, failed or stalled transfers, empty folders, duplicate files and
   leftover .torrent files, with one-click fixes (feature 010).

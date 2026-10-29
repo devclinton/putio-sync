@@ -106,8 +106,8 @@ network: Put.io, the caches, indexer URLs and the *arr API are mocked with mocki
     the note), `delete_flag(id) -> Deleted | NotFound | NotAFlag`, `flags_for(targets)`;
   - `reports(range)`, `release_stats(range)` returning the contracts/api.md `/stats/releases`
     shape;
-  - *MVP note*: `upsert_flag`, `delete_flag`, `flags_for`, `reports` and `release_stats`
-    are not built yet; they land with T020 (stats) and T023 (flags).
+  - *MVP note*: `upsert_flag`, `delete_flag` and `flags_for` are not built yet; they land
+    with T023 (flags). `release_stats` landed with T020, and `reports` with T022.
   - `prune(older_than)`.
 - [X] T007 [P] Test, then add the metrics in `putio-sync-telemetry/src/precheck.rs`, with the
   exact families and bounded label enums from research R12:
@@ -303,20 +303,25 @@ scan, only the real one is uploaded, and the fake is `<name>.torrent.rejected`.
 **Independent test**: seeded checks in the mock UI. The tiles' totals and their splits by stage,
 reason and cache match the seed.
 
-- [ ] T020 [P] [US5] Test, then add `GET /stats/releases` in
+- [X] T020 [P] [US5] Test, then add `GET /stats/releases` in
   `putio-sync-api/src/routes/system/stats.rs`, using `StatsQuery`'s range parsing and
   `ReleasesRepository::release_stats`.
   - The response is exactly the contracts/api.md shape.
   - Test: `putio-sync-api/tests/releases.rs`.
-- [ ] T021 [US5] In `putio-sync-api/ui/pages/stats.js`, add a "Rejected releases" tile (count,
+- [X] T021 [US5] In `putio-sync-api/ui/pages/stats.js`, add a "Rejected releases" tile (count,
   bytes, stage split, top reasons) and a "Magnet lookups" tile (found vs fell back, fallbacks that
   were fake and the bytes they cost on Put.io, per-cache table).
   - Use their own render functions, the page's range control, and text alternatives for any
     chart (006 FR-013).
   - Add the API helper in `putio-sync-api/ui/api.js` and seed a week of checks in
     `putio-sync-api/examples/mock_ui.rs`.
-- [ ] T022 [P] [US5] On rejected items in Queue (`putio-sync-api/ui/pages/queue.js`) and History
+- [X] T022 [P] [US5] On rejected items in Queue (`putio-sync-api/ui/pages/queue.js`) and History
   (`history.js`), show the reason and the stage.
+  - *Note*: rejected releases never become queue or history items, so this is a
+    "Rejected releases" view in History, read from `GET /releases/reports`. It shows
+    the time, stage, name, reason (with the types or sizes seen) and size. The Queue is
+    unchanged. `GET /releases/reports` (JSON and CSV) and `ReleasesRepository::reports`
+    landed here, ahead of T023.
 
 ## Phase 8: User Story 6 - Flag fakes the check missed, and wrong rejections (P3)
 
@@ -335,7 +340,7 @@ items. A CSV/JSON export.
   - `POST /releases/flags`;
   - `DELETE /releases/flags/{id}`;
   - `GET /releases/flags`;
-  - `GET /releases/reports?format=json|csv`.
+  - `GET /releases/reports?format=json|csv` (done with T022).
 
   Trait gathering (research R11) lives in `putio-sync-precheck/src/report.rs`:
   `traits_for(target)`, using the transfer from `transfers/list`, a read-only tree walk, or the

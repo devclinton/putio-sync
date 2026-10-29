@@ -1,8 +1,9 @@
 // Stats page: totals, bandwidth over time, an hour × weekday heatmap, file types,
-// origins and sources from GET /stats/summary. Filters live in the hash query, so a
-// reload or a shared link keeps them. Loads on filter change and Refresh only.
+// origins and sources from GET /stats/summary, and the release pre-check's rejections
+// and magnet lookups from GET /stats/releases (feature 042). Filters live in the hash
+// query, so a reload or a shared link keeps them. Loads on filter change and Refresh only.
 
-import { get } from "../api.js";
+import { get, releaseStats } from "../api.js";
 import { empty as emptyState, h } from "../app.js";
 import { bytes, duration, speed } from "../format.js";
 
@@ -12,6 +13,7 @@ const CATEGORIES = { video: "Video", audio: "Audio", archive: "Archive", image: 
 const SOURCES = { torrent: "Torrent", url: "URL", other: "Other", unknown: "Unknown" };
 const ORIGINS = { watch: "Watch folder", manual: "Added in putio-sync", putio: "Added on Put.io", unknown: "Unknown" };
 const PRIVACY = { private: "Private", public: "Public", unknown: "Unknown" };
+const REASONS = { no_wanted: "No wanted file", small_wanted: "Wanted file too small", invalid: "Not a valid .torrent", gone: "Transfer gone from Put.io" };
 /** Hash keys, in the order they are written */
 const KEYS = ["range", "cat", "ext", "source", "tracker", "private", "origin", "watch", "folder"];
 const DOTS = "…other";
@@ -23,6 +25,7 @@ const DAY_MS = 86400000;
 let f = {};
 let els = null;
 let data = null;
+let releases = null;
 let seq = 0;
 let sel = { bar: null, cell: null, heat: "bytes" };
 let resize = null;
@@ -32,6 +35,7 @@ export function mount(el, params = {}) {
   f = Object.fromEntries(KEYS.map((k) => [k, q.get(k) || ""]));
   if (!RANGES[f.range]) f.range = DEFAULT_RANGE;
   data = null;
+  releases = null;
   sel = { bar: null, cell: null, heat: "bytes" };
 
   els = {
@@ -60,6 +64,7 @@ export function unmount() {
   resize = null;
   els = null;
   data = null;
+  releases = null;
   seq += 1;
 }
 
@@ -132,10 +137,13 @@ function refresh() {
 
 async function load() {
   const mine = ++seq;
-  const q = new URLSearchParams({ range: f.range, tz: String(-new Date().getTimezoneOffset()) });
+  const tz = -new Date().getTimezoneOffset();
+  const q = new URLSearchParams({ range: f.range, tz: String(tz) });
   const api = { cat: "category", ext: "ext", source: "source", tracker: "tracker", private: "private", origin: "origin", watch: "watch", folder: "folder" };
   for (const [k, p] of Object.entries(api)) if (f[k]) q.set(p, f[k]);
   els.body.classList.add("loading");
+  // The release tiles are optional: a failure there leaves the rest of the page
+  const rel = releaseStats(f.range, tz).catch(() => null);
   let res;
   try {
     res = await get(`/stats/summary?${q}`);
@@ -154,8 +162,10 @@ async function load() {
     );
     throw e;
   }
+  const relRes = await rel;
   if (mine !== seq || !els) return;
   data = res;
+  releases = relRes;
   els.body.classList.remove("loading");
   renderFilters();
   render();
@@ -175,7 +185,7 @@ function render() {
   els.plot = null;
   els.body.replaceChildren(
     h("div", { class: "tiles" }, tile("Files", count(t.files)), tile("Downloaded", bytes(t.bytes)), tile("Time downloading", t.seconds ? duration(t.seconds) : "—"), tile("Average speed", t.avg_bps ? speed(t.avg_bps) : "—")),
-    h("div", { class: "stats-grid" }, card("Bandwidth", empty ? null : bandwidth()), card("When", empty ? null : heatmap()), card("File types", empty ? null : types()), card("Origin", empty ? null : origin()), card("Sources", empty ? null : sources())),
+    h("div", { class: "stats-grid" }, card("Bandwidth", empty ? null : bandwidth()), card("When", empty ? null : heatmap()), card("File types", empty ? null : types()), card("Origin", empty ? null : origin()), card("Sources", empty ? null : sources()), rejectedCard(), magnetsCard()),
   );
   if (els.plot) drawBars();
 }
@@ -437,4 +447,89 @@ function sources() {
     barList("Privacy", privacyRows, total),
     h("p", { class: "muted note", text: "Recorded for downloads queued since this version; earlier ones are unknown. Put.io doesn't report DHT; private torrents don't use it." }),
   ];
+}
+
+// ---- Release pre-check (feature 042) -----------------------------------------
+
+/** Rows of `{ label, count, sub? }` with a bar for each row's share of `total` */
+function countList(title, rows, total) {
+  if (!rows.length) return null;
+  return h(
+    "div",
+    { class: "blist" },
+    title ? h("h3", { text: title }) : null,
+    rows.map((r) =>
+      h(
+        "div",
+        { class: "brow" },
+        h("span", { class: "blabel name", text: r.label }),
+        h("span", { class: "num muted right", text: r.sub ? `${count(r.count)} · ${r.sub}` : count(r.count) }),
+        h("span", { class: "bar" }, h("span", { style: `width:${total ? Math.max(0.5, (r.count / total) * 100) : 0}%` })),
+      ),
+    ),
+  );
+}
+
+const rangeNote = () => h("p", { class: "muted note", text: "Counts every release checked in the range; the type and source filters don't apply." });
+
+function rejectedCard() {
+  const title = "Rejected releases";
+  if (!releases) return h("section", { class: "card" }, h("h2", { text: title }), emptyState("Can't load the release check"));
+  const r = releases.rejected;
+  if (!r.count) return h("section", { class: "card" }, h("h2", { text: title }), emptyState("Nothing rejected in this range"));
+  const stages = [
+    { label: "Before Put.io", count: r.by_stage.before.count, sub: bytes(r.by_stage.before.bytes) },
+    { label: "On Put.io", count: r.by_stage.putio.count, sub: bytes(r.by_stage.putio.bytes) },
+  ];
+  const reasons = r.by_reason.map((x) => ({ label: REASONS[x.reason] || x.reason || "Unknown", count: x.count }));
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: title }),
+    h("p", { class: "big", text: count(r.count) }),
+    h("p", { class: "muted", text: `${bytes(r.bytes)} kept off the NAS` }),
+    countList("Where it was checked", stages, r.count),
+    countList("Reason", reasons, r.count),
+    rangeNote(),
+  );
+}
+
+function magnetsCard() {
+  const title = "Magnet lookups";
+  if (!releases) return h("section", { class: "card" }, h("h2", { text: title }), emptyState("Can't load the release check"));
+  const m = releases.magnets;
+  if (!m.checked) return h("section", { class: "card" }, h("h2", { text: title }), emptyState("No magnets in this range"));
+  const lookups = [
+    { label: "Found in a cache", count: m.found },
+    { label: "Sent to Put.io unchecked", count: m.fell_back },
+  ];
+  const fake = m.fallback_fake
+    ? `${count(m.fallback_fake)} of those sent to Put.io were fake. Put.io downloaded ${bytes(m.fallback_putio_bytes)} for them before they were deleted.`
+    : "None of those sent to Put.io were fake.";
+  const results = [["found", "found"], ["not_found", "not found"], ["timeout", "timed out"], ["wrong_hash", "wrong hash"], ["error", "error"]];
+  const caches = m.caches.length
+    ? h(
+        "div",
+        { class: "blist" },
+        h("h3", { text: "Per cache" }),
+        m.caches.map((c) =>
+          h(
+            "div",
+            { class: "brow" },
+            h("span", { class: "blabel name", text: c.cache || "Misses (any cache)" }),
+            h("span", { class: "num muted right", text: count(results.reduce((n, [k]) => n + c[k], 0)) }),
+            h("small", { class: "muted", text: results.filter(([k]) => c[k]).map(([k, label]) => `${count(c[k])} ${label}`).join(" · ") }),
+          ),
+        ),
+      )
+    : null;
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: title }),
+    countList(null, lookups, m.checked),
+    h("p", { text: fake }),
+    caches,
+    h("p", { class: "muted note", text: "Misses aren't kept per cache, so they share one row. Magnets with lookups off count as sent to Put.io." }),
+  );
 }

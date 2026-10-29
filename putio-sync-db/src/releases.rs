@@ -2,12 +2,19 @@
 //! operator flag with the traits that tell fakes apart. Never a magnet link, URL, API
 //! key or .torrent bytes.
 
+use super::analytics::RangePreset;
 use super::error::{tracked, DbError, DbResult};
 use putio_sync_telemetry::DbOp;
+use serde::Serialize;
 use sqlx::{Row, SqlitePool};
+use std::collections::BTreeMap;
 
 /// The longest operator note kept
 pub const MAX_NOTE_CHARS: usize = 500;
+
+/// File types and tracker hosts listed in `/stats/releases`
+const TOP_TYPES: i64 = 8;
+const TOP_TRACKERS: i64 = 10;
 
 /// `release_checks.state`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,6 +365,221 @@ impl<'a> ReleasesRepository<'a> {
         Ok(result.last_insert_rowid())
     }
 
+    /// Every report made since the start of `range`, newest first (contracts/api.md
+    /// `/releases/reports`)
+    pub async fn reports(&self, range: RangePreset, now: i64) -> DbResult<Vec<ReportRow>> {
+        let from = range.length().map_or(0, |l| now - l.num_seconds());
+        let rows = sqlx::query(
+            r#"
+            SELECT id, kind, check_id, arr_hash, file_id, transfer_id, source, category,
+                   watch_folder, stage, name, hash, total_size, file_count, types,
+                   largest_wanted, min_size, tracker_hosts, is_private, reason, note,
+                   created_at
+            FROM release_reports
+            WHERE created_at >= datetime(?, 'unixepoch')
+            ORDER BY created_at DESC, id DESC
+            "#,
+        )
+        .bind(from)
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to list release reports"))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| ReportRow {
+                id: row.get("id"),
+                kind: row.get("kind"),
+                check_id: row.get("check_id"),
+                arr_hash: row.get("arr_hash"),
+                file_id: row.get("file_id"),
+                transfer_id: row.get("transfer_id"),
+                source: row.get("source"),
+                category: row.get("category"),
+                watch_folder: row.get("watch_folder"),
+                stage: row.get("stage"),
+                name: row.get("name"),
+                hash: row.get("hash"),
+                total_size: row.get("total_size"),
+                file_count: row.get("file_count"),
+                types: json_list(&row, "types"),
+                largest_wanted: row.get("largest_wanted"),
+                min_size: row.get("min_size"),
+                tracker_hosts: json_list(&row, "tracker_hosts"),
+                is_private: row.get("is_private"),
+                reason: row.get("reason"),
+                note: row.get("note"),
+                created_at: row.get("created_at"),
+            })
+            .collect())
+    }
+
+    /// Everything the Stats page's release tiles draw, for checks made since the start of
+    /// `range` (contracts/api.md `/stats/releases`). A rejection on Put.io counts its
+    /// bytes as avoided on the NAS; what Put.io downloaded is `fallback_putio_bytes`.
+    pub async fn release_stats(&self, range: RangePreset, now: i64) -> DbResult<ReleaseStats> {
+        let since = range.length().map(|l| now - l.num_seconds());
+        let from = since.unwrap_or(0);
+        let mut stats = ReleaseStats {
+            range: StatsRange {
+                preset: range.as_str(),
+                from: since,
+                to: now,
+            },
+            ..ReleaseStats::default()
+        };
+
+        let rows = sqlx::query(
+            r#"
+            SELECT stage, reason, COUNT(*) AS n, COALESCE(SUM(total_size), 0) AS bytes
+            FROM release_checks
+            WHERE state = 'rejected'
+              AND COALESCE(resolved_at, checked_at) >= datetime(?, 'unixepoch')
+            GROUP BY stage, reason
+            "#,
+        )
+        .bind(from)
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to count rejected releases"))?;
+        let mut reasons: BTreeMap<String, i64> = BTreeMap::new();
+        for row in rows {
+            let (count, bytes): (i64, i64) = (row.get("n"), row.get("bytes"));
+            let rejected = &mut stats.rejected;
+            rejected.count += count;
+            rejected.bytes += bytes;
+            let stage = match row.get::<String, _>("stage").as_str() {
+                "putio" => &mut rejected.by_stage.putio,
+                _ => &mut rejected.by_stage.before,
+            };
+            stage.count += count;
+            stage.bytes += bytes;
+            let reason: Option<String> = row.get("reason");
+            *reasons.entry(reason.unwrap_or_default()).or_default() += count;
+        }
+        stats.rejected.by_reason = reasons
+            .into_iter()
+            .map(|(reason, count)| ReasonCount { reason, count })
+            .collect();
+        stats
+            .rejected
+            .by_reason
+            .sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.reason.cmp(&b.reason)));
+
+        let rows = sqlx::query(
+            r#"
+            SELECT lookup, lookup_cache, stage, state, reason = 'gone' AS gone,
+                   COUNT(*) AS n, COALESCE(SUM(putio_bytes), 0) AS putio_bytes
+            FROM release_checks
+            WHERE source IN ('magnet', 'watch_magnet')
+              AND checked_at >= datetime(?, 'unixepoch')
+            GROUP BY lookup, lookup_cache, stage, state, gone
+            "#,
+        )
+        .bind(from)
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to count magnet lookups"))?;
+        let mut caches: BTreeMap<Option<String>, CacheCount> = BTreeMap::new();
+        for row in rows {
+            let count: i64 = row.get("n");
+            let lookup: Option<String> = row.get("lookup");
+            let magnets = &mut stats.magnets;
+            magnets.checked += count;
+            if lookup.as_deref() == Some("found") {
+                magnets.found += count;
+            } else {
+                magnets.fell_back += count;
+                let fake = row.get::<String, _>("stage") == "putio"
+                    && row.get::<String, _>("state") == "rejected"
+                    && !row.get::<Option<bool>, _>("gone").unwrap_or(false);
+                if fake {
+                    magnets.fallback_fake += count;
+                    magnets.fallback_putio_bytes += row.get::<i64, _>("putio_bytes");
+                }
+            }
+            // Only the cache that found a .torrent is kept, so misses share one row
+            let Some(lookup) = lookup.filter(|l| l != "off") else {
+                continue;
+            };
+            let cache: Option<String> = row.get("lookup_cache");
+            let entry = caches.entry(cache.clone()).or_insert_with(|| CacheCount {
+                cache,
+                ..CacheCount::default()
+            });
+            match lookup.as_str() {
+                "found" => entry.found += count,
+                "not_found" => entry.not_found += count,
+                "timeout" => entry.timeout += count,
+                "wrong_hash" => entry.wrong_hash += count,
+                _ => entry.error += count,
+            }
+        }
+        // Named caches first, then the misses
+        let (mut named, missed): (Vec<_>, Vec<_>) =
+            caches.into_values().partition(|c| c.cache.is_some());
+        named.extend(missed);
+        stats.magnets.caches = named;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT kind, COUNT(*) AS n FROM release_reports
+            WHERE created_at >= datetime(?, 'unixepoch')
+            GROUP BY kind
+            "#,
+        )
+        .bind(from)
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to count release reports"))?;
+        for row in rows {
+            let count: i64 = row.get("n");
+            match row.get::<String, _>("kind").as_str() {
+                "rejected" => stats.reports.rejected += count,
+                "flagged_fake" => stats.reports.flagged_fake += count,
+                _ => stats.reports.flagged_not_fake += count,
+            }
+        }
+
+        // Traits of releases known to be fake: rejections and "Fake" flags
+        stats.reports.top_types = sqlx::query_as(
+            r#"
+            SELECT lower(json_extract(t.value, '$.ext')) AS ext, COUNT(DISTINCT r.id) AS n
+            FROM release_reports r, json_each(r.types) t
+            WHERE r.kind IN ('rejected', 'flagged_fake')
+              AND r.created_at >= datetime(?, 'unixepoch')
+              AND json_extract(t.value, '$.ext') IS NOT NULL
+            GROUP BY ext ORDER BY n DESC, ext LIMIT ?
+            "#,
+        )
+        .bind(from)
+        .bind(TOP_TYPES)
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to count report file types"))?
+        .into_iter()
+        .map(|(ext, count)| TypeCount { ext, count })
+        .collect();
+        stats.reports.top_trackers = sqlx::query_as(
+            r#"
+            SELECT lower(t.value) AS host, COUNT(DISTINCT r.id) AS n
+            FROM release_reports r, json_each(r.tracker_hosts) t
+            WHERE r.kind IN ('rejected', 'flagged_fake')
+              AND r.created_at >= datetime(?, 'unixepoch')
+            GROUP BY host ORDER BY n DESC, host LIMIT ?
+            "#,
+        )
+        .bind(from)
+        .bind(TOP_TRACKERS)
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to count report trackers"))?
+        .into_iter()
+        .map(|(host, count)| TrackerCount { host, count })
+        .collect();
+
+        Ok(stats)
+    }
+
     /// Delete checks and reports older than `days` days (research R10: 400). Pending
     /// checks are kept whatever their age, so the sync gate never loses one.
     pub async fn prune(&self, days: i64) -> DbResult<u64> {
@@ -541,4 +763,148 @@ mod tests {
         assert_eq!(repo.prune(400).await.unwrap(), 2);
         assert!(repo.has_pending().await.unwrap());
     }
+}
+
+/// A JSON list column; empty when it doesn't parse
+fn json_list<T: serde::de::DeserializeOwned>(
+    row: &sqlx::sqlite::SqliteRow,
+    column: &str,
+) -> Vec<T> {
+    serde_json::from_str(&row.get::<String, _>(column)).unwrap_or_default()
+}
+
+/// One file type in a report
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
+pub struct ReportType {
+    pub ext: String,
+    pub count: i64,
+    pub largest: i64,
+}
+
+/// One `release_reports` row, with `types` and `tracker_hosts` as lists
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ReportRow {
+    pub id: i64,
+    pub kind: String,
+    pub check_id: Option<i64>,
+    pub arr_hash: Option<String>,
+    pub file_id: Option<i64>,
+    pub transfer_id: Option<i64>,
+    pub source: Option<String>,
+    pub category: Option<String>,
+    pub watch_folder: Option<String>,
+    pub stage: Option<String>,
+    pub name: String,
+    pub hash: Option<String>,
+    pub total_size: Option<i64>,
+    pub file_count: Option<i64>,
+    pub types: Vec<ReportType>,
+    pub largest_wanted: Option<i64>,
+    pub min_size: Option<i64>,
+    pub tracker_hosts: Vec<String>,
+    pub is_private: bool,
+    pub reason: Option<String>,
+    pub note: Option<String>,
+    /// UTC, `YYYY-MM-DD HH:MM:SS`
+    pub created_at: String,
+}
+
+/// `GET /stats/releases` (contracts/api.md)
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ReleaseStats {
+    pub range: StatsRange,
+    pub rejected: RejectedStats,
+    pub magnets: MagnetStats,
+    pub reports: ReportStats,
+}
+
+/// The range counted, UTC epoch seconds; `from` is `None` for everything
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct StatsRange {
+    pub preset: &'static str,
+    pub from: Option<i64>,
+    pub to: i64,
+}
+
+/// Releases and bytes
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct CountBytes {
+    pub count: i64,
+    pub bytes: i64,
+}
+
+/// Rejections by where the check ran
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ByStage {
+    pub before: CountBytes,
+    pub putio: CountBytes,
+}
+
+/// Rejections with one reason
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ReasonCount {
+    pub reason: String,
+    pub count: i64,
+}
+
+/// `rejected` section
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct RejectedStats {
+    pub count: i64,
+    pub bytes: i64,
+    pub by_stage: ByStage,
+    /// Most first
+    pub by_reason: Vec<ReasonCount>,
+}
+
+/// Lookup results for one cache. `cache` is `None` for misses, which aren't kept per
+/// cache (the per-cache split is in `putio_sync_precheck_cache_lookups_total`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct CacheCount {
+    pub cache: Option<String>,
+    pub found: i64,
+    pub not_found: i64,
+    pub timeout: i64,
+    pub wrong_hash: i64,
+    pub error: i64,
+}
+
+/// `magnets` section
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct MagnetStats {
+    /// Magnets with an info hash
+    pub checked: i64,
+    /// .torrent found in a cache
+    pub found: i64,
+    /// Sent to Put.io unchecked
+    pub fell_back: i64,
+    /// Fallbacks rejected on Put.io
+    pub fallback_fake: i64,
+    /// What Put.io downloaded for those
+    pub fallback_putio_bytes: i64,
+    pub caches: Vec<CacheCount>,
+}
+
+/// Releases with one file type
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct TypeCount {
+    pub ext: String,
+    pub count: i64,
+}
+
+/// Releases announced to one tracker
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct TrackerCount {
+    pub host: String,
+    pub count: i64,
+}
+
+/// `reports` section
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ReportStats {
+    pub rejected: i64,
+    pub flagged_fake: i64,
+    pub flagged_not_fake: i64,
+    pub top_types: Vec<TypeCount>,
+    pub top_trackers: Vec<TrackerCount>,
 }

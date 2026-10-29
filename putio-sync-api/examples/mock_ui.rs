@@ -25,6 +25,9 @@
 //! a duplicate of Sintel in Shows, an orphaned `.torrent` at the top, queue row 501 for a
 //! deleted file, failed queue row 403, a stale partial download in `Movies/` and an
 //! unknown key in the config file. Its fixes run against the same mocks.
+//! Feature 042: the Stats page's "Rejected releases" and "Magnet lookups" tiles count a
+//! week of seeded release checks: fakes rejected before and on Put.io, magnets found in
+//! itorrents.net or sent to Put.io, and one older reject that only 30d and longer show.
 
 use chrono::{Duration, Timelike, Utc};
 use putio_sync_api::{extract_download_config, router, AppState};
@@ -34,7 +37,7 @@ use putio_sync_core::config::{ArrConfig, ArrKind, ArrServer, AuthConfig, Config}
 use putio_sync_core::rules::FolderRule;
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::models::{DownloadSource, HistoryAction, Origin, QueueStatus, SourceType};
-use putio_sync_db::Database;
+use putio_sync_db::{CheckState, Database, NewCheck, NewReport, ReportKind};
 use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadManager;
 use putio_sync_telemetry::RuleDecision;
@@ -449,6 +452,225 @@ async fn seed_stats(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// A week of release checks for the Stats page's release tiles (feature 042), with one
+/// older reject that only the 30d range and longer count
+async fn seed_releases(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
+    const GB: i64 = 1_073_741_824;
+    // (days ago, name, source, stage, state, reason, lookup, cache, size, Put.io bytes)
+    type Row = (
+        i64,
+        &'static str,
+        &'static str,
+        &'static str,
+        CheckState,
+        Option<&'static str>,
+        Option<&'static str>,
+        Option<&'static str>,
+        i64,
+        i64,
+    );
+    use CheckState::{Passed, Rejected};
+    const ROWS: [Row; 12] = [
+        (
+            0,
+            "Movie.2024.2160p",
+            "torrent",
+            "before",
+            Rejected,
+            Some("no_wanted"),
+            None,
+            None,
+            2 * GB,
+            0,
+        ),
+        (
+            1,
+            "Movie.2024.1080p",
+            "url",
+            "before",
+            Rejected,
+            Some("no_wanted"),
+            None,
+            None,
+            1_500_000_000,
+            0,
+        ),
+        (
+            1,
+            "Show.S02E04",
+            "watch_torrent",
+            "before",
+            Rejected,
+            Some("small_wanted"),
+            None,
+            None,
+            40_000_000,
+            0,
+        ),
+        (
+            2,
+            "Movie.2023.REPACK",
+            "magnet",
+            "putio",
+            Rejected,
+            Some("no_wanted"),
+            Some("not_found"),
+            None,
+            1_800_000_000,
+            1_800_000_000,
+        ),
+        (
+            3,
+            "Album.FLAC",
+            "magnet",
+            "putio",
+            Passed,
+            None,
+            Some("timeout"),
+            None,
+            600_000_000,
+            600_000_000,
+        ),
+        (
+            3,
+            "Show.S02E03",
+            "magnet",
+            "before",
+            Passed,
+            None,
+            Some("found"),
+            Some("itorrents.net"),
+            900_000_000,
+            0,
+        ),
+        (
+            4,
+            "Show.S02E02",
+            "magnet",
+            "before",
+            Rejected,
+            Some("no_wanted"),
+            Some("found"),
+            Some("itorrents.net"),
+            1_200_000_000,
+            0,
+        ),
+        (
+            4,
+            "Old.Movie.1999",
+            "watch_magnet",
+            "putio",
+            Rejected,
+            Some("gone"),
+            Some("not_found"),
+            None,
+            0,
+            0,
+        ),
+        (
+            5,
+            "Show.S02E01",
+            "torrent",
+            "before",
+            Passed,
+            None,
+            None,
+            None,
+            1_100_000_000,
+            0,
+        ),
+        (
+            5,
+            "Movie.2022",
+            "magnet",
+            "putio",
+            Rejected,
+            Some("small_wanted"),
+            Some("wrong_hash"),
+            None,
+            300_000_000,
+            300_000_000,
+        ),
+        (
+            6,
+            "Show.S01E10",
+            "magnet",
+            "before",
+            Passed,
+            None,
+            Some("found"),
+            Some("itorrents.net"),
+            1_000_000_000,
+            0,
+        ),
+        (
+            20,
+            "Movie.2021",
+            "torrent",
+            "before",
+            Rejected,
+            Some("invalid"),
+            None,
+            None,
+            0,
+            0,
+        ),
+    ];
+    let releases = db.releases();
+    for (days, name, source, stage, state, reason, lookup, cache, size, putio_bytes) in ROWS {
+        let id = releases
+            .insert_check(&NewCheck {
+                name,
+                source,
+                stage,
+                state: Some(state),
+                reason,
+                lookup,
+                lookup_cache: cache,
+                total_size: size,
+                ..NewCheck::default()
+            })
+            .await?;
+        let at = format!("-{days} days");
+        sqlx::query(
+            "UPDATE release_checks SET checked_at = datetime('now', ?), resolved_at = datetime('now', ?), putio_bytes = ? WHERE id = ?",
+        )
+        .bind(&at)
+        .bind(&at)
+        .bind(putio_bytes)
+        .bind(id)
+        .execute(db.pool())
+        .await?;
+        if reason.is_some_and(|r| r != "gone") {
+            let types = if source.contains("magnet") {
+                r#"[{"ext":"7z","count":1,"largest":900000000},{"ext":"txt","count":1,"largest":120}]"#
+            } else {
+                r#"[{"ext":"exe","count":1,"largest":1400000000},{"ext":"nfo","count":1,"largest":900}]"#
+            };
+            let report = releases
+                .insert_report(&NewReport {
+                    kind: ReportKind::Rejected,
+                    check_id: Some(id),
+                    source: Some(source),
+                    stage: Some(stage),
+                    name,
+                    total_size: Some(size),
+                    types,
+                    tracker_hosts: r#"["tracker.opentrackr.org"]"#,
+                    reason,
+                    ..NewReport::default()
+                })
+                .await?;
+            sqlx::query("UPDATE release_reports SET created_at = datetime('now', ?) WHERE id = ?")
+                .bind(&at)
+                .bind(report)
+                .execute(db.pool())
+                .await?;
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -569,6 +791,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     seed_history(&db).await?;
     seed_stats(&db).await?;
+    seed_releases(&db).await?;
     seed_partial(dir.path())?;
     db.rule_decisions()
         .record(
