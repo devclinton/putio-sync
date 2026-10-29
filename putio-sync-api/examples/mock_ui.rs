@@ -18,19 +18,22 @@
 //! finds 2 (one completed, one seeding), Clear failed 1, Clear all finished 3. Every
 //! mocked delete, cancel and clean succeeds, but the listings don't change.
 //! Feature 009: `Shows` has a "Video only" rule, so `Example.Show.S01E01.nfo` there shows
-//! as blocked; `Movies` and `Movies/Extras` start with the global settings. Recently
+//! as blocked; `Movies` and `Movies/Extras` start with the global type filter. Recently
 //! blocked on Settings holds a seeded `setup.exe`. The config file (path printed at
 //! start) begins with a comment that rule saves must keep.
 //! Feature 010: `#/doctor` finds Put.io storage at 93%, the failed and stalled transfers,
 //! a duplicate of Sintel in Shows, an orphaned `.torrent` at the top, queue row 501 for a
 //! deleted file, failed queue row 403, a stale partial download in `Movies/` and an
 //! unknown key in the config file. Its fixes run against the same mocks.
+//! Feature 040: History badges some rows Saved as copy (with the `(1)` path under the
+//! name), Resumed or Overwritten; Settings has "When a file already exists" set to Keep
+//! both, and `Movies` has an Overwrite rule.
 
 use chrono::{Duration, Timelike, Utc};
 use putio_sync_api::{extract_download_config, router, AppState};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::cleanup::EmptyFolderCleanup;
-use putio_sync_core::config::{ArrConfig, ArrKind, ArrServer, AuthConfig, Config};
+use putio_sync_core::config::{ArrConfig, ArrKind, ArrServer, AuthConfig, Config, ExistingFile};
 use putio_sync_core::rules::FolderRule;
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::models::{DownloadSource, HistoryAction, Origin, QueueStatus, SourceType};
@@ -332,7 +335,7 @@ async fn seed_history(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
                 .await?;
         } else {
             let seconds = 30 + i * 5;
-            history
+            let id = history
                 .insert(
                     500 + i,
                     &name,
@@ -342,6 +345,17 @@ async fn seed_history(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
                     Some(size / seconds),
                 )
                 .await?;
+            // Feature 040: one saved under a new name, one resumed, one overwritten
+            let seen = match i % 16 {
+                1 => Some(("saved_as", name.replace(".mkv", " (1).mkv"))),
+                2 => Some(("resumed", name.clone())),
+                5 => Some(("overwritten", name.clone())),
+                _ => None,
+            };
+            if let Some((outcome, saved)) = seen {
+                let path = format!("/downloads/Movies/{saved}");
+                history.set_outcome(id, Some(&path), Some(outcome)).await?;
+            }
         }
     }
     Ok(())
@@ -501,11 +515,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
         ..Default::default()
     };
-    config.download.rules = vec![FolderRule {
-        path: "Shows".to_string(),
-        preset: Some("video".to_string()),
-        ..Default::default()
-    }];
+    config.download.set_on_existing(ExistingFile::KeepBoth);
+    config.download.rules = vec![
+        FolderRule {
+            path: "Shows".to_string(),
+            preset: Some("video".to_string()),
+            ..Default::default()
+        },
+        FolderRule {
+            path: "Movies".to_string(),
+            on_existing: Some(ExistingFile::Overwrite),
+            ..Default::default()
+        },
+    ];
     let config_path = dir.path().join("config.toml");
     config.save(&config_path)?;
     // A comment UI saves must keep (save_keeping_file_credentials edits in place), and an

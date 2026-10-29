@@ -7,7 +7,7 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::{body_json, test_app, test_daemon_app, TestApp, API_TOKEN};
-use putio_sync_core::config::{AuthConfig, Config};
+use putio_sync_core::config::{AuthConfig, Config, ExistingFile};
 use serde_json::{json, Value};
 
 async fn get_ok(app: &TestApp, path: &str) -> Value {
@@ -104,7 +104,7 @@ async fn download_settings_round_trip() {
             "workers",
             "target_directory",
             "buffer_size_mb",
-            "skip_existing",
+            "on_existing",
             "delete_after_download",
             "resume_enabled",
             "chunk_size_mb",
@@ -128,8 +128,26 @@ async fn download_settings_round_trip() {
     put_invalid(&app, path, body.clone(), "buffer_size_mb", json!(0)).await;
     put_invalid(&app, path, body.clone(), "sort_order", json!("sideways")).await;
     // A wrong type is a 400 with a JSON error too, not a bare 422
-    put_invalid(&app, path, body, "workers", json!(-1)).await;
+    put_invalid(&app, path, body.clone(), "workers", json!(-1)).await;
     assert_eq!(saved(&app).download.workers, 5);
+
+    // feature 040: three choices, the old bool still accepted
+    assert_eq!(body["on_existing"], "resume");
+    assert!(body.get("skip_existing").is_none(), "{body}");
+    put_changed(&app, path, body.clone(), "on_existing", json!("keep_both")).await;
+    assert_eq!(saved(&app).download.on_existing(), ExistingFile::KeepBoth);
+    assert!(!std::fs::read_to_string(config_path(&app))
+        .unwrap()
+        .contains("skip_existing"));
+    put_invalid(&app, path, body.clone(), "on_existing", json!("delete")).await;
+
+    let mut old = get_ok(&app, path).await;
+    old.as_object_mut().unwrap().remove("on_existing");
+    old["skip_existing"] = json!(false);
+    let (status, response) = put(&app, path, old).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(saved(&app).download.on_existing(), ExistingFile::Overwrite);
+    assert_eq!(get_ok(&app, path).await["on_existing"], "overwrite");
 }
 
 #[tokio::test]

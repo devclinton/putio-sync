@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use putio_sync_client::{FileEntry, PutioApiClient};
-use putio_sync_core::config::{AuthMethod, Config, ProgressStyle, SortOrder};
+use putio_sync_core::config::{AuthMethod, Config, ExistingFile, ProgressStyle, SortOrder};
 use putio_sync_core::filter::{parse_size, sort_files, FileFilter, SortField};
 use putio_sync_db::Database;
 use putio_sync_download::{DownloadConfig, DownloadFile, DownloadManager};
@@ -26,7 +26,7 @@ pub async fn execute_download(
     buffer_size: Option<String>,
     bandwidth_limit: Option<String>,
     no_resume: bool,
-    skip_existing: bool,
+    on_existing: Option<ExistingFile>,
     delete_after: bool,
     delete_empty_folders: Option<bool>,
     sort: Option<String>,
@@ -84,11 +84,9 @@ pub async fn execute_download(
         bandwidth_limit_bytes_per_sec = Some(limit_bytes_per_sec as u64);
     }
 
-    let skip_existing_flag = if skip_existing {
-        true
-    } else {
-        old_config.skip_existing
-    };
+    // Folder rules still override it per folder
+    let on_existing = on_existing.unwrap_or_else(|| old_config.on_existing());
+    let resume_enabled = !no_resume && old_config.resume_enabled;
 
     // Handle chunk size warning
     if chunk_size.is_some() {
@@ -102,7 +100,8 @@ pub async fn execute_download(
     let delete_after_download = delete_after || old_config.delete_after_download;
     let download_config = DownloadConfig {
         target_directory: target_directory.clone(),
-        skip_existing: skip_existing_flag,
+        on_existing,
+        resume_enabled,
         buffer_size_mb,
         bandwidth_limit_bytes_per_sec,
         max_retries: old_config.max_retries,
@@ -123,7 +122,6 @@ pub async fn execute_download(
     } else {
         old_config.progress_style
     };
-    let resume_enabled = !no_resume && old_config.resume_enabled;
 
     // Create API client
     let client = match auth.auth_method {
@@ -147,7 +145,7 @@ pub async fn execute_download(
     debug!("  Target directory: {:?}", download_config.target_directory);
     debug!("  Buffer size: {} MB", download_config.buffer_size_mb);
     debug!("  Resume enabled: {}", resume_enabled);
-    debug!("  Skip existing: {}", download_config.skip_existing);
+    debug!("  On existing: {}", download_config.on_existing);
     debug!("  Delete after: {}", delete_after_download);
     debug!("  Delete empty folders: {}", delete_empty_folders_flag);
     debug!("  Sort order: {:?}", sort_order);
@@ -316,6 +314,9 @@ async fn run_single_download(
             relative_path: file.name.clone(), // For single downloads, use filename as path
             file_size: file.size as u64,
             download_url,
+            crc32: file.crc32.clone(),
+            save_as: None,
+            fixed_path: false,
         };
 
         match download_manager.download_file(download_file, None).await {

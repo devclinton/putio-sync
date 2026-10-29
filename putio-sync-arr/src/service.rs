@@ -421,7 +421,7 @@ impl ArrService {
 
     /// Queue a finished transfer's files and record which ones the item waits for
     async fn move_to_local(&self, item: &ArrItem, file_id: i64) -> Result<(), ArrError> {
-        let report = match self.downloads.enqueue_tree_report(file_id).await {
+        let report = match self.downloads.enqueue_tree_report(file_id, true).await {
             Ok(report) => report,
             Err(e) => {
                 // Stays on Put.io; the next refresh tries again
