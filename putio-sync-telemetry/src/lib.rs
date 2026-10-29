@@ -4,7 +4,7 @@
 //! (see `specs/003-telemetry-prometheus/contracts/metrics.md`), the closed label sets and
 //! the metrics listener. Engine crates record through the free functions in [`api`],
 //! [`sync`], [`download`], [`watch`], [`cleanup`] and [`db`], which use the process-wide [`global`]
-//! instance. Tests build their own instance with [`Telemetry::new`].
+//! instance. [`process`] reads the process's own CPU and memory figures at scrape time. Tests build their own instance with [`Telemetry::new`].
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
@@ -23,6 +23,7 @@ pub mod doctor;
 pub mod download;
 pub mod gauges;
 pub mod labels;
+pub mod process;
 pub mod server;
 pub mod sync;
 pub mod transfers;
@@ -52,6 +53,7 @@ pub struct Telemetry {
     pub(crate) last_success: GaugeVec,
     pub(crate) last_sync_files: IntGaugeVec,
     pub(crate) files_blocked: IntCounter,
+    pub(crate) sync_in_progress: IntGauge,
     pub(crate) rule_decisions: IntCounterVec,
 
     pub(crate) queue_items: IntGaugeVec,
@@ -195,6 +197,11 @@ impl Telemetry {
                 opts("queue_items", "Download queue rows by state."),
                 &["state"],
             )
+            .unwrap(),
+            sync_in_progress: IntGauge::with_opts(opts(
+                "sync_in_progress",
+                "1 while a Put.io sync run is in progress.",
+            ))
             .unwrap(),
             transfers_stalled: IntGauge::with_opts(opts(
                 "transfers_stalled",
@@ -400,6 +407,7 @@ impl Telemetry {
             Box::new(self.last_success.clone()),
             Box::new(self.last_sync_files.clone()),
             Box::new(self.files_blocked.clone()),
+            Box::new(self.sync_in_progress.clone()),
             Box::new(self.rule_decisions.clone()),
             Box::new(self.queue_items.clone()),
             Box::new(self.downloads_active.clone()),
@@ -432,6 +440,7 @@ impl Telemetry {
             Box::new(self.disk_total.clone()),
             Box::new(self.start_time.clone()),
             Box::new(self.build_info.clone()),
+            Box::new(process::ProcessCollector::new()),
         ];
         for c in collectors {
             r.register(c).expect("metric families have unique names");

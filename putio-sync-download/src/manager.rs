@@ -1141,6 +1141,7 @@ impl DownloadManager {
     pub async fn sync_downloads(&self) -> DownloadResult<SyncStats> {
         let started = Instant::now();
         self.sync_status.write().await.begin();
+        telemetry::sync::started();
         let result = self.sync_downloads_inner().await;
         self.sync_status.write().await.finish(match &result {
             Ok(stats) => SyncOutcome::from(stats),
