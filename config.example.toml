@@ -421,9 +421,13 @@ bind = "0.0.0.0:15432"
 # download client. They send magnets and .torrent files; putio-sync adds them to
 # Put.io in a folder named after the category, downloads the result to
 # <target_directory>/<category>/, and reports progress, completion and failures.
-# Needs the API listener ([api] listen) and the database. Restart to change.
+# Needs the API listener ([api] listen) and the database.
 #
-# In Radarr or Sonarr: Settings > Download Clients > + > Transmission
+# This whole section can be edited in the web UI: Settings > Radarr / Sonarr.
+# Changes there apply without a restart and keep the rest of this file. "Set up
+# automatically" adds the download client inside Radarr or Sonarr for you.
+#
+# To add it by hand instead, in Radarr or Sonarr: Settings > Download Clients > + > Transmission
 #   Host: this machine   Port: 15432 (the API port)   URL Base: /transmission/
 #   Username: putio-sync (or `username` below)   Password: `password` below
 #   Category: e.g. radarr / sonarr. Its folder is <target_directory>/<category>.
@@ -444,22 +448,25 @@ enabled = false
 # Env: PUTIO_SYNC_ARR_PASSWORD
 # password = "change-me"
 
-# Optional: let putio-sync call Radarr/Sonarr back. With a server listed, a
-# release that fails (Put.io error, or only blocked files) is removed from that
-# app's queue and blocklisted, so it searches again. The category must match the
-# one set on the download client. Settings in the web UI can test each server.
+# Optional: applications putio-sync calls back (Settings > Radarr / Sonarr >
+# Applications in the web UI). With one listed, a release that fails (Put.io
+# error, or only blocked files) is removed from that app's queue and blocklisted,
+# so it searches again. The category is read from the app's own putio-sync
+# download client, so it isn't set here.
 # API keys: Settings > General in each app. Env PUTIO_SYNC_RADARR_API_KEY and
 # PUTIO_SYNC_SONARR_API_KEY set the key of the first server of that kind.
 # [[arr.servers]]
 # kind = "radarr"
+# name = "Radarr"                # Optional. Default: Radarr / Sonarr
 # url = "http://192.168.1.10:7878"
-# category = "radarr"
 # api_key = "..."
 #
 # [[arr.servers]]
 # kind = "sonarr"
 # url = "http://192.168.1.10:8989"
-# category = "sonarr"
+#
+# `category` from older versions is no longer needed. It still loads, is ignored,
+# and the UI warns when it differs from the app's client.
 
 # ============================================================================
 # Database Configuration (Advanced)

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use putio_sync_client::{error_chain, PutioApiClient};
-use putio_sync_core::config::{normalize_arr_category, ArrSettings};
+use putio_sync_core::config::{normalize_arr_category, ArrServer, ArrSettings};
 use putio_sync_db::{ArrItem, ArrState, BlocklistState, Database, NewArrItem, PutioProgress};
 use putio_sync_download::{DownloadManager, TreeDecision};
 use putio_sync_telemetry::arr as metrics;
@@ -19,8 +19,10 @@ use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::arr_api::ArrApi;
+use crate::clients::{self, ClientInfo};
 use crate::contact::Contacts;
 use crate::infohash;
+use crate::path_check::{self, PathCheck, PathStatus};
 use crate::view::{self, LocalProgress};
 
 /// How often a poll may refresh from Put.io (research R7)
@@ -101,7 +103,8 @@ pub struct ArrService {
     client: Arc<PutioApiClient>,
     db: Arc<Database>,
     downloads: Arc<DownloadManager>,
-    settings: ArrSettings,
+    /// Swapped by [`ArrService::apply`] when the settings are saved (feature 018)
+    settings: std::sync::RwLock<Arc<ArrSettings>>,
     target: PathBuf,
     http: reqwest::Client,
     contacts: Contacts,
@@ -111,6 +114,15 @@ pub struct ArrService {
     last_refresh: Mutex<Option<Instant>>,
     /// Held while blocklist calls run, so a slow *arr never queues a second pass
     blocklist_lock: Mutex<()>,
+    /// One discovery at a time (feature 018, R9)
+    discovery: Mutex<()>,
+    /// What each saved application has for putio-sync, by [`url_key`] (feature 018, R4)
+    clients: std::sync::RwLock<HashMap<String, ClientInfo>>,
+}
+
+/// The cache key for a server URL
+pub fn url_key(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_ascii_lowercase()
 }
 
 impl ArrService {
@@ -126,19 +138,112 @@ impl ArrService {
             client,
             db,
             downloads,
-            settings,
+            settings: std::sync::RwLock::new(Arc::new(settings)),
             target,
             http: reqwest::Client::new(),
             contacts: Contacts::default(),
             add_lock: Mutex::new(()),
             last_refresh: Mutex::new(None),
             blocklist_lock: Mutex::new(()),
+            discovery: Mutex::new(()),
+            clients: std::sync::RwLock::new(HashMap::new()),
         }
     }
 
+    /// The last [`ClientInfo`] read for the application at `url`
+    pub fn client_info(&self, url: &str) -> Option<ClientInfo> {
+        self.clients
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&url_key(url))
+            .cloned()
+    }
+
+    /// Re-read one application's putio-sync clients. `port` and `hosts` say what points
+    /// at putio-sync (R6). Without a key there's nothing to read.
+    pub async fn refresh_client_info(
+        &self,
+        server: &ArrServer,
+        port: u16,
+        hosts: &[String],
+    ) -> Option<ClientInfo> {
+        let key = server.api_key.as_deref()?;
+        let api = ArrApi::new(server.kind, &server.url, key, self.http.clone());
+        let info = clients::read_clients(&api, port, hosts, self.client_info(&server.url)).await;
+        if let Some(error) = info.last_error {
+            warn!(url = %server.url, error, "Could not read the categories from the arr");
+        }
+        self.clients
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(url_key(&server.url), info.clone());
+        Some(info)
+    }
+
+    /// Check that the application at `server` can see the download folder, which its
+    /// putio-sync client at `client_host` reports (R10). The result is kept with its
+    /// [`ClientInfo`].
+    pub async fn check_path(&self, server: &ArrServer, client_host: &str) -> Option<PathCheck> {
+        let key = server.api_key.as_deref()?;
+        let api = ArrApi::new(server.kind, &server.url, key, self.http.clone());
+        let result = path_check::check(&api, &self.download_dir(), client_host).await;
+        if result.status != PathStatus::Visible {
+            warn!(url = %server.url, status = ?result.status, arr_path = %result.arr_path,
+                "The arr may not see the download folder");
+        }
+        self.clients
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(url_key(&server.url))
+            .or_default()
+            .path_check = Some(result.clone());
+        Some(result)
+    }
+
+    /// Re-read every saved application (R4)
+    pub async fn refresh_all_client_info(&self, port: u16, hosts: &[String]) {
+        let settings = self.settings();
+        for server in &settings.servers {
+            self.refresh_client_info(server, port, hosts).await;
+        }
+    }
+
+    /// Re-read every saved application now, then every 15 minutes
+    pub fn spawn_category_refresh(
+        self: &Arc<Self>,
+        port: u16,
+        hosts: Vec<String>,
+    ) -> tokio::task::JoinHandle<()> {
+        let service = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(clients::CATEGORY_REFRESH);
+            loop {
+                ticker.tick().await;
+                let Some(service) = service.upgrade() else {
+                    return;
+                };
+                service.refresh_all_client_info(port, &hosts).await;
+            }
+        })
+    }
+
+    /// Held while a discovery runs (feature 018)
+    pub fn discovery_lock(&self) -> &Mutex<()> {
+        &self.discovery
+    }
+
     /// The resolved `[arr]` settings
-    pub fn settings(&self) -> &ArrSettings {
-        &self.settings
+    pub fn settings(&self) -> Arc<ArrSettings> {
+        self.settings
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Use new `[arr]` settings from now on. Tracked items, refreshes and downloads carry
+    /// on; only the next request sees the change.
+    pub fn apply(&self, settings: ArrSettings) {
+        *self.settings.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(settings);
     }
 
     /// The local target directory
@@ -503,8 +608,23 @@ impl ArrService {
     }
 
     /// The *arr API for a category, when one with an API key is configured
+    /// The application whose putio-sync client has `category` (R4). Before the first read,
+    /// a legacy typed category is used.
     fn blocklist_server(&self, category: &str) -> Option<ArrApi> {
-        let server = self.settings.server_for(category)?;
+        let settings = self.settings();
+        let wanted = normalize_arr_category(category)?;
+        let read = {
+            let clients = self.clients.read().unwrap_or_else(|e| e.into_inner());
+            settings.servers.iter().find(|s| {
+                clients
+                    .get(&url_key(&s.url))
+                    .is_some_and(|i| i.categories.contains(&wanted))
+            })
+        };
+        let Some(server) = read.or_else(|| settings.server_for(&wanted)) else {
+            debug!(category = %wanted, "No application has this category; not blocklisted yet");
+            return None;
+        };
         let key = server.api_key.as_deref()?;
         Some(ArrApi::new(
             server.kind,

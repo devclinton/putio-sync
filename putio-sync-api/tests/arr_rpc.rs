@@ -84,6 +84,33 @@ async fn disabled_is_404() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
+/// Feature 018: turning the client on, or changing its password, needs no restart
+#[tokio::test]
+async fn settings_apply_without_restart() {
+    let app = test_app().await;
+    let arr = app
+        .state
+        .arr
+        .clone()
+        .expect("built whenever a database exists");
+    let mut settings = (*arr.service.settings()).clone();
+    settings.enabled = true;
+    settings.password = Some(PASSWORD.to_string());
+    arr.service.apply(settings.clone());
+    session_id(&app).await;
+
+    settings.password = Some("new-password".to_string());
+    arr.service.apply(settings.clone());
+    let old = basic("putio-sync", PASSWORD);
+    let response = send(&app, Method::POST, Some(&old), None, "{}").await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    settings.enabled = false;
+    arr.service.apply(settings);
+    let response = send(&app, Method::POST, None, None, "{}").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn enabled_without_password_is_503() {
     let app = test_app_with(|config| config.arr.enabled = true).await;
@@ -95,8 +122,23 @@ async fn enabled_without_password_is_503() {
 #[tokio::test]
 async fn only_post() {
     let app = arr_app().await;
-    let response = send(&app, Method::GET, None, None, "").await;
+    let session = session_id(&app).await;
+    let auth = basic("putio-sync", PASSWORD);
+    let response = send(&app, Method::GET, Some(&auth), Some(&session), "").await;
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+/// Radarr 6 opens the handshake with a GET, as real Transmission allows
+#[tokio::test]
+async fn a_get_handshake_gets_the_session_id() {
+    let app = arr_app().await;
+    let response = send(&app, Method::GET, None, None, "").await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let auth = basic("putio-sync", PASSWORD);
+    let response = send(&app, Method::GET, Some(&auth), None, "").await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(response.headers().contains_key("X-Transmission-Session-Id"));
 }
 
 #[tokio::test]

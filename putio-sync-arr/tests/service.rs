@@ -511,7 +511,8 @@ async fn blocked_only_release_fails_and_is_blocklisted() {
         kind: ArrKind::Sonarr,
         url: arr.url(),
         api_key: Some("sonarr-key".to_string()),
-        category: "sonarr".to_string(),
+        name: None,
+        category: Some("sonarr".to_string()),
     }]);
     h.added(&service).await;
 
@@ -540,6 +541,88 @@ async fn blocked_only_release_fails_and_is_blocklisted() {
     queue.assert_async().await;
 }
 
+/// A Sonarr whose putio-sync client has category `category`
+async fn sonarr_with_category(category: &str) -> mockito::ServerGuard {
+    let mut arr = mockito::Server::new_async().await;
+    arr.mock("GET", "/api/v3/downloadclient")
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"[{{"name":"putio-sync","implementation":"Transmission","enable":true,"fields":[
+                {{"name":"host","value":"putio-sync"}},{{"name":"port","value":15432}},
+                {{"name":"urlBase","value":"/transmission/"}},
+                {{"name":"tvCategory","value":"{}"}}]}}]"#,
+            category
+        ))
+        .create_async()
+        .await;
+    arr
+}
+
+#[tokio::test]
+async fn blocklist_goes_to_the_app_whose_client_has_the_category() {
+    let mut h = Harness::new().await;
+    // The first Sonarr still has the legacy typed category, but its client now says "tv"
+    let mut first = sonarr_with_category("tv").await;
+    let mut second = sonarr_with_category("sonarr").await;
+    let not_first = first
+        .mock("GET", "/api/v3/queue/details")
+        .expect(0)
+        .create_async()
+        .await;
+    let queue = second
+        .mock("GET", "/api/v3/queue/details")
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"[{{"id":9,"downloadId":"{}"}}]"#, HASH))
+        .expect(1)
+        .create_async()
+        .await;
+    let delete = second
+        .mock(
+            "DELETE",
+            "/api/v3/queue/9?removeFromClient=true&blocklist=true",
+        )
+        .expect(1)
+        .create_async()
+        .await;
+    let servers = vec![
+        ArrServer {
+            kind: ArrKind::Sonarr,
+            url: first.url(),
+            api_key: Some("first-key".to_string()),
+            name: None,
+            category: Some("sonarr".to_string()),
+        },
+        ArrServer {
+            kind: ArrKind::Sonarr,
+            url: second.url(),
+            api_key: Some("second-key".to_string()),
+            name: Some("Sonarr 4K".to_string()),
+            category: None,
+        },
+    ];
+    let service = h.service(servers.clone());
+    let hosts = vec!["putio-sync".to_string()];
+    service.refresh_all_client_info(15432, &hosts).await;
+    assert_eq!(
+        service
+            .client_info(&format!("{}/", first.url().to_uppercase()))
+            .map(|i| i.categories),
+        Some(vec!["tv".to_string()])
+    );
+    h.added(&service).await;
+
+    h.transfers(&[transfer("COMPLETED", 100, Some(ITEM_FOLDER), None)])
+        .await;
+    h.item_folder(&[entry(1, "Show.S01E01.exe", "FILE", ITEM_FOLDER, 900)])
+        .await;
+    service.refresh().await;
+
+    assert_eq!(state(&h.db).await.2, BlocklistState::Done);
+    queue.assert_async().await;
+    delete.assert_async().await;
+    not_first.assert_async().await;
+}
+
 #[tokio::test]
 async fn blocklist_gives_up_after_five_failures() {
     let mut h = Harness::new().await;
@@ -554,7 +637,8 @@ async fn blocklist_gives_up_after_five_failures() {
         kind: ArrKind::Sonarr,
         url: arr.url(),
         api_key: Some("wrong".to_string()),
-        category: "sonarr".to_string(),
+        name: None,
+        category: Some("sonarr".to_string()),
     }]);
     h.added(&service).await;
     h.transfers(&[]).await;

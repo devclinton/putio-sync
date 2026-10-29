@@ -177,26 +177,31 @@ impl ArrKind {
     }
 }
 
-/// `[[arr.servers]]`: one *arr app and the category it sends
+/// `[[arr.servers]]`: one *arr app (an "application" in the UI)
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ArrServer {
     /// `radarr` or `sonarr`
     pub kind: ArrKind,
+    /// Name shown in the UI; [`Config::resolve_arr`] fills in "Radarr"/"Sonarr" (feature 018)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// Base URL, e.g. `http://192.168.1.34:8989`
     pub url: String,
     /// API key. `PUTIO_SYNC_RADARR_API_KEY` / `PUTIO_SYNC_SONARR_API_KEY` override it
     /// for the first server of that kind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
-    /// The category set on the *arr's Transmission client (the folder under the
-    /// download folder)
-    pub category: String,
+    /// Legacy (feature 011): the category typed for this server. The category is now read
+    /// from the *arr; this one is only a fallback for blocklisting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
 
 impl std::fmt::Debug for ArrServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ArrServer")
             .field("kind", &self.kind)
+            .field("name", &self.name)
             .field("url", &self.url)
             .field("api_key", &redacted(&self.api_key))
             .field("category", &self.category)
@@ -232,7 +237,8 @@ pub fn normalize_arr_category(category: &str) -> Option<String> {
 }
 
 impl ArrConfig {
-    /// Check each server's URL and category, and that categories are unique
+    /// Check the username and each server's URL, and that no URL is used twice. A legacy
+    /// `category` isn't checked: it's ignored when it isn't a valid folder.
     pub fn validate(&self) -> CoreResult<()> {
         if self.username.is_empty() || self.username.contains(':') {
             return Err(CoreError::ConfigError(
@@ -248,17 +254,10 @@ impl ArrConfig {
             if rest.is_none_or(|r| r.is_empty() || r.chars().any(char::is_whitespace)) {
                 return Err(invalid("arr server url", &server.url, "an http(s):// URL"));
             }
-            let category = normalize_arr_category(&server.category).ok_or_else(|| {
-                invalid(
-                    "arr server category",
-                    &server.category,
-                    "a relative folder without empty, . or .. segments",
-                )
-            })?;
-            if !seen.insert(category.clone()) {
+            if !seen.insert(url.to_ascii_lowercase()) {
                 return Err(CoreError::ConfigError(format!(
-                    "arr server category '{}' is used twice",
-                    category
+                    "arr server url '{}' is used twice",
+                    url
                 )));
             }
         }
@@ -291,11 +290,42 @@ impl std::fmt::Debug for ArrSettings {
 }
 
 impl ArrSettings {
-    /// The server whose category is `category` (normalised)
+    /// The server whose legacy typed category is `category` (normalised)
     pub fn server_for(&self, category: &str) -> Option<&ArrServer> {
         let category = normalize_arr_category(category)?;
-        self.servers.iter().find(|s| s.category == category)
+        self.servers
+            .iter()
+            .find(|s| s.category.as_deref() == Some(category.as_str()))
     }
+
+    /// `PUTIO_SYNC_ARR_PASSWORD` sets the password, so the UI can't change it
+    pub fn password_from_env() -> bool {
+        env_value(ARR_PASSWORD_VAR).is_some()
+    }
+
+    /// The API key of server `index` comes from `PUTIO_SYNC_RADARR_API_KEY` /
+    /// `PUTIO_SYNC_SONARR_API_KEY` (the first server of its kind)
+    pub fn api_key_from_env(servers: &[ArrServer], index: usize) -> bool {
+        let Some(server) = servers.get(index) else {
+            return false;
+        };
+        env_value(arr_key_var(server.kind)).is_some()
+            && servers.iter().position(|s| s.kind == server.kind) == Some(index)
+    }
+}
+
+const ARR_PASSWORD_VAR: &str = "PUTIO_SYNC_ARR_PASSWORD";
+
+fn arr_key_var(kind: ArrKind) -> &'static str {
+    match kind {
+        ArrKind::Radarr => "PUTIO_SYNC_RADARR_API_KEY",
+        ArrKind::Sonarr => "PUTIO_SYNC_SONARR_API_KEY",
+    }
+}
+
+/// An environment variable; empty counts as unset
+fn env_value(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
 /// `[transfers]`: when a Put.io transfer counts as stalled (feature 007)
@@ -1462,29 +1492,42 @@ impl Config {
     /// kind). An empty variable counts as unset. Errors never echo a secret.
     pub fn resolve_arr(&self) -> CoreResult<ArrSettings> {
         self.arr.validate()?;
-        let env = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
 
-        let password = env("PUTIO_SYNC_ARR_PASSWORD")
+        let password = env_value(ARR_PASSWORD_VAR)
             .or_else(|| self.arr.password.clone())
             .filter(|p| !p.is_empty());
         let mut servers = self.arr.servers.clone();
-        for (kind, var) in [
-            (ArrKind::Radarr, "PUTIO_SYNC_RADARR_API_KEY"),
-            (ArrKind::Sonarr, "PUTIO_SYNC_SONARR_API_KEY"),
-        ] {
-            if let Some(key) = env(var) {
+        for kind in [ArrKind::Radarr, ArrKind::Sonarr] {
+            if let Some(key) = env_value(arr_key_var(kind)) {
                 if let Some(server) = servers.iter_mut().find(|s| s.kind == kind) {
                     server.api_key = Some(key);
                 }
             }
         }
+        let mut names = std::collections::HashSet::new();
         for server in &mut servers {
             server.url = server.url.trim_end_matches('/').to_string();
-            // validate() has checked it
-            server.category = normalize_arr_category(&server.category).unwrap_or_default();
+            // A legacy category that isn't a valid folder is ignored
+            server.category = server
+                .category
+                .as_deref()
+                .and_then(normalize_arr_category)
+                .filter(|c| !c.is_empty());
             if server.api_key.as_deref() == Some("") {
                 server.api_key = None;
             }
+            let name = server
+                .name
+                .clone()
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or_else(|| server.kind.app_name().to_string());
+            let mut unique = name.clone();
+            let mut n = 2;
+            while !names.insert(unique.clone()) {
+                unique = format!("{name} ({n})");
+                n += 1;
+            }
+            server.name = Some(unique);
         }
 
         Ok(ArrSettings {
@@ -1493,6 +1536,46 @@ impl Config {
             password,
             servers,
         })
+    }
+
+    /// Write `arr` as the file's `[arr]` section (feature 018). Every other table, its
+    /// comments and the credentials stay as on disk; only `[arr]` keys that differ from the
+    /// file are edited. The caller merges secrets the form left empty and never passes an
+    /// environment override. Same file handling as
+    /// [`Config::save_keeping_file_credentials`].
+    pub fn save_arr_section<P: AsRef<Path>>(path: P, arr: &ArrConfig) -> CoreResult<()> {
+        let path = path.as_ref();
+        let unreadable = |what: &str| {
+            CoreError::ConfigError(format!(
+                "Failed to {what} {}; settings not saved",
+                path.display()
+            ))
+        };
+        let section = |arr: &ArrConfig| -> CoreResult<toml::Table> {
+            let value = toml::Value::try_from(arr).map_err(|e| {
+                CoreError::ConfigError(format!("Failed to serialize config: {}", e))
+            })?;
+            Ok(toml::Table::from_iter([("arr".to_string(), value)]))
+        };
+        let after = section(arr)?;
+
+        if !path.exists() {
+            let contents = toml::to_string_pretty(&after).map_err(|e| {
+                CoreError::ConfigError(format!("Failed to serialize config: {}", e))
+            })?;
+            return write_atomically(path, &contents, None);
+        }
+
+        let path = fs::canonicalize(path).map_err(|_| unreadable("read"))?;
+        let contents = fs::read_to_string(&path).map_err(|_| unreadable("read"))?;
+        let mut document: toml_edit::DocumentMut =
+            contents.parse().map_err(|_| unreadable("parse"))?;
+        let on_disk: Config = toml::from_str(&contents).map_err(|_| unreadable("parse"))?;
+        let before = section(&on_disk.arr)?;
+
+        edit_table(document.as_table_mut(), &before, &after);
+        let permissions = fs::metadata(&path).ok().map(|m| m.permissions());
+        write_atomically(&path, &document.to_string(), permissions)
     }
 }
 
@@ -1563,7 +1646,8 @@ fn settings_table(config: &Config) -> CoreResult<toml::Table> {
     let mut table = toml::Table::try_from(config)
         .map_err(|e| CoreError::ConfigError(format!("Failed to serialize config: {}", e)))?;
     table.remove("auth");
-    // No settings route edits `[arr]`, so it keeps its password and API keys as on disk
+    // `[arr]` has its own writer (`save_arr_section`), so this save keeps its password
+    // and API keys as on disk
     table.remove("arr");
     if let Some(toml::Value::Table(api)) = table.get_mut("api") {
         api.remove("auth_token");
@@ -2918,7 +3002,9 @@ category = "movies"
         assert!(r.enabled);
         assert_eq!(r.password.as_deref(), Some("file-pass"));
         assert_eq!(r.servers[0].url, "http://nas:8989");
-        assert_eq!(r.servers[0].category, "tv");
+        assert_eq!(r.servers[0].category.as_deref(), Some("tv"));
+        assert_eq!(r.servers[0].name.as_deref(), Some("Sonarr"));
+        assert_eq!(r.servers[1].name.as_deref(), Some("Radarr"));
         assert_eq!(r.servers[0].api_key.as_deref(), Some("file-sonarr-key"));
         assert_eq!(r.servers[1].api_key, None);
         assert_eq!(r.server_for("/tv").map(|s| s.kind), Some(ArrKind::Sonarr));
@@ -2966,18 +3052,90 @@ category = "movies"
 
     #[test]
     fn bad_servers_are_rejected() {
-        let server = |url: &str, category: &str| {
-            format!(
-                "[[arr.servers]]\nkind = \"sonarr\"\nurl = \"{url}\"\ncategory = \"{category}\"\n"
-            )
-        };
-        assert!(arr_error(&server("nas:8989", "tv")).contains("arr server url"));
-        assert!(arr_error(&server("ftp://nas", "tv")).contains("arr server url"));
-        assert!(arr_error(&server("http://nas", "../tv")).contains("arr server category"));
-        assert!(arr_error(&server("http://nas", "tv//x")).contains("arr server category"));
-        let twice = format!("{}{}", server("http://a", "tv"), server("http://b", "/tv"));
+        let server = |url: &str| format!("[[arr.servers]]\nkind = \"sonarr\"\nurl = \"{url}\"\n");
+        assert!(arr_error(&server("nas:8989")).contains("arr server url"));
+        assert!(arr_error(&server("ftp://nas")).contains("arr server url"));
+        let twice = format!("{}{}", server("http://a:8989"), server("http://A:8989/"));
         assert!(arr_error(&twice).contains("used twice"));
         assert!(arr_error("[arr]\nusername = \"a:b\"\n").contains("arr username"));
+    }
+
+    /// Feature 018: the typed category is legacy; an invalid one no longer stops loading
+    #[test]
+    fn legacy_category_is_optional() {
+        let config: Config = toml::from_str(
+            "[[arr.servers]]\nkind = \"radarr\"\nurl = \"http://a\"\ncategory = \"../x\"\n\n[[arr.servers]]\nkind = \"radarr\"\nurl = \"http://b\"\n",
+        )
+        .unwrap();
+        config.validate().unwrap();
+        let r = with_env(&[], || config.resolve_arr().unwrap());
+        assert_eq!(r.servers[0].category, None);
+        assert_eq!(r.servers[1].category, None);
+        assert_eq!(r.servers[0].name.as_deref(), Some("Radarr"));
+        assert_eq!(r.servers[1].name.as_deref(), Some("Radarr (2)"));
+    }
+
+    #[test]
+    fn env_flags() {
+        let config: Config = toml::from_str(TWO_SERVERS).unwrap();
+        let servers = &config.arr.servers;
+        with_env(&[("PUTIO_SYNC_SONARR_API_KEY", "k")], || {
+            assert!(!ArrSettings::password_from_env());
+            assert!(ArrSettings::api_key_from_env(servers, 0));
+            assert!(!ArrSettings::api_key_from_env(servers, 1));
+            assert!(!ArrSettings::api_key_from_env(servers, 9));
+        });
+        with_env(&[("PUTIO_SYNC_ARR_PASSWORD", "p")], || {
+            assert!(ArrSettings::password_from_env());
+            assert!(!ArrSettings::api_key_from_env(servers, 0));
+        });
+    }
+
+    /// Feature 018: `[arr]` is written on its own; the rest of the file is untouched
+    #[test]
+    fn save_arr_section_edits_only_arr() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let other = "# keep me\n[cleanup]\nenabled = true # on\n";
+        fs::write(&path, format!("{other}{TWO_SERVERS}")).unwrap();
+
+        let mut arr: ArrConfig = toml::from_str::<Config>(TWO_SERVERS).unwrap().arr;
+        arr.enabled = false;
+        arr.password = Some("new-pass".to_string());
+        arr.servers.remove(1);
+        arr.servers[0].name = Some("TV".to_string());
+        Config::save_arr_section(&path, &arr).unwrap();
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with(other), "{text}");
+        let saved: Config = toml::from_str(&text).unwrap();
+        assert_eq!(saved.arr, arr);
+        assert!(text.contains("api_key = \"file-sonarr-key\""));
+        assert!(!text.contains("radarr"));
+    }
+
+    #[test]
+    fn save_arr_section_creates_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let arr = ArrConfig {
+            enabled: true,
+            password: Some("p".to_string()),
+            ..ArrConfig::default()
+        };
+        Config::save_arr_section(&path, &arr).unwrap();
+        let saved: Config = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.arr, arr);
+    }
+
+    #[test]
+    fn save_arr_section_refuses_a_bad_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "not = [toml").unwrap();
+        let err = Config::save_arr_section(&path, &ArrConfig::default()).unwrap_err();
+        assert!(err.to_string().contains("settings not saved"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "not = [toml");
     }
 
     #[test]

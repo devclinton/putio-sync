@@ -14,6 +14,14 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Radarr and Sonarr can be set up from Settings → Radarr / Sonarr without
+  editing the config or restarting. "Set up automatically" finds them, then
+  adds or updates putio-sync's download client inside each app, testing it
+  first so a failure leaves nothing behind. The download client and the
+  applications are now forms (Add, Edit, Test, Delete). The category for
+  blocklisting is read from each app, and Test checks that the app can see the
+  download folder, with help for path mappings. Item counts and last contact
+  moved to a Radarr / Sonarr card on the Status page (feature 018).
 - A Doctor page that checks the Put.io account and the sync setup: sign-in,
   storage, failed or stalled transfers, empty folders, duplicate files and
   leftover .torrent files, with one-click fixes (feature 010).
@@ -44,6 +52,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- Radarr 6 can now connect to the download client. Radarr 6 opens the
+  Transmission handshake with a GET, which putio-sync refused, so its Test
+  failed with "Authentication Failure".
 - Empty-folder cleanup now removes nested empty folders on Put.io. Put.io
   marks folders only by their type, so every folder was read as a file and
   kept. The doctor's empty-folder and duplicate checks and recursive delete

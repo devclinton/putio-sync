@@ -85,6 +85,7 @@ pub struct Telemetry {
     pub(crate) arr_rpc_requests: IntCounterVec,
     pub(crate) arr_items: IntGaugeVec,
     pub(crate) arr_blocklist: IntCounterVec,
+    pub(crate) arr_setup: IntCounterVec,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -352,6 +353,14 @@ impl Telemetry {
                 &["outcome"],
             )
             .unwrap(),
+            arr_setup: IntCounterVec::new(
+                opts(
+                    "arr_setup_total",
+                    "Radarr/Sonarr auto-setups, by app kind and result.",
+                ),
+                &["kind", "result"],
+            )
+            .unwrap(),
 
             db_errors: IntCounterVec::new(
                 opts("db_errors_total", "Database errors."),
@@ -427,6 +436,7 @@ impl Telemetry {
             Box::new(self.arr_rpc_requests.clone()),
             Box::new(self.arr_items.clone()),
             Box::new(self.arr_blocklist.clone()),
+            Box::new(self.arr_setup.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
             Box::new(self.disk_total.clone()),
@@ -480,6 +490,11 @@ impl Telemetry {
         }
         for o in BlocklistOutcome::ALL {
             self.arr_blocklist.with_label_values(&[o.as_str()]);
+        }
+        for k in ArrSetupKind::ALL {
+            for r in ArrSetupResult::ALL {
+                self.arr_setup.with_label_values(&[k.as_str(), r.as_str()]);
+            }
         }
         for op in DbOp::ALL {
             self.db_errors.with_label_values(&[op.as_str()]);
