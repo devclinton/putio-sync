@@ -19,6 +19,7 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_last_sync_files",
     "putio_sync_files_blocked_total",
     "putio_sync_rule_decisions_total",
+    "putio_sync_sync_in_progress",
     "putio_sync_queue_items",
     "putio_sync_downloads_active",
     "putio_sync_download_workers",

@@ -1,0 +1,13 @@
+Name:	putio-sync
+Umask:	0022
+State:	S (sleeping)
+Tgid:	7
+Pid:	7
+VmPeak:	 1310720 kB
+VmSize:	 1228800 kB
+VmLck:	       0 kB
+VmHWM:	   40960 kB
+VmRSS:	   36864 kB
+RssAnon:	   20480 kB
+Threads:	9
+SigQ:	0/127436
