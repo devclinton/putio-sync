@@ -5,9 +5,15 @@ use std::time::Duration;
 use crate::{global, unix_now, RuleDecision, SyncKind, SyncResult, Telemetry};
 
 impl Telemetry {
+    /// Mark a sync run as in progress, until [`Telemetry::sync_run`] records its end.
+    pub fn sync_started(&self) {
+        self.sync_in_progress.set(1);
+    }
+
     /// Record a finished sync run and the latest per-kind file counts. A success also
-    /// sets the last-success timestamp.
+    /// sets the last-success timestamp. Either way the run is no longer in progress.
     pub fn sync_run(&self, result: SyncResult, elapsed: Duration, counts: &[(SyncKind, usize)]) {
+        self.sync_in_progress.set(0);
         let secs = elapsed.as_secs_f64();
         self.sync_runs.with_label_values(&[result.as_str()]).inc();
         self.sync_duration.observe(secs);
@@ -37,6 +43,11 @@ impl Telemetry {
     }
 }
 
+/// Mark a sync run as in progress on the global instance.
+pub fn started() {
+    global().sync_started();
+}
+
 /// Record a finished sync run on the global instance.
 pub fn record_run(result: SyncResult, elapsed: Duration, counts: &[(SyncKind, usize)]) {
     global().sync_run(result, elapsed, counts);
@@ -50,4 +61,22 @@ pub fn file_blocked() {
 /// Count a folder rule decision on the global instance.
 pub fn rule_decision(decision: RuleDecision) {
     global().sync_rule_decision(decision);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn in_progress_is_set_by_start_and_cleared_by_any_result() {
+        let t = Telemetry::new();
+        let in_progress = || t.sample("putio_sync_sync_in_progress", &[]);
+        assert_eq!(in_progress(), Some(0.0));
+        for result in SyncResult::ALL {
+            t.sync_started();
+            assert_eq!(in_progress(), Some(1.0));
+            t.sync_run(*result, Duration::from_secs(1), &[]);
+            assert_eq!(in_progress(), Some(0.0), "after {:?}", result);
+        }
+    }
 }

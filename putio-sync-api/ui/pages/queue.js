@@ -322,8 +322,13 @@ function renderDownloads(res) {
           { class: "num", "data-label": "Progress" },
           h("div", {}, percent(pct), h("div", { class: "bar" }, h("span", { style: `width:${clamp(pct)}%` }))),
         ),
-        h("td", { class: "num right", "data-label": "Speed", text: speed(d.speed_bps) }),
-        h("td", { class: "num right", "data-label": "ETA", text: d.eta_seconds != null ? duration(d.eta_seconds) : "—" }),
+        // feature 040: reading a local file's checksum has no speed or ETA
+        d.phase === "checking"
+          ? h("td", { class: "num right", "data-label": "Speed", colspan: 2 }, h("span", { class: "badge active", text: "Checking" }))
+          : [
+              h("td", { class: "num right", "data-label": "Speed", text: speed(d.speed_bps) }),
+              h("td", { class: "num right", "data-label": "ETA", text: d.eta_seconds != null ? duration(d.eta_seconds) : "—" }),
+            ],
         h(
           "td",
           { class: "actions-cell", "data-label": "Actions" },

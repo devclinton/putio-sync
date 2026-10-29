@@ -20,8 +20,100 @@ fn default_delete_empty_folders() -> bool {
     true
 }
 
-fn default_skip_existing() -> bool {
-    true
+/// What to do when a file already exists at its local path (`[download] on_existing`,
+/// feature 040)
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExistingFile {
+    /// Skip complete files, continue partial ones
+    #[default]
+    Resume,
+    /// Download again, replacing the old file once the new one is complete
+    Overwrite,
+    /// Keep the old file and save the new one as `name (1).ext`
+    #[serde(alias = "rename")]
+    KeepBoth,
+}
+
+impl ExistingFile {
+    /// The config value
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ExistingFile::Resume => "resume",
+            ExistingFile::Overwrite => "overwrite",
+            ExistingFile::KeepBoth => "keep_both",
+        }
+    }
+}
+
+impl From<bool> for ExistingFile {
+    /// The old `skip_existing`: `true` is resume, `false` overwrite
+    fn from(skip_existing: bool) -> Self {
+        if skip_existing {
+            ExistingFile::Resume
+        } else {
+            ExistingFile::Overwrite
+        }
+    }
+}
+
+impl std::fmt::Display for ExistingFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// What happened to a file that already existed locally (feature 040)
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExistingOutcome {
+    /// Complete already; nothing downloaded
+    Skipped,
+    /// The partial file was continued
+    Resumed,
+    /// A resumed file failed its checksum and was downloaded again
+    Restarted,
+    /// Replaced by a new download
+    Overwritten,
+    /// Kept, with the new download under a numbered name
+    SavedAs,
+    /// A folder is in the way; nothing downloaded
+    Refused,
+}
+
+impl ExistingOutcome {
+    /// Every outcome
+    pub const ALL: [ExistingOutcome; 6] = [
+        ExistingOutcome::Skipped,
+        ExistingOutcome::Resumed,
+        ExistingOutcome::Restarted,
+        ExistingOutcome::Overwritten,
+        ExistingOutcome::SavedAs,
+        ExistingOutcome::Refused,
+    ];
+
+    /// The stored and logged name
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ExistingOutcome::Skipped => "skipped",
+            ExistingOutcome::Resumed => "resumed",
+            ExistingOutcome::Restarted => "restarted",
+            ExistingOutcome::Overwritten => "overwritten",
+            ExistingOutcome::SavedAs => "saved_as",
+            ExistingOutcome::Refused => "refused",
+        }
+    }
+}
+
+impl std::str::FromStr for ExistingOutcome {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        ExistingOutcome::ALL
+            .into_iter()
+            .find(|o| o.as_str() == s)
+            .ok_or(())
+    }
 }
 
 /// Extensions that are never downloaded unless `blocked_extensions` overrides them.
@@ -484,12 +576,16 @@ pub struct DownloadConfig {
     pub buffer_size_mb: usize,
     /// Chunk size in MB for chunked downloads (None to disable - Put.io doesn't support range requests)
     pub chunk_size_mb: Option<usize>,
-    /// Enable resume support for interrupted downloads
+    /// Continue interrupted and partial downloads instead of starting over
     pub resume_enabled: bool,
-    /// Skip files that already exist in the target directory (default true; false
-    /// re-downloads and overwrites them)
-    #[serde(default = "default_skip_existing")]
-    pub skip_existing: bool,
+    /// What to do when a file already exists locally; absent, `skip_existing` decides
+    /// (see [`DownloadConfig::on_existing`])
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_existing: Option<ExistingFile>,
+    /// Replaced by `on_existing` and still read: `true` is resume, `false` overwrite.
+    /// Saves from the web UI drop it once `on_existing` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_existing: Option<bool>,
     /// Delete files from Put.io after successful download
     pub delete_after_download: bool,
     /// Progress bar display style
@@ -665,7 +761,8 @@ impl Default for DownloadConfig {
             buffer_size_mb: 16,
             chunk_size_mb: None, // Disabled - Put.io doesn't support range requests
             resume_enabled: true,
-            skip_existing: true,
+            on_existing: None,
+            skip_existing: None,
             delete_after_download: false,
             progress_style: ProgressStyle::PerFile,
             sort_order: SortOrder::ByDate,
@@ -680,6 +777,36 @@ impl Default for DownloadConfig {
             rules: Vec::new(),
             presets: BTreeMap::new(),
         }
+    }
+}
+
+impl DownloadConfig {
+    /// The global choice for existing files: `on_existing`, else the old
+    /// `skip_existing`, else resume
+    pub fn on_existing(&self) -> ExistingFile {
+        self.on_existing
+            .unwrap_or_else(|| self.skip_existing.unwrap_or(true).into())
+    }
+
+    /// Set the global choice, dropping the old `skip_existing` so a save writes one key
+    pub fn set_on_existing(&mut self, choice: ExistingFile) {
+        self.on_existing = Some(choice);
+        self.skip_existing = None;
+    }
+
+    /// Where both `on_existing` and the old `skip_existing` are set (the `[download]`
+    /// table or a rule path); `on_existing` wins in each
+    pub fn both_existing_keys(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        if self.on_existing.is_some() && self.skip_existing.is_some() {
+            found.push("download".to_string());
+        }
+        for rule in &self.rules {
+            if rule.on_existing.is_some() && rule.skip_existing.is_some() {
+                found.push(format!("download.rules {}", rule.path));
+            }
+        }
+        found
     }
 }
 
@@ -810,6 +937,13 @@ impl Config {
             eprintln!("❌ Path expansion failed: {}", e);
             e
         })?;
+
+        for table in config.download.both_existing_keys() {
+            tracing::warn!(
+                table,
+                "Both on_existing and skip_existing are set; on_existing wins"
+            );
+        }
 
         eprintln!("✅ Configuration loaded and processed successfully");
         Ok(config)
@@ -1149,9 +1283,15 @@ impl ConfigBuilder {
         self
     }
 
-    /// Set whether to skip existing downloads
+    /// Set whether to skip existing downloads (the old key: `true` is resume)
     pub fn skip_existing(mut self, skip: bool) -> Self {
-        self.download.skip_existing = skip;
+        self.download.skip_existing = Some(skip);
+        self
+    }
+
+    /// Set what to do when a file already exists locally
+    pub fn on_existing(mut self, choice: ExistingFile) -> Self {
+        self.download.set_on_existing(choice);
         self
     }
 
@@ -1871,7 +2011,8 @@ mod tests {
                 buffer_size_mb: 16,
                 chunk_size_mb: Some(256),
                 resume_enabled: true,
-                skip_existing: false,
+                on_existing: None,
+                skip_existing: Some(false),
                 delete_after_download: false,
                 progress_style: ProgressStyle::PerFile,
                 sort_order: SortOrder::ByDate,
@@ -2014,7 +2155,7 @@ mod tests {
         assert_eq!(config.download.buffer_size_mb, 16);
         assert_eq!(config.download.chunk_size_mb, None);
         assert!(config.download.resume_enabled);
-        assert!(config.download.skip_existing);
+        assert_eq!(config.download.on_existing(), ExistingFile::Resume);
         assert!(!config.download.delete_after_download);
         assert_eq!(config.download.progress_style, ProgressStyle::PerFile);
         assert_eq!(config.download.sort_order, SortOrder::ByDate);
@@ -2133,7 +2274,7 @@ mod tests {
         assert_eq!(config.buffer_size_mb, 16);
         assert_eq!(config.chunk_size_mb, None);
         assert!(config.resume_enabled);
-        assert!(config.skip_existing);
+        assert_eq!(config.on_existing(), ExistingFile::Resume);
         assert!(!config.delete_after_download);
         assert_eq!(config.progress_style, ProgressStyle::PerFile);
         assert_eq!(config.sort_order, SortOrder::ByDate);
@@ -2164,15 +2305,55 @@ mod tests {
     }
 
     #[test]
-    fn test_skip_existing_missing_key_defaults_to_true() {
-        let mut value = toml::Value::try_from(DownloadConfig {
-            skip_existing: false,
-            ..DownloadConfig::default()
-        })
-        .unwrap();
-        value.as_table_mut().unwrap().remove("skip_existing");
-        let config: DownloadConfig = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
-        assert!(config.skip_existing);
+    fn test_existing_keys_missing_default_to_resume() {
+        let config: DownloadConfig =
+            toml::from_str(&toml::to_string(&DownloadConfig::default()).unwrap()).unwrap();
+        assert_eq!(config.on_existing, None);
+        assert_eq!(config.skip_existing, None);
+        assert_eq!(config.on_existing(), ExistingFile::Resume);
+    }
+
+    fn with_download_key(extra: &str) -> CoreResult<DownloadConfig> {
+        Ok(toml::from_str(&format!(
+            "{}{extra}\n",
+            download_toml_without_blocked()
+        ))?)
+    }
+
+    #[test]
+    fn test_old_skip_existing_maps_to_on_existing() {
+        let config = with_download_key("skip_existing = false").unwrap();
+        assert_eq!(config.on_existing(), ExistingFile::Overwrite);
+        let config = with_download_key("skip_existing = true").unwrap();
+        assert_eq!(config.on_existing(), ExistingFile::Resume);
+    }
+
+    #[test]
+    fn test_on_existing_values() {
+        let config = with_download_key("on_existing = \"keep_both\"").unwrap();
+        assert_eq!(config.on_existing(), ExistingFile::KeepBoth);
+        let config = with_download_key("on_existing = \"rename\"").unwrap();
+        assert_eq!(config.on_existing(), ExistingFile::KeepBoth);
+        let config = with_download_key("on_existing = \"overwrite\"").unwrap();
+        assert_eq!(config.on_existing(), ExistingFile::Overwrite);
+    }
+
+    #[test]
+    fn test_on_existing_unknown_value_lists_choices() {
+        let message = with_download_key("on_existing = \"replace\"")
+            .unwrap_err()
+            .to_string();
+        for value in ["resume", "overwrite", "keep_both"] {
+            assert!(message.contains(value), "{message}");
+        }
+    }
+
+    #[test]
+    fn test_on_existing_wins_over_skip_existing() {
+        let config =
+            with_download_key("on_existing = \"keep_both\"\nskip_existing = false").unwrap();
+        assert_eq!(config.on_existing(), ExistingFile::KeepBoth);
+        assert_eq!(config.both_existing_keys(), ["download"]);
     }
 
     #[test]
@@ -2550,6 +2731,36 @@ mod save_keeping_file_credentials_tests {
         assert_eq!(saved.download.workers, 7);
         assert_eq!(saved.api.auth_token, None);
         assert!(!fs::read_to_string(&path).unwrap().contains("env-api"));
+    }
+
+    /// A UI save of the new key drops the old one and keeps the comments
+    #[test]
+    fn on_existing_save_drops_skip_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut on_disk = Config::default();
+        on_disk.download.skip_existing = Some(false);
+        on_disk.save(&path).unwrap();
+        let contents = fs::read_to_string(&path)
+            .unwrap()
+            .replace("[download]\n", "[download]\n# my downloads\n");
+        fs::write(&path, contents).unwrap();
+
+        let mut memory: Config = written(&path);
+        memory.download.set_on_existing(ExistingFile::Overwrite);
+        memory.save_keeping_file_credentials(&path).unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(
+            contents.contains("on_existing = \"overwrite\""),
+            "{contents}"
+        );
+        assert!(!contents.contains("skip_existing"), "{contents}");
+        assert!(contents.contains("# my downloads"), "{contents}");
+        assert_eq!(
+            written(&path).download.on_existing(),
+            ExistingFile::Overwrite
+        );
     }
 
     #[test]

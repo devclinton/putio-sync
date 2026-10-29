@@ -14,6 +14,15 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Metrics for putio-sync's own CPU, memory, threads, open files and disk I/O
+  (`putio_sync_process_*`, Linux and Docker only), and
+  `putio_sync_sync_in_progress`, which is 1 while a sync runs (feature 041).
+- A choice for files already on disk, `[download] on_existing`: resume
+  (the default) continues partial files and skips complete ones, checked
+  against Put.io's CRC32; overwrite replaces the old file once the new copy
+  is complete; keep both saves the new file as `name (1).ext`. Set it in
+  Settings, per folder rule, or with `--on-existing`. History shows the
+  outcome and where the file was saved (feature 040).
 - Radarr and Sonarr can be set up from Settings → Radarr / Sonarr without
   editing the config or restarting. "Set up automatically" finds them, then
   adds or updates putio-sync's download client inside each app, testing it
@@ -52,6 +61,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- `resume_enabled = false` and `--no-resume` now start partial downloads
+  over; before, they did nothing. `--skip-existing` now works in daemon mode
+  (feature 040).
 - Radarr 6 can now connect to the download client. Radarr 6 opens the
   Transmission handshake with a GET, which putio-sync refused, so its Test
   failed with "Authentication Failure".
@@ -66,6 +78,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- `skip_existing` is replaced by `on_existing` and still read (`true` is
+  resume, `false` overwrite). A file of the same size but a different
+  checksum is no longer treated as downloaded (feature 040).
 - The snap stores its config in `/var/snap/putio-sync/common/config.toml`,
   shared by the CLI (run with `sudo`) and the daemon. The armhf snap is no
   longer built.
