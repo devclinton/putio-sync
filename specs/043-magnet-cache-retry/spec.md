@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-28
 
-**Status**: Planned (spec, research and plan; no tasks yet)
+**Status**: Planned (spec, research, plan and tasks; not built)
 
 **Input**: User description: "Peer metadata fallback for magnet pre-check (follow-up to 042):
 when the [precheck] caches lookup misses for a magnet link, fetch the info dictionary (file list)

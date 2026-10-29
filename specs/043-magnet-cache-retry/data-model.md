@@ -67,4 +67,4 @@ is settled by the hold:
 | `hold_retry_secs` | 30 | 10..=600 | time between asks |
 | `first_lookup_secs` | 3 | 1..=`lookup_timeout_secs` | the first ask's limit when holding is on |
 
-Env overrides follow 042's `PUTIO_SYNC_PRECHECK_*` pattern.
+No env overrides: 042 has them only for `enabled` and `magnet_lookup`, and these need none.
