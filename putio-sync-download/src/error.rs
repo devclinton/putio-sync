@@ -33,6 +33,11 @@ pub enum DownloadError {
     /// Internal error
     #[error("Internal error: {0}")]
     InternalError(String),
+
+    /// The download was stopped on request (pause or the Pause NAS downloads switch).
+    /// Not retried and not a failure: the partial file is kept for resume (feature 039).
+    #[error("Download stopped")]
+    Stopped,
 }
 
 /// Result type for download operations

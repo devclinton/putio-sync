@@ -17,7 +17,9 @@ impl<'a> QueueRepository<'a> {
         Self { pool }
     }
 
-    /// Add an item to the queue
+    /// Add an item to the queue with its initial status (`pending`, or `paused` when its
+    /// transfer is on hold). An existing row keeps its status.
+    #[allow(clippy::too_many_arguments)]
     pub async fn add(
         &self,
         file_id: i64,
@@ -26,6 +28,7 @@ impl<'a> QueueRepository<'a> {
         download_url: &str,
         relative_path: &str,
         priority: i64,
+        status: QueueStatus,
     ) -> DbResult<i64> {
         debug!(
             "Adding to queue: file_id={}, filename={}, size={}, relative_path={}, priority={}",
@@ -48,7 +51,7 @@ impl<'a> QueueRepository<'a> {
         .bind(download_url)
         .bind(relative_path)
         .bind(priority)
-        .bind(QueueStatus::Pending.to_string())
+        .bind(status.to_string())
         .execute(self.pool)
         .await
         .map_err(tracked(DbOp::Queue, "Failed to add to queue"))?;
@@ -247,6 +250,68 @@ impl<'a> QueueRepository<'a> {
         .map_err(tracked(DbOp::Queue, "Failed to resume queue"))?;
 
         Ok(result.rows_affected() as usize)
+    }
+
+    /// Pause the `pending` or `downloading` rows among `file_ids` (feature 039). Returns
+    /// the ids it changed; the caller stops the running ones.
+    pub async fn pause_files(&self, file_ids: &[i64]) -> DbResult<Vec<i64>> {
+        self.set_status_where(
+            file_ids,
+            QueueStatus::Paused,
+            "status IN ('pending', 'downloading')",
+            "Failed to pause queue items",
+        )
+        .await
+    }
+
+    /// Put the `paused` rows among `file_ids` back to `pending`. Priority and row id are
+    /// kept, so queue order is unchanged. Returns the ids it changed.
+    pub async fn resume_files(&self, file_ids: &[i64]) -> DbResult<Vec<i64>> {
+        self.set_status_where(
+            file_ids,
+            QueueStatus::Pending,
+            "status = 'paused'",
+            "Failed to resume queue items",
+        )
+        .await
+    }
+
+    /// Put the `failed` rows among `file_ids` back to `pending`, keeping queue order.
+    /// Returns the ids it changed.
+    pub async fn retry_files(&self, file_ids: &[i64]) -> DbResult<Vec<i64>> {
+        self.set_status_where(
+            file_ids,
+            QueueStatus::Pending,
+            "status = 'failed'",
+            "Failed to retry queue items",
+        )
+        .await
+    }
+
+    /// Set `status` on the rows among `file_ids` that match `condition`, returning their ids
+    async fn set_status_where(
+        &self,
+        file_ids: &[i64],
+        status: QueueStatus,
+        condition: &str,
+        context: &'static str,
+    ) -> DbResult<Vec<i64>> {
+        if file_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = vec!["?"; file_ids.len()].join(", ");
+        let sql = format!(
+            "UPDATE download_queue SET status = ?, updated_at = CURRENT_TIMESTAMP \
+             WHERE file_id IN ({placeholders}) AND {condition} RETURNING file_id"
+        );
+        let mut query = sqlx::query_scalar::<_, i64>(&sql).bind(status.to_string());
+        for id in file_ids {
+            query = query.bind(id);
+        }
+        query
+            .fetch_all(self.pool)
+            .await
+            .map_err(tracked(DbOp::Queue, context))
     }
 
     /// Failed rows, oldest first (doctor, feature 010)

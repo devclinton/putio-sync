@@ -48,7 +48,7 @@ async fn dead_queue_rows_are_removed_and_stale_keys_skipped() {
     env.gone(77).await;
     env.db
         .queue()
-        .add(77, "gone.mkv", 10, "u", "Movies", 0)
+        .add(77, "gone.mkv", 10, "u", "Movies", 0, QueueStatus::Pending)
         .await
         .unwrap();
 
@@ -73,7 +73,9 @@ async fn dead_queue_rows_are_removed_and_stale_keys_skipped() {
 async fn failed_downloads_are_requeued() {
     let env = Env::new().await;
     let q = env.db.queue();
-    q.add(78, "flaky.mkv", 10, "u", "Movies", 0).await.unwrap();
+    q.add(78, "flaky.mkv", 10, "u", "Movies", 0, QueueStatus::Pending)
+        .await
+        .unwrap();
     q.update_status(78, QueueStatus::Failed).await.unwrap();
 
     let preview = env.doctor.preview(FixId::FailingDownloadsRequeue).await;

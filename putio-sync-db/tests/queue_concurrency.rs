@@ -1,5 +1,6 @@
 //! Concurrent queue claims must never fail with "database is locked" (live NAS logs, 145x).
 
+use putio_sync_db::models::QueueStatus;
 use putio_sync_db::Database;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -16,7 +17,15 @@ async fn claim_next_pending_is_safe_under_concurrency() {
 
     for id in 1..=10 {
         db.queue()
-            .add(id, &format!("file{id}.mkv"), 1, "", "", 0)
+            .add(
+                id,
+                &format!("file{id}.mkv"),
+                1,
+                "",
+                "",
+                0,
+                QueueStatus::Pending,
+            )
             .await
             .unwrap();
     }

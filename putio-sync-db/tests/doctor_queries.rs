@@ -22,7 +22,9 @@ async fn failed_and_claimed_split_queue_rows_by_status() {
     let (_dir, db) = db().await;
     let q = db.queue();
     for id in 1..=5 {
-        q.add(id, "f.mkv", 1, "", "", 0).await.unwrap();
+        q.add(id, "f.mkv", 1, "", "", 0, QueueStatus::Pending)
+            .await
+            .unwrap();
     }
     q.update_status(2, QueueStatus::Downloading).await.unwrap();
     q.update_status(3, QueueStatus::Paused).await.unwrap();

@@ -14,6 +14,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- An Active page listing every transfer on its way to the NAS, once each, in
+  its Put.io or NAS stage, with counts by state that filter the list. The
+  Status page's Active transfers card summarises it, and the
+  `putio_sync_pipeline_items` metric counts items by stage and state
+  (feature 039).
 - A Doctor page that checks the Put.io account and the sync setup: sign-in,
   storage, failed or stalled transfers, empty folders, duplicate files and
   leftover .torrent files, with one-click fixes (feature 010).

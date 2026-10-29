@@ -327,7 +327,7 @@ mod tests {
         let db = db(dir.path()).await;
         for id in 1..=3 {
             db.queue()
-                .add(id, "f.mkv", 1, "", "Movies", 0)
+                .add(id, "f.mkv", 1, "", "Movies", 0, QueueStatus::Pending)
                 .await
                 .unwrap();
         }
@@ -342,7 +342,10 @@ mod tests {
     async fn failing_downloads_merge_queue_and_history() {
         let dir = tempfile::tempdir().unwrap();
         let db = db(dir.path()).await;
-        db.queue().add(1, "a.mkv", 1, "", "", 0).await.unwrap();
+        db.queue()
+            .add(1, "a.mkv", 1, "", "", 0, QueueStatus::Pending)
+            .await
+            .unwrap();
         db.queue()
             .update_status(1, QueueStatus::Failed)
             .await
@@ -379,7 +382,7 @@ mod tests {
         }
         std::fs::write(target.join(".fresh.mkv.downloading"), "x").unwrap();
         db.queue()
-            .add(1, "claimed.mkv", 3, "", "./Movies", 0)
+            .add(1, "claimed.mkv", 3, "", "./Movies", 0, QueueStatus::Pending)
             .await
             .unwrap();
 

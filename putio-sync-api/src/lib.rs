@@ -236,6 +236,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/history", create_history_router())
         .nest("/doctor", routes::system::doctor::router())
         .nest("/arr", routes::arr::router())
+        .route("/active", axum::routing::get(routes::active::get_active))
         .route(
             "/status",
             axum::routing::get(routes::system::status::get_status),

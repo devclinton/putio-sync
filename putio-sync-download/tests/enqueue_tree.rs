@@ -68,7 +68,15 @@ async fn setup() -> (
             .unwrap(),
     );
     db.queue()
-        .add(3, "c.mkv", 100, "http://unused", "Show", 0)
+        .add(
+            3,
+            "c.mkv",
+            100,
+            "http://unused",
+            "Show",
+            0,
+            putio_sync_db::models::QueueStatus::Pending,
+        )
         .await
         .unwrap();
     let client = Arc::new(PutioApiClient::with_base_url(

@@ -22,7 +22,15 @@ async fn a_scheduled_run_records_the_check_gauges() {
     env.gone(77).await;
     env.db
         .queue()
-        .add(77, "gone.mkv", 10, "u", "Movies", 0)
+        .add(
+            77,
+            "gone.mkv",
+            10,
+            "u",
+            "Movies",
+            0,
+            putio_sync_db::models::QueueStatus::Pending,
+        )
         .await
         .unwrap();
     let doctor = Arc::new(env.doctor.with_metrics());

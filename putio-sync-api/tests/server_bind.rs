@@ -33,6 +33,7 @@ async fn seeded_app(db_path: &Path) -> axum::Router {
                 "http://unused",
                 "",
                 priority,
+                QueueStatus::Pending,
             )
             .await
             .unwrap();
@@ -130,7 +131,15 @@ async fn create_app_requeues_interrupted_downloads() {
     {
         let db = Database::new(&db_path).await.unwrap();
         db.queue()
-            .add(201, "crashed.mkv", 1024, "http://unused", "", 3)
+            .add(
+                201,
+                "crashed.mkv",
+                1024,
+                "http://unused",
+                "",
+                3,
+                QueueStatus::Pending,
+            )
             .await
             .unwrap();
         db.queue()

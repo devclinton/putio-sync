@@ -374,7 +374,15 @@ async fn preview_decides_without_changing_anything() {
         .await;
     app.db()
         .queue()
-        .add(111, "notes.txt", 100, "http://unused", "Movies/Extras", 0)
+        .add(
+            111,
+            "notes.txt",
+            100,
+            "http://unused",
+            "Movies/Extras",
+            0,
+            putio_sync_db::models::QueueStatus::Pending,
+        )
         .await
         .unwrap();
     let before = file_text(&app);

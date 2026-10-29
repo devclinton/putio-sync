@@ -3,6 +3,7 @@
 //! This module contains the route definitions for all API endpoints.
 
 // Organized routes
+pub mod active;
 pub mod arr;
 pub mod local;
 pub mod putio;

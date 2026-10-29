@@ -54,8 +54,12 @@ async fn seeded_faults_are_reported() {
     env.folder(0, &[(78, "flaky.mkv", 2_000_000, false)]).await;
     env.gone(77).await;
     let q = env.db.queue();
-    q.add(77, "gone.mkv", 10, "u", "Movies", 0).await.unwrap();
-    q.add(78, "flaky.mkv", 10, "u", "Movies", 0).await.unwrap();
+    q.add(77, "gone.mkv", 10, "u", "Movies", 0, QueueStatus::Pending)
+        .await
+        .unwrap();
+    q.add(78, "flaky.mkv", 10, "u", "Movies", 0, QueueStatus::Pending)
+        .await
+        .unwrap();
     q.update_status(78, QueueStatus::Failed).await.unwrap();
     partial(
         &env.downloads(),
