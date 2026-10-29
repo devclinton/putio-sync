@@ -27,6 +27,8 @@ async fn arr_app() -> TestApp {
             password: Some(PASSWORD.to_string()),
             ..ArrConfig::default()
         };
+        // No cache requests from tests (Constitution III)
+        config.precheck.magnet_lookup = false;
     })
     .await
 }

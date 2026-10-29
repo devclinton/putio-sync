@@ -17,7 +17,7 @@ use putio_sync_download::{DownloadManager, TreeDecision};
 use putio_sync_precheck::fetch::{self, Fetched};
 use putio_sync_precheck::policy::Key;
 use putio_sync_precheck::{
-    Metainfo, Outcome, Policy, PrecheckSource, Prechecker, Reason, Stage, Traits,
+    Lookup, Metainfo, Outcome, Policy, PrecheckSource, Prechecker, Reason, Stage, Traits,
 };
 use putio_sync_telemetry::arr as metrics;
 use putio_sync_telemetry::labels::{ArrItemState, BlocklistOutcome};
@@ -105,6 +105,18 @@ struct Release<'a> {
     name: Option<String>,
     category: &'a str,
     source: PrecheckSource,
+    /// Magnets: the lookup result and the cache that answered
+    lookup: Option<&'static str>,
+    cache: Option<&'a str>,
+}
+
+/// What the check decided for one add, and how
+struct Checked {
+    outcome: Outcome,
+    policy: Policy,
+    /// Magnets: the lookup result and the cache that answered
+    lookup: Option<&'static str>,
+    cache: Option<String>,
 }
 
 /// The torrent bytes or magnet to hand to Put.io
@@ -240,18 +252,34 @@ impl ArrService {
             return Ok(AddOutcome::Duplicate(existing));
         }
 
-        let passed = match self.precheck(&payload, &category, source) {
-            Some((Outcome::Rejected(meta, reason), policy)) => {
+        let checked = self
+            .precheck(
+                &payload,
+                &hash,
+                name.as_deref(),
+                &category,
+                source,
+                deadline,
+            )
+            .await;
+        let checked = match checked {
+            Some(Checked {
+                outcome: Outcome::Rejected(meta, reason),
+                policy,
+                lookup,
+                cache,
+            }) => {
                 let release = Release {
                     hash: &hash,
                     name,
                     category: &category,
                     source,
+                    lookup,
+                    cache: cache.as_deref(),
                 };
                 return self.reject(release, meta, reason, &policy).await;
             }
-            Some((Outcome::Passed(meta), _)) => Some(meta),
-            Some((Outcome::Unknown { .. }, _)) | None => None,
+            other => other,
         };
 
         let parent = self.category_folder(&category).await?;
@@ -282,15 +310,24 @@ impl ArrService {
         })
         .await?;
         info!(hash = %hash, name = %name, transfer_id = transfer.id, "arr item added");
-        if let Some(meta) = passed {
-            let total = meta.as_ref().map_or(0, Metainfo::total_size);
+        if let Some(checked) = checked {
+            // A magnet missed in the caches waits for its check on Put.io
+            let (state, total) = match &checked.outcome {
+                Outcome::Passed(meta) => (
+                    Some(CheckState::Passed),
+                    meta.as_ref().map_or(0, Metainfo::total_size),
+                ),
+                _ => (None, 0),
+            };
             self.record_check(&NewCheck {
                 hash: Some(&hash),
                 name: &name,
                 source: source.as_str(),
                 category: Some(&category),
                 stage: Stage::Before.as_str(),
-                state: Some(CheckState::Passed),
+                state,
+                lookup: checked.lookup,
+                lookup_cache: checked.cache.as_deref(),
                 transfer_id: Some(transfer.id),
                 total_size: total as i64,
                 ..NewCheck::default()
@@ -306,23 +343,51 @@ impl ArrService {
         Ok(AddOutcome::Added(item))
     }
 
-    /// Check a .torrent before Put.io, with the policy that was used. `None` when the
-    /// check is off for the category, or for a magnet (looked up in a later story).
-    fn precheck(
+    /// Check a release before Put.io. A magnet is looked up in the caches with the time
+    /// left before `deadline`. `None` when the check is off for the category.
+    async fn precheck(
         &self,
         payload: &Payload,
+        hash: &str,
+        name: Option<&str>,
         category: &str,
         source: PrecheckSource,
-    ) -> Option<(Outcome, Policy)> {
+        deadline: Instant,
+    ) -> Option<Checked> {
         let precheck = self.precheck.as_ref()?;
-        let Payload::Torrent(bytes) = payload else {
-            return None;
-        };
         let policy = precheck.policy(category, Key::Category(category));
         if !policy.enabled {
             return None;
         }
-        Some((precheck.check(bytes, &policy, source), policy))
+        let (outcome, lookup, cache) = match payload {
+            Payload::Torrent(bytes) => (precheck.check(bytes, &policy, source), None, None),
+            Payload::Magnet(_) => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                let found = precheck.lookup(hash, left).await;
+                let result = found.as_str();
+                match found {
+                    Lookup::Found { meta, cache } => (
+                        precheck.check_meta(meta, &policy, source),
+                        Some(result),
+                        Some(cache),
+                    ),
+                    Lookup::Missed(missed) => {
+                        precheck.unknown(hash, name.unwrap_or(hash), source, missed);
+                        let outcome = Outcome::Unknown {
+                            hash: hash.to_string(),
+                            name: name.map(str::to_string),
+                        };
+                        (outcome, Some(result), None)
+                    }
+                }
+            }
+        };
+        Some(Checked {
+            outcome,
+            policy,
+            lookup,
+            cache,
+        })
     }
 
     /// A release that failed the check: listed as failed with no Put.io transfer, and
@@ -339,6 +404,8 @@ impl ArrService {
             name,
             category,
             source,
+            lookup,
+            cache,
         } = release;
         let name = name
             .or_else(|| meta.as_ref().map(|m| m.name.clone()))
@@ -369,6 +436,8 @@ impl ArrService {
                 category: Some(category),
                 stage: Stage::Before.as_str(),
                 state: Some(CheckState::Rejected),
+                lookup,
+                lookup_cache: cache,
                 total_size: total,
                 reason: Some(reason.key()),
                 ..NewCheck::default()

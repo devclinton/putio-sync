@@ -19,8 +19,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   50 MB, such as an `.exe` or a password-protected `.7z`, it's listed as failed
   with the reason and blocklisted, with no Put.io transfer created. Configure it
   under `[precheck]` (`enabled`, `dry_run`, `min_size_mb`, `allow_archives`, and
-  per-category or per-watch-folder overrides). Magnet links aren't checked yet
-  (feature 042).
+  per-category or per-watch-folder overrides). Magnet links are checked by
+  looking their .torrent up in a public cache (itorrents.net by default; only
+  the info hash is sent, and `magnet_lookup = false` turns it off). A magnet
+  that isn't found goes to Put.io as before (feature 042).
 - A Doctor page that checks the Put.io account and the sync setup: sign-in,
   storage, failed or stalled transfers, empty folders, duplicate files and
   leftover .torrent files, with one-click fixes (feature 010).
