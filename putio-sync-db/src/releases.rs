@@ -4,6 +4,7 @@
 
 use super::analytics::RangePreset;
 use super::error::{tracked, DbError, DbResult};
+use super::held::{HeldRepository, HoldStats};
 use putio_sync_telemetry::DbOp;
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
@@ -702,6 +703,7 @@ impl<'a> ReleasesRepository<'a> {
             caches.into_values().partition(|c| c.cache.is_some());
         named.extend(missed);
         stats.magnets.caches = named;
+        stats.held = HeldRepository::new(self.pool).stats(from).await?;
 
         let rows = sqlx::query(
             r#"
@@ -780,7 +782,11 @@ impl<'a> ReleasesRepository<'a> {
                 .execute(self.pool)
                 .await
                 .map_err(tracked(DbOp::Other, "Failed to prune release reports"))?;
-        Ok(checks.rows_affected() + reports.rows_affected())
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let holds = HeldRepository::new(self.pool).prune(days, now).await?;
+        Ok(checks.rows_affected() + reports.rows_affected() + holds)
     }
 }
 
@@ -1133,6 +1139,8 @@ pub struct ReleaseStats {
     pub rejected: RejectedStats,
     pub magnets: MagnetStats,
     pub reports: ReportStats,
+    /// Held magnets (feature 043)
+    pub held: HoldStats,
 }
 
 /// The range counted, UTC epoch seconds; `from` is `None` for everything

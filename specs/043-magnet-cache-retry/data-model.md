@@ -59,6 +59,20 @@ is settled by the hold:
 
 `pending_checks` (042 US3) only acts on rows with a transfer, so held rows aren't touched by it.
 
+### `hold_ends` (new)
+
+One row per ended hold, for the Stats page's `held` block: `hash`, `result` (a `HoldResult`
+label), `held_secs`, `ended_at` (Unix seconds). Written in the same transaction that deletes
+the `held_magnets` row (`HeldRepository::finish`), and pruned with the release checks.
+
+### Watch-folder holds (US4)
+
+`source = watch_magnet`, `watch_folder` set, no `arr_items` row and no `release_checks` row
+while held: the check row is written when the file is uploaded or rejected, as in 042 US4.
+The watcher re-asks a held file when a scan reaches it and it is due; the *arr hold pass
+(`due`) skips these rows. A scan ends the holds whose file is gone from the folder
+(`removed`).
+
 ## Settings (`[precheck]`, `PrecheckConfig`)
 
 | Key | Default | Range | Meaning |

@@ -49,7 +49,7 @@ pub use arr::{ArrItem, ArrRepository, ArrState, BlocklistState, NewArrItem, Puti
 pub use decisions::{RuleDecisionRecord, RuleDecisionsRepository};
 pub use downloads::DownloadRepository;
 pub use error::{DbError, DbResult};
-pub use held::{Held, HeldRepository, NewHeld};
+pub use held::{Held, HeldRepository, HoldStats, NewHeld};
 pub use history::HistoryRepository;
 pub use queue::{QueueRepository, QueueStats};
 pub use releases::{
@@ -304,6 +304,10 @@ impl Database {
             (
                 schema::CREATE_HELD_MAGNETS_TABLE,
                 "Failed to create held_magnets table",
+            ),
+            (
+                schema::CREATE_HOLD_ENDS_TABLE,
+                "Failed to create hold_ends table",
             ),
         ] {
             sqlx::query(sql)

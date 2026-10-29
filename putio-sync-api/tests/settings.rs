@@ -451,6 +451,9 @@ async fn precheck_settings_and_effective() {
             "allow_archives",
             "magnet_lookup",
             "lookup_timeout_secs",
+            "hold_magnet_secs",
+            "hold_retry_secs",
+            "first_lookup_secs",
             "caches",
             "categories",
             "watch",
@@ -527,4 +530,52 @@ async fn precheck_save_validates_and_keeps_comments() {
         "{text}"
     );
     assert!(saved(&app).precheck.dry_run);
+}
+
+/// The hold keys (043) save, keep the file's comments, and are checked against each other
+#[tokio::test]
+async fn precheck_hold_keys_save_and_validate() {
+    let app = test_app().await;
+    let path = "/settings/precheck";
+    let file = config_path(&app);
+    let original = std::fs::read_to_string(&file).unwrap();
+    let edited = original.replace("[precheck]\n", "# Hold what the caches miss\n[precheck]\n");
+    std::fs::write(&file, &edited).unwrap();
+
+    let mut body = get_ok(&app, path).await;
+    assert_eq!(body["hold_magnet_secs"], json!(300));
+    assert_eq!(body["hold_retry_secs"], json!(30));
+    assert_eq!(body["first_lookup_secs"], json!(3));
+    body.as_object_mut().unwrap().remove("effective");
+
+    let mut bad = body.clone();
+    bad["first_lookup_secs"] = json!(11);
+    bad["lookup_timeout_secs"] = json!(10);
+    let (status, response) = put(&app, path, bad).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    assert!(response["error"]
+        .as_str()
+        .unwrap()
+        .contains("first_lookup_secs"));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), edited);
+
+    body["hold_magnet_secs"] = json!(600);
+    body["hold_retry_secs"] = json!(60);
+    body["first_lookup_secs"] = json!(2);
+    let (status, response) = put(&app, path, body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let config = saved(&app).precheck;
+    assert_eq!(
+        (
+            config.hold_magnet_secs,
+            config.hold_retry_secs,
+            config.first_lookup_secs
+        ),
+        (600, 60, 2)
+    );
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        text.contains("# Hold what the caches miss\n[precheck]"),
+        "{text}"
+    );
 }

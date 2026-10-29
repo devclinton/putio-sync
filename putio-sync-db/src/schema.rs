@@ -231,6 +231,18 @@ CREATE TABLE IF NOT EXISTS held_magnets (
 )
 "#;
 
+/// SQL to create the hold_ends table (feature 043): how each hold ended, for the Stats
+/// page. `result` is a `HoldResult` label; times are Unix seconds.
+pub const CREATE_HOLD_ENDS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS hold_ends (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hash TEXT NOT NULL,
+    result TEXT NOT NULL,
+    held_secs INTEGER NOT NULL,
+    ended_at INTEGER NOT NULL
+)
+"#;
+
 /// SQL to create performance indexes
 /// These indexes optimize common query patterns
 pub const CREATE_INDEXES: &str = r#"
@@ -266,6 +278,7 @@ CREATE INDEX IF NOT EXISTS idx_release_checks_pending ON release_checks(state) W
 CREATE INDEX IF NOT EXISTS idx_release_checks_checked_at ON release_checks(checked_at);
 CREATE INDEX IF NOT EXISTS idx_release_checks_transfer_id ON release_checks(transfer_id);
 CREATE INDEX IF NOT EXISTS idx_held_magnets_next_at ON held_magnets(next_at);
+CREATE INDEX IF NOT EXISTS idx_hold_ends_ended_at ON hold_ends(ended_at);
 CREATE INDEX IF NOT EXISTS idx_release_reports_created_at ON release_reports(created_at);
 "#;
 

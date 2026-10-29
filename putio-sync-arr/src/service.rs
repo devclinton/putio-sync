@@ -659,7 +659,10 @@ impl ArrService {
                 }
             }
         };
-        self.db.held().delete(&held.hash).await?;
+        self.db
+            .held()
+            .finish(&held.hash, result.as_str(), now)
+            .await?;
         precheck_metrics::hold_ended(result, held_for(held, now));
         Ok(())
     }
@@ -722,8 +725,12 @@ impl ArrService {
         )
         .await;
         warn!(hash = %held.hash, name = %item.name, error = %message, "arr item failed");
-        self.db.held().delete(&held.hash).await?;
-        precheck_metrics::hold_ended(HoldResult::FoundRejected, held_for(held, now));
+        let result = HoldResult::FoundRejected;
+        self.db
+            .held()
+            .finish(&held.hash, result.as_str(), now)
+            .await?;
+        precheck_metrics::hold_ended(result, held_for(held, now));
         Ok(())
     }
 
@@ -1444,9 +1451,14 @@ impl ArrService {
         if is_held(&item) {
             // Never on Put.io: end the hold under the lock its release takes (043 US3)
             let _guard = self.add_lock.lock().await;
-            if let Some(held) = self.db.held().get(&item.hash).await? {
-                self.db.held().delete(&item.hash).await?;
-                precheck_metrics::hold_ended(HoldResult::Removed, held_for(&held, unix_now()));
+            let (result, now) = (HoldResult::Removed, unix_now());
+            if let Some(held) = self
+                .db
+                .held()
+                .finish(&item.hash, result.as_str(), now)
+                .await?
+            {
+                precheck_metrics::hold_ended(result, held_for(&held, now));
                 self.update_held_gauge().await;
             }
         }

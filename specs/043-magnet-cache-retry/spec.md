@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-28
 
-**Status**: In progress (US1–US3 built on 042; US4 and the US5 stats tile wait for 042 US4 and US5)
+**Status**: Built (all five stories); NAS quickstart steps left after deploy
 
 **Input**: User description: "Peer metadata fallback for magnet pre-check (follow-up to 042):
 when the [precheck] caches lookup misses for a magnet link, fetch the info dictionary (file list)
@@ -137,7 +137,7 @@ A `.magnet` file dropped in a watch folder that the cache misses is held the sam
 checked or sent to Put.io.
 
 **Why this priority**: the watch folder has no request deadline, so it gains the most, but its
-pre-check (042 US4) isn't built yet. This story waits for 042 US4.
+pre-check is 042 US4.
 
 **Independent test**: as 042 US4's watch test, with a test cache that misses first and hits
 later.

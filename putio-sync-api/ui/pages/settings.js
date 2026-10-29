@@ -98,6 +98,9 @@ const PRECHECK = {
     ["dry_run", "Check only (don't reject or delete)", "Log and count what would be rejected", "b"],
     ["allow_archives", "Allow archives", "Count .rar, .7z and split parts as wanted", "b"],
     ["magnet_lookup", "Look up magnets", "Find a magnet's .torrent in the caches before adding it", "b"],
+    ["hold_magnet_secs", "Hold magnets (s)", "Hold magnets no cache knows; 0 (off) to 3600", "n", 0, 3600],
+    ["hold_retry_secs", "Ask again every (s)", "10 to 600", "n", 10, 600],
+    ["first_lookup_secs", "First ask (s)", "While holding; 1 to the lookup timeout", "n", 1, 30],
   ],
   extra: precheckExtra,
 };

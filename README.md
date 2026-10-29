@@ -981,6 +981,15 @@ Each category and watch folder can turn the check off or change the size and arc
 settings (`[precheck.categories.<name>]`, `[precheck.watch."<path>"]`); the Settings card
 lists what applies to each.
 
+A magnet whose file list no cache has yet is held, not sent: a cache often has it a minute
+or two later. The first ask is cut short (`first_lookup_secs`, 3 s) so Radarr/Sonarr get
+their answer fast, then the caches are asked again every `hold_retry_secs` (30 s) for up to
+`hold_magnet_secs` (300 s). Found, it is checked like any other release; still missing, it
+goes to Put.io unchecked and is checked there. A held magnet shows as queued in the *arr and
+under "Waiting for a file list" on the Queue page, and a watch-folder `.magnet` stays in its
+folder until then. Holding delays only magnets the caches miss, asks the same caches and
+contacts nothing new. `hold_magnet_secs = 0` turns it off. Stats shows how holds ended.
+
 `dry_run = true` checks, logs and counts, but rejects and deletes nothing: a good way to
 try it first. Rejections show in History → Rejected and on the Stats page either way.
 

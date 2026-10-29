@@ -509,6 +509,19 @@ magnet_lookup = true
 # Total time for all caches per magnet, 1 to 30 seconds. Default: 10
 lookup_timeout_secs = 10
 
+# Hold a magnet no cache has yet, up to this many seconds, asking again before
+# it goes to Put.io; when the hold runs out it goes unchecked and is checked on
+# Put.io. Radarr/Sonarr see it as queued meanwhile. 0 to 3600; 0 turns holding
+# off. Asks the same caches, nothing else. Default: 300
+hold_magnet_secs = 300
+
+# Seconds between asks while a magnet is held, 10 to 600. Default: 30
+hold_retry_secs = 30
+
+# While holding, the first ask's limit in seconds, so Radarr/Sonarr get their
+# answer fast. 1 to lookup_timeout_secs. Default: 3
+first_lookup_secs = 3
+
 # .torrent caches, tried in order. Each is an http(s) URL with {HASH} (upper
 # case) or {hash} (lower case) in place of the info hash.
 caches = ["https://itorrents.net/torrent/{HASH}.torrent"]
