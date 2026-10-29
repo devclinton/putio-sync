@@ -226,6 +226,43 @@ impl<'a> ArrRepository<'a> {
         Ok(row.as_ref().map(item_from_row))
     }
 
+    /// The item whose Put.io folder or accepted files include `file_id`
+    pub async fn get_by_file_id(&self, file_id: i64) -> DbResult<Option<ArrItem>> {
+        let sql = format!(
+            "SELECT {COLUMNS} FROM arr_items WHERE file_id = ? \
+             OR hash IN (SELECT hash FROM arr_item_files WHERE file_id = ?) LIMIT 1"
+        );
+        let row = sqlx::query(&sql)
+            .bind(file_id)
+            .bind(file_id)
+            .fetch_optional(self.pool)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to get arr item by file"))?;
+        Ok(row.as_ref().map(item_from_row))
+    }
+
+    /// Which of `file_ids` belong to an item, for the UI's "fail and blocklist" (042 US6)
+    pub async fn arr_file_ids(&self, file_ids: &[i64]) -> DbResult<Vec<i64>> {
+        if file_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let list = vec!["?"; file_ids.len()].join(",");
+        let sql = format!(
+            "SELECT file_id FROM arr_items WHERE file_id IN ({list}) \
+             UNION SELECT file_id FROM arr_item_files WHERE file_id IN ({list})"
+        );
+        let mut query = sqlx::query_scalar(&sql);
+        for _ in 0..2 {
+            for id in file_ids {
+                query = query.bind(id);
+            }
+        }
+        query
+            .fetch_all(self.pool)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to look up arr files"))
+    }
+
     /// The item with this Transmission id
     pub async fn get_by_id(&self, id: i64) -> DbResult<Option<ArrItem>> {
         let row = sqlx::query(&format!("SELECT {COLUMNS} FROM arr_items WHERE id = ?"))

@@ -28,6 +28,10 @@
 //! Feature 042: the Stats page's "Rejected releases" and "Magnet lookups" tiles count a
 //! week of seeded release checks: fakes rejected before and on Put.io, magnets found in
 //! itorrents.net or sent to Put.io, and one older reject that only 30d and longer show.
+//! Flags (US6): `Movies/setup.exe` is flagged fake with a note, so it shows the badge and
+//! Undo. `Shows/Example.Show.S01E01.1080p.mkv` belongs to a Sonarr item, so its Flag
+//! dialog offers "Also fail and blocklist it". History → Rejected releases offers
+//! "Not fake" on each row, and the Stats page's "Release reports" card downloads them.
 
 use chrono::{Duration, Timelike, Utc};
 use putio_sync_api::{extract_download_config, router, AppState};
@@ -37,7 +41,7 @@ use putio_sync_core::config::{ArrConfig, ArrKind, ArrServer, AuthConfig, Config}
 use putio_sync_core::rules::FolderRule;
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::models::{DownloadSource, HistoryAction, Origin, QueueStatus, SourceType};
-use putio_sync_db::{CheckState, Database, NewCheck, NewReport, ReportKind};
+use putio_sync_db::{CheckState, Database, NewArrItem, NewCheck, NewReport, ReportKind};
 use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadManager;
 use putio_sync_telemetry::RuleDecision;
@@ -668,6 +672,36 @@ async fn seed_releases(db: &Database) -> Result<(), Box<dyn std::error::Error>> 
                 .await?;
         }
     }
+
+    // One fake flagged by hand, and a Sonarr item the Shows episode belongs to
+    releases
+        .upsert_flag(&NewReport {
+            kind: ReportKind::FlaggedFake,
+            source: Some("putio"),
+            name: "setup.exe",
+            file_id: Some(102),
+            total_size: Some(52_428_800),
+            types: r#"[{"ext":"exe","count":1,"largest":52428800}]"#,
+            file_count: Some(1),
+            largest_wanted: Some(0),
+            tracker_hosts: "[]",
+            note: Some("An installer in a movie folder"),
+            ..NewReport::default()
+        })
+        .await?;
+    db.arr()
+        .insert(&NewArrItem {
+            hash: "8f14e45fceea167a5a36dedd4bea2543f1f2a3b4",
+            name: "Example.Show.S01E01.1080p",
+            category: "sonarr",
+            transfer_id: None,
+            putio_status: "COMPLETED",
+            total_size: 1_610_612_736,
+        })
+        .await?;
+    sqlx::query("UPDATE arr_items SET file_id = 201 WHERE category = 'sonarr'")
+        .execute(db.pool())
+        .await?;
     Ok(())
 }
 

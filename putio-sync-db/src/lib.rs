@@ -51,8 +51,8 @@ pub use error::{DbError, DbResult};
 pub use history::HistoryRepository;
 pub use queue::{QueueRepository, QueueStats};
 pub use releases::{
-    CheckState, NewCheck, NewReport, PendingCheck, ReleaseStats, ReleasesRepository, ReportKind,
-    ReportRow,
+    CheckState, FlagUndo, NewCheck, NewReport, PendingCheck, ReleaseStats, ReleasesRepository,
+    ReportKind, ReportRow,
 };
 pub use sources::SourcesRepository;
 pub use stats::{ExtensionStats, StatsRepository};

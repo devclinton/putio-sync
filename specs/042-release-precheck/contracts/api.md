@@ -59,11 +59,15 @@ The `by_reason` keys are `no_wanted`, `small_wanted`, `invalid` and `gone`.
 Request:
 
 ```json
-{"target": {"arr_hash": "…"} | {"file_id": 123} | {"history_id": 456},
+{"target": {"arr_hash": "…"} | {"file_id": 123} | {"history_id": 456} | {"report_id": 9},
  "kind": "fake" | "not_fake",
  "note": "optional, ≤ 500 chars",
  "blocklist": false}
 ```
+
+A `file_id` that an *arr item holds is flagged as that item. `report_id` names a `rejected`
+report, so History's rejected rows can be marked "Not fake" even when the release never reached
+Put.io (a watch-folder file); a `fake` flag on it is a 400.
 
 Responses:
 
@@ -90,14 +94,19 @@ With `blocklist: true` on an *arr item:
 - 404 when the id is unknown.
 - 409 when the row is a `rejected` report rather than a flag.
 
-## `GET /releases/flags?arr_hash=…&file_id=…&history_id=…`
+## `GET /releases/flags?arr_hash=…&file_id=…&history_id=…&report_id=…`
 
 Answers the active flags for the targets on screen, so rows can show "Flagged". Each parameter
 may repeat, up to 200 in total.
 
 ```json
-{"flags": [{"id": 77, "kind": "flagged_fake", "target": {"file_id": 123}, "note": "…"}]}
+{"flags": [{"id": 77, "kind": "flagged_fake", "target": {"file_id": 123}, "note": "…"}],
+ "arr_file_ids": [123]}
 ```
+
+`arr_file_ids` lists the asked-for `file_id`s that an *arr item holds, so the UI offers "also
+fail and blocklist" only on those rows. More than 200 targets, or a parameter that isn't a
+number where one is expected, is a 400.
 
 ## `GET /releases/reports?range=…&format=json|csv`
 

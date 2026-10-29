@@ -122,15 +122,7 @@ impl Prechecker {
         if !tree.complete || !tree.errors.is_empty() {
             return None;
         }
-        let files = tree
-            .files
-            .iter()
-            .filter(|f| !f.is_folder)
-            .map(|f| ReleaseFile {
-                path: f.path.trim_start_matches('/').to_string(),
-                size: f.size.max(0) as u64,
-            })
-            .collect();
+        let files = report::tree_files(tree);
         let meta = Metainfo {
             hash: hash.to_ascii_lowercase(),
             name: name.to_string(),

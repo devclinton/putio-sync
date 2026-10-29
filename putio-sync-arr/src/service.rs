@@ -97,6 +97,9 @@ impl From<putio_sync_db::DbError> for ArrError {
     }
 }
 
+/// The error an item flagged fake by the operator reports to the *arr
+const FLAGGED_FAKE: &str = "flagged fake by the operator";
+
 /// A release being added, for [`ArrService::reject`]
 struct Release<'a> {
     hash: &'a str,
@@ -855,6 +858,46 @@ impl ArrService {
             .await?;
         warn!(hash = %item.hash, name = %item.name, error = reason, "arr item failed");
         Ok(())
+    }
+
+    /// The operator flagged an item fake and asked to fail and blocklist it (042 US6): fail
+    /// it with "flagged fake by the operator", delete its Put.io files, and queue the
+    /// blocklist call for the next refresh. Under `dry_run` only the delete is logged and
+    /// the item is left as it is. True when the blocklist was queued.
+    pub async fn flag_fake(&self, hash: &str, dry_run: bool) -> Result<bool, ArrError> {
+        let Some(item) = self
+            .db
+            .arr()
+            .get_by_hash(&hash.to_ascii_lowercase())
+            .await?
+        else {
+            return Ok(false);
+        };
+        if dry_run {
+            info!(
+                hash = %item.hash,
+                name = %item.name,
+                transfer_id = ?item.transfer_id,
+                file_id = ?item.file_id,
+                "Dry run: would fail an arr item flagged fake and delete it from Put.io"
+            );
+            return Ok(false);
+        }
+        self.fail(&item, FLAGGED_FAKE).await?;
+        if let Some(file_id) = item.file_id {
+            // Constitution IV deviation (plan.md Complexity Tracking): the operator asked
+            info!(
+                hash = %item.hash,
+                name = %item.name,
+                transfer_id = ?item.transfer_id,
+                file_id,
+                "Deleting an arr item flagged fake from Put.io"
+            );
+            if let Err(e) = self.client.delete_files(vec![file_id]).await {
+                warn!(hash = %item.hash, error = %error_chain(&e), "Failed to delete Put.io files");
+            }
+        }
+        Ok(self.blocklist_server(&item.category).is_some())
     }
 
     /// The *arr API for a category, when one with an API key is configured
