@@ -186,3 +186,53 @@ async fn telemetry_overhead_is_under_two_percent() {
     );
     assert!(share <= 2.0, "telemetry took {:.3}%", share);
 }
+
+/// Feature 041: `sync_in_progress` is 1 while a sync runs and 0 once it ends, either way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_in_progress_follows_the_run() {
+    let _serial = SERIAL.lock().await;
+    let (mut server, manager, _dir, mut mocks) = setup(20, 4096, 4096).await;
+    let in_progress = || value("putio_sync_sync_in_progress", &[]);
+    assert_eq!(in_progress(), 0.0);
+
+    // Swap the listing for one held open, so the run can be seen in progress. Mockito
+    // matches the oldest mock first, so the quick one has to go.
+    mocks.remove(0).remove_async().await;
+    let list = format!(
+        r#"{{"files":[{}],"parent":{ROOT},"status":"OK"}}"#,
+        entry(20, "movie.mkv", 4096)
+    );
+    let slow = server
+        .mock("GET", "/files/list?parent_id=0")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body_from_request(move |_| {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            list.clone().into_bytes()
+        })
+        .create_async()
+        .await;
+    let manager = Arc::new(manager);
+    let run = tokio::spawn({
+        let manager = manager.clone();
+        async move { manager.sync_downloads().await.map(|_| ()) }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(in_progress(), 1.0, "during the run");
+    run.await.unwrap().unwrap();
+    assert_eq!(in_progress(), 0.0, "after a success");
+
+    // A failed run clears it too.
+    slow.remove_async().await;
+    for m in mocks {
+        m.remove_async().await;
+    }
+    server
+        .mock("GET", "/files/list?parent_id=0")
+        // Not retried, unlike a 5xx
+        .with_status(400)
+        .create_async()
+        .await;
+    assert!(manager.sync_downloads().await.is_err());
+    assert_eq!(in_progress(), 0.0, "after a failure");
+}
