@@ -1,4 +1,8 @@
-# Research: Magnet Metadata from Peers (043)
+# Research: Hold Magnets and Ask the Cache Again (043)
+
+This research started as "get magnet metadata from peers". Its findings led to the rescope
+(spec Clarifications, 2026-10-28): build option B, hold and re-ask the cache. R3–R7 are kept for
+the deferred peer lookup. R9 covers the design questions for B.
 
 All probes ran on 2026-10-28 from the maintainer's Mac (home broadband, IPv4, no port
 forwarding), not from the NAS. They used only legal torrents: Debian and Ubuntu-family ISOs
@@ -20,7 +24,7 @@ code is throwaway and lives outside the repo. The probe sources and raw output w
   less (the URL fetch came first).
 
 **Consequence**: peer lookup is only useful if the cache gets a smaller share of the budget.
-FR-009 makes the split configurable. A cache that misses by timing out tells us nothing, so
+The spec's FR-007 gives the first ask its own shorter limit when holding is on. A cache that misses by timing out tells us nothing, so
 shortening it to around 3–4 s loses almost no hits (hits arrive in under 2 s).
 
 ## R2. itorrents.net fetches what it doesn't have
@@ -36,7 +40,7 @@ shortening it to around 3–4 s loses almost no hits (hits arrive in under 2 s).
 The Debian and Blender hashes asked earlier in the day behaved the same: a 10 s timeout on the
 first ask, then 200 in about 40 ms a minute later.
 
-**Consequence: a cheaper fallback (option B in the spec's clarification).** 042 already
+**Consequence: a cheaper fallback (option B, chosen).** 042 already
 accepts an add and tracks an item without a Put.io transfer (the reject path, `transfer_id =
 NULL`). A magnet that misses could be held the same way: accepted, not sent to Put.io, and the
 cache asked again every 30–60 s for a few minutes. On a hit it is checked as a .torrent. After
@@ -179,3 +183,26 @@ Suggested order:
    first cache ask from 10 s to 3–4 s, since misses time out anyway.
 3. Build peer lookup (this spec, option C) only if misses after re-asking still cost real Put.io
    traffic. Use librqbit, opt-in, default off.
+
+**Decision (2026-10-28)**: the user chose option B. The spec now covers holding and re-asking;
+peer lookup is out of scope.
+
+## R9. Design questions for holding
+
+- **Hold time and interval.** R2's hits came about 1–3 minutes after the first ask. A 30 s
+  re-ask over 5 minutes is up to 10 asks per magnet, each a cheap 404/timeout for the cache.
+  Both are settings; 0 turns holding off.
+- **First-ask limit.** Hits answered in 40–60 ms, the slowest under 2 s. 3 s keeps every hit
+  seen and saves about 7 s on each miss.
+- **Re-ask limit.** No *arr deadline applies to a re-ask, so it can use the full
+  `lookup_timeout_secs` (10 s). A long stall still only costs a background task.
+- **Where the item lives.** 042's reject path already stores an arr item with no Put.io transfer
+  (`transfer_id NULL`). A held item is the same row in state `putio` with no transfer, so the
+  existing state CHECK constraint doesn't change and the refresh loop, which only follows items
+  with a transfer, leaves it alone. The magnet text and the schedule go in a new table, because
+  `arr_items` and `release_checks` never store a magnet.
+- **Sonarr and Radarr.** A Transmission item in status "queued" with no error isn't flagged
+  by the *arr's failed-download handling. Its stalled check needs a downloading status with no
+  progress, which a held item never reports.
+- **Burst control.** One background task re-asks the due magnets one at a time, oldest first,
+  so a 20-episode season search makes 20 sequential asks per interval at most.

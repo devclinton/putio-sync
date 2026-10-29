@@ -215,19 +215,19 @@ Radarr and Sonarr must not import an item before its pipeline is done:
   import back forever: after a set number of retries the item completes
   without it, and the failure shows on the item and in notifications.
 
-### 043 Magnet metadata from peers
+### 043 Hold magnets and ask the cache again
 
-Follow-up to 042. When no .torrent cache has a magnet's file list, get it
-from BitTorrent peers (DHT and `ut_metadata`) within the add's time limit,
-so the release is checked before Put.io downloads it. Metadata only: no
-pieces, no seeding, no listening port, no trackers. Opt-in and off by
-default, because it shows the NAS's IP and the info hash to DHT nodes and
-peers. The settings screen and `docs/` must say so.
+Follow-up to 042. When no .torrent cache has a magnet's file list on the
+first ask, accept the add but don't send it to Put.io yet. Ask the cache
+again every 30 s for up to 5 minutes, then check it as a .torrent, or send it
+to Put.io unchecked as 042 does today. With holding on, the first ask gets
+3 s instead of 10 s. Research found itorrents.net fetches hashes it doesn't
+have: 16 of 17 first-time misses were there a few minutes later.
 
-Spec and research are in `specs/043-magnet-peer-metadata`. Research found a
-cheaper first step: itorrents.net fetches hashes it doesn't have, so asking
-it again a few minutes later found 16 of 17 first-time misses. Wait for
-042's fallback counters, then pick: re-ask the cache, peers, or both.
+Spec, research and plan are in `specs/043-magnet-cache-retry`. Needs 042
+merged first. Fetching the file list from BitTorrent peers (DHT) was
+researched and deferred: it reveals the NAS's IP to the swarm and costs about
+93 crates.
 
 ## Queued: packaging
 

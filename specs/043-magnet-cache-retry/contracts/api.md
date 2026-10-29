@@ -1,0 +1,53 @@
+# Contract: API and metrics changes (043)
+
+Everything below is under `/api/v1`, behind the bearer token. No response contains a magnet.
+
+## Transmission RPC (`/transmission/rpc`)
+
+`torrent-add` of a magnet that misses the first ask answers as any add:
+
+```json
+{"result": "success",
+ "arguments": {"torrent-added": {"id": 42, "name": "Show.S01E04.1080p", "hashString": "…"}}}
+```
+
+While held, `torrent-get` lists it with `status: 3` (queued for download), `percentDone: 0`,
+`error: 0`, `errorString: ""`, `eta: -1`, `isFinished: false`.
+
+After the hold it reports as any other item: a Put.io transfer, or the 042 reject
+(`status: 0`, `error: 3`, `errorString: "rejected before Put.io: …"`).
+
+## Arr items list (the Queue page's source)
+
+Each item gains an optional `held` object, present only while the item is held:
+
+```json
+"held": {"since": "2026-10-28T10:00:00Z", "until": "2026-10-28T10:05:00Z",
+         "attempts": 4, "last_lookup": "timeout"}
+```
+
+## `GET /stats/releases`: new `held` block
+
+```json
+"held": {"now": 2, "found": 15, "ran_out": 1, "removed": 0,
+         "median_found_secs": 150}
+```
+
+## `GET /settings` and `PUT /settings`: three new keys in `precheck`
+
+```json
+"precheck": { "…": "…", "hold_magnet_secs": 300, "hold_retry_secs": 30, "first_lookup_secs": 3 }
+```
+
+Validation errors use 042's format, for example
+`precheck.first_lookup_secs must be between 1 and lookup_timeout_secs (10)`.
+
+## Metrics
+
+| Name | Type | Labels |
+|---|---|---|
+| `putio_sync_precheck_held_total` | counter | `result` = `found_passed`, `found_rejected`, `ran_out`, `removed`, `unchecked` |
+| `putio_sync_precheck_held` | gauge | none |
+| `putio_sync_precheck_held_seconds` | histogram | `result` (same values); buckets 30, 60, 120, 180, 300, 600 |
+
+042's `putio_sync_precheck_cache_lookups_total` gains an `ask` label: `first` or `retry`.
