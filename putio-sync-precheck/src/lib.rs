@@ -16,6 +16,7 @@ pub use rule::{Policy, Reason, Stage, Verdict};
 
 use std::time::Duration;
 
+use putio_sync_client::FileWalk;
 use putio_sync_core::config::PrecheckConfig;
 use putio_sync_core::rules::RuleSet;
 use putio_sync_telemetry::precheck as metrics;
@@ -103,6 +104,42 @@ impl Prechecker {
             verdict,
         };
         self.decide(checked, source, Stage::Before)
+    }
+
+    /// Judge a fallback's files once Put.io has them, with no logging or counting; pass
+    /// the result to [`Prechecker::decide`] with [`Stage::Putio`]. `tree` is the walk of
+    /// the transfer's `file_id`. `None` when the walk is incomplete or hit an error: the
+    /// next pass tries again.
+    pub fn check_on_putio(
+        hash: &str,
+        name: &str,
+        tree: &FileWalk,
+        policy: &Policy,
+    ) -> Option<Checked> {
+        if !tree.complete || !tree.errors.is_empty() {
+            return None;
+        }
+        let files = tree
+            .files
+            .iter()
+            .filter(|f| !f.is_folder)
+            .map(|f| ReleaseFile {
+                path: f.path.trim_start_matches('/').to_string(),
+                size: f.size.max(0) as u64,
+            })
+            .collect();
+        let meta = Metainfo {
+            hash: hash.to_ascii_lowercase(),
+            name: name.to_string(),
+            files,
+            private: false,
+            tracker_hosts: Vec::new(),
+        };
+        let verdict = rule::evaluate(policy, &meta.files);
+        Some(Checked {
+            meta: Some(meta),
+            verdict,
+        })
     }
 
     /// Look a magnet up in the caches within `limit`, capped at `lookup_timeout_secs`.

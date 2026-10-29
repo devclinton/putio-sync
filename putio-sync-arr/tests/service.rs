@@ -1197,3 +1197,201 @@ async fn slow_redirect_to_magnet_still_answers_in_time() {
     assert_eq!(rows, vec![("magnet".into(), Some("timeout".into()))]);
     added.assert_async().await;
 }
+
+// --- The check on Put.io of a magnet fallback (US3, T017) ---
+
+/// The fallback transfer, finished on Put.io after downloading `downloaded` bytes
+fn finished(status: &str, downloaded: i64) -> String {
+    transfer(status, 100, Some(ITEM_FOLDER), None).replacen(
+        r#""size":1000,"#,
+        &format!(r#""size":1000,"downloaded":{downloaded},"#),
+        1,
+    )
+}
+
+/// (stage, state, reason, putio_bytes) of each `release_checks` row
+async fn resolved(db: &Database) -> Vec<(String, String, Option<String>, i64)> {
+    sqlx::query_as("SELECT stage, state, reason, putio_bytes FROM release_checks ORDER BY id")
+        .fetch_all(db.pool())
+        .await
+        .unwrap()
+}
+
+impl Harness {
+    /// A magnet that no cache was asked about: on Put.io with its check pending
+    async fn fallback(&mut self, cfg: PrecheckConfig) -> ArrService {
+        let service = self.checked(
+            vec![],
+            PrecheckConfig {
+                magnet_lookup: false,
+                ..cfg
+            },
+        );
+        self.added(&service).await;
+        assert_eq!(
+            lookups(&self.db).await,
+            vec![(Some("off".into()), None, "pending".into(), Some(TRANSFER))]
+        );
+        service
+    }
+
+    async fn putio_post(&mut self, path: &str, status: usize, expect: usize) -> Mock {
+        self.putio
+            .mock("POST", path)
+            .with_status(status)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status":"OK"}"#)
+            .expect(expect)
+            .create_async()
+            .await
+    }
+}
+
+#[tokio::test]
+async fn fallback_fake_is_removed_from_putio() {
+    let mut h = Harness::new().await;
+    let service = h.fallback(PrecheckConfig::default()).await;
+    h.transfers(&[finished("COMPLETED", 1_400_000)]).await;
+    h.item_folder(&[
+        entry(1, "Show.S01E01.exe", "FILE", ITEM_FOLDER, 1500 * MB as i64),
+        entry(2, "readme.txt", "FILE", ITEM_FOLDER, 100),
+    ])
+    .await;
+
+    // Put.io refuses the delete: nothing settles, and the next pass tries again
+    let refused = h.putio_post("/files/delete", 400, 1).await;
+    service.refresh().await;
+    assert_eq!(state(&h.db).await.0, ArrState::Putio);
+    assert!(h.db.releases().has_pending().await.unwrap());
+    refused.remove_async().await;
+
+    let delete = h.putio_post("/files/delete", 200, 1).await;
+    let cancel = h.putio_post("/transfers/cancel", 200, 1).await;
+    let clean = h.putio_post("/transfers/clean", 200, 1).await;
+    service.refresh().await;
+    assert_eq!(
+        state(&h.db).await,
+        (
+            ArrState::Failed,
+            Some("rejected on Put.io: no video file (found .exe, .txt) (checked on Put.io)".into()),
+            BlocklistState::None
+        )
+    );
+    assert_eq!(
+        resolved(&h.db).await,
+        vec![(
+            "putio".into(),
+            "rejected".into(),
+            Some("no_wanted".into()),
+            1_400_000
+        )]
+    );
+    let report: (String, String, Option<i64>, Option<i64>, i64) =
+        sqlx::query_as("SELECT kind, stage, file_id, transfer_id, file_count FROM release_reports")
+            .fetch_one(h.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        report,
+        (
+            "rejected".into(),
+            "putio".into(),
+            Some(ITEM_FOLDER),
+            Some(TRANSFER),
+            2
+        )
+    );
+    assert!(h.db.queue().get_by_file_id(1).await.unwrap().is_none());
+    assert!(!h.db.releases().has_pending().await.unwrap());
+    delete.assert_async().await;
+    cancel.assert_async().await;
+    clean.assert_async().await;
+}
+
+#[tokio::test]
+async fn fallback_real_passes_and_goes_to_the_nas() {
+    let mut h = Harness::new().await;
+    let service = h.fallback(PrecheckConfig::default()).await;
+    h.transfers(&[finished("SEEDING", 2048 * MB as i64)]).await;
+    h.item_folder(&[entry(
+        1,
+        "Show.S01E01.mkv",
+        "VIDEO",
+        ITEM_FOLDER,
+        2048 * MB as i64,
+    )])
+    .await;
+    let delete = h.putio_post("/files/delete", 200, 0).await;
+    service.refresh().await;
+    assert_eq!(state(&h.db).await.0, ArrState::Local);
+    assert_eq!(
+        resolved(&h.db).await,
+        vec![("putio".into(), "passed".into(), None, 2048 * MB as i64)]
+    );
+    assert!(h.db.queue().get_by_file_id(1).await.unwrap().is_some());
+    assert!(!h.db.releases().has_pending().await.unwrap());
+    delete.assert_async().await;
+}
+
+#[tokio::test]
+async fn fallback_dry_run_only_logs() {
+    let mut h = Harness::new().await;
+    let service = h
+        .fallback(PrecheckConfig {
+            dry_run: true,
+            ..PrecheckConfig::default()
+        })
+        .await;
+    h.transfers(&[finished("COMPLETED", 1000)]).await;
+    h.item_folder(&[entry(
+        1,
+        "Show.S01E01.exe",
+        "FILE",
+        ITEM_FOLDER,
+        1500 * MB as i64,
+    )])
+    .await;
+    let delete = h.putio_post("/files/delete", 200, 0).await;
+    let cancel = h.putio_post("/transfers/cancel", 200, 0).await;
+    service.refresh().await;
+    // Let through to the 009 rules, which block the .exe
+    assert_eq!(
+        state(&h.db).await.1.as_deref(),
+        Some("no files to import: blocked extensions .exe")
+    );
+    assert_eq!(resolved(&h.db).await[0].1, "passed");
+    delete.assert_async().await;
+    cancel.assert_async().await;
+}
+
+#[tokio::test]
+async fn fallback_gone_errored_or_cancelled_is_not_counted_fake() {
+    for (transfers, error) in [
+        (vec![], "transfer no longer on Put.io"),
+        (
+            vec![transfer("ERROR", 10, None, Some("No peers"))],
+            "No peers",
+        ),
+        (
+            vec![transfer("CANCELLED", 10, None, None)],
+            "transfer cancelled on Put.io",
+        ),
+    ] {
+        let mut h = Harness::new().await;
+        let service = h.fallback(PrecheckConfig::default()).await;
+        h.transfers(&transfers).await;
+        service.refresh().await;
+        assert_eq!(state(&h.db).await.1.as_deref(), Some(error));
+        assert_eq!(
+            resolved(&h.db).await,
+            vec![("putio".into(), "rejected".into(), Some("gone".into()), 0)],
+            "{error}"
+        );
+        assert!(!h.db.releases().has_pending().await.unwrap(), "{error}");
+        let reports: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM release_reports")
+            .fetch_one(h.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(reports, 0, "{error}");
+    }
+}

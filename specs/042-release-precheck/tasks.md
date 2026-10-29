@@ -234,19 +234,19 @@ it first.
 - it is cancelled on Put.io, its files are deleted, and it is failed and blocklisted;
 - nothing is queued locally, even when a regular sync runs in between.
 
-- [ ] T015 [P] [US3] Test, then add the sync gate in `putio-sync-download/src/manager.rs` (tree
+- [X] T015 [P] [US3] Test, then add the sync gate in `putio-sync-download/src/manager.rs` (tree
   enqueue loop, research R8):
   - when `releases().has_pending()` is true, load the transfers before the loop;
   - skip files whose `matching_transfer` id is in `pending_transfer_ids()`, with
     `decide(TreeDecision::Known)`, no queue add, and no rule decision recorded.
   - Test: one pending transfer and one normal transfer in the same tree; only the normal one's
     files are queued.
-- [ ] T016 [US3] Test, then add `check_on_putio(transfer, tree)` in
+- [X] T016 [US3] Test, then add `check_on_putio(transfer, tree)` in
   `putio-sync-precheck/src/lib.rs`.
   - Input: a read-only file list from `PutioApiClient` (the walk in `putio-sync-client/src/walk.rs`
     for the transfer's `file_id`).
   - Returns a verdict with stage `putio`.
-- [ ] T017 [US3] Test, then in `ArrService::refresh` in `putio-sync-arr/src/service.rs`, run the
+- [X] T017 [US3] Test, then in `ArrService::refresh` in `putio-sync-arr/src/service.rs`, run the
   check for items whose check is pending, when the transfer has a `file_id`, before
   `move_to_local`:
   - pass: resolve the row as `passed`, and continue as today;
