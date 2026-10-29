@@ -38,6 +38,10 @@ futures-util = "0.3"
 # Bytes handling
 bytes = "1"
 
+# CRC32 of local files against Put.io's crc32 (feature 040, research R4); already in
+# Cargo.lock through sqlx
+crc = "3.4"
+
 [dev-dependencies]
 mockito = "1.2"
 tokio = { workspace = true, features = ["test-util"] }

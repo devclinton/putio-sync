@@ -69,6 +69,10 @@ pub struct QueueItem {
     pub created_at: String,
     /// Timestamp when item was last updated
     pub updated_at: String,
+    /// Numbered file name chosen for "keep both", kept across restarts (feature 040)
+    pub save_as: Option<String>,
+    /// Never give this file a numbered name (Radarr/Sonarr items, feature 040)
+    pub fixed_path: bool,
 }
 
 impl QueueItem {
@@ -193,6 +197,10 @@ pub struct DownloadHistory {
     pub duration_seconds: Option<i64>,
     /// Average download speed in bytes/sec
     pub average_speed: Option<i64>,
+    /// Path the download was written to, when known (feature 040)
+    pub local_path: Option<String>,
+    /// What happened to a file that already existed locally (feature 040)
+    pub outcome: Option<String>,
 }
 
 impl DownloadHistory {

@@ -61,6 +61,7 @@ pub struct Telemetry {
     pub(crate) download_workers: IntGauge,
     pub(crate) downloads_completed: IntCounter,
     pub(crate) downloads_failed: IntCounterVec,
+    pub(crate) existing_files: IntCounterVec,
     pub(crate) downloaded_bytes: IntCounter,
     pub(crate) download_duration: Histogram,
     pub(crate) worker_state: IntGaugeVec,
@@ -260,6 +261,14 @@ impl Telemetry {
                 &["reason"],
             )
             .unwrap(),
+            existing_files: IntCounterVec::new(
+                opts(
+                    "existing_files_total",
+                    "Files that already existed locally, by what was done with them.",
+                ),
+                &["outcome"],
+            )
+            .unwrap(),
             downloaded_bytes: IntCounter::with_opts(opts(
                 "downloaded_bytes_total",
                 "Bytes written to disk by downloads.",
@@ -414,6 +423,7 @@ impl Telemetry {
             Box::new(self.download_workers.clone()),
             Box::new(self.downloads_completed.clone()),
             Box::new(self.downloads_failed.clone()),
+            Box::new(self.existing_files.clone()),
             Box::new(self.downloaded_bytes.clone()),
             Box::new(self.download_duration.clone()),
             Box::new(self.worker_state.clone()),
@@ -471,6 +481,9 @@ impl Telemetry {
         }
         for r in FailReason::ALL {
             self.downloads_failed.with_label_values(&[r.as_str()]);
+        }
+        for o in ExistingOutcome::ALL {
+            self.existing_files.with_label_values(&[o.as_str()]);
         }
         for t in CleanupTrigger::ALL {
             for r in SyncResult::ALL {

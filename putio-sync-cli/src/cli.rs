@@ -1,10 +1,31 @@
 //! Command-line interface definitions using clap
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 /// Version string (will include git hash if available)
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `--on-existing`: what to do when a file already exists at its local path
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum OnExisting {
+    /// Skip complete files, continue partial ones
+    Resume,
+    /// Download again and replace the old file once the new one is complete
+    Overwrite,
+    /// Keep the old file and save the new one as "name (1).ext"
+    KeepBoth,
+}
+
+impl From<OnExisting> for putio_sync_core::config::ExistingFile {
+    fn from(arg: OnExisting) -> Self {
+        match arg {
+            OnExisting::Resume => Self::Resume,
+            OnExisting::Overwrite => Self::Overwrite,
+            OnExisting::KeepBoth => Self::KeepBoth,
+        }
+    }
+}
 
 /// putio-sync - Synchronize files with Put.io
 #[derive(Parser, Debug)]
@@ -237,8 +258,12 @@ pub enum Commands {
         #[arg(long = "no-resume", help = "Disable resume of partial downloads")]
         no_resume: bool,
 
-        /// Skip files already downloaded
-        #[arg(long = "skip-existing", help = "Skip files already downloaded")]
+        /// What to do when a file already exists locally [default: config on_existing]
+        #[arg(long = "on-existing", value_enum, conflicts_with = "skip_existing")]
+        on_existing: Option<OnExisting>,
+
+        /// Same as --on-existing resume
+        #[arg(long = "skip-existing", help = "Same as --on-existing resume")]
         skip_existing: bool,
 
         /// Delete from Put.io after download
@@ -519,8 +544,12 @@ pub enum Commands {
         )]
         filter: Option<String>,
 
-        /// Skip files already downloaded
-        #[arg(long = "skip-existing", help = "Skip files already downloaded")]
+        /// What to do when a file already exists locally [default: config on_existing]
+        #[arg(long = "on-existing", value_enum, conflicts_with = "skip_existing")]
+        on_existing: Option<OnExisting>,
+
+        /// Same as --on-existing resume
+        #[arg(long = "skip-existing", help = "Same as --on-existing resume")]
         skip_existing: bool,
 
         /// Delete from Put.io after successful download
@@ -1082,6 +1111,7 @@ impl Cli {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use putio_sync_core::config::ExistingFile;
 
     #[test]
     fn test_cli_parse_no_args() {
@@ -1148,6 +1178,37 @@ mod tests {
             Cli::try_parse_from(["putio-sync", "files", "clean-empty", "--dry-run", "--yes"])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn test_on_existing_flag() {
+        let cli =
+            Cli::try_parse_from(["putio-sync", "download", "1", "--on-existing", "keep-both"])
+                .unwrap();
+        match cli.command {
+            Commands::Download { on_existing, .. } => {
+                assert_eq!(
+                    on_existing.map(ExistingFile::from),
+                    Some(ExistingFile::KeepBoth)
+                )
+            }
+            _ => panic!("expected download"),
+        }
+        assert!(
+            Cli::try_parse_from(["putio-sync", "daemon", "--on-existing", "overwrite"]).is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["putio-sync", "download", "1", "--on-existing", "rename"])
+                .is_err()
+        );
+        for command in [&["download", "1"][..], &["daemon"][..]] {
+            let args = ["putio-sync"].iter().chain(command).chain(&[
+                "--on-existing",
+                "resume",
+                "--skip-existing",
+            ]);
+            assert!(Cli::try_parse_from(args).is_err(), "{command:?}");
+        }
     }
 
     #[test]
