@@ -285,6 +285,10 @@ fn daemon_config(
             config.transfers.stall_threshold_hours.saturating_mul(3600),
         ),
         stall_check_interval: config.transfers.stall_check_interval_secs,
+        precheck: config
+            .resolve_precheck()
+            .map_err(|e| tracing::warn!(error = %e, "Release pre-check disabled for watch folders"))
+            .ok(),
     }
 }
 
@@ -304,6 +308,15 @@ mod tests {
             std::time::Duration::from_secs(12 * 3600)
         );
         assert_eq!(daemon.stall_check_interval, 120);
+    }
+
+    /// `[precheck]` reaches the watch folders' release check (042 US4)
+    #[test]
+    fn daemon_config_takes_the_precheck() {
+        let mut config = Config::default();
+        config.precheck.dry_run = true;
+        let daemon = daemon_config(&config, "t".to_string(), vec![], 60, 300, None);
+        assert!(daemon.precheck.is_some_and(|p| p.dry_run));
     }
 
     /// Every `[download]` setting the manager has reaches the daemon, not only the

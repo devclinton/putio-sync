@@ -16,12 +16,12 @@ use putio_sync_db::{
 use putio_sync_download::{DownloadManager, TreeDecision};
 use putio_sync_precheck::fetch::{self, Fetched};
 use putio_sync_precheck::policy::Key;
+use putio_sync_precheck::putio::{self, OnPutio};
 use putio_sync_precheck::{
-    Lookup, Metainfo, Outcome, Policy, PrecheckSource, Prechecker, Reason, Stage, Traits, Verdict,
+    Lookup, Metainfo, Outcome, Policy, PrecheckSource, Prechecker, Reason, Stage, Traits,
 };
 use putio_sync_telemetry::arr as metrics;
-use putio_sync_telemetry::labels::{ArrItemState, BlocklistOutcome, FallbackResult};
-use putio_sync_telemetry::precheck as precheck_metrics;
+use putio_sync_telemetry::labels::{ArrItemState, BlocklistOutcome};
 use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -41,15 +41,6 @@ const ADD_BUDGET: Duration = Duration::from_secs(14);
 
 /// Blocklist calls tried before giving up
 const MAX_BLOCKLIST_ATTEMPTS: i64 = 5;
-
-/// Put.io statuses after which the transfer's files exist
-const FINISHED: [&str; 2] = ["COMPLETED", "SEEDING"];
-
-/// How long listing a fallback's files on Put.io may take (042 US3)
-const PUTIO_CHECK_BUDGET: Duration = Duration::from_secs(5);
-
-/// Folders listed at once for that
-const PUTIO_CHECK_CONCURRENCY: usize = 4;
 
 /// What `torrent-add` was given
 #[derive(Debug, Clone)]
@@ -662,13 +653,13 @@ impl ArrService {
                 .unwrap_or_else(|| "Put.io transfer failed".to_string());
             return self.fail(item, &reason).await;
         }
-        if let Some(check) = check.filter(|_| transfer.status == "CANCELLED") {
+        if let Some(check) = check.filter(|_| putio::is_gone(transfer)) {
             self.check_gone(item, check).await;
             return self.fail(item, "transfer cancelled on Put.io").await;
         }
 
         match transfer.file_id {
-            Some(file_id) if FINISHED.contains(&transfer.status.as_str()) => {
+            Some(file_id) if putio::is_finished(transfer) => {
                 if let Some(check) = check {
                     if !self.check_on_putio(item, transfer, file_id, check).await? {
                         return Ok(());
@@ -691,7 +682,7 @@ impl ArrService {
         check: &PendingCheck,
     ) -> Result<bool, ArrError> {
         let releases = self.db.releases();
-        let putio_bytes = transfer.downloaded.unwrap_or(0).max(0);
+        let putio_bytes = putio::putio_bytes(transfer);
         let policy = self
             .precheck
             .as_ref()
@@ -706,38 +697,21 @@ impl ArrService {
         };
 
         let hash = check.hash.as_deref().unwrap_or(&item.hash);
-        let deadline = Instant::now() + PUTIO_CHECK_BUDGET;
-        let tree = self
-            .client
-            .walk_tree(file_id, PUTIO_CHECK_CONCURRENCY, deadline)
-            .await;
-        let Some(checked) = Prechecker::check_on_putio(hash, &item.name, &tree, &policy) else {
-            warn!(
-                hash,
-                name = %item.name,
-                transfer_id = transfer.id,
-                "Could not list the release's files on Put.io; checking again next pass"
-            );
-            return Ok(false);
-        };
-        let rejected = matches!(checked.verdict, Verdict::Reject(_));
-        if rejected
-            && !precheck.config().dry_run
-            && !self.clean_up_putio(item, transfer.id, file_id).await
-        {
-            return Ok(false);
-        }
-
         let source = PrecheckSource::Magnet;
-        let total = checked.meta.as_ref().map_or(0, Metainfo::total_size) as i64;
-        let result = if rejected {
-            FallbackResult::Rejected
-        } else {
-            FallbackResult::Passed
-        };
-        precheck_metrics::fallback(result, putio_bytes as u64);
-        match precheck.decide(checked, source, Stage::Putio) {
-            Outcome::Rejected(meta, reason) => {
+        let judged = precheck
+            .judge_on_putio(
+                &self.client,
+                hash,
+                &item.name,
+                transfer,
+                file_id,
+                &policy,
+                source,
+            )
+            .await;
+        match judged {
+            OnPutio::Retry => Ok(false),
+            OnPutio::Rejected { meta, reason } => {
                 releases
                     .resolve_check(
                         check.id,
@@ -746,6 +720,7 @@ impl ArrService {
                         putio_bytes,
                     )
                     .await?;
+                let total = meta.as_ref().map_or(0, Metainfo::total_size) as i64;
                 let traits = meta.as_ref().map(|m| Traits::of(m, &policy));
                 let types = traits.as_ref().map_or("[]".to_string(), Traits::types_json);
                 let report = NewReport {
@@ -773,42 +748,13 @@ impl ArrService {
                 self.fail(item, &reason.message(Stage::Putio)).await?;
                 Ok(false)
             }
-            _ => {
+            OnPutio::Passed => {
                 releases
                     .resolve_check(check.id, CheckState::Passed, None, putio_bytes)
                     .await?;
                 Ok(true)
             }
         }
-    }
-
-    /// Remove a rejected fallback from Put.io (research R4). The files go first, so a
-    /// failure leaves the transfer for the next pass to find and try again. False when
-    /// they couldn't be deleted.
-    async fn clean_up_putio(&self, item: &ArrItem, transfer_id: i64, file_id: i64) -> bool {
-        if let Err(e) = self.client.delete_files(vec![file_id]).await {
-            warn!(
-                hash = %item.hash,
-                name = %item.name,
-                transfer_id,
-                error = %error_chain(&e),
-                "Failed to delete a rejected release on Put.io; retrying next pass"
-            );
-            return false;
-        }
-        if let Err(e) = self.client.cancel_transfers(vec![transfer_id]).await {
-            warn!(
-                hash = %item.hash,
-                name = %item.name,
-                transfer_id,
-                error = %error_chain(&e),
-                "Failed to cancel a rejected transfer on Put.io"
-            );
-        }
-        if let Err(e) = self.client.clean_transfers(vec![transfer_id]).await {
-            debug!(transfer_id, error = %error_chain(&e), "Failed to clear a rejected transfer");
-        }
-        true
     }
 
     /// Settle a fallback's check whose transfer can't be checked any more: rejected as
