@@ -209,3 +209,59 @@ async fn sync_now_requires_token() {
         .await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// The Active transfers card (feature 039, FR-030): totals and the busiest items, from
+/// the last Put.io list; `/status` itself never asks Put.io
+#[tokio::test]
+async fn status_active_summarises_the_pipeline() {
+    let mut app = test_app().await;
+    let transfer = |id: i64, status: &str, speed: i64| {
+        json!({
+            "id": id, "name": format!("T{id}"), "size": 1000, "status": status,
+            "down_speed": speed, "downloaded": 250, "percent_done": 25, "estimated_time": 15,
+            "error_message": null, "created_at": "2026-10-25T12:00:00", "finished_at": null,
+            "save_parent_id": 0
+        })
+    };
+    let list = app
+        .putio
+        .mock("GET", "/transfers/list")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            json!({"status": "OK", "transfers": [
+                transfer(1, "IN_QUEUE", 0),
+                transfer(2, "DOWNLOADING", 10),
+                transfer(3, "DOWNLOADING", 90),
+                transfer(4, "ERROR", 0),
+            ]})
+            .to_string(),
+        )
+        .expect(1)
+        .create_async()
+        .await;
+    app.seed_queue(&[(50, "loose.mkv", QueueStatus::Failed)])
+        .await;
+
+    // Before any list is fetched: NAS items only
+    let body = body_json(app.get("/status").await).await;
+    assert_eq!(body["active"]["total"], 1, "{body}");
+    assert_eq!(body["active"]["nas"], 1);
+
+    app.get("/active").await;
+    let body = body_json(app.get("/status").await).await;
+    let active = &body["active"];
+    assert_eq!(active["total"], 5, "{active}");
+    assert_eq!(active["putio"], 4);
+    assert_eq!(active["nas"], 1);
+    assert_eq!(active["failed"], 2);
+    let top = active["top"].as_array().unwrap();
+    assert_eq!(top[0]["key"], "transfer:3", "{active}");
+    assert_eq!(top[1]["key"], "transfer:2");
+    assert_eq!(top[2]["key"], "transfer:1");
+    for key in ["name", "stage", "state", "percent", "eta_seconds"] {
+        assert!(top[0].get(key).is_some(), "{key} missing: {active}");
+    }
+    assert!(body["downloads"].is_array(), "downloads stays: {body}");
+    list.assert_async().await;
+}

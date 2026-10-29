@@ -11,9 +11,11 @@ use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::Database;
 use putio_sync_doctor::Doctor;
-use putio_sync_download::{DownloadConfig, DownloadManager};
+use putio_sync_download::pipeline::Counts;
+use putio_sync_download::{DownloadConfig, DownloadManager, DownloadResult};
 use putio_sync_file_manager::watcher::WatcherConfig;
 use putio_sync_file_manager::TorrentWatcher;
+use putio_sync_telemetry::{PipelineStage, PipelineState};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -57,7 +59,16 @@ pub struct DaemonConfig {
     pub stall_threshold: Duration,
     /// Seconds between checks of the Put.io transfer list for stalls
     pub stall_check_interval: u64,
+    /// Hours a finished transfer stays in the Active page's Recently finished list
+    pub finished_retention_hours: u64,
 }
+
+/// How often the pipeline loop sets `putio_sync_pipeline_items` (feature 039)
+pub const PIPELINE_TICK: Duration = Duration::from_secs(10);
+/// How old the Put.io list may be for the pipeline loop (R3): with no page open,
+/// Put.io is asked at most once per this; open pages ask every 10 s and the loop reuses
+/// their list
+pub const PIPELINE_MAX_AGE: Duration = Duration::from_secs(60);
 
 /// (Put.io sync interval, queue worker interval) in seconds.
 /// The sync loop used to run on `watch_interval`, which made `--download-interval` a no-op.
@@ -82,6 +93,7 @@ impl Default for DaemonConfig {
             api_url: None,
             stall_threshold: Duration::from_secs(6 * 3600),
             stall_check_interval: 600,
+            finished_retention_hours: 24,
         }
     }
 }
@@ -300,7 +312,7 @@ impl PutioDaemon {
             };
 
         // Spawn download tasks if in local mode (not API mode)
-        let (sync_task, download_task) = match &self.download_mode {
+        let (sync_task, download_task, pipeline_task) = match &self.download_mode {
             Some(DownloadMode::Local(_)) => {
                 // Clone Arc (cheap) - download manager remains accessible for API hot reload
                 if let Some(DownloadMode::Local(dm)) = &self.download_mode {
@@ -321,7 +333,19 @@ impl PutioDaemon {
                         Self::run_download_loop(dm_workers, worker_interval).await;
                     });
 
-                    (Some(sync_handle), Some(worker_handle))
+                    // Spawn the pipeline task (feature 039): the Active pipeline gauge
+                    let dm_pipeline = dm.clone();
+                    let tracker = self.stall_tracker.clone();
+                    let retention = self.config.read().await.finished_retention_hours;
+                    let pipeline_handle = tokio::spawn(async move {
+                        Self::run_pipeline_loop(dm_pipeline, tracker, retention).await;
+                    });
+
+                    (
+                        Some(sync_handle),
+                        Some(worker_handle),
+                        Some(pipeline_handle),
+                    )
                 } else {
                     unreachable!()
                 }
@@ -331,11 +355,11 @@ impl PutioDaemon {
                     "Running in API mode - downloads handled by API server at {}",
                     api_url
                 );
-                (None, None)
+                (None, None, None)
             }
             None => {
                 info!("Download mode not configured, skipping download tasks");
-                (None, None)
+                (None, None, None)
             }
         };
 
@@ -431,6 +455,9 @@ impl PutioDaemon {
         if let Some(task) = download_task {
             task.abort();
         }
+        if let Some(task) = pipeline_task {
+            task.abort();
+        }
         if let Some(task) = cleanup_task {
             task.abort();
         }
@@ -443,6 +470,25 @@ impl PutioDaemon {
 
         info!("Daemon shutting down...");
         Ok(())
+    }
+
+    /// Set the Active pipeline gauge every [`PIPELINE_TICK`]
+    async fn run_pipeline_loop(
+        download_manager: Arc<DownloadManager>,
+        tracker: Arc<StallTracker>,
+        retention_hours: u64,
+    ) {
+        info!(
+            tick_secs = PIPELINE_TICK.as_secs(),
+            "Active pipeline task started"
+        );
+        let mut tick = tokio::time::interval(PIPELINE_TICK);
+        loop {
+            tick.tick().await;
+            if let Err(e) = pipeline_tick(&download_manager, &tracker, retention_hours).await {
+                debug!(error = %e, "Active pipeline update failed; keeping the gauge");
+            }
+        }
     }
 
     /// Check the Put.io transfer list for stalls every `interval_secs`
@@ -644,6 +690,51 @@ impl PutioDaemon {
     }
 }
 
+/// One pipeline update: build the Active pipeline from a Put.io list at most
+/// [`PIPELINE_MAX_AGE`] old and set `putio_sync_pipeline_items`
+pub async fn pipeline_tick(
+    download_manager: &DownloadManager,
+    tracker: &StallTracker,
+    retention_hours: u64,
+) -> DownloadResult<Counts> {
+    let pipeline = download_manager
+        .pipeline(PIPELINE_MAX_AGE, tracker, retention_hours)
+        .await?;
+    for (stage, state, n) in pipeline_gauges(&pipeline.counts) {
+        putio_sync_telemetry::pipeline::set_items(stage, state, n);
+    }
+    Ok(pipeline.counts)
+}
+
+/// Every `(stage, state)` gauge value of `counts`, zeros included
+fn pipeline_gauges(counts: &Counts) -> Vec<(PipelineStage, PipelineState, usize)> {
+    let (p, n) = (&counts.putio, &counts.nas);
+    vec![
+        (PipelineStage::Putio, PipelineState::Queued, p.queued),
+        (
+            PipelineStage::Putio,
+            PipelineState::Downloading,
+            p.downloading,
+        ),
+        (PipelineStage::Putio, PipelineState::Stalled, p.stalled),
+        (PipelineStage::Putio, PipelineState::Finishing, p.finishing),
+        (PipelineStage::Putio, PipelineState::Error, p.error),
+        (
+            PipelineStage::Nas,
+            PipelineState::WaitingForSync,
+            n.waiting_for_sync,
+        ),
+        (PipelineStage::Nas, PipelineState::Queued, n.queued),
+        (
+            PipelineStage::Nas,
+            PipelineState::Downloading,
+            n.downloading,
+        ),
+        (PipelineStage::Nas, PipelineState::Paused, n.paused),
+        (PipelineStage::Nas, PipelineState::Failed, n.failed),
+    ]
+}
+
 /// One stall check: fetch the transfer list, update `tracker` as of `now` and the
 /// `putio_sync_transfers_stalled` gauge. On a Put.io error nothing changes.
 pub async fn check_stalls(
@@ -742,6 +833,96 @@ mod tests {
         assert_eq!(tracker.stalled_count(), 1);
     }
 
+    async fn pipeline_manager(server: &mockito::Server) -> (tempfile::TempDir, DownloadManager) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            Database::new(dir.path().join(".putiosync.db"))
+                .await
+                .unwrap(),
+        );
+        let client = Arc::new(PutioApiClient::with_base_url("t".to_string(), server.url()));
+        let config = DownloadConfig {
+            target_directory: dir.path().to_path_buf(),
+            ..DownloadConfig::default()
+        };
+        (dir, DownloadManager::new(client, db, config))
+    }
+
+    /// FR-028, SC-006: with no page open, a minute of loop ticks asks Put.io once
+    #[tokio::test]
+    async fn pipeline_ticks_ask_putio_once_per_minute_with_no_viewer() {
+        let mut server = mockito::Server::new_async().await;
+        let list = server
+            .mock("GET", "/transfers/list")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({ "status": "OK", "transfers": [downloading(5, 970)] })
+                    .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let (_dir, manager) = pipeline_manager(&server).await;
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+
+        let ticks = PIPELINE_MAX_AGE.as_secs() / PIPELINE_TICK.as_secs();
+        assert_eq!(ticks, 6);
+        for _ in 0..ticks {
+            let counts = pipeline_tick(&manager, &tracker, 24).await.unwrap();
+            assert_eq!(counts.putio.downloading, 1);
+        }
+        list.assert_async().await;
+    }
+
+    /// FR-028, SC-006: three tabs polling every 5 s beside the loop share one Put.io
+    /// call per page window
+    #[tokio::test]
+    async fn open_pages_and_the_loop_share_one_putio_call() {
+        let mut server = mockito::Server::new_async().await;
+        let list = server
+            .mock("GET", "/transfers/list")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({ "status": "OK", "transfers": [downloading(5, 970)] })
+                    .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let (_dir, manager) = pipeline_manager(&server).await;
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+
+        // One 10 s window: a loop tick, and each of three tabs polls twice
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        for _poll in 0..2 {
+            for _tab in 0..3 {
+                manager
+                    .pipeline(Duration::from_secs(10), &tracker, 24)
+                    .await
+                    .unwrap();
+            }
+        }
+        list.assert_async().await;
+    }
+
+    #[test]
+    fn pipeline_gauges_cover_every_stage_and_state() {
+        let mut counts = Counts::default();
+        counts.putio.stalled = 2;
+        counts.nas.waiting_for_sync = 3;
+        let gauges = pipeline_gauges(&counts);
+        let expected: usize = putio_sync_telemetry::labels::PIPELINE_STATES
+            .iter()
+            .map(|(_, states)| states.len())
+            .sum();
+        assert_eq!(gauges.len(), expected);
+        assert!(gauges.contains(&(PipelineStage::Putio, PipelineState::Stalled, 2)));
+        assert!(gauges.contains(&(PipelineStage::Nas, PipelineState::WaitingForSync, 3)));
+        assert!(gauges.contains(&(PipelineStage::Nas, PipelineState::Queued, 0)));
+    }
+
     #[test]
     fn sync_loop_uses_download_interval() {
         let config = DaemonConfig {
@@ -822,7 +1003,18 @@ mod tests {
         let db_path = dir.path().join(".putiosync.db");
         {
             let db = Database::new(&db_path).await.unwrap();
-            db.queue().add(1, "a.mkv", 10, "", "", 4).await.unwrap();
+            db.queue()
+                .add(
+                    1,
+                    "a.mkv",
+                    10,
+                    "",
+                    "",
+                    4,
+                    putio_sync_db::models::QueueStatus::Pending,
+                )
+                .await
+                .unwrap();
             db.queue()
                 .update_status(1, putio_sync_db::models::QueueStatus::Downloading)
                 .await

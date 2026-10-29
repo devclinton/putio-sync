@@ -260,6 +260,10 @@ main { max-width: 1160px; margin: 0 auto; padding: 40px 40px 80px; outline: none
 
 .paths { margin: 8px 0 0; padding: 0; list-style: none; }
 .paths li { font-family: var(--mono); font-size: var(--fs-sm); color: var(--muted); word-break: break-all; }
+.lines { margin: 0; padding: 0; list-style: none; }
+.lines li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 0; border-top: 1px solid var(--border); }
+.lines li:first-child { border-top: 0; }
+.lines .badges { display: inline-flex; gap: 4px; }
 
 /* Status dots and badges */
 
@@ -296,6 +300,12 @@ main { max-width: 1160px; margin: 0 auto; padding: 40px 40px 80px; outline: none
 .badge.warn { color: var(--warn); }
 .badge.bad { color: var(--bad); }
 .badges { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* Count chips (Active page): a click filters, zero counts are dimmed */
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chips-label { min-width: 4.5em; color: var(--muted); font-size: var(--fs-sm); font-weight: 600; }
+.chip[aria-pressed="true"] { background: var(--accent-soft); box-shadow: 0 0 0 1px var(--ring); }
+.chip.zero { opacity: 0.5; }
 
 /* Buttons */
 

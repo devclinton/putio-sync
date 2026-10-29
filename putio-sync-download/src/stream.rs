@@ -4,10 +4,13 @@ use crate::error::{DownloadError, DownloadResult};
 use crate::files::create_temp_path;
 use crate::rate_limiter::RateLimiter;
 use putio_sync_client::PutioApiClient;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 
 /// Default buffer size for streaming downloads (128MB)
@@ -143,6 +146,48 @@ fn format_speed(bytes_per_sec: f64) -> String {
     }
 }
 
+/// Asks one running download to stop (feature 039, R7)
+///
+/// The chunk loop checks it between chunks and while it waits for the network or the rate
+/// limiter, so a stop takes effect within one chunk.
+#[derive(Debug, Default)]
+pub struct StopSignal {
+    flag: AtomicBool,
+    notify: Notify,
+}
+
+impl StopSignal {
+    /// Ask the download to stop
+    pub fn stop(&self) {
+        self.flag.store(true, Ordering::SeqCst);
+        self.notify.notify_one();
+    }
+
+    /// Whether a stop was asked for
+    pub fn is_stopped(&self) -> bool {
+        self.flag.load(Ordering::SeqCst)
+    }
+
+    /// Resolves once a stop is asked for
+    async fn stopped(&self) {
+        while !self.is_stopped() {
+            self.notify.notified().await;
+        }
+    }
+}
+
+/// Run `fut`, unless `stop` asks to stop first
+async fn unless_stopped<F: Future>(stop: Option<&StopSignal>, fut: F) -> DownloadResult<F::Output> {
+    match stop {
+        Some(stop) => tokio::select! {
+            biased;
+            _ = stop.stopped() => Err(DownloadError::Stopped),
+            out = fut => Ok(out),
+        },
+        None => Ok(fut.await),
+    }
+}
+
 /// Result of a streaming download operation
 #[derive(Debug)]
 pub struct StreamDownloadResult {
@@ -171,6 +216,8 @@ pub struct StreamDownloadResult {
 /// * `buffer_size_mb` - Buffer size in megabytes
 /// * `bandwidth_limit_bytes_per_sec` - Optional bandwidth limit in bytes per second
 /// * `resume_from_byte` - Optional byte offset to resume from (for range requests)
+/// * `stop` - Optional stop signal; a stop ends the download with
+///   [`DownloadError::Stopped`], keeping the partial temp file
 ///
 /// # Returns
 ///
@@ -185,6 +232,7 @@ pub async fn stream_download(
     buffer_size_mb: usize,
     bandwidth_limit_bytes_per_sec: Option<u64>,
     resume_from_byte: Option<u64>,
+    stop: Option<&StopSignal>,
 ) -> DownloadResult<StreamDownloadResult> {
     let buffer_size = buffer_size_mb * 1024 * 1024;
 
@@ -431,11 +479,14 @@ pub async fn stream_download(
     // Network download loop - never blocks on disk I/O
     let network_result: Result<(), DownloadError> = async {
         loop {
-            match tokio::time::timeout(stall_timeout, stream.next()).await {
+            if stop.is_some_and(StopSignal::is_stopped) {
+                return Err(DownloadError::Stopped);
+            }
+            match unless_stopped(stop, tokio::time::timeout(stall_timeout, stream.next())).await? {
                 Ok(Some(Ok(chunk))) => {
                     // Apply rate limiting if enabled
                     if let Some(ref mut limiter) = rate_limiter {
-                        limiter.consume(chunk.len()).await;
+                        unless_stopped(stop, limiter.consume(chunk.len())).await?;
                     }
 
                     bytes_downloaded += chunk.len() as u64;
@@ -594,6 +645,7 @@ mod tests {
             1,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -639,6 +691,7 @@ mod tests {
             1,
             None,
             None,
+            None,
         )
         .await;
 
@@ -665,8 +718,18 @@ mod tests {
         let client = PutioApiClient::with_base_url("test_token".to_string(), server.url());
         let url = format!("{}/not-found.txt", server.url());
 
-        let result =
-            stream_download(&client, &url, &target_path, "test.txt", None, 1, None, None).await;
+        let result = stream_download(
+            &client,
+            &url,
+            &target_path,
+            "test.txt",
+            None,
+            1,
+            None,
+            None,
+            None,
+        )
+        .await;
 
         assert!(result.is_err());
     }
@@ -714,6 +777,7 @@ mod tests {
             Some(2048),
             1,
             Some(1024),
+            None,
             None,
         )
         .await

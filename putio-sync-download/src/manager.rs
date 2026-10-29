@@ -3,19 +3,20 @@
 use crate::error::{DownloadError, DownloadResult};
 use crate::files::{check_resume, cleanup_partial, create_temp_path};
 use crate::progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
-use crate::stream::stream_download;
+use crate::stream::{stream_download, StopSignal};
 use crate::sync_status::{SyncOutcome, SyncRequestError, SyncStatus};
 use crate::utils::retry_with_stall_detection;
 use putio_sync_client::models::Transfer;
 use putio_sync_client::{error_chain, FileEntry, PutioApiClient};
 use putio_sync_core::rules::{extension, Decision, Effective, RuleSet};
-use putio_sync_db::models::{DownloadSource, DownloadStatus, Origin, SourceType};
+use putio_sync_core::stall::StallTracker;
+use putio_sync_db::models::{DownloadSource, DownloadStatus, Origin, QueueStatus, SourceType};
 use putio_sync_db::Database;
 use putio_sync_telemetry::{self as telemetry, RuleDecision, SyncKind, SyncResult};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{broadcast, Notify, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
@@ -126,6 +127,29 @@ impl Drop for BusyGuard {
         }
     }
 }
+
+/// Removes a file's stop signal when its download ends
+struct StopGuard {
+    signals: Arc<Mutex<HashMap<i64, Arc<StopSignal>>>>,
+    file_id: i64,
+    signal: Arc<StopSignal>,
+}
+
+impl Drop for StopGuard {
+    fn drop(&mut self) {
+        let mut signals = self.signals.lock().unwrap();
+        // A later registration for the same file keeps its own signal
+        if signals
+            .get(&self.file_id)
+            .is_some_and(|s| Arc::ptr_eq(s, &self.signal))
+        {
+            signals.remove(&self.file_id);
+        }
+    }
+}
+
+/// Note shown when a stopped file had to start again from 0 (feature 039, R8)
+const RESTARTED_NOTE: &str = "Started again: the partial download was gone";
 
 /// Sanitize a filename to remove invalid characters
 fn sanitize_filename(filename: &str) -> String {
@@ -365,6 +389,45 @@ pub struct DownloadManager {
     sync_status: Arc<RwLock<SyncStatus>>,
     /// Wakes `run_sync_loop` for "sync now"
     sync_notify: Arc<Notify>,
+    /// Stop signals of running downloads, by file id (feature 039)
+    stop_signals: Arc<Mutex<HashMap<i64, Arc<StopSignal>>>>,
+    /// Files stopped with bytes on disk, to notice a restart from 0
+    stopped_partial: Arc<Mutex<HashSet<i64>>>,
+    /// In-memory notes per file id
+    notes: Arc<Mutex<HashMap<i64, String>>>,
+    /// The last Put.io transfer list, shared by the Active page, Status and the daemon
+    /// loop (feature 039, R3). The async lock makes concurrent callers share one fetch.
+    transfers_cache: Arc<tokio::sync::Mutex<Option<CachedTransfers>>>,
+}
+
+/// The cached transfer list, when it was fetched, and the last attempt
+struct CachedTransfers {
+    /// The last fetch attempt, successful or not
+    attempted: Instant,
+    fetched_at: SystemTime,
+    transfers: Arc<Vec<Transfer>>,
+    /// The last attempt failed
+    stale: bool,
+}
+
+impl CachedTransfers {
+    fn snapshot(&self) -> TransfersSnapshot {
+        TransfersSnapshot {
+            transfers: self.transfers.clone(),
+            fetched_at: self.fetched_at,
+            stale: self.stale,
+        }
+    }
+}
+
+/// A Put.io transfer list from `transfers_snapshot`
+#[derive(Debug, Clone)]
+pub struct TransfersSnapshot {
+    pub transfers: Arc<Vec<Transfer>>,
+    /// When the list was fetched
+    pub fetched_at: SystemTime,
+    /// The last fetch failed, so this is an older list (FR-029)
+    pub stale: bool,
 }
 
 impl DownloadManager {
@@ -393,6 +456,10 @@ impl DownloadManager {
             decided: Arc::new(Mutex::new(HashSet::new())),
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
+            stop_signals: Arc::new(Mutex::new(HashMap::new())),
+            stopped_partial: Arc::new(Mutex::new(HashSet::new())),
+            notes: Arc::new(Mutex::new(HashMap::new())),
+            transfers_cache: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -418,6 +485,10 @@ impl DownloadManager {
             decided: Arc::new(Mutex::new(HashSet::new())),
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
+            stop_signals: Arc::new(Mutex::new(HashMap::new())),
+            stopped_partial: Arc::new(Mutex::new(HashSet::new())),
+            notes: Arc::new(Mutex::new(HashMap::new())),
+            transfers_cache: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -779,6 +850,12 @@ impl DownloadManager {
         let temp_path = create_temp_path(&target_path)?;
 
         let resume_bytes = check_resume(&temp_path, file.file_size).await?;
+        if resume_bytes.is_none() && self.stopped_partial.lock().unwrap().remove(&file_id) {
+            self.notes
+                .lock()
+                .unwrap()
+                .insert(file_id, RESTARTED_NOTE.to_string());
+        }
 
         // Download the file using streaming with range requests for resuming if available
         let result = if let Some(resume_from) = resume_bytes {
@@ -802,11 +879,22 @@ impl DownloadManager {
                 // A successful result means the temp file was verified and renamed.
                 if result.success {
                     telemetry::download::completed(started.elapsed());
+                    self.notes.lock().unwrap().remove(&file_id);
                 }
                 if let Some(ref callback) = progress_callback {
                     callback.on_file_complete(file_id, &filename, result.success);
                 }
                 Ok(result)
+            }
+            Err(DownloadError::Stopped) => {
+                info!(file_id, name = %filename, "Download stopped; partial file kept");
+                if tokio::fs::metadata(&temp_path)
+                    .await
+                    .is_ok_and(|m| m.len() > 0)
+                {
+                    self.stopped_partial.lock().unwrap().insert(file_id);
+                }
+                Err(DownloadError::Stopped)
             }
             Err(e) => {
                 telemetry::download::failed(e.fail_reason());
@@ -855,6 +943,7 @@ impl DownloadManager {
         let bandwidth_limit = config.bandwidth_limit_bytes_per_sec;
         let max_retries = config.max_retries;
         let initial_delay = config.retry_initial_delay_secs;
+        let stop = self.stop_signal(file.file_id);
 
         let result = retry_with_stall_detection(
             || async {
@@ -867,6 +956,7 @@ impl DownloadManager {
                     buffer_size_mb,
                     bandwidth_limit,
                     Some(resume_from_byte), // Resume from the specified byte
+                    stop.as_deref(),
                 )
                 .await
             },
@@ -954,6 +1044,7 @@ impl DownloadManager {
                     file_path: Some(target_path),
                 })
             }
+            Err(DownloadError::Stopped) => Err(DownloadError::Stopped),
             Err(e) => {
                 telemetry::download::failed(e.fail_reason());
                 // Check if it's a 404 error
@@ -1012,6 +1103,7 @@ impl DownloadManager {
         let bandwidth_limit = config.bandwidth_limit_bytes_per_sec;
         let max_retries = config.max_retries;
         let initial_delay = config.retry_initial_delay_secs;
+        let stop = self.stop_signal(file.file_id);
 
         let result = retry_with_stall_detection(
             || async {
@@ -1024,6 +1116,7 @@ impl DownloadManager {
                     buffer_size_mb,
                     bandwidth_limit,
                     None, // No resume for new downloads
+                    stop.as_deref(),
                 )
                 .await
             },
@@ -1108,6 +1201,7 @@ impl DownloadManager {
                     file_path: Some(target_path),
                 })
             }
+            Err(DownloadError::Stopped) => Err(DownloadError::Stopped),
             Err(e) => {
                 telemetry::download::failed(e.fail_reason());
                 // Check if it's a 404 error
@@ -1331,6 +1425,7 @@ impl DownloadManager {
                     &download_url,
                     &relative_path,
                     0,
+                    QueueStatus::Pending,
                 )
                 .await
             {
@@ -1602,6 +1697,18 @@ impl DownloadManager {
 
         let _busy = BusyGuard::new();
         let file_id = queue_item.file_id;
+        let _stop = self.register_stop(file_id);
+        // A pause between the claim and the registration above found no signal to stop
+        if queue_repo
+            .get_by_file_id(file_id)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|row| row.status != "downloading")
+        {
+            debug!(file_id, "Claimed row was paused before it started");
+            return Ok(true);
+        }
 
         info!(
             "Processing queue item: {} (ID: {})",
@@ -1655,7 +1762,7 @@ impl DownloadManager {
 
                         // Update queue status to completed and remove
                         if let Err(e) = queue_repo
-                            .update_status(file_id, putio_sync_db::models::QueueStatus::Completed)
+                            .update_status(file_id, QueueStatus::Completed)
                             .await
                         {
                             warn!("Failed to update queue status to completed: {}", e);
@@ -1667,13 +1774,13 @@ impl DownloadManager {
 
                         Ok(true)
                     }
+                    // Stopped on request: keep the partial and the row as the caller set it
+                    Err(DownloadError::Stopped) => Ok(true),
                     Ok(_) | Err(_) => {
                         error!("Failed to download: {}", file_info.name);
 
                         // Update queue status to failed
-                        if let Err(e) = queue_repo
-                            .update_status(file_id, putio_sync_db::models::QueueStatus::Failed)
-                            .await
+                        if let Err(e) = queue_repo.update_status(file_id, QueueStatus::Failed).await
                         {
                             warn!("Failed to update queue status to failed: {}", e);
                         }
@@ -2062,7 +2169,7 @@ impl DownloadManager {
 
         // Update status to pending (effectively pausing it)
         queue_repo
-            .update_status(file_id, putio_sync_db::models::QueueStatus::Pending)
+            .update_status(file_id, QueueStatus::Pending)
             .await
             .map_err(|e| {
                 DownloadError::InternalError(format!("Failed to cancel download: {}", e))
@@ -2073,6 +2180,191 @@ impl DownloadManager {
 
         info!("Download cancelled for file_id: {}", file_id);
         Ok(())
+    }
+
+    /// Stop the running downloads of `file_ids` (feature 039, R7)
+    ///
+    /// Set each queue row's status first (`paused`, or `pending` under the switch): a
+    /// stopped file keeps its partial and its row is left as it is. Returns the ids that
+    /// were running.
+    pub async fn stop_files(&self, file_ids: &[i64]) -> Vec<i64> {
+        let signals = self.stop_signals.lock().unwrap();
+        file_ids
+            .iter()
+            .filter_map(|id| {
+                signals.get(id).map(|signal| {
+                    signal.stop();
+                    *id
+                })
+            })
+            .collect()
+    }
+
+    /// The Put.io transfer list, fetched at most once per `max_age` (feature 039, R3).
+    /// Concurrent callers wait for the same fetch. When Put.io fails, the last list is
+    /// returned flagged stale, and the next try waits `max_age` too; with no list yet,
+    /// the error is returned.
+    pub async fn transfers_snapshot(&self, max_age: Duration) -> DownloadResult<TransfersSnapshot> {
+        let mut cache = self.transfers_cache.lock().await;
+        if let Some(cached) = cache.as_ref() {
+            if cached.attempted.elapsed() < max_age {
+                return Ok(cached.snapshot());
+            }
+        }
+        match self.client.list_transfers().await {
+            Ok(response) => Ok(cache
+                .insert(CachedTransfers {
+                    attempted: Instant::now(),
+                    fetched_at: SystemTime::now(),
+                    transfers: Arc::new(response.transfers),
+                    stale: false,
+                })
+                .snapshot()),
+            Err(e) => match cache.as_mut() {
+                Some(cached) => {
+                    warn!(error = %error_chain(&e), "Failed to list transfers; using the last list");
+                    cached.attempted = Instant::now();
+                    cached.stale = true;
+                    Ok(cached.snapshot())
+                }
+                None => Err(e.into()),
+            },
+        }
+    }
+
+    /// The Active transfers pipeline (feature 039): Put.io's transfer list, at most
+    /// `max_age` old, joined with the queue, holds, live progress, stalls and origins.
+    /// `retention_hours` is how far back done files are read.
+    pub async fn pipeline(
+        &self,
+        max_age: Duration,
+        stalls: &StallTracker,
+        retention_hours: u64,
+    ) -> DownloadResult<crate::pipeline::Pipeline> {
+        let snapshot = self.transfers_snapshot(max_age).await?;
+        self.pipeline_from(Some(snapshot), stalls, retention_hours)
+            .await
+    }
+
+    /// The pipeline from the last Put.io list fetched, without asking Put.io; with no
+    /// list yet, NAS items only (the Status card, FR-030)
+    pub async fn pipeline_cached(
+        &self,
+        stalls: &StallTracker,
+        retention_hours: u64,
+    ) -> DownloadResult<crate::pipeline::Pipeline> {
+        let snapshot = self
+            .transfers_cache
+            .lock()
+            .await
+            .as_ref()
+            .map(|c| c.snapshot());
+        self.pipeline_from(snapshot, stalls, retention_hours).await
+    }
+
+    async fn pipeline_from(
+        &self,
+        snapshot: Option<TransfersSnapshot>,
+        stalls: &StallTracker,
+        retention_hours: u64,
+    ) -> DownloadResult<crate::pipeline::Pipeline> {
+        use crate::pipeline::{build, BuildInput, FileProgress, Origin};
+
+        let db = self.database.as_ref().ok_or_else(|| {
+            DownloadError::InternalError("Database required for the pipeline".to_string())
+        })?;
+        let transfers = snapshot
+            .as_ref()
+            .map(|s| s.transfers.to_vec())
+            .unwrap_or_default();
+        let transfer_ids: Vec<i64> = transfers.iter().map(|t| t.id).collect();
+        let internal = |e: putio_sync_db::DbError| DownloadError::InternalError(e.to_string());
+
+        let files = db
+            .pipeline_files(&transfer_ids, retention_hours)
+            .await
+            .map_err(internal)?;
+        let holds = db.holds().list().await.map_err(internal)?;
+        // Origins of the listed transfers and of transfers gone from Put.io
+        let mut origin_ids = transfer_ids.clone();
+        origin_ids.extend(files.iter().filter_map(|f| f.transfer_id));
+        origin_ids.sort_unstable();
+        origin_ids.dedup();
+        let transfer_origins = db
+            .transfer_origins(&origin_ids)
+            .await
+            .map_err(internal)?
+            .into_iter()
+            .filter_map(|(id, label)| Origin::from_db(&label).map(|o| (id, o)))
+            .collect();
+        let progress = self
+            .get_active_downloads()
+            .await?
+            .into_iter()
+            .map(|d| {
+                (
+                    d.file_id,
+                    FileProgress {
+                        downloaded: d.bytes_downloaded,
+                        speed_bps: d.speed_bps.max(0.0) as u64,
+                    },
+                )
+            })
+            .collect();
+        let stalls = transfer_ids
+            .iter()
+            .filter_map(|id| stalls.get(*id).map(|s| (*id, s)))
+            .collect();
+
+        // The start of the last finished sync run: a transfer done after it waits for
+        // the next run
+        let sync = self.sync_status().await;
+        let last_sync_start = if sync.in_progress {
+            sync.last_finished_at
+                .zip(sync.last_duration)
+                .and_then(|(finished, took)| finished.checked_sub(took))
+        } else {
+            sync.last_started_at
+        };
+
+        Ok(build(&BuildInput {
+            transfers,
+            files,
+            holds: holds.into_iter().map(|h| h.transfer_id).collect(),
+            progress,
+            stalls,
+            transfer_origins,
+            notes: self.file_notes(),
+            last_sync_start,
+            next_sync_at: sync.next_due_at,
+            now: SystemTime::now(),
+            putio_as_of: snapshot.as_ref().map(|s| s.fetched_at),
+            putio_stale: snapshot.is_some_and(|s| s.stale),
+        }))
+    }
+
+    /// In-memory notes per file, such as "Started again: the partial download was gone"
+    pub fn file_notes(&self) -> HashMap<i64, String> {
+        self.notes.lock().unwrap().clone()
+    }
+
+    /// Register a stop signal for `file_id` until the guard is dropped
+    fn register_stop(&self, file_id: i64) -> StopGuard {
+        let signal = Arc::new(StopSignal::default());
+        self.stop_signals
+            .lock()
+            .unwrap()
+            .insert(file_id, signal.clone());
+        StopGuard {
+            signals: self.stop_signals.clone(),
+            file_id,
+            signal,
+        }
+    }
+
+    /// The stop signal of a running `file_id`, if any
+    fn stop_signal(&self, file_id: i64) -> Option<Arc<StopSignal>> {
+        self.stop_signals.lock().unwrap().get(&file_id).cloned()
     }
 
     /// Get statistics for all active workers

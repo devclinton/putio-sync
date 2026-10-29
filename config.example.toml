@@ -367,6 +367,10 @@ stall_threshold_hours = 6
 # Seconds between checks of the transfer list. Default: 600
 stall_check_interval_secs = 600
 
+# Hours a finished transfer stays in the Active page's "Recently finished" list.
+# From 1 to 720. Default: 24
+finished_retention_hours = 24
+
 # ============================================================================
 # Doctor
 # ============================================================================

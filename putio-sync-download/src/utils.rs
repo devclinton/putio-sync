@@ -1,6 +1,6 @@
 //! Utility functions for downloads
 
-use crate::error::DownloadResult;
+use crate::error::{DownloadError, DownloadResult};
 use std::future::Future;
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -52,6 +52,7 @@ where
                     attempts: attempt,
                 });
             }
+            Err(DownloadError::Stopped) => return Err(DownloadError::Stopped),
             Err(e) => {
                 attempt += 1;
                 if attempt > max_retries {

@@ -1,8 +1,8 @@
 //! Status summary route (feature 004, FR-010)
 //!
 //! Provides the one request behind the web UI's status page:
-//! - GET  /status - Build, uptime, sync, queue, downloads, workers, watcher, disk,
-//!   reachability and auth method
+//! - GET  /status - Build, uptime, sync, queue, downloads, active transfers, workers,
+//!   watcher, disk, reachability and auth method
 //!
 //! A section that cannot be produced is `null` and named in `unavailable`; the route
 //! itself never fails because of one section. No token value is ever included.
@@ -10,6 +10,7 @@
 use axum::{extract::State, Json};
 use chrono::{DateTime, SecondsFormat, Utc};
 use putio_sync_core::config::{AuthMethod, Config};
+use putio_sync_download::pipeline::{summary, Summary};
 use putio_sync_download::{SyncOutcome, SyncStatus};
 use serde::Serialize;
 use std::time::SystemTime;
@@ -26,6 +27,8 @@ pub struct StatusResponse {
     pub sync: SyncSection,
     pub queue: Option<QueueCounts>,
     pub downloads: Option<Vec<ActiveDownloadInfo>>,
+    /// The Active transfers card (feature 039), from the last Put.io list fetched
+    pub active: Option<Summary>,
     pub workers: WorkersSection,
     pub watcher: WatcherSection,
     pub disk: Option<DiskSection>,
@@ -201,6 +204,34 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
         }
     };
 
+    let active = match state.database.as_ref() {
+        Some(_) => match state
+            .download_manager
+            .pipeline_cached(
+                &state.stall_tracker,
+                config.transfers.finished_retention_hours,
+            )
+            .await
+        {
+            Ok(pipeline) => Some(summary(&pipeline)),
+            Err(e) => {
+                debug!(error = %e, "Status: active transfers failed");
+                unavailable.push(Unavailable {
+                    section: "active",
+                    reason: e.to_string(),
+                });
+                None
+            }
+        },
+        None => {
+            unavailable.push(Unavailable {
+                section: "active",
+                reason: "database unavailable".to_string(),
+            });
+            None
+        }
+    };
+
     let workers = WorkersSection {
         busy: state.download_manager.active_workers().await,
         configured: config.download.workers,
@@ -260,6 +291,7 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
         sync: sync_json(&sync_status),
         queue,
         downloads,
+        active,
         workers,
         watcher,
         disk,

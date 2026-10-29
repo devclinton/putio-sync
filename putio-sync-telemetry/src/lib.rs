@@ -23,6 +23,7 @@ pub mod doctor;
 pub mod download;
 pub mod gauges;
 pub mod labels;
+pub mod pipeline;
 pub mod server;
 pub mod sync;
 pub mod transfers;
@@ -76,6 +77,10 @@ pub struct Telemetry {
     // Label-less vec: absent until the first successful run
     pub(crate) empty_folder_last_success: GaugeVec,
     pub(crate) transfers_stalled: IntGauge,
+    // Feature 039
+    pub(crate) pipeline_items: IntGaugeVec,
+    pub(crate) pipeline_actions: IntCounterVec,
+    pub(crate) nas_downloads_paused: IntGauge,
 
     // Feature 010; absent until the first doctor run
     pub(crate) doctor_check_status: GaugeVec,
@@ -199,6 +204,27 @@ impl Telemetry {
             transfers_stalled: IntGauge::with_opts(opts(
                 "transfers_stalled",
                 "Put.io transfers with no progress for the stall threshold, at the last check.",
+            ))
+            .unwrap(),
+            pipeline_items: IntGaugeVec::new(
+                opts(
+                    "pipeline_items",
+                    "Active transfers on the Active page, by stage and state.",
+                ),
+                &["stage", "state"],
+            )
+            .unwrap(),
+            pipeline_actions: IntCounterVec::new(
+                opts(
+                    "pipeline_actions_total",
+                    "Pause, hold and resume actions on active transfers.",
+                ),
+                &["action"],
+            )
+            .unwrap(),
+            nas_downloads_paused: IntGauge::with_opts(opts(
+                "nas_downloads_paused",
+                "1 while the Pause NAS downloads switch is on, else 0.",
             ))
             .unwrap(),
             doctor_check_status: GaugeVec::new(
@@ -420,6 +446,9 @@ impl Telemetry {
             Box::new(self.empty_folder_delete_failures.clone()),
             Box::new(self.empty_folder_last_success.clone()),
             Box::new(self.transfers_stalled.clone()),
+            Box::new(self.pipeline_items.clone()),
+            Box::new(self.pipeline_actions.clone()),
+            Box::new(self.nas_downloads_paused.clone()),
             Box::new(self.doctor_check_status.clone()),
             Box::new(self.doctor_check_items.clone()),
             Box::new(self.doctor_last_run.clone()),
@@ -477,6 +506,15 @@ impl Telemetry {
         }
         for s in ArrItemState::ALL {
             self.arr_items.with_label_values(&[s.as_str()]);
+        }
+        for (stage, states) in PIPELINE_STATES {
+            for state in *states {
+                self.pipeline_items
+                    .with_label_values(&[stage.as_str(), state.as_str()]);
+            }
+        }
+        for a in PipelineAction::ALL {
+            self.pipeline_actions.with_label_values(&[a.as_str()]);
         }
         for o in BlocklistOutcome::ALL {
             self.arr_blocklist.with_label_values(&[o.as_str()]);

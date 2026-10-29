@@ -201,7 +201,15 @@ impl TestApp {
         let queue = self.db().queue();
         for (priority, (file_id, name, status)) in rows.iter().enumerate() {
             queue
-                .add(*file_id, name, 1024, "http://unused", "", priority as i64)
+                .add(
+                    *file_id,
+                    name,
+                    1024,
+                    "http://unused",
+                    "",
+                    priority as i64,
+                    QueueStatus::Pending,
+                )
                 .await
                 .unwrap();
             if *status != QueueStatus::Pending {

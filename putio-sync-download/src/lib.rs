@@ -7,6 +7,7 @@ pub mod blocklist;
 pub mod error;
 pub mod files;
 pub mod manager;
+pub mod pipeline;
 pub mod progress;
 pub mod rate_limiter;
 pub mod stream;
@@ -22,12 +23,12 @@ pub use files::{
 };
 pub use manager::{
     ActiveDownload, DownloadConfig, DownloadFile, DownloadManager, DownloadOperationResult,
-    PreviewItem, RulePreview, SyncStats, TreeDecision, TreeFile, TreeReport, WorkerStats,
-    PREVIEW_ITEMS,
+    PreviewItem, RulePreview, SyncStats, TransfersSnapshot, TreeDecision, TreeFile, TreeReport,
+    WorkerStats, PREVIEW_ITEMS,
 };
 pub use progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 pub use rate_limiter::RateLimiter;
-pub use stream::{stream_download, StreamDownloadResult, DEFAULT_BUFFER_SIZE};
+pub use stream::{stream_download, StopSignal, StreamDownloadResult, DEFAULT_BUFFER_SIZE};
 pub use sync_status::{SyncOutcome, SyncRequestError, SyncStatus};
 pub use utils::{retry_with_stall_detection, RetryResult};
 pub use worker::{DownloadJob, DownloadWorkerPool, WorkerResult};

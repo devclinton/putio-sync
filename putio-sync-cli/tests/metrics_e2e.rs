@@ -32,7 +32,18 @@ async fn serves_without_db_then_reports_queue_and_disk() {
         .await
         .unwrap();
     for id in 1..=2 {
-        db.queue().add(id, "f.mkv", 1, "", "", 0).await.unwrap();
+        db.queue()
+            .add(
+                id,
+                "f.mkv",
+                1,
+                "",
+                "",
+                0,
+                putio_sync_db::models::QueueStatus::Pending,
+            )
+            .await
+            .unwrap();
     }
     tokio::time::pause();
 

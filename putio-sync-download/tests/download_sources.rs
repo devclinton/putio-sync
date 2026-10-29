@@ -141,7 +141,15 @@ async fn nothing_queued_lists_no_transfers() {
     let (_server, _dir, db, manager, transfers) = setup(200).await;
     for (id, name) in [(52, "e01.mkv"), (60, "single.iso"), (70, "upload.txt")] {
         db.queue()
-            .add(id, name, 100, "http://unused", "", 0)
+            .add(
+                id,
+                name,
+                100,
+                "http://unused",
+                "",
+                0,
+                putio_sync_db::models::QueueStatus::Pending,
+            )
             .await
             .unwrap();
     }

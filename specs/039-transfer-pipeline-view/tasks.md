@@ -20,11 +20,11 @@ description: "Task list for feature 039: Active Transfers Pipeline View"
 
 ## Phase 1: Setup
 
-- [ ] T001 [P] Add `finished_retention_hours` (default 24) to `TransfersConfig` in
+- [X] T001 [P] Add `finished_retention_hours` (default 24) to `TransfersConfig` in
   `putio-sync-core/src/config.rs` and to `[transfers]` in `config.example.toml`. The config lint
   refuses a value outside 1–720 with a clear message ("must be from 1 to 720"). Unit test for
   the default, 1, 720, 0 and 721.
-- [ ] T002 [P] Test then add `putio-sync-telemetry/src/pipeline.rs` (export from `lib.rs`):
+- [X] T002 [P] Test then add `putio-sync-telemetry/src/pipeline.rs` (export from `lib.rs`):
   gauge `putio_sync_pipeline_items{stage,state}` (stage `putio`|`nas`, the 10 states), counter
   `putio_sync_pipeline_actions_total{action}` (`pause`|`hold`|`resume`), gauge
   `putio_sync_nas_downloads_paused` (0 or 1, no labels). Setters on `Telemetry`. Add the three
@@ -37,20 +37,20 @@ description: "Task list for feature 039: Active Transfers Pipeline View"
 
 ### Stop a running download (R7, R8)
 
-- [ ] T003 Failing test first: `putio-sync-download/tests/stop_resume.rs`. A local HTTP server
+- [X] T003 Failing test first: `putio-sync-download/tests/stop_resume.rs`. A local HTTP server
   serves a slow body with range support. Start a download, pause its file, and assert within
   5 s: no more bytes arrive, `.<name>.downloading` is kept, the row is not `completed`, no
   failure is counted. Then resume and assert a range request from the partial size and a
   correct final file. A second case, with one download slot and a file of another transfer
   queued behind it: after the stop, that other file starts (FR-014). Run it on today's code
   and record that it fails.
-- [ ] T004 Add `DownloadError::Stopped` in `putio-sync-download/src/error.rs` (not retryable,
+- [X] T004 Add `DownloadError::Stopped` in `putio-sync-download/src/error.rs` (not retryable,
   not a failure).
-- [ ] T005 In `putio-sync-download/src/stream.rs`, take a stop signal (`Arc<AtomicBool>` plus
+- [X] T005 In `putio-sync-download/src/stream.rs`, take a stop signal (`Arc<AtomicBool>` plus
   `tokio::sync::Notify`). Check the flag between chunks, and `select!` on the notify while
   waiting on the rate limiter. Return `DownloadError::Stopped`, flushing and keeping the temp
   file, never renaming it.
-- [ ] T006 In `putio-sync-download/src/manager.rs`, keep `HashMap<file_id, StopSignal>`:
+- [X] T006 In `putio-sync-download/src/manager.rs`, keep `HashMap<file_id, StopSignal>`:
   register when a file starts, remove when it ends, and add `stop_files(&[file_id])`. On
   `Stopped`: keep the partial, leave the queue row status as the caller set it, record no
   failure in metrics or history, and run no Put.io delete. Resume goes through `check_resume`.
@@ -59,7 +59,7 @@ description: "Task list for feature 039: Active Transfers Pipeline View"
 
 ### Database (R9–R12)
 
-- [ ] T007 Add the three tables to `putio-sync-db/src/schema.rs` exactly as data-model.md:
+- [X] T007 Add the three tables to `putio-sync-db/src/schema.rs` exactly as data-model.md:
   - `pipeline_holds(transfer_id INTEGER PRIMARY KEY, name TEXT NOT NULL, held_at TIMESTAMP
     DEFAULT CURRENT_TIMESTAMP)`;
   - `daemon_flags(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMP DEFAULT
@@ -68,7 +68,7 @@ description: "Task list for feature 039: Active Transfers Pipeline View"
     outcome TEXT NOT NULL CHECK (outcome IN ('done','failed')), reason TEXT, added_at
     TIMESTAMP, putio_done_at TIMESTAMP, queued_at TIMESTAMP, done_at TIMESTAMP NOT NULL)`.
   No change to existing tables. Migration test on an existing database.
-- [ ] T008 [P] Tests then `putio-sync-db/src/pipeline.rs` (accessors in `lib.rs`):
+- [X] T008 [P] Tests then `putio-sync-db/src/pipeline.rs` (accessors in `lib.rs`):
   - `HoldsRepository`: `add(transfer_id, name)`, `remove`, `list`, `is_held`;
   - `FlagsRepository`: `get_bool(key)` (a missing key means off), `set_bool(key, bool)`
     writing `"1"`/`"0"`;
@@ -82,7 +82,7 @@ description: "Task list for feature 039: Active Transfers Pipeline View"
     `completed` downloads row) or **skipped** (neither), with sizes, `relative_path`,
     `transfer_id`, `recorded_at` and error. Queue rows with no source row are included as in
     the queue. Test each of the three cases, since a completed file has no queue row (R1).
-- [ ] T009 [P] Tests then, in `putio-sync-db/src/queue.rs`:
+- [X] T009 [P] Tests then, in `putio-sync-db/src/queue.rs`:
   - `add` takes the initial status (`pending` or `paused`);
   - `pause_files(&[file_id])` changes only `pending` or `downloading` rows to `paused`;
   - `resume_files(&[file_id])` changes `paused` rows back to `pending`, leaving `priority`
@@ -93,12 +93,12 @@ description: "Task list for feature 039: Active Transfers Pipeline View"
 
 ### Pipeline core (R3, R4)
 
-- [ ] T010 Tests (mockito) then `DownloadManager::transfers_snapshot(max_age)` in
+- [X] T010 Tests (mockito) then `DownloadManager::transfers_snapshot(max_age)` in
   `putio-sync-download/src/manager.rs`: a `tokio::sync::Mutex<Option<(Instant,
   Arc<Vec<Transfer>>)>>`. Two calls within `max_age` make one Put.io request, and concurrent
   callers share one fetch. On a Put.io error it returns the last list with its age, flagged
   stale.
-- [ ] T011 Create `putio-sync-download/src/pipeline.rs` (export from `lib.rs`) with
+- [X] T011 Create `putio-sync-download/src/pipeline.rs` (export from `lib.rs`) with
   `PipelineItem` (fields as data-model.md), `Stage`, `State`, `FileCounts`, `Origin`, `Counts`,
   `BuildInput` (transfers, active rows, holds, live progress, stall verdicts, last sync start,
   next sync time, `now`) and an empty `build(input) -> Pipeline`. Serde names match
@@ -115,7 +115,7 @@ description: "Task list for feature 039: Active Transfers Pipeline View"
 **Independent test**: with the mock UI fixtures, each transfer shows once on `#/active`, in the
 right stage and state, and moves from Put.io to NAS when Put.io finishes.
 
-- [ ] T012 [US1] Table tests in `putio-sync-download/src/pipeline.rs` (`#[cfg(test)]`), one per
+- [X] T012 [US1] Table tests in `putio-sync-download/src/pipeline.rs` (`#[cfg(test)]`), one per
   row of R5: `IN_QUEUE`/`WAITING`/`PREPARING_DOWNLOAD` → Put.io Queued; `DOWNLOADING` → Put.io
   Downloading, or Stalled with a stall verdict; `COMPLETING` → Finishing; `ERROR` → Error with
   `error_message` as reason; `COMPLETED`/`SEEDING` → NAS stage with `seeding` set for
@@ -136,21 +136,21 @@ right stage and state, and moves from Put.io to NAS when Put.io finishes.
   speed) in the NAS stage; Put.io figures in the Put.io stage. Origin (`watch`, `manual`,
   `arr:<category>`, `putio`). Sort: failed/error first, then downloading by speed, then name.
   One item per transfer through every stage (SC-002).
-- [ ] T013 [US1] Implement item building in `build()` in `putio-sync-download/src/pipeline.rs`
+- [X] T013 [US1] Implement item building in `build()` in `putio-sync-download/src/pipeline.rs`
   until T012 passes.
-- [ ] T014 [US1] `DownloadManager::pipeline()` in `putio-sync-download/src/manager.rs`: gather
+- [X] T014 [US1] `DownloadManager::pipeline()` in `putio-sync-download/src/manager.rs`: gather
   `BuildInput` from `transfers_snapshot(10 s)`, `pipeline_files()`, holds, live progress, the
   feature 007 stall tracker, origins (`arr_items.category` by `transfer_id`, then
   `transfer_origins`, then `download_sources.origin`), the sync status (last start,
   `next_due_at`) and the restart notes, then call `build`. Set `putio_as_of` and `putio_stale`
   from the snapshot.
-- [ ] T015 [US1] Tests first in `putio-sync-api/tests/active.rs`: `GET /active` returns the
+- [X] T015 [US1] Tests first in `putio-sync-api/tests/active.rs`: `GET /active` returns the
   contracts/api.md shape; auth is required; no database → 503 with the usual error body; Put.io
   answering 503 → `putio_stale: true` with the last list and NAS figures still current.
-- [ ] T016 [US1] `putio-sync-api/src/routes/active.rs`: `GET /active` calling
+- [X] T016 [US1] `putio-sync-api/src/routes/active.rs`: `GET /active` calling
   `DownloadManager::pipeline()`; register under the authenticated router in
   `putio-sync-api/src/lib.rs`. T015 passes.
-- [ ] T017 [US1] `putio-sync-api/ui/pages/active.js`: table with name and its origin label
+- [X] T017 [US1] `putio-sync-api/ui/pages/active.js`: table with name and its origin label
   (Radarr/Sonarr category, watch folder or web UI) when known, stage badge, state, size,
   progress bar, files ("4 of 12 files"), speed, time left; Stalled badge and reason; Waiting
   for sync with the next sync time; "seeding" note; failure reason; the out-of-date marker with
@@ -158,7 +158,7 @@ right stage and state, and moves from Put.io to NAS when Put.io finishes.
   right now" with a link to the Transfers page. Refresh every 5 s while open. Cards at phone
   width (375 px) like the other pages. Add the "Active" nav link after Status in
   `putio-sync-api/ui/index.html` and the `#/active` route in `putio-sync-api/ui/app.js`.
-- [ ] T018 [P] [US1] `putio-sync-api/examples/mock_ui.rs`: fixtures for every stage and state,
+- [X] T018 [P] [US1] `putio-sync-api/examples/mock_ui.rs`: fixtures for every stage and state,
   the season pack (4 of 12 files, seeding), a stalled transfer, a Put.io Error transfer, a
   waiting-for-sync transfer, a folder row with no transfer, a Radarr-origin row, and
   `MOCK_PUTIO_DOWN=1` making the mocked transfer list answer 503. `MOCK_ACTIVE_COUNT=200`
@@ -175,22 +175,22 @@ right stage and state, and moves from Put.io to NAS when Put.io finishes.
 **Independent test**: on the mock UI the counts show every state including zeros, add up to
 the rows, and a click filters the list.
 
-- [ ] T019 [US2] Tests in `putio-sync-download/src/pipeline.rs`: every state present with zeros;
+- [X] T019 [US2] Tests in `putio-sync-download/src/pipeline.rs`: every state present with zeros;
   each item counted once, in its current stage (FR-011); `putio` plus `nas` equals the number
   of items (SC-004); `on_hold` counted outside the sum.
-- [ ] T020 [US2] Build `Counts` in `build()` and add `counts` to `GET /active` in
+- [X] T020 [US2] Build `Counts` in `build()` and add `counts` to `GET /active` in
   `putio-sync-api/src/routes/active.rs`; extend `putio-sync-api/tests/active.rs`.
-- [ ] T021 [US2] Count chips in `putio-sync-api/ui/pages/active.js`: one per state, a click
+- [X] T021 [US2] Count chips in `putio-sync-api/ui/pages/active.js`: one per state, a click
   filters, "Show all" clears; zero counts are shown as 0 and dimmed; "N on hold" chip; a name
   filter. Filtering is client-side.
-- [ ] T022 [US2] Tests then the `active` section in `putio-sync-api/src/routes/system/status.rs`:
+- [X] T022 [US2] Tests then the `active` section in `putio-sync-api/src/routes/system/status.rs`:
   `{total, putio, nas, failed, top}`, `top` at most 5 items, downloading before queued then by
   speed; `failed` counts `error` and `failed` and is also in `putio` or `nas`. `downloads`
   stays in the response.
-- [ ] T023 [US2] `putio-sync-api/ui/pages/status.js`: the Active transfers card (counts
+- [X] T023 [US2] `putio-sync-api/ui/pages/status.js`: the Active transfers card (counts
   sentence, up to 5 lines with stage badges, "See all" link to `#/active`) replaces the Active
   downloads card.
-- [ ] T024 [US2] Pipeline loop in `putio-sync-daemon/src/daemon.rs`: every 10 s build the
+- [X] T024 [US2] Pipeline loop in `putio-sync-daemon/src/daemon.rs`: every 10 s build the
   pipeline and set `putio_sync_pipeline_items`. The loop reads `transfers_snapshot(60 s)`, the
   API reads `transfers_snapshot(10 s)`, so Put.io is asked at most every 60 s with no page
   open and every 10 s with pages open. Tests with mockito: with no viewer, ticks make one

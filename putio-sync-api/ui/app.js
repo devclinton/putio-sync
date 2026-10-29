@@ -4,6 +4,7 @@
 
 import { getToken, logout, onAuthExpired } from "./api.js";
 import * as status from "./pages/status.js";
+import * as active from "./pages/active.js";
 import * as queue from "./pages/queue.js";
 import * as putio from "./pages/putio.js";
 import * as transfers from "./pages/transfers.js";
@@ -13,9 +14,10 @@ import * as settings from "./pages/settings.js";
 import * as doctor from "./pages/doctor.js";
 import * as login from "./pages/login.js";
 
-const PAGES = { status, queue, putio, transfers, history, stats, doctor, settings, login };
+const PAGES = { status, active, queue, putio, transfers, history, stats, doctor, settings, login };
 const TITLES = {
   status: "Status",
+  active: "Active",
   queue: "Queue",
   putio: "Put.io",
   transfers: "Transfers",
