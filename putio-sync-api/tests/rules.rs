@@ -152,7 +152,10 @@ async fn a_rule_is_set_inherited_and_cleared() {
         effective["delete_blocked"],
         json!({ "value": true, "from": "Movies" })
     );
-    assert_eq!(effective["skip_existing"]["from"], Value::Null);
+    assert_eq!(
+        effective["on_existing"],
+        json!({ "value": "resume", "from": null })
+    );
     let only: Vec<&str> = effective["filter"]["only"]
         .as_array()
         .unwrap()
@@ -295,7 +298,7 @@ async fn presets_are_added_overridden_reset_and_deleted() {
         names,
         ["video", "audio", "ebooks", "no-binaries", "everything"]
     );
-    assert_eq!(all["global"]["skip_existing"], true);
+    assert_eq!(all["global"]["on_existing"], "resume");
 
     let (status, body) = call(
         &app,
@@ -482,4 +485,65 @@ async fn rules_need_the_token() {
     let (app, _mocks) = tree_app(None).await;
     let response = app.req(Method::GET, "/rules", None, None).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Feature 040: a folder's `on_existing` is set, inherited and cleared, and a body with
+/// only the old `skip_existing` is mapped
+#[tokio::test]
+async fn on_existing_is_set_inherited_and_cleared() {
+    let (app, _mocks) = tree_app(None).await;
+
+    let (status, body) = call(
+        &app,
+        Method::PUT,
+        "/rules/folder/100",
+        Some(json!({ "on_existing": "keep_both" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let movies = get(&app, "/rules/folder/100").await;
+    assert_eq!(movies["rule"]["on_existing"], "keep_both");
+    assert_eq!(
+        movies["effective"]["on_existing"],
+        json!({ "value": "keep_both", "from": "Movies" })
+    );
+    let extras = get(&app, "/rules/folder/110").await;
+    assert_eq!(
+        extras["effective"]["on_existing"],
+        json!({ "value": "keep_both", "from": "Movies" })
+    );
+    assert!(!file_text(&app).contains("skip_existing"));
+
+    let (status, body) = call(
+        &app,
+        Method::PUT,
+        "/rules/folder/110",
+        Some(json!({ "skip_existing": false })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let extras = get(&app, "/rules/folder/110").await;
+    assert_eq!(extras["rule"]["on_existing"], "overwrite");
+    assert!(extras["rule"].get("skip_existing").is_none(), "{extras}");
+
+    let (status, body) = call(
+        &app,
+        Method::PUT,
+        "/rules/folder/100",
+        Some(json!({ "on_existing": "sideways" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        get(&app, "/rules/folder/100").await["rule"]["on_existing"],
+        "keep_both"
+    );
+
+    let (status, _) = call(&app, Method::DELETE, "/rules/folder/100", None).await;
+    assert!(status.is_success(), "{status}");
+    let movies = get(&app, "/rules/folder/100").await;
+    assert_eq!(
+        movies["effective"]["on_existing"],
+        json!({ "value": "resume", "from": null })
+    );
 }

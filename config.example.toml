@@ -73,15 +73,21 @@ buffer_size_mb = 16
 # Default: null (disabled)
 # chunk_size_mb = 256
 
-# Enable resume support for interrupted downloads
-# When enabled, downloads can be resumed if interrupted
+# Continue interrupted and partial downloads instead of starting over.
+# --no-resume turns it off for one `download` run.
 # Default: true
 resume_enabled = true
 
-# Skip files that already exist in target_directory. false re-downloads and
-# overwrites them, including files the queue database doesn't know about.
-# Default: true
-skip_existing = true
+# What to do when a file already exists at its local path and the download history
+# does not list it as done:
+#   resume     skip complete files, continue partial ones (default)
+#   overwrite  download again from the start, replace the old file once the new one is complete
+#   keep_both  keep the old file, save the new one as "name (1).ext", "name (2).ext", ...
+# Complete means same size as on Put.io, and same CRC32 when Put.io has one.
+# Radarr/Sonarr download-client items never get a numbered name; they overwrite instead.
+# Replaces skip_existing (true = resume, false = overwrite), which is still read.
+# Default: "resume"
+on_existing = "resume"
 
 # Delete files from Put.io after successful download
 # Note: This is specific to the download command
@@ -144,7 +150,8 @@ blocked_extensions = ["exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs",
 #   allow / block          extra extensions on top of the preset
 #   skip                   download nothing in this folder
 #   delete_blocked         delete files the rule blocks from Put.io (one call per sync)
-#   delete_after_download  / skip_existing: override the settings above
+#   delete_after_download  / on_existing: override the settings above
+#                          (an old rule's skip_existing is still read)
 #
 # The web UI sets rules from the Put.io page and previews them before saving.
 #
@@ -543,7 +550,7 @@ caches = ["https://itorrents.net/torrent/{HASH}.torrent"]
 # workers = 4
 # chunk_size_mb = 256
 # buffer_size_mb = 32
-# skip_existing = true
+# on_existing = "resume"
 
 # Example 3: Selective downloads with filtering
 # [download]
@@ -555,7 +562,7 @@ caches = ["https://itorrents.net/torrent/{HASH}.torrent"]
 # Example 4: Auto-delete setup
 # [download]
 # delete_after_download = true
-# skip_existing = true
+# on_existing = "resume"
 # [sync]
 # delete_after_download = true
 

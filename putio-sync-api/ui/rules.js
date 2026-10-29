@@ -11,8 +11,14 @@ const FLAGS = [
   ["skip", "Skip folder", "Download nothing here"],
   ["delete_blocked", "Delete blocked files", "Remove files the type filter blocks from Put.io at each sync"],
   ["delete_after_download", "Delete after download", "Remove each file from Put.io once downloaded"],
-  ["skip_existing", "Skip existing", "Skip files already on disk"],
 ];
+// feature 040: what to do when a file is already on disk
+const EXISTING = [
+  ["resume", "Resume"],
+  ["overwrite", "Overwrite"],
+  ["keep_both", "Keep both"],
+];
+const existingLabel = (v) => (EXISTING.find(([k]) => k === v) || [v, v])[1];
 const SHOWN_EXTS = 8;
 
 const quiet = (e) => e.status === 401 || e.status === 429;
@@ -101,6 +107,7 @@ export function ruleCard(id, onChange) {
         row("Preset", preset, eff.preset.from),
         row("Types", filterText(eff.filter), eff.filter.from),
         FLAGS.map(([k, label]) => row(label, yesNo(eff[k].value), eff[k].from)),
+        row("When a file exists", existingLabel(eff.on_existing.value), eff.on_existing.from),
       ),
       tools,
     );
@@ -143,6 +150,12 @@ export function ruleCard(id, onChange) {
       );
       return [k, sel, h("label", { class: "field", for: fid(k) }, h("span", { text: label }), sel, h("small", { text: hint }))];
     });
+    const existingSel = h(
+      "select",
+      { class: "input", id: fid("on_existing") },
+      h("option", { value: "", text: `Inherit (${existingLabel(eff.on_existing.value)})`, selected: rule.on_existing == null }),
+      EXISTING.map(([v, text]) => h("option", { value: v, text, selected: rule.on_existing === v })),
+    );
     const field = (input, label, hint) => h("label", { class: "field", for: input.id }, h("span", { text: label }), input, h("small", { text: hint }));
     const out = h("div", { class: "rule-preview", "aria-live": "polite" });
     const error = h("p", { class: "error-text", role: "alert", hidden: true });
@@ -150,6 +163,7 @@ export function ruleCard(id, onChange) {
     const body = () => {
       const b = { preset: presetSel.value || null, allow: parseExts(allow.value), block: parseExts(block.value) };
       for (const [k, sel] of flags) b[k] = sel.value === "" ? null : sel.value === "true";
+      b.on_existing = existingSel.value || null;
       return b;
     };
     const fail = (e) => {
@@ -210,6 +224,7 @@ export function ruleCard(id, onChange) {
         field(allow, "Also allow", "Extensions, comma separated"),
         field(block, "Also block", "Extensions, comma separated"),
         flags.map((f) => f[2]),
+        field(existingSel, "When a file exists", "Resume, overwrite, or keep both under a new name"),
       ),
       error,
       h(
@@ -313,7 +328,7 @@ function ruleSummary(r, presets) {
 
 function rulesList(all, reload) {
   const g = all.global;
-  const global = h("p", { class: "muted", text: `Root (global): ${g.blocked_extensions.length ? `blocks ${exts(g.blocked_extensions)}` : "blocks nothing"} · delete after download: ${yesNo(g.delete_after_download)} · skip existing: ${yesNo(g.skip_existing)}` });
+  const global = h("p", { class: "muted", text: `Root (global): ${g.blocked_extensions.length ? `blocks ${exts(g.blocked_extensions)}` : "blocks nothing"} · delete after download: ${yesNo(g.delete_after_download)} · when a file exists: ${existingLabel(g.on_existing).toLowerCase()}` });
   if (!all.rules.length) return [global, h("p", { class: "muted", text: "No folder rules. Set one from a folder on the Put.io page." })];
   const remove = async (button, path) => {
     const ok = await confirm({ title: "Remove folder rule", text: `Remove the rule for ${path}? Its folders go back to the inherited settings.`, verb: "Remove" });

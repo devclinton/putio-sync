@@ -3,7 +3,7 @@
 
 use mockito::Matcher;
 use putio_sync_client::PutioApiClient;
-use putio_sync_core::config::DownloadConfig as DownloadSettings;
+use putio_sync_core::config::{DownloadConfig as DownloadSettings, ExistingFile};
 use putio_sync_core::rules::{Decision, FolderRule};
 use putio_sync_db::Database;
 use putio_sync_download::{DownloadConfig, DownloadManager, TreeDecision};
@@ -192,7 +192,7 @@ async fn presets_skip_and_inheritance_decide_the_queue() {
 #[tokio::test]
 async fn the_tree_report_shows_rule_decisions() {
     let (_server, _dir, _db, manager) = setup(the_rules()).await;
-    let report = manager.enqueue_tree_report(0).await.unwrap();
+    let report = manager.enqueue_tree_report(0, false).await.unwrap();
     let decision = |id: i64| {
         report
             .files
@@ -368,7 +368,8 @@ async fn download_extras(
     let target = dir.path().join("Movies/Extras/notes.txt");
     if existing {
         std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-        std::fs::write(&target, b"old").unwrap();
+        // Same size and no Put.io checksum: complete, as far as "resume" can tell
+        std::fs::write(&target, [1u8; 100]).unwrap();
     }
     db.queue()
         .add(21, "notes.txt", 100, "http://unused", "Movies/Extras", 0)
@@ -410,16 +411,30 @@ async fn delete_after_download_per_folder() {
 }
 
 #[tokio::test]
-async fn skip_existing_per_folder() {
-    // Global skip_existing (true): the old file stays
-    assert_eq!(download_extras(vec![], false, true).await.1, b"old");
-    // Movies says re-download: replaced
-    let redownload = FolderRule {
+async fn on_existing_per_folder() {
+    let with = |path: &str, choice: ExistingFile| FolderRule {
+        on_existing: Some(choice),
+        ..rule(path)
+    };
+    // Global resume: the complete-looking file stays
+    assert_eq!(download_extras(vec![], false, true).await.1, [1u8; 100]);
+    // Movies says overwrite, inherited by Movies/Extras: replaced
+    assert_eq!(
+        download_extras(vec![with("Movies", ExistingFile::Overwrite)], false, true)
+            .await
+            .1,
+        [7u8; 100]
+    );
+    // The nearest rule wins
+    let rules = vec![
+        with("Movies", ExistingFile::Overwrite),
+        with("Movies/Extras", ExistingFile::Resume),
+    ];
+    assert_eq!(download_extras(rules, false, true).await.1, [1u8; 100]);
+    // A rule with only the old `skip_existing = false` acts as overwrite
+    let old = FolderRule {
         skip_existing: Some(false),
         ..rule("Movies")
     };
-    assert_eq!(
-        download_extras(vec![redownload], false, true).await.1,
-        vec![7u8; 100]
-    );
+    assert_eq!(download_extras(vec![old], false, true).await.1, [7u8; 100]);
 }

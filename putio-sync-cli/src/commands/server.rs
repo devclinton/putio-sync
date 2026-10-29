@@ -444,6 +444,9 @@ fn spawn_download_daemon(
                                         file_info.id
                                     ),
                                     relative_path: String::new(),
+                                    crc32: file_info.crc32.clone(),
+                                    save_as: None,
+                                    fixed_path: false,
                                 };
 
                                 // Spawn download task

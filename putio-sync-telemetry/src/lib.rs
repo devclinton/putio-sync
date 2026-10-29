@@ -4,7 +4,7 @@
 //! (see `specs/003-telemetry-prometheus/contracts/metrics.md`), the closed label sets and
 //! the metrics listener. Engine crates record through the free functions in [`api`],
 //! [`sync`], [`download`], [`watch`], [`cleanup`] and [`db`], which use the process-wide [`global`]
-//! instance. Tests build their own instance with [`Telemetry::new`].
+//! instance. [`process`] reads the process's own CPU and memory figures at scrape time. Tests build their own instance with [`Telemetry::new`].
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
@@ -24,6 +24,7 @@ pub mod download;
 pub mod gauges;
 pub mod labels;
 pub mod precheck;
+pub mod process;
 pub mod server;
 pub mod sync;
 pub mod transfers;
@@ -54,6 +55,7 @@ pub struct Telemetry {
     pub(crate) last_success: GaugeVec,
     pub(crate) last_sync_files: IntGaugeVec,
     pub(crate) files_blocked: IntCounter,
+    pub(crate) sync_in_progress: IntGauge,
     pub(crate) rule_decisions: IntCounterVec,
 
     pub(crate) queue_items: IntGaugeVec,
@@ -61,6 +63,7 @@ pub struct Telemetry {
     pub(crate) download_workers: IntGauge,
     pub(crate) downloads_completed: IntCounter,
     pub(crate) downloads_failed: IntCounterVec,
+    pub(crate) existing_files: IntCounterVec,
     pub(crate) downloaded_bytes: IntCounter,
     pub(crate) download_duration: Histogram,
     pub(crate) worker_state: IntGaugeVec,
@@ -206,6 +209,11 @@ impl Telemetry {
                 &["state"],
             )
             .unwrap(),
+            sync_in_progress: IntGauge::with_opts(opts(
+                "sync_in_progress",
+                "1 while a Put.io sync run is in progress.",
+            ))
+            .unwrap(),
             transfers_stalled: IntGauge::with_opts(opts(
                 "transfers_stalled",
                 "Put.io transfers with no progress for the stall threshold, at the last check.",
@@ -261,6 +269,14 @@ impl Telemetry {
             downloads_failed: IntCounterVec::new(
                 opts("downloads_failed_total", "Downloads that ended in failure."),
                 &["reason"],
+            )
+            .unwrap(),
+            existing_files: IntCounterVec::new(
+                opts(
+                    "existing_files_total",
+                    "Files that already existed locally, by what was done with them.",
+                ),
+                &["outcome"],
             )
             .unwrap(),
             downloaded_bytes: IntCounter::with_opts(opts(
@@ -458,12 +474,14 @@ impl Telemetry {
             Box::new(self.last_success.clone()),
             Box::new(self.last_sync_files.clone()),
             Box::new(self.files_blocked.clone()),
+            Box::new(self.sync_in_progress.clone()),
             Box::new(self.rule_decisions.clone()),
             Box::new(self.queue_items.clone()),
             Box::new(self.downloads_active.clone()),
             Box::new(self.download_workers.clone()),
             Box::new(self.downloads_completed.clone()),
             Box::new(self.downloads_failed.clone()),
+            Box::new(self.existing_files.clone()),
             Box::new(self.downloaded_bytes.clone()),
             Box::new(self.download_duration.clone()),
             Box::new(self.worker_state.clone()),
@@ -497,6 +515,7 @@ impl Telemetry {
             Box::new(self.disk_total.clone()),
             Box::new(self.start_time.clone()),
             Box::new(self.build_info.clone()),
+            Box::new(process::ProcessCollector::new()),
         ];
         for c in collectors {
             r.register(c).expect("metric families have unique names");
@@ -527,6 +546,9 @@ impl Telemetry {
         }
         for r in FailReason::ALL {
             self.downloads_failed.with_label_values(&[r.as_str()]);
+        }
+        for o in ExistingOutcome::ALL {
+            self.existing_files.with_label_values(&[o.as_str()]);
         }
         for t in CleanupTrigger::ALL {
             for r in SyncResult::ALL {

@@ -10,7 +10,7 @@ use putio_sync_cli::commands;
 
 use chrono::Utc;
 use cli::{Cli, Commands, QueueCommands, TransfersCommands};
-use putio_sync_core::config::Config;
+use putio_sync_core::config::{Config, ExistingFile};
 use tracing::{debug, error, info};
 
 /// Get version string with git commit info
@@ -242,6 +242,7 @@ async fn main() {
             buffer_size,
             bandwidth_limit,
             no_resume,
+            on_existing,
             skip_existing,
             delete_after,
             delete_empty_folders,
@@ -261,7 +262,9 @@ async fn main() {
                 buffer_size,
                 bandwidth_limit,
                 no_resume,
-                skip_existing,
+                on_existing
+                    .map(Into::into)
+                    .or(skip_existing.then_some(ExistingFile::Resume)),
                 delete_after,
                 delete_empty_folders,
                 sort,
@@ -373,6 +376,7 @@ async fn main() {
             watch_interval,
             watch,
             filter,
+            on_existing,
             skip_existing,
             delete_after,
             delete_empty_folders,
@@ -390,7 +394,9 @@ async fn main() {
                 watch_interval,
                 watch,
                 filter,
-                skip_existing,
+                on_existing
+                    .map(Into::into)
+                    .or(skip_existing.then_some(ExistingFile::Resume)),
                 delete_after,
                 delete_empty_folders,
                 parent_id,

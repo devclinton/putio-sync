@@ -825,7 +825,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let download = putio_sync_download::DownloadConfig {
             target_directory: dir.path().to_path_buf(),
-            skip_existing: false,
+            on_existing: putio_sync_core::config::ExistingFile::Overwrite,
+            resume_enabled: false,
             buffer_size_mb: 48,
             bandwidth_limit_bytes_per_sec: Some(1_048_576),
             max_retries: 9,
