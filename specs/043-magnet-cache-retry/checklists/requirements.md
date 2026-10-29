@@ -1,4 +1,4 @@
-# Specification Quality Checklist: Magnet Metadata from Peers
+# Specification Quality Checklist: Hold Magnets and Ask the Cache Again
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-10-28
@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,11 +31,8 @@
 
 ## Notes
 
-- One marker is open, on scope: build peer lookup (A), cache re-ask (B), or both (C).
-  Research R2 found that itorrents.net fetches hashes it doesn't have, so asking again a few
-  minutes later found 16 of 17 first-time misses. The recommendation is B, and this spec (C)
-  only if telemetry shows misses are still left.
-- The spec names DHT, peers, info hash and trackers because they are the domain and the privacy
-  question, not an implementation choice. Crate names and code paths are only in research.md.
-- Not ready for `/speckit-plan`: research R8 recommends waiting for 042's fallback counters
-  before planning.
+- Q1 answered 2026-10-28: option B (hold and re-ask the cache, shorter first ask, no DHT).
+  The spec was rewritten for it; peer lookup is under Out of Scope with its research kept.
+- The spec names caches, info hashes and Put.io because they are the domain, not an
+  implementation choice.
+- Ready for `/speckit-plan`.
