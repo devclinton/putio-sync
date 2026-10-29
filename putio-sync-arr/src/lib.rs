@@ -3,12 +3,16 @@
 //! downloads.
 
 pub mod arr_api;
+pub mod clients;
 pub mod contact;
+pub mod discovery;
 pub mod infohash;
+pub mod path_check;
 pub mod rpc;
 pub mod service;
+pub mod setup;
 pub mod view;
 
-pub use arr_api::{ArrApi, ArrApiError, SystemStatus};
+pub use arr_api::{ArrApi, ArrApiError, DownloadClient, SystemStatus};
 pub use contact::Contacts;
 pub use service::{AddOutcome, AddSource, ArrError, ArrService, ItemId, REFRESH_INTERVAL};

@@ -39,6 +39,7 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_arr_rpc_requests_total",
     "putio_sync_arr_items",
     "putio_sync_arr_blocklist_total",
+    "putio_sync_arr_setup_total",
     "putio_sync_db_errors_total",
     "putio_sync_disk_free_bytes",
     "putio_sync_disk_total_bytes",
@@ -152,6 +153,7 @@ fn record_everything(t: &Telemetry) {
     t.arr_rpc_request(ArrMethod::TorrentAdd, ArrOutcome::AuthFailed);
     t.set_arr_items(ArrItemState::Done, 2);
     t.arr_blocklist(BlocklistOutcome::Error);
+    t.arr_setup(ArrSetupKind::Radarr, ArrSetupResult::Created);
     t.set_transfers_stalled(2);
     t.db_error(DbOp::Queue);
     t.set_queue_counts(&[(QueueState::Pending, 2)]);
@@ -181,8 +183,16 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v.extend(strs(FailReason::ALL, FailReason::as_str));
             v
         }
-        "result" => strs(SyncResult::ALL, SyncResult::as_str),
-        "kind" => strs(SyncKind::ALL, SyncKind::as_str),
+        "result" => {
+            let mut v = strs(SyncResult::ALL, SyncResult::as_str);
+            v.extend(strs(ArrSetupResult::ALL, ArrSetupResult::as_str));
+            v
+        }
+        "kind" => {
+            let mut v = strs(SyncKind::ALL, SyncKind::as_str);
+            v.extend(strs(ArrSetupKind::ALL, ArrSetupKind::as_str));
+            v
+        }
         "state" => {
             let mut v = strs(QueueState::ALL, QueueState::as_str);
             v.extend(strs(ArrItemState::ALL, ArrItemState::as_str));

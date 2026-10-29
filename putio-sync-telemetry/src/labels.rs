@@ -172,6 +172,34 @@ label_enum!(
 );
 
 label_enum!(
+    /// Kind of *arr app an auto-setup ran against (feature 018).
+    ArrSetupKind {
+        Radarr => "radarr",
+        Sonarr => "sonarr",
+    }
+);
+
+label_enum!(
+    /// Result of one *arr auto-setup (feature 018, data-model "Failure reasons").
+    ArrSetupResult {
+        Created => "created",
+        Updated => "updated",
+        Unchanged => "unchanged",
+        Unreachable => "unreachable",
+        TimedOut => "timed_out",
+        UntrustedCertificate => "untrusted_certificate",
+        Unauthorized => "unauthorized",
+        NotArr => "not_arr",
+        UnsupportedVersion => "unsupported_version",
+        InvalidCategory => "invalid_category",
+        ArrCannotReach => "arr_cannot_reach",
+        ArrTestFailed => "arr_test_failed",
+        ArrRefused => "arr_refused",
+        ConfigWriteFailed => "config_write_failed",
+    }
+);
+
+label_enum!(
     /// Outcome of one *arr blocklist call.
     BlocklistOutcome {
         Ok => "ok",

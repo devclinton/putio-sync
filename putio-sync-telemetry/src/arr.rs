@@ -1,6 +1,9 @@
 //! Radarr/Sonarr download-client metrics (feature 011).
 
-use crate::{global, ArrItemState, ArrMethod, ArrOutcome, BlocklistOutcome, Telemetry};
+use crate::{
+    global, ArrItemState, ArrMethod, ArrOutcome, ArrSetupKind, ArrSetupResult, BlocklistOutcome,
+    Telemetry,
+};
 
 impl Telemetry {
     /// Count one Transmission RPC request.
@@ -21,6 +24,13 @@ impl Telemetry {
             .with_label_values(&[outcome.as_str()])
             .inc();
     }
+
+    /// Count one auto-setup (feature 018).
+    pub fn arr_setup(&self, kind: ArrSetupKind, result: ArrSetupResult) {
+        self.arr_setup
+            .with_label_values(&[kind.as_str(), result.as_str()])
+            .inc();
+    }
 }
 
 /// Count an RPC request on the global instance.
@@ -36,4 +46,9 @@ pub fn set_items(state: ArrItemState, n: i64) {
 /// Count a blocklist call on the global instance.
 pub fn blocklist(outcome: BlocklistOutcome) {
     global().arr_blocklist(outcome);
+}
+
+/// Count an auto-setup on the global instance.
+pub fn setup(kind: ArrSetupKind, result: ArrSetupResult) {
+    global().arr_setup(kind, result);
 }

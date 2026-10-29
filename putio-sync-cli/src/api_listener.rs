@@ -1,7 +1,7 @@
 //! Starts the API and web UI listener on the daemon's own engine (feature 004, R4).
 //! The `server` command serves the same router itself, with its own flags.
 
-use putio_sync_api::{router, AppState};
+use putio_sync_api::{router, spawn_arr_refresh, AppState};
 use putio_sync_core::config::Config;
 use putio_sync_core::error::CoreError;
 use std::net::SocketAddr;
@@ -37,6 +37,7 @@ pub async fn start(config: &Config, state: AppState) -> Result<Option<SocketAddr
         }
     };
     let addr = listener.local_addr().unwrap_or(settings.bind);
+    spawn_arr_refresh(&state).await;
 
     let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
     tokio::spawn(async move {

@@ -811,8 +811,15 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /doctor/run` | Run every check now and answer with the report (a run already going is joined, not repeated) |
 | `POST /doctor/fixes/{fix}/preview` | Check again and list the items the fix would act on; changes nothing |
 | `POST /doctor/fixes/{fix}/apply` | `{"items": ["key", ...], "confirm": true}` → `{"done", "skipped", "failed", "check"}`. Only items that still qualify are touched. 400 without `confirm` for a fix that deletes, 404 for an unknown fix, 409 while an empty-folder cleanup runs |
-| `GET /arr` | The Radarr / Sonarr card: enabled, username, URL base, download folder, last contact, servers, item counts. Never the password or API keys |
-| `POST /arr/servers/{index}/test` | Test one `[[arr.servers]]` entry → `{"ok": true, "app", "version"}` or `{"ok": false, "reason", "detail"}` |
+| `GET /arr` | The Settings card: the download client (enabled, username, connection values, download folder) and the applications with their categories and path check. Never the password or API keys |
+| `GET /arr/status` | The Status card: `{"enabled", "clients_seen", "items"}` |
+| `PUT /arr/client` | `{"enabled", "username", "password"}`; an empty password keeps the current one. Applies without a restart; 400 when turned on with no password |
+| `POST /arr/applications` | Add an application (`{"kind", "name", "host", "port", "ssl", "url_base", "api_key"}`) → 201 `{"index"}`; 400 for a duplicate URL |
+| `PUT`/`DELETE /arr/applications/{index}` | Edit (an empty key keeps it) or remove one; the app itself is not changed |
+| `POST /arr/applications/test`, `POST /arr/applications/{index}/test` | Test form values or a saved application → `{"ok": true, "app", "version", "categories", "client_present", "path_check"}` or `{"ok": false, "reason", "detail"}` |
+| `POST /arr/discover` | Look for Radarr and Sonarr for up to 10 s → `{"instances", "tried"}`; 409 while one runs |
+| `POST /arr/setup/preview` | What setup would change; changes nothing |
+| `POST /arr/setup` | `{"target": {"url"} or {"application"}, "api_key", "category", "remember", "disable_blackhole"}` → `{"outcome": "created"/"updated"/"unchanged"/"failed", ...}` |
 | `GET /rules` | Folder rules, presets (built-in and your own, with the rules using each) and the global defaults |
 | `GET`/`PUT`/`DELETE /rules/folder/{id}` | A folder's rule and its effective settings, each with the rule it comes from; `PUT` an empty body clears it; 400 for the root |
 | `POST /rules/delete` | `{"path": "Shows"}`: remove a rule by path |
@@ -830,23 +837,48 @@ at `/transmission/rpc` on the API port, so the apps add it as a **Transmission**
 send it magnets and .torrent files; putio-sync adds each to Put.io, downloads the result, and
 reports progress and completion with the local path, so the apps import it themselves.
 
-### Setup
+Everything below is set in the web UI under Settings → Radarr / Sonarr. Saves apply without a
+restart and keep the rest of `config.toml`. The client needs the API listener and the database
+(the `daemon` has both). The Status page shows item counts and when each app last connected.
 
-1. In `config.toml`:
+### Set up automatically
 
-   ```toml
-   [arr]
-   enabled = true
-   # password = "..."   # or PUTIO_SYNC_ARR_PASSWORD (preferred)
-   ```
+1. Click **Set up automatically**. putio-sync looks for Radarr and Sonarr for up to 10 s: at
+   the `radarr` and `sonarr` container names, the Docker host, this machine and the address
+   your browser used, on ports 7878 and 8989. It never scans the network. If yours isn't found,
+   type its address (a bare host like `nas` tries both ports).
+2. Pick the app and paste its API key (Settings → General in the app). Tick **Remember** to
+   save it as an application. **Disable Torrent Blackhole** is off unless you tick it.
+3. Check the preview, then **Set up**. putio-sync turns its download client on (generating a
+   password if it has none), then has the app test each address it might use for putio-sync
+   (`putio-sync`, the Docker host, …) and saves the client with the first that passes. A
+   failed test leaves nothing in the app. Running it again updates the client in place.
 
-   Then restart. The client needs the API listener and the database (the `daemon` has both).
-2. In Radarr or Sonarr, open Settings → Download Clients → + → Transmission and set:
-   - Host: the putio-sync machine. Port: `15432`. URL Base: `/transmission/`.
-   - Username: `putio-sync`. Password: the one from step 1.
-   - Category: for example `radarr` or `sonarr`.
-3. Click Test. Settings in the web UI shows the values to enter, and when each app last
-   connected.
+### Download client and applications
+
+- **Download client**: on/off, username and password (with Generate). After a password change,
+  the page offers to update the apps' clients.
+- **Applications**: Add Radarr / Add Sonarr, then Test and Save, like in Prowlarr. Each row
+  shows the category read from that app's putio-sync client, and whether the app can see the
+  download folder. Delete removes it from putio-sync only.
+
+### Manual setup
+
+The section can still be written by hand:
+
+```toml
+[arr]
+enabled = true
+# password = "..."   # or PUTIO_SYNC_ARR_PASSWORD (preferred)
+```
+
+Then in Radarr or Sonarr, open Settings → Download Clients → + → Transmission and set:
+
+- Host: the putio-sync machine. Port: `15432`. URL Base: `/transmission/`.
+- Username: `putio-sync`. Password: the one above.
+- Category: for example `radarr` or `sonarr`.
+
+Click Test in the app. Settings in the web UI shows the values to enter.
 
 ### How it works
 
@@ -866,24 +898,49 @@ reports progress and completion with the local path, so the apps import it thems
 ### Blocklisting failed releases
 
 Radarr and Sonarr show a Transmission item with an error as a warning; they don't blocklist
-it or search again on their own. To have putio-sync do it, add the app with its API key (Settings → General in the app):
+it or search again on their own. To have putio-sync do it, add the app under Applications (or
+set it up with Remember ticked). By hand:
 
 ```toml
 [[arr.servers]]
 kind = "sonarr"                     # or "radarr"
 url = "http://192.168.1.10:8989"
-category = "sonarr"                 # the category set on the download client
+# name = "Sonarr 4K"                # optional
 # api_key = "..."                   # or PUTIO_SYNC_SONARR_API_KEY / PUTIO_SYNC_RADARR_API_KEY
 ```
 
-When an item fails, putio-sync finds it in that app's queue, removes it and blocklists the
-release, so the app searches again. Failed calls are retried, up to 5 times. Use the Test
-button in Settings to check the URL and key.
+When an item fails, putio-sync finds the app whose putio-sync client has that item's category,
+removes the item from its queue and blocklists the release, so the app searches again. The
+categories are read from each app at startup, every 15 minutes, and on Test, Save and setup.
+Failed calls are retried, up to 5 times. A `category` from older versions is ignored; the UI
+warns when it differs from the app's client.
 
-### Paths and the blackhole
+### Path mapping
 
-- If Radarr/Sonarr see the download folder under another path, for example a different Docker
-  mount, add a Remote Path Mapping in the app from putio-sync's folder to theirs.
+Radarr and Sonarr import from putio-sync's download folder, so they must see it. The simplest
+setup mounts the same host folder at the same path in every container:
+
+```yaml
+services:
+  putio-sync:
+    volumes:
+      - /volume1/downloads:/downloads   # target_directory = "/downloads"
+  sonarr:
+    volumes:
+      - /volume1/downloads:/downloads
+```
+
+If an app sees it under another path, for example `/data/downloads`, add a Remote Path
+Mapping in the app (Settings → Download Clients → Remote Path Mappings): Host is the putio-sync
+host in its download client (e.g. `putio-sync`), Remote Path `/downloads/`, Local Path
+`/data/downloads/`.
+
+Test in Settings → Radarr / Sonarr, and every setup, checks this: the app applies its
+mappings and lists the folder's parent. It shows "Folder visible", or which path the app could
+not see with its mappings.
+
+### The blackhole
+
 - The torrent watcher keeps working. A Torrent Blackhole client pointed at a watched folder can
   stay as a fallback at a lower priority. Blackhole items don't report progress or failures.
 
