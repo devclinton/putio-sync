@@ -72,9 +72,47 @@ impl PutioApiClient {
     ///
     /// Stops listing new folders at `deadline`; the result then has `complete: false`.
     pub async fn walk_files(&self, concurrency: usize, deadline: Instant) -> FileWalk {
-        let concurrency = concurrency.max(1);
+        let start = VecDeque::from([(0, String::new())]);
+        self.walk_from(start, FileWalk::default(), concurrency, deadline)
+            .await
+    }
+
+    /// List `root_id` and, when it is a folder, everything under it (feature 042's check
+    /// on Put.io). Paths start at the root's name: `/Show.S01E03/Show.S01E03.mkv`.
+    pub async fn walk_tree(&self, root_id: i64, concurrency: usize, deadline: Instant) -> FileWalk {
         let mut walk = FileWalk::default();
-        let mut pending: VecDeque<(i64, String)> = VecDeque::from([(0, String::new())]);
+        let details = tokio::time::timeout_at(deadline, self.get_file_details(root_id)).await;
+        let root = match details {
+            Ok(Ok(details)) => details.file,
+            Ok(Err(e)) => {
+                walk.errors.push(WalkError {
+                    folder_id: root_id,
+                    path: String::new(),
+                    error: e.to_string(),
+                });
+                return walk;
+            }
+            Err(_) => return walk,
+        };
+        let parent_id = root.parent_id.unwrap_or(0);
+        let root = walked(root, parent_id, "");
+        let start = if root.is_folder {
+            VecDeque::from([(root.id, root.path.clone())])
+        } else {
+            VecDeque::new()
+        };
+        walk.files.push(root);
+        self.walk_from(start, walk, concurrency, deadline).await
+    }
+
+    async fn walk_from(
+        &self,
+        mut pending: VecDeque<(i64, String)>,
+        mut walk: FileWalk,
+        concurrency: usize,
+        deadline: Instant,
+    ) -> FileWalk {
+        let concurrency = concurrency.max(1);
         let mut in_flight = FuturesUnordered::new();
         let mut timed_out = false;
 
@@ -221,6 +259,41 @@ mod tests {
             .walk_files(4, Instant::now() - Duration::from_secs(1))
             .await;
         assert!(!walk.complete);
+    }
+
+    #[tokio::test]
+    async fn walks_one_tree_from_its_root() {
+        let mut server = Server::new_async().await;
+        server
+            .mock("GET", "/files/7")
+            .with_body(format!(
+                r#"{{"status":"OK","file":{}}}"#,
+                entry(7, "Show", 0, true)
+            ))
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/files/list?parent_id=7")
+            .with_body(listing(&[entry(8, "Show.mkv", 9, false)]))
+            .create_async()
+            .await;
+        let walk = client(server.url()).walk_tree(7, 4, far()).await;
+        assert!(walk.complete);
+        let paths: Vec<_> = walk.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["/Show", "/Show/Show.mkv"]);
+
+        server
+            .mock("GET", "/files/9")
+            .with_body(format!(
+                r#"{{"status":"OK","file":{}}}"#,
+                entry(9, "a.mkv", 5, false)
+            ))
+            .create_async()
+            .await;
+        let walk = client(server.url()).walk_tree(9, 4, far()).await;
+        assert!(walk.complete);
+        assert_eq!(walk.files.len(), 1);
+        assert_eq!(walk.files[0].path, "/a.mkv");
     }
 
     #[test]

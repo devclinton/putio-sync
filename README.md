@@ -17,6 +17,7 @@ What changed in each build is in [CHANGELOG.md](CHANGELOG.md); planned work is i
 - **Folder Rules**: Per-folder type presets (video, audio, ebooks, no binaries, or your own), skip a folder, or delete blocked files from Put.io; child folders inherit
 - **Transfer Management**: Add torrents from files or magnet links
 - **Radarr / Sonarr**: acts as their Transmission download client: Put.io transfer, local download, progress, completion and blocklisting of failed releases ([details](#radarr-and-sonarr))
+- **Release check**: fake releases (an `.exe` posing as a movie, a locked `.7z`) are rejected before they reach Put.io or the NAS ([details](#release-check))
 - **Watch Mode**: Automatically upload .torrent and .magnet files from watched directories with smart deduplication
 - **Post-Processing**: Archive or delete processed torrent files after upload
 - **Advanced Daemon**: Unified daemon with live log-level changes and graceful worker scaling
@@ -648,6 +649,13 @@ H = histogram.
 | `putio_sync_arr_rpc_requests_total` | counter | `method`, `outcome` | Transmission RPC requests from Radarr/Sonarr; `outcome` is `ok`, `error` or `auth_failed` |
 | `putio_sync_arr_items` | gauge | `state` | Radarr/Sonarr items by state: `putio`, `local`, `done`, `failed` |
 | `putio_sync_arr_blocklist_total` | counter | `outcome` | Calls asking Radarr/Sonarr to blocklist a failed release: `ok`, `not_found`, `error` |
+| `putio_sync_precheck_total` | counter | `source`, `stage`, `outcome` | Release checks: `source` is `torrent`, `url`, `magnet`, `watch_torrent`, `watch_magnet`; `stage` is `before` (Put.io) or `putio`; `outcome` is `passed`, `rejected`, `unknown` |
+| `putio_sync_precheck_avoided_bytes_total` | counter | `stage` | Bytes in the file lists of rejected releases |
+| `putio_sync_precheck_cache_lookups_total` | counter | `cache`, `result` | Magnet cache requests by cache host: `found`, `not_found`, `timeout`, `wrong_hash`, `error` |
+| `putio_sync_precheck_cache_lookup_seconds` | H | — | Time to look one magnet up across the caches |
+| `putio_sync_precheck_fallback_total` | counter | `result` | Magnets sent to Put.io unchecked, by how the check there went: `passed`, `rejected` |
+| `putio_sync_precheck_fallback_putio_bytes_total` | counter | — | Bytes Put.io fetched for unchecked magnets that were then rejected |
+| `putio_sync_release_flags_total` | counter | `kind` | Operator flags: `fake`, `not_fake` |
 | `putio_sync_start_time_seconds` | gauge | — | Process start, Unix seconds |
 | `putio_sync_build_info` | gauge (=1) | `version`, `commit` | Build identity |
 | `putio_sync_process_cpu_seconds_total` | counter | — | CPU time used (user + system); `rate()` gives cores in use |
@@ -679,6 +687,8 @@ Label values are fixed sets, listed in
 | DB errors | `increase(putio_sync_db_errors_total[1d])` |
 | Transfers stuck | `putio_sync_transfers_stalled > 0` |
 | Doctor problems | `putio_sync_doctor_check_status == 2` |
+| Fakes rejected this week | `sum(increase(putio_sync_precheck_total{outcome="rejected"}[7d]))` |
+| Caches failing | `sum by (cache, result) (increase(putio_sync_precheck_cache_lookups_total{result!="found"}[1d]))` |
 | CPU in use (cores) | `rate(putio_sync_process_cpu_seconds_total[5m])` |
 | Memory in use | `putio_sync_process_resident_memory_bytes` |
 
@@ -813,6 +823,7 @@ daemon's download manager and watcher:
 | Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, for the next download | `target_directory` (new downloads go there at once, but the queue database and disk figures stay on the startup folder), and the rest of the group |
 | Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
+| Release check | — | everything |
 | Notifications | — | everything |
 
 Under `server`, the logging rows are the same (when the config file existed at
@@ -853,7 +864,12 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /putio/transfers/{id}/readd` | Cancel a transfer and add its magnet again to the same folder; answers `{"cancelled_id", "transfer"}`. 400 without a magnet link (nothing cancelled); 500 with the magnet in `details` if the add fails after the cancel |
 | `GET /history?action=&name=&limit=&offset=` | History; `name` is a case-insensitive substring |
 | `GET /history/stats`, `GET /stats/{downloads,transfers,disk}` | Totals |
-| `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications}` | Settings (see above) |
+| `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
+| `GET /stats/releases?range=` | Rejected releases and bytes kept off the NAS, by stage and reason; magnet lookups by cache; fallbacks to Put.io; report counts with the top file types and trackers |
+| `GET /releases/reports?range=&format=json\|csv` | The rejection and flag reports as a download: file types, sizes and tracker hosts, never a link, magnet or passkey |
+| `GET /releases/flags?file_id=&history_id=&arr_hash=&report_id=` | The flags on up to 200 releases, and which of the `file_id`s a Radarr/Sonarr item holds |
+| `POST /releases/flags` | `{"target": {"file_id": 1}, "kind": "fake" \| "not_fake", "note", "blocklist"}`: flag a release. With `blocklist` on a Radarr/Sonarr item, it fails, its Put.io files are deleted and it's blocklisted (not under `dry_run`) |
+| `DELETE /releases/flags/{id}` | Undo a flag. A blocklist already sent isn't undone |
 | `GET /local/watcher/status`, `GET /local/workers` | Watcher and worker state |
 | `GET /doctor` | The latest doctor report; 404 before the first run |
 | `POST /doctor/run` | Run every check now and answer with the report (a run already going is joined, not repeated) |
@@ -997,6 +1013,49 @@ not see with its mappings.
 The password and API keys come from the config file or the env variables above, which win.
 They are never logged or sent back by the API. The UI shows only whether each one is set. A
 settings save from the UI keeps the ones in the file and never writes env-only values.
+
+## Release check
+
+Some releases are fakes: a "movie" that is only an `.exe`, or a password-protected `.7z` that
+asks you to visit a site for the key. putio-sync reads a release's file list before it
+reaches Put.io and rejects it when no file is a wanted type of at least `min_size_mb`
+(50 MB by default). It is on by default; configure it under `[precheck]` (see
+`config.example.toml`) or in Settings → Release check.
+
+### What is checked, and where
+
+| Source | How the file list is read | A fake |
+|---|---|---|
+| Radarr/Sonarr `.torrent` or URL | From the .torrent itself | Fails with the reason in the app's queue, and is blocklisted with `[[arr.servers]]`. No Put.io transfer is made |
+| Radarr/Sonarr magnet | The .torrent is looked up in the `caches` by info hash | As above |
+| Magnet not in a cache | Put.io fetches it; its files are checked on Put.io before any download | Deleted from Put.io and failed "(checked on Put.io)" |
+| Watch-folder `.torrent` / `.magnet` | As above | Not uploaded; renamed `<file>.rejected` |
+
+The wanted types are those of the folder rule ([Folder Rules](#folder-rules)) with an allow
+list on the release's Put.io folder: the category's folder for Radarr/Sonarr, the upload
+folder for a watch folder. Without one, video. `allow_archives` counts archives as wanted.
+Each category and watch folder can turn the check off or change the size and archive
+settings (`[precheck.categories.<name>]`, `[precheck.watch."<path>"]`); the Settings card
+lists what applies to each.
+
+`dry_run = true` checks, logs and counts, but rejects and deletes nothing: a good way to
+try it first. Rejections show in History → Rejected and on the Stats page either way.
+
+### Privacy
+
+Only the 40-character info hash goes to a cache, never the release name, trackers or a
+passkey. Set `magnet_lookup = false` to send nothing: magnets then go to Put.io and are
+checked there. Logs, metrics and reports never hold a link, magnet or passkey; a tracker is
+stored as its host name only.
+
+### Flagging
+
+A fake the check missed can be flagged from the Put.io, Queue or History pages, with a note.
+For a Radarr/Sonarr item, the flag can also fail it, delete its files from Put.io and
+blocklist it. A wrong rejection can be marked "Not fake" in History → Rejected. Any flag can
+be undone, but a blocklist already sent stays. Stats sums up the reports and downloads them
+as CSV or JSON, with file types, sizes and tracker hosts, to share without giving anything
+away. Checks and reports older than 400 days are deleted.
 
 ## Advanced Features
 

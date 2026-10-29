@@ -23,6 +23,7 @@ pub mod doctor;
 pub mod download;
 pub mod gauges;
 pub mod labels;
+pub mod precheck;
 pub mod process;
 pub mod server;
 pub mod sync;
@@ -33,6 +34,7 @@ pub use labels::*;
 
 const API_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0];
 const DOWNLOAD_BUCKETS: &[f64] = &[1.0, 5.0, 15.0, 60.0, 300.0, 900.0, 1800.0, 3600.0, 7200.0];
+const LOOKUP_BUCKETS: &[f64] = &[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0];
 const SYNC_BUCKETS: &[f64] = &[1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0];
 
 /// Every metric family, registered in one registry.
@@ -89,6 +91,14 @@ pub struct Telemetry {
     pub(crate) arr_items: IntGaugeVec,
     pub(crate) arr_blocklist: IntCounterVec,
     pub(crate) arr_setup: IntCounterVec,
+    // Feature 042
+    pub(crate) precheck: IntCounterVec,
+    pub(crate) precheck_avoided_bytes: IntCounterVec,
+    pub(crate) precheck_cache_lookups: IntCounterVec,
+    pub(crate) precheck_cache_lookup_seconds: Histogram,
+    pub(crate) precheck_fallback: IntCounterVec,
+    pub(crate) precheck_fallback_putio_bytes: IntCounter,
+    pub(crate) release_flags: IntCounterVec,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -377,6 +387,54 @@ impl Telemetry {
                 &["kind", "result"],
             )
             .unwrap(),
+            precheck: IntCounterVec::new(
+                opts(
+                    "precheck_total",
+                    "Release pre-checks, by source, stage and outcome.",
+                ),
+                &["source", "stage", "outcome"],
+            )
+            .unwrap(),
+            precheck_avoided_bytes: IntCounterVec::new(
+                opts(
+                    "precheck_avoided_bytes_total",
+                    "Bytes in the file lists of rejected releases.",
+                ),
+                &["stage"],
+            )
+            .unwrap(),
+            precheck_cache_lookups: IntCounterVec::new(
+                opts(
+                    "precheck_cache_lookups_total",
+                    "Magnet .torrent cache lookups, by cache host and result.",
+                ),
+                &["cache", "result"],
+            )
+            .unwrap(),
+            precheck_cache_lookup_seconds: Histogram::with_opts(hopts(
+                "precheck_cache_lookup_seconds",
+                "Time to look one magnet up across the caches.",
+                LOOKUP_BUCKETS,
+            ))
+            .unwrap(),
+            precheck_fallback: IntCounterVec::new(
+                opts(
+                    "precheck_fallback_total",
+                    "Magnets added to Put.io unchecked, by how the check on Put.io went.",
+                ),
+                &["result"],
+            )
+            .unwrap(),
+            precheck_fallback_putio_bytes: IntCounter::with_opts(opts(
+                "precheck_fallback_putio_bytes_total",
+                "Bytes Put.io downloaded for unchecked magnets that were then rejected.",
+            ))
+            .unwrap(),
+            release_flags: IntCounterVec::new(
+                opts("release_flags_total", "Operator flags on releases, by kind."),
+                &["kind"],
+            )
+            .unwrap(),
 
             db_errors: IntCounterVec::new(
                 opts("db_errors_total", "Database errors."),
@@ -455,6 +513,13 @@ impl Telemetry {
             Box::new(self.arr_items.clone()),
             Box::new(self.arr_blocklist.clone()),
             Box::new(self.arr_setup.clone()),
+            Box::new(self.precheck.clone()),
+            Box::new(self.precheck_avoided_bytes.clone()),
+            Box::new(self.precheck_cache_lookups.clone()),
+            Box::new(self.precheck_cache_lookup_seconds.clone()),
+            Box::new(self.precheck_fallback.clone()),
+            Box::new(self.precheck_fallback_putio_bytes.clone()),
+            Box::new(self.release_flags.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
             Box::new(self.disk_total.clone()),
@@ -517,6 +582,27 @@ impl Telemetry {
             for r in ArrSetupResult::ALL {
                 self.arr_setup.with_label_values(&[k.as_str(), r.as_str()]);
             }
+        }
+        for source in PrecheckSource::ALL {
+            for stage in PrecheckStage::ALL {
+                for outcome in PrecheckOutcome::ALL {
+                    self.precheck.with_label_values(&[
+                        source.as_str(),
+                        stage.as_str(),
+                        outcome.as_str(),
+                    ]);
+                }
+            }
+        }
+        for stage in PrecheckStage::ALL {
+            self.precheck_avoided_bytes
+                .with_label_values(&[stage.as_str()]);
+        }
+        for r in FallbackResult::ALL {
+            self.precheck_fallback.with_label_values(&[r.as_str()]);
+        }
+        for k in FlagKind::ALL {
+            self.release_flags.with_label_values(&[k.as_str()]);
         }
         for op in DbOp::ALL {
             self.db_errors.with_label_values(&[op.as_str()]);

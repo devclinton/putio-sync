@@ -5,7 +5,7 @@ use std::sync::Arc;
 use mockito::{Matcher, Mock, ServerGuard};
 use putio_sync_arr::{AddOutcome, AddSource, ArrError, ArrService, ItemId};
 use putio_sync_client::PutioApiClient;
-use putio_sync_core::config::{ArrKind, ArrServer, ArrSettings};
+use putio_sync_core::config::{ArrKind, ArrServer, ArrSettings, PrecheckConfig, PrecheckOverride};
 use putio_sync_db::models::DownloadStatus;
 use putio_sync_db::{ArrState, BlocklistState, Database};
 use putio_sync_download::{DownloadConfig, DownloadManager};
@@ -731,4 +731,752 @@ async fn remove_unfinished_item_keeps_putio_files_and_drops_queue() {
     assert!(h.db.arr().get_by_hash(HASH).await.unwrap().is_none());
     assert!(h.db.queue().get_by_file_id(1).await.unwrap().is_none());
     delete.assert_async().await;
+}
+
+// --- Release pre-check (feature 042) ---
+
+const MB: u64 = 1024 * 1024;
+
+/// A multi-file .torrent named `name` with `files` as (path, size)
+fn torrent(name: &str, files: &[(&str, u64)]) -> Vec<u8> {
+    let mut list = String::new();
+    for (path, size) in files {
+        list.push_str(&format!("d6:lengthi{size}e4:pathl{}:{path}ee", path.len()));
+    }
+    format!(
+        "d4:infod5:filesl{list}e4:name{}:{name}12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee",
+        name.len()
+    )
+    .into_bytes()
+}
+
+fn hash_of(bytes: &[u8]) -> String {
+    putio_sync_precheck::metainfo::info_hash(bytes).unwrap().0
+}
+
+/// (source, stage, state, reason) of each `release_checks` row, oldest first
+async fn checks(db: &Database) -> Vec<(String, String, String, Option<String>)> {
+    sqlx::query_as("SELECT source, stage, state, reason FROM release_checks ORDER BY id")
+        .fetch_all(db.pool())
+        .await
+        .unwrap()
+}
+
+impl Harness {
+    fn checked(&self, servers: Vec<ArrServer>, cfg: PrecheckConfig) -> ArrService {
+        self.service(servers).with_precheck(
+            cfg,
+            putio_sync_core::rules::RuleSet::from_config(
+                &putio_sync_core::config::DownloadConfig::default(),
+            ),
+        )
+    }
+
+    /// The `sonarr` folder exists, and one upload into it is expected
+    async fn upload_expected(&mut self) -> Mock {
+        self.json(
+            "GET",
+            "/files/list?parent_id=0",
+            format!(
+                r#"{{"files":[{}],"parent":{},"status":"OK"}}"#,
+                entry(CATEGORY_FOLDER, "sonarr", "FOLDER", 0, 0),
+                entry(0, "root", "FOLDER", 0, 0)
+            ),
+        )
+        .await;
+        self.putio
+            .mock("POST", "/files/upload")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{"transfer":{},"status":"OK"}}"#,
+                transfer("IN_QUEUE", 0, None, None)
+            ))
+            .expect(1)
+            .create_async()
+            .await
+    }
+}
+
+fn sonarr(url: String) -> ArrServer {
+    ArrServer {
+        kind: ArrKind::Sonarr,
+        name: None,
+        url,
+        api_key: Some("sonarr-key".to_string()),
+        category: Some("sonarr".to_string()),
+    }
+}
+
+#[tokio::test]
+async fn fake_torrents_never_reach_putio() {
+    let mut h = Harness::new().await;
+    let upload = h.upload_expected().await;
+    let arr = mockito::Server::new_async().await;
+    let service = h.checked(vec![sonarr(arr.url())], PrecheckConfig::default());
+    let dir = format!("{}/sonarr", h.target().display());
+
+    let exe = torrent(
+        "Show.S01E03.1080p",
+        &[("Show.S01E03.exe", 1500 * MB), ("readme.txt", 1000)],
+    );
+    let seven = torrent("Show.S01E04.1080p", &[("Show.S01E04.7z", 900 * MB)]);
+    let real = torrent("Show.S01E05.1080p", &[("Show.S01E05.mkv", 2048 * MB)]);
+
+    for (bytes, error) in [
+        (
+            &exe,
+            "rejected before Put.io: no video file (found .exe, .txt)",
+        ),
+        (&seven, "rejected before Put.io: no video file (found .7z)"),
+    ] {
+        let AddOutcome::Added(item) = service
+            .add(AddSource::Metainfo(bytes.clone()), Some(&dir))
+            .await
+            .unwrap()
+        else {
+            panic!("expected a new item");
+        };
+        assert_eq!(item.hash, hash_of(bytes));
+        assert_eq!(item.transfer_id, None);
+        assert_eq!(item.state, ArrState::Failed);
+        assert_eq!(item.error.as_deref(), Some(error));
+        assert_eq!(item.blocklist, BlocklistState::Pending);
+    }
+    let AddOutcome::Added(item) = service
+        .add(AddSource::Metainfo(real.clone()), Some(&dir))
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(item.transfer_id, Some(TRANSFER));
+    upload.assert_async().await;
+
+    let rows = checks(&h.db).await;
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "torrent".into(),
+                "before".into(),
+                "rejected".into(),
+                Some("no_wanted".into())
+            ),
+            (
+                "torrent".into(),
+                "before".into(),
+                "rejected".into(),
+                Some("no_wanted".into())
+            ),
+            ("torrent".into(), "before".into(), "passed".into(), None),
+        ]
+    );
+    let (types, hosts, count): (String, String, i64) = sqlx::query_as(
+        "SELECT types, tracker_hosts, file_count FROM release_reports ORDER BY id LIMIT 1",
+    )
+    .fetch_one(h.db.pool())
+    .await
+    .unwrap();
+    assert!(types.starts_with(r#"[{"ext":"exe","count":1,"#), "{types}");
+    assert_eq!(hosts, "[]");
+    assert_eq!(count, 2);
+
+    // A rejected item has no transfer to follow, and removing it calls no Put.io API
+    service.remove(&hash_of(&exe), true).await.unwrap();
+    assert!(h
+        .db
+        .arr()
+        .get_by_hash(&hash_of(&exe))
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn rejected_item_is_blocklisted_once() {
+    let mut h = Harness::new().await;
+    let exe = torrent("Show.S01E03.1080p", &[("Show.S01E03.exe", 1500 * MB)]);
+    let hash = hash_of(&exe);
+    let mut arr = mockito::Server::new_async().await;
+    let queue = arr
+        .mock("GET", "/api/v3/queue/details")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"[{{"id":9,"downloadId":"{}"}}]"#,
+            hash.to_uppercase()
+        ))
+        .expect(1)
+        .create_async()
+        .await;
+    let delete = arr
+        .mock(
+            "DELETE",
+            "/api/v3/queue/9?removeFromClient=true&blocklist=true",
+        )
+        .with_status(200)
+        .expect(1)
+        .create_async()
+        .await;
+    // No Put.io call at all: neither a transfer list nor an upload
+    let list = h.transfers(&[]).await.expect(0);
+    let service = h.checked(vec![sonarr(arr.url())], PrecheckConfig::default());
+    let dir = format!("{}/sonarr", h.target().display());
+    service
+        .add(AddSource::Metainfo(exe), Some(&dir))
+        .await
+        .unwrap();
+
+    service.refresh().await;
+    service.refresh().await;
+    let item = h.db.arr().get_by_hash(&hash).await.unwrap().unwrap();
+    assert_eq!(item.blocklist, BlocklistState::Done);
+    queue.assert_async().await;
+    delete.assert_async().await;
+    list.assert_async().await;
+}
+
+#[tokio::test]
+async fn url_is_fetched_and_checked() {
+    let h = Harness::new().await;
+    let mut indexer = mockito::Server::new_async().await;
+    let exe = torrent("Movie.2026.1080p", &[("Movie.2026.exe", 1500 * MB)]);
+    let _t = indexer
+        .mock("GET", "/download?apikey=secret")
+        .with_body(exe.clone())
+        .create_async()
+        .await;
+    let service = h.checked(vec![], PrecheckConfig::default());
+    let AddOutcome::Added(item) = service
+        .add(
+            AddSource::Url(format!("{}/download?apikey=secret", indexer.url())),
+            None,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(item.hash, hash_of(&exe));
+    assert_eq!(item.state, ArrState::Failed);
+    assert_eq!(
+        checks(&h.db).await,
+        vec![(
+            "url".into(),
+            "before".into(),
+            "rejected".into(),
+            Some("no_wanted".into())
+        )]
+    );
+}
+
+#[tokio::test]
+async fn small_video_and_unreadable_list_are_rejected() {
+    let h = Harness::new().await;
+    let service = h.checked(vec![], PrecheckConfig::default());
+    let small = torrent("Sample", &[("sample.mkv", 12 * MB)]);
+    let AddOutcome::Added(item) = service.add(AddSource::Metainfo(small), None).await.unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(
+        item.error.as_deref(),
+        Some("rejected before Put.io: only a small video (12 MB, minimum 50 MB)")
+    );
+
+    // The info dict hashes, but has no file list
+    let no_files =
+        b"d4:infod4:name3:abc12:piece lengthi1e6:pieces20:aaaaaaaaaaaaaaaaaaaaee".to_vec();
+    let AddOutcome::Added(item) = service
+        .add(AddSource::Metainfo(no_files), None)
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(
+        item.error.as_deref(),
+        Some("rejected before Put.io: not a valid .torrent")
+    );
+}
+
+#[tokio::test]
+async fn category_with_the_check_off_goes_to_putio() {
+    let mut h = Harness::new().await;
+    let upload = h.upload_expected().await;
+    let mut cfg = PrecheckConfig::default();
+    cfg.categories.insert(
+        "sonarr".to_string(),
+        PrecheckOverride {
+            enabled: Some(false),
+            ..PrecheckOverride::default()
+        },
+    );
+    let service = h.checked(vec![], cfg);
+    let dir = format!("{}/sonarr", h.target().display());
+    let exe = torrent("Tool", &[("setup.exe", 1500 * MB)]);
+    let AddOutcome::Added(item) = service
+        .add(AddSource::Metainfo(exe), Some(&dir))
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(item.transfer_id, Some(TRANSFER));
+    assert!(checks(&h.db).await.is_empty());
+    upload.assert_async().await;
+}
+
+#[tokio::test]
+async fn dry_run_logs_but_sends_to_putio() {
+    let mut h = Harness::new().await;
+    let upload = h.upload_expected().await;
+    let cfg = PrecheckConfig {
+        dry_run: true,
+        ..PrecheckConfig::default()
+    };
+    let service = h.checked(vec![], cfg);
+    let dir = format!("{}/sonarr", h.target().display());
+    let exe = torrent("Show.S01E03.1080p", &[("Show.S01E03.exe", 1500 * MB)]);
+    let AddOutcome::Added(item) = service
+        .add(AddSource::Metainfo(exe), Some(&dir))
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(item.transfer_id, Some(TRANSFER));
+    assert_eq!(item.state, ArrState::Putio);
+    upload.assert_async().await;
+}
+
+// --- Magnets looked up in caches (042 T014) ---
+
+fn magnet_for(hash: &str, name: &str) -> String {
+    format!("magnet:?xt=urn:btih:{}&dn={name}", hash.to_uppercase())
+}
+
+/// (lookup, lookup_cache, state, transfer_id) of each `release_checks` row
+async fn lookups(db: &Database) -> Vec<(Option<String>, Option<String>, String, Option<i64>)> {
+    sqlx::query_as(
+        "SELECT lookup, lookup_cache, state, transfer_id FROM release_checks ORDER BY id",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap()
+}
+
+fn with_caches(caches: Vec<String>) -> PrecheckConfig {
+    PrecheckConfig {
+        caches,
+        ..PrecheckConfig::default()
+    }
+}
+
+/// A server that accepts connections and never answers
+async fn hanging() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            held.push(socket);
+        }
+    });
+    format!("http://{addr}/{{HASH}}.torrent")
+}
+
+#[tokio::test]
+async fn magnet_found_fake_is_rejected_and_not_asked_again() {
+    let h = Harness::new().await;
+    let exe = torrent("Show.S01E03.1080p", &[("Show.S01E03.exe", 1500 * MB)]);
+    let hash = hash_of(&exe);
+    let mut cache = mockito::Server::new_async().await;
+    let hit = cache
+        .mock(
+            "GET",
+            format!("/t/{}.torrent", hash.to_uppercase()).as_str(),
+        )
+        .with_body(exe)
+        .expect(1)
+        .create_async()
+        .await;
+    let service = h.checked(
+        vec![],
+        with_caches(vec![format!("{}/t/{{HASH}}.torrent", cache.url())]),
+    );
+    let magnet = magnet_for(&hash, "Show.S01E03.1080p");
+
+    let AddOutcome::Added(item) = service
+        .add(AddSource::Magnet(magnet.clone()), None)
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new item");
+    };
+    assert_eq!(item.transfer_id, None);
+    assert_eq!(
+        item.error.as_deref(),
+        Some("rejected before Put.io: no video file (found .exe)")
+    );
+    assert_eq!(
+        lookups(&h.db).await,
+        vec![(
+            Some("found".into()),
+            Some("127.0.0.1".into()),
+            "rejected".into(),
+            None
+        )]
+    );
+
+    // Re-added: the existing failed item, with no cache request
+    let again = service.add(AddSource::Magnet(magnet), None).await.unwrap();
+    assert!(matches!(again, AddOutcome::Duplicate(i) if i.id == item.id));
+    hit.assert_async().await;
+}
+
+#[tokio::test]
+async fn magnet_found_real_and_missed_go_to_putio() {
+    let mut h = Harness::new().await;
+    let real = torrent("Show.S01E01", &[("Show.S01E01.mkv", 2048 * MB)]);
+    let real_hash = hash_of(&real);
+    let mut cache = mockito::Server::new_async().await;
+    let _hit = cache
+        .mock(
+            "GET",
+            format!("/t/{}.torrent", real_hash.to_uppercase()).as_str(),
+        )
+        .with_body(real)
+        .create_async()
+        .await;
+    let miss = cache
+        .mock(
+            "GET",
+            format!("/t/{}.torrent", HASH.to_uppercase()).as_str(),
+        )
+        .with_status(404)
+        .expect(1)
+        .create_async()
+        .await;
+    h.category_created().await;
+    let added = h
+        .putio
+        .mock("POST", "/transfers/add")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"transfer":{},"status":"OK"}}"#,
+            transfer("IN_QUEUE", 0, None, None)
+        ))
+        .expect(2)
+        .create_async()
+        .await;
+    let service = h.checked(
+        vec![],
+        with_caches(vec![format!("{}/t/{{HASH}}.torrent", cache.url())]),
+    );
+    let dir = format!("{}/sonarr", h.target().display());
+
+    service
+        .add(
+            AddSource::Magnet(magnet_for(&real_hash, "Show.S01E01")),
+            Some(&dir),
+        )
+        .await
+        .unwrap();
+    service
+        .add(AddSource::Magnet(magnet()), Some(&dir))
+        .await
+        .unwrap();
+    assert_eq!(
+        lookups(&h.db).await,
+        vec![
+            (
+                Some("found".into()),
+                Some("127.0.0.1".into()),
+                "passed".into(),
+                Some(TRANSFER)
+            ),
+            (
+                Some("not_found".into()),
+                None,
+                "pending".into(),
+                Some(TRANSFER)
+            ),
+        ]
+    );
+    assert!(h.db.releases().has_pending().await.unwrap());
+    added.assert_async().await;
+    miss.assert_async().await;
+}
+
+/// SC-003: the add answers inside the *arr's 15 s timeout while every cache hangs
+#[tokio::test]
+async fn hanging_caches_fall_back_within_the_deadline() {
+    let mut h = Harness::new().await;
+    h.category_created().await;
+    let added = h.transfer_added().await;
+    let cfg = PrecheckConfig {
+        lookup_timeout_secs: 30,
+        caches: vec![hanging().await, hanging().await],
+        ..PrecheckConfig::default()
+    };
+    let service = h.checked(vec![], cfg);
+    let dir = format!("{}/sonarr", h.target().display());
+    let started = std::time::Instant::now();
+    service
+        .add(AddSource::Magnet(magnet()), Some(&dir))
+        .await
+        .unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+    assert_eq!(
+        lookups(&h.db).await,
+        vec![(
+            Some("timeout".into()),
+            None,
+            "pending".into(),
+            Some(TRANSFER)
+        )]
+    );
+    added.assert_async().await;
+}
+
+/// An indexer that waits 12 s and then redirects to a magnet: the lookup gets what is left
+#[tokio::test]
+async fn slow_redirect_to_magnet_still_answers_in_time() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut h = Harness::new().await;
+    h.category_created().await;
+    let added = h.transfer_added().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let location = magnet();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = socket.read(&mut buf).await;
+        tokio::time::sleep(std::time::Duration::from_secs(12)).await;
+        let reply = format!(
+            "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        socket.write_all(reply.as_bytes()).await.unwrap();
+    });
+    let service = h.checked(vec![], with_caches(vec![hanging().await]));
+    let dir = format!("{}/sonarr", h.target().display());
+    let started = std::time::Instant::now();
+    service
+        .add(
+            AddSource::Url(format!("http://{addr}/download?apikey=secret")),
+            Some(&dir),
+        )
+        .await
+        .unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+    let rows: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT source, lookup FROM release_checks")
+            .fetch_all(h.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(rows, vec![("magnet".into(), Some("timeout".into()))]);
+    added.assert_async().await;
+}
+
+// --- The check on Put.io of a magnet fallback (US3, T017) ---
+
+/// The fallback transfer, finished on Put.io after downloading `downloaded` bytes
+fn finished(status: &str, downloaded: i64) -> String {
+    transfer(status, 100, Some(ITEM_FOLDER), None).replacen(
+        r#""size":1000,"#,
+        &format!(r#""size":1000,"downloaded":{downloaded},"#),
+        1,
+    )
+}
+
+/// (stage, state, reason, putio_bytes) of each `release_checks` row
+async fn resolved(db: &Database) -> Vec<(String, String, Option<String>, i64)> {
+    sqlx::query_as("SELECT stage, state, reason, putio_bytes FROM release_checks ORDER BY id")
+        .fetch_all(db.pool())
+        .await
+        .unwrap()
+}
+
+impl Harness {
+    /// A magnet that no cache was asked about: on Put.io with its check pending
+    async fn fallback(&mut self, cfg: PrecheckConfig) -> ArrService {
+        let service = self.checked(
+            vec![],
+            PrecheckConfig {
+                magnet_lookup: false,
+                ..cfg
+            },
+        );
+        self.added(&service).await;
+        assert_eq!(
+            lookups(&self.db).await,
+            vec![(Some("off".into()), None, "pending".into(), Some(TRANSFER))]
+        );
+        service
+    }
+
+    async fn putio_post(&mut self, path: &str, status: usize, expect: usize) -> Mock {
+        self.putio
+            .mock("POST", path)
+            .with_status(status)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status":"OK"}"#)
+            .expect(expect)
+            .create_async()
+            .await
+    }
+}
+
+#[tokio::test]
+async fn fallback_fake_is_removed_from_putio() {
+    let mut h = Harness::new().await;
+    let service = h.fallback(PrecheckConfig::default()).await;
+    h.transfers(&[finished("COMPLETED", 1_400_000)]).await;
+    h.item_folder(&[
+        entry(1, "Show.S01E01.exe", "FILE", ITEM_FOLDER, 1500 * MB as i64),
+        entry(2, "readme.txt", "FILE", ITEM_FOLDER, 100),
+    ])
+    .await;
+
+    // Put.io refuses the delete: nothing settles, and the next pass tries again
+    let refused = h.putio_post("/files/delete", 400, 1).await;
+    service.refresh().await;
+    assert_eq!(state(&h.db).await.0, ArrState::Putio);
+    assert!(h.db.releases().has_pending().await.unwrap());
+    refused.remove_async().await;
+
+    let delete = h.putio_post("/files/delete", 200, 1).await;
+    let cancel = h.putio_post("/transfers/cancel", 200, 1).await;
+    let clean = h.putio_post("/transfers/clean", 200, 1).await;
+    service.refresh().await;
+    assert_eq!(
+        state(&h.db).await,
+        (
+            ArrState::Failed,
+            Some("rejected on Put.io: no video file (found .exe, .txt) (checked on Put.io)".into()),
+            BlocklistState::None
+        )
+    );
+    assert_eq!(
+        resolved(&h.db).await,
+        vec![(
+            "putio".into(),
+            "rejected".into(),
+            Some("no_wanted".into()),
+            1_400_000
+        )]
+    );
+    let report: (String, String, Option<i64>, Option<i64>, i64) =
+        sqlx::query_as("SELECT kind, stage, file_id, transfer_id, file_count FROM release_reports")
+            .fetch_one(h.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        report,
+        (
+            "rejected".into(),
+            "putio".into(),
+            Some(ITEM_FOLDER),
+            Some(TRANSFER),
+            2
+        )
+    );
+    assert!(h.db.queue().get_by_file_id(1).await.unwrap().is_none());
+    assert!(!h.db.releases().has_pending().await.unwrap());
+    delete.assert_async().await;
+    cancel.assert_async().await;
+    clean.assert_async().await;
+}
+
+#[tokio::test]
+async fn fallback_real_passes_and_goes_to_the_nas() {
+    let mut h = Harness::new().await;
+    let service = h.fallback(PrecheckConfig::default()).await;
+    h.transfers(&[finished("SEEDING", 2048 * MB as i64)]).await;
+    h.item_folder(&[entry(
+        1,
+        "Show.S01E01.mkv",
+        "VIDEO",
+        ITEM_FOLDER,
+        2048 * MB as i64,
+    )])
+    .await;
+    let delete = h.putio_post("/files/delete", 200, 0).await;
+    service.refresh().await;
+    assert_eq!(state(&h.db).await.0, ArrState::Local);
+    assert_eq!(
+        resolved(&h.db).await,
+        vec![("putio".into(), "passed".into(), None, 2048 * MB as i64)]
+    );
+    assert!(h.db.queue().get_by_file_id(1).await.unwrap().is_some());
+    assert!(!h.db.releases().has_pending().await.unwrap());
+    delete.assert_async().await;
+}
+
+#[tokio::test]
+async fn fallback_dry_run_only_logs() {
+    let mut h = Harness::new().await;
+    let service = h
+        .fallback(PrecheckConfig {
+            dry_run: true,
+            ..PrecheckConfig::default()
+        })
+        .await;
+    h.transfers(&[finished("COMPLETED", 1000)]).await;
+    h.item_folder(&[entry(
+        1,
+        "Show.S01E01.exe",
+        "FILE",
+        ITEM_FOLDER,
+        1500 * MB as i64,
+    )])
+    .await;
+    let delete = h.putio_post("/files/delete", 200, 0).await;
+    let cancel = h.putio_post("/transfers/cancel", 200, 0).await;
+    service.refresh().await;
+    // Let through to the 009 rules, which block the .exe
+    assert_eq!(
+        state(&h.db).await.1.as_deref(),
+        Some("no files to import: blocked extensions .exe")
+    );
+    assert_eq!(resolved(&h.db).await[0].1, "passed");
+    delete.assert_async().await;
+    cancel.assert_async().await;
+}
+
+#[tokio::test]
+async fn fallback_gone_errored_or_cancelled_is_not_counted_fake() {
+    for (transfers, error) in [
+        (vec![], "transfer no longer on Put.io"),
+        (
+            vec![transfer("ERROR", 10, None, Some("No peers"))],
+            "No peers",
+        ),
+        (
+            vec![transfer("CANCELLED", 10, None, None)],
+            "transfer cancelled on Put.io",
+        ),
+    ] {
+        let mut h = Harness::new().await;
+        let service = h.fallback(PrecheckConfig::default()).await;
+        h.transfers(&transfers).await;
+        service.refresh().await;
+        assert_eq!(state(&h.db).await.1.as_deref(), Some(error));
+        assert_eq!(
+            resolved(&h.db).await,
+            vec![("putio".into(), "rejected".into(), Some("gone".into()), 0)],
+            "{error}"
+        );
+        assert!(!h.db.releases().has_pending().await.unwrap(), "{error}");
+        let reports: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM release_reports")
+            .fetch_one(h.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(reports, 0, "{error}");
+    }
 }

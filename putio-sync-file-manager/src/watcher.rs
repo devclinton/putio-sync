@@ -7,11 +7,18 @@
 
 use anyhow::{Context, Result};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
-use putio_sync_client::PutioApiClient;
+use putio_sync_client::{error_chain, PutioApiClient, Transfer};
 use putio_sync_db::models::{Origin, TransferOrigin};
-use putio_sync_db::Database;
+use putio_sync_db::{CheckState, Database, NewCheck, NewReport, PendingCheck, ReportKind};
+use putio_sync_precheck::magnet::from_magnet;
+use putio_sync_precheck::metainfo::info_hash;
+use putio_sync_precheck::policy::Key;
+use putio_sync_precheck::putio::{self as putio_check, OnPutio};
+use putio_sync_precheck::{
+    Lookup, Metainfo, Outcome, Policy, PrecheckSource, Prechecker, Reason, Stage, Traits,
+};
 use putio_sync_telemetry::watch as watch_metrics;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock as StdRwLock};
@@ -31,6 +38,8 @@ pub struct WatchStats {
     pub files_failed: usize,
     /// Number of files skipped (already processed)
     pub files_skipped: usize,
+    /// Number of files the release check rejected (042 US4)
+    pub files_rejected: usize,
     /// Number of already-uploaded files removed or archived by this scan
     pub cleaned_up: usize,
 }
@@ -48,6 +57,22 @@ pub enum ProcessOutcome {
     Invalid(String),
     /// Not a .torrent or .magnet file
     Unsupported,
+    /// Failed the release check: not uploaded, renamed `.rejected` (042 US4)
+    Rejected(String),
+}
+
+/// Folders above an upload folder read for its path, so a loop can't hang a scan
+const MAX_FOLDER_DEPTH: usize = 32;
+
+/// A watch file's check before upload, for its `release_checks` row
+struct WatchCheck {
+    hash: Option<String>,
+    name: String,
+    source: PrecheckSource,
+    watch_folder: String,
+    lookup: Option<&'static str>,
+    cache: Option<String>,
+    policy: Policy,
 }
 
 /// What a post-upload action did
@@ -81,7 +106,11 @@ impl WatchStats {
 
     /// Get total files encountered
     pub fn total_files(&self) -> usize {
-        self.files_processed + self.files_failed + self.files_skipped + self.cleaned_up
+        self.files_processed
+            + self.files_failed
+            + self.files_skipped
+            + self.files_rejected
+            + self.cleaned_up
     }
 
     /// Get success rate as percentage
@@ -99,6 +128,10 @@ pub struct TorrentWatchCore {
     processed_files: Arc<Mutex<HashSet<PathBuf>>>,
     /// Paths already warned about, so a stuck file is reported once, not every scan
     warned: Mutex<HashSet<PathBuf>>,
+    /// The release check (042 US4); files go up unchecked without it
+    precheck: Option<Arc<Prechecker>>,
+    /// Put.io folder paths by id, for the check's policy
+    folder_paths: Mutex<HashMap<i64, String>>,
 }
 
 impl TorrentWatchCore {
@@ -107,6 +140,8 @@ impl TorrentWatchCore {
         Self {
             processed_files: Arc::new(Mutex::new(HashSet::new())),
             warned: Mutex::new(HashSet::new()),
+            precheck: None,
+            folder_paths: Mutex::new(HashMap::new()),
         }
     }
 
@@ -115,7 +150,16 @@ impl TorrentWatchCore {
         Self {
             processed_files,
             warned: Mutex::new(HashSet::new()),
+            precheck: None,
+            folder_paths: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Check watch files before upload, and magnets that missed the caches once Put.io
+    /// has them (042 US4)
+    pub fn with_precheck(mut self, precheck: Arc<Prechecker>) -> Self {
+        self.precheck = Some(precheck);
+        self
     }
 
     /// Perform a single scan of the specified directories
@@ -133,6 +177,9 @@ impl TorrentWatchCore {
     ) -> Result<WatchStats> {
         let mut stats = WatchStats::new();
         watch_metrics::scan();
+        if let Some(db) = database {
+            self.check_pending_on_putio(client, db).await;
+        }
 
         debug!("Starting scan of {} directories", directories.len());
 
@@ -224,6 +271,8 @@ impl TorrentWatchCore {
                             }
                         }
                     }
+                    // Renamed `.rejected`: no archive or delete step
+                    Ok(ProcessOutcome::Rejected(_)) => stats.files_rejected += 1,
                     Ok(ProcessOutcome::Gone) | Ok(ProcessOutcome::Unsupported) => {
                         stats.files_skipped += 1;
                         debug!("Skipped: {}", file_path.display());
@@ -244,15 +293,17 @@ impl TorrentWatchCore {
         }
 
         let summary = format!(
-            "Scan completed - directories: {}, files found: {}, processed: {}, cleaned up: {}, skipped: {}, failed: {}",
+            "Scan completed - directories: {}, files found: {}, processed: {}, cleaned up: {}, skipped: {}, rejected: {}, failed: {}",
             stats.directories_scanned,
             stats.files_found,
             stats.files_processed,
             stats.cleaned_up,
             stats.files_skipped,
+            stats.files_rejected,
             stats.files_failed
         );
-        if stats.files_processed + stats.cleaned_up + stats.files_failed > 0 {
+        if stats.files_processed + stats.cleaned_up + stats.files_rejected + stats.files_failed > 0
+        {
             info!("{}", summary);
         } else {
             debug!("{}", summary);
@@ -352,6 +403,13 @@ impl TorrentWatchCore {
         };
         info!("🔼 Processing new .{} file: {}", file_type, path.display());
 
+        let check = match self.precheck_file(path, client, parent_id).await? {
+            Some((check, Outcome::Rejected(meta, reason))) => {
+                return Ok(self.reject_file(path, &check, meta, reason, database).await);
+            }
+            other => other,
+        };
+
         // Process based on file type
         let transfer_result = if self.is_magnet_file(path) {
             // Read magnet link from file and add as URL
@@ -418,6 +476,9 @@ impl TorrentWatchCore {
                         .await
                     {
                         warn!(transfer_id = transfer.id, error = %e, "Failed to record transfer origin");
+                    }
+                    if let Some((check, outcome)) = &check {
+                        record_upload_check(db, check, outcome, transfer.id).await;
                     }
 
                     let (checksum, magnet_link) = if self.is_magnet_file(path) {
@@ -542,6 +603,328 @@ impl TorrentWatchCore {
                     Err(e.into())
                 }
             }
+        }
+    }
+
+    /// Check a watch file before upload (042 US4). `None` when the check is off for its
+    /// folder, or a magnet has no info hash to look up.
+    async fn precheck_file(
+        &self,
+        path: &Path,
+        client: &PutioApiClient,
+        parent_id: Option<i64>,
+    ) -> Result<Option<(WatchCheck, Outcome)>> {
+        let Some(precheck) = &self.precheck else {
+            return Ok(None);
+        };
+        // Watching isn't recursive, so the file's directory is the `[watch].paths` entry
+        let dir = path.parent().unwrap_or(Path::new(""));
+        let folder = self.folder_path(client, parent_id).await?;
+        let policy = precheck.policy(&folder, Key::Watch(dir));
+        if !policy.enabled {
+            return Ok(None);
+        }
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let watch_folder = dir.display().to_string();
+
+        if self.is_magnet_file(path) {
+            let content = tokio::fs::read_to_string(path).await.unwrap_or_default();
+            let Some((hash, name)) = from_magnet(content.trim()) else {
+                debug!(path = %path.display(), "Magnet has no info hash; not checked");
+                return Ok(None);
+            };
+            let source = PrecheckSource::WatchMagnet;
+            let name = name.unwrap_or(stem);
+            let limit = Duration::from_secs(precheck.config().lookup_timeout_secs);
+            let found = precheck.lookup(&hash, limit).await;
+            let lookup = Some(found.as_str());
+            let (outcome, cache) = match found {
+                Lookup::Found { meta, cache } => {
+                    (precheck.check_meta(meta, &policy, source), Some(cache))
+                }
+                Lookup::Missed(missed) => {
+                    precheck.unknown(&hash, &name, source, missed);
+                    let outcome = Outcome::Unknown {
+                        hash: hash.clone(),
+                        name: Some(name.clone()),
+                    };
+                    (outcome, None)
+                }
+            };
+            let check = WatchCheck {
+                hash: Some(hash),
+                name,
+                source,
+                watch_folder,
+                lookup,
+                cache,
+                policy,
+            };
+            return Ok(Some((check, outcome)));
+        }
+
+        let bytes = tokio::fs::read(path)
+            .await
+            .with_context(|| format!("read {}", path.display()))?;
+        let source = PrecheckSource::WatchTorrent;
+        let (hash, name) = info_hash(&bytes).map_or((None, None), |(h, n)| (Some(h), n));
+        let outcome = precheck.check(&bytes, &policy, source);
+        let check = WatchCheck {
+            hash,
+            name: name.filter(|n| !n.trim().is_empty()).unwrap_or(stem),
+            source,
+            watch_folder,
+            lookup: None,
+            cache: None,
+            policy,
+        };
+        Ok(Some((check, outcome)))
+    }
+
+    /// A watch file that failed the check: not uploaded, marked processed, recorded, and
+    /// renamed `<file>.rejected` for the operator to see
+    async fn reject_file(
+        &self,
+        path: &Path,
+        check: &WatchCheck,
+        meta: Option<Metainfo>,
+        reason: Reason,
+        database: Option<&Database>,
+    ) -> ProcessOutcome {
+        let message = reason.message(Stage::Before);
+        let hash = check
+            .hash
+            .as_deref()
+            .or(meta.as_ref().map(|m| m.hash.as_str()))
+            .unwrap_or("");
+        warn!(path = %path.display(), hash, reason = reason.key(), "Watch file rejected: {}", message);
+
+        if let Some(db) = database {
+            if let Some((checksum, magnet)) = self.content_checksum(path).await {
+                let size = path.metadata().map(|m| m.len()).unwrap_or(0) as i64;
+                if let Err(e) = db
+                    .processed_torrents()
+                    .record_processed(
+                        path.to_str().unwrap_or("unknown"),
+                        &checksum,
+                        size,
+                        magnet.as_deref(),
+                    )
+                    .await
+                {
+                    debug!("Failed to record rejected watch file in database: {}", e);
+                }
+            }
+            record_rejection(db, check, meta.as_ref(), &reason).await;
+        }
+
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let to = path.with_file_name(format!("{}.rejected", name));
+        if let Err(e) = tokio::fs::rename(path, &to).await {
+            warn!(path = %path.display(), error = %e, "Failed to rename rejected watch file");
+            // Keep it from being checked again this run
+            self.processed_files
+                .lock()
+                .unwrap()
+                .insert(path.to_path_buf());
+        }
+        ProcessOutcome::Rejected(message)
+    }
+
+    /// The checksum a watch file is remembered by, and its magnet link
+    async fn content_checksum(&self, path: &Path) -> Option<(String, Option<String>)> {
+        if self.is_magnet_file(path) {
+            let magnet = tokio::fs::read_to_string(path)
+                .await
+                .ok()?
+                .trim()
+                .to_string();
+            Some((calculate_string_checksum(&magnet), Some(magnet)))
+        } else {
+            calculate_file_checksum(path).await.ok().map(|c| (c, None))
+        }
+    }
+
+    /// The Put.io path of an upload folder, as 009 rules name folders. The root, and an
+    /// unset `parent_id` (the account's default folder), are `""`.
+    async fn folder_path(&self, client: &PutioApiClient, parent_id: Option<i64>) -> Result<String> {
+        let Some(id) = parent_id.filter(|id| *id > 0) else {
+            return Ok(String::new());
+        };
+        if let Some(path) = self.folder_paths.lock().unwrap().get(&id) {
+            return Ok(path.clone());
+        }
+        let mut names = Vec::new();
+        let mut next = Some(id);
+        while let Some(current) = next.filter(|id| *id > 0) {
+            if names.len() >= MAX_FOLDER_DEPTH {
+                break;
+            }
+            let entry = client
+                .get_file_details(current)
+                .await
+                .context("read the upload folder on Put.io")?
+                .file;
+            names.push(entry.name);
+            next = entry.parent_id;
+        }
+        names.reverse();
+        let path = names.join("/");
+        self.folder_paths.lock().unwrap().insert(id, path.clone());
+        Ok(path)
+    }
+
+    /// Check the watch magnets that reached Put.io unchecked, once their transfer
+    /// finished (042 US4). Runs before the scan; the sync holds their files until then.
+    async fn check_pending_on_putio(&self, client: &PutioApiClient, db: &Database) {
+        let Some(precheck) = &self.precheck else {
+            return;
+        };
+        let releases = db.releases();
+        let pending = match releases.has_pending().await {
+            Ok(false) => return,
+            Ok(true) => releases.pending_checks().await,
+            Err(e) => Err(e),
+        };
+        let pending: Vec<PendingCheck> = match pending {
+            Ok(checks) => checks
+                .into_iter()
+                .filter(|c| c.source == PrecheckSource::WatchMagnet.as_str())
+                .collect(),
+            Err(e) => {
+                warn!(error = %e, "Failed to list pending release checks");
+                return;
+            }
+        };
+        if pending.is_empty() {
+            return;
+        }
+        let transfers: HashMap<i64, Transfer> = match client.list_transfers().await {
+            Ok(listing) => listing.transfers.into_iter().map(|t| (t.id, t)).collect(),
+            Err(e) => {
+                warn!(error = %error_chain(&e), "Failed to list Put.io transfers for release checks");
+                return;
+            }
+        };
+
+        for check in &pending {
+            match check.transfer_id.and_then(|id| transfers.get(&id)) {
+                Some(transfer) if !putio_check::is_gone(transfer) => {
+                    if let Some(file_id) = transfer
+                        .file_id
+                        .filter(|_| putio_check::is_finished(transfer))
+                    {
+                        self.check_transfer(precheck, client, db, check, transfer, file_id)
+                            .await;
+                    }
+                }
+                // Gone, in `ERROR` or cancelled: no stat counts it as fake
+                _ => {
+                    let gone = Reason::Gone.key();
+                    match releases
+                        .resolve_check(check.id, CheckState::Rejected, Some(gone), 0)
+                        .await
+                    {
+                        Ok(_) => info!(
+                            hash = ?check.hash,
+                            name = %check.name,
+                            "Release check on Put.io dropped: the transfer is gone"
+                        ),
+                        Err(e) => warn!(error = %e, "Failed to resolve release check"),
+                    }
+                }
+            }
+        }
+    }
+
+    /// Judge one finished watch magnet on Put.io, removing it there when it fails
+    async fn check_transfer(
+        &self,
+        precheck: &Prechecker,
+        client: &PutioApiClient,
+        db: &Database,
+        check: &PendingCheck,
+        transfer: &Transfer,
+        file_id: i64,
+    ) {
+        let releases = db.releases();
+        let bytes = putio_check::putio_bytes(transfer);
+        let folder = match self
+            .folder_path(client, Some(transfer.save_parent_id))
+            .await
+        {
+            Ok(folder) => folder,
+            Err(e) => {
+                debug!(error = %format!("{:#}", e), "Upload folder unreadable; checking next pass");
+                return;
+            }
+        };
+        let dir = Path::new(check.watch_folder.as_deref().unwrap_or(""));
+        let policy = precheck.policy(&folder, Key::Watch(dir));
+        let hash = check.hash.as_deref().unwrap_or("");
+        let source = PrecheckSource::WatchMagnet;
+        let judged = if policy.enabled {
+            precheck
+                .judge_on_putio(
+                    client,
+                    hash,
+                    &check.name,
+                    transfer,
+                    file_id,
+                    &policy,
+                    source,
+                )
+                .await
+        } else {
+            // The check was turned off since the upload: let it through
+            OnPutio::Passed
+        };
+        let resolved = match judged {
+            OnPutio::Retry => return,
+            OnPutio::Passed => {
+                releases
+                    .resolve_check(check.id, CheckState::Passed, None, bytes)
+                    .await
+            }
+            OnPutio::Rejected { meta, reason } => {
+                let resolved = releases
+                    .resolve_check(check.id, CheckState::Rejected, Some(reason.key()), bytes)
+                    .await;
+                let total = meta.as_ref().map_or(0, Metainfo::total_size) as i64;
+                let traits = meta.as_ref().map(|m| Traits::of(m, &policy));
+                let types = traits.as_ref().map_or("[]".to_string(), Traits::types_json);
+                let report = NewReport {
+                    kind: ReportKind::Rejected,
+                    check_id: Some(check.id),
+                    file_id: Some(file_id),
+                    transfer_id: Some(transfer.id),
+                    source: Some(source.as_str()),
+                    watch_folder: check.watch_folder.as_deref(),
+                    stage: Some(Stage::Putio.as_str()),
+                    name: &check.name,
+                    hash: Some(hash),
+                    total_size: Some(total),
+                    file_count: traits.as_ref().map(|t| t.file_count as i64),
+                    types: &types,
+                    largest_wanted: traits.as_ref().map(|t| t.largest_wanted as i64),
+                    min_size: Some(policy.min_size as i64),
+                    reason: Some(reason.key()),
+                    ..NewReport::default()
+                };
+                if let Err(e) = releases.insert_report(&report).await {
+                    warn!(hash, error = %e, "Failed to record release report");
+                }
+                resolved
+            }
+        };
+        if let Err(e) = resolved {
+            warn!(hash, error = %e, "Failed to resolve release check");
         }
     }
 
@@ -693,6 +1076,97 @@ pub fn calculate_string_checksum(content: &str) -> String {
     format!("{:x}", result)
 }
 
+/// Write the check row of an uploaded watch file: passed, or pending its check on Put.io
+/// when a magnet missed the caches. A failure is logged: the upload stands.
+async fn record_upload_check(
+    db: &Database,
+    check: &WatchCheck,
+    outcome: &Outcome,
+    transfer_id: i64,
+) {
+    let (state, total) = match outcome {
+        Outcome::Passed(meta) => (
+            Some(CheckState::Passed),
+            meta.as_ref().map_or(0, Metainfo::total_size),
+        ),
+        _ => (None, 0),
+    };
+    let row = NewCheck {
+        hash: check.hash.as_deref(),
+        name: &check.name,
+        source: check.source.as_str(),
+        watch_folder: Some(&check.watch_folder),
+        stage: Stage::Before.as_str(),
+        state,
+        lookup: check.lookup,
+        lookup_cache: check.cache.as_deref(),
+        transfer_id: Some(transfer_id),
+        total_size: total as i64,
+        ..NewCheck::default()
+    };
+    if let Err(e) = db.releases().insert_check(&row).await {
+        warn!(hash = ?check.hash, error = %e, "Failed to record release check");
+    }
+}
+
+/// Write the check row and report of a rejected watch file
+async fn record_rejection(
+    db: &Database,
+    check: &WatchCheck,
+    meta: Option<&Metainfo>,
+    reason: &Reason,
+) {
+    let releases = db.releases();
+    let hash = check.hash.as_deref().or(meta.map(|m| m.hash.as_str()));
+    let total = meta.map_or(0, Metainfo::total_size) as i64;
+    let row = NewCheck {
+        hash,
+        name: &check.name,
+        source: check.source.as_str(),
+        watch_folder: Some(&check.watch_folder),
+        stage: Stage::Before.as_str(),
+        state: Some(CheckState::Rejected),
+        lookup: check.lookup,
+        lookup_cache: check.cache.as_deref(),
+        total_size: total,
+        reason: Some(reason.key()),
+        ..NewCheck::default()
+    };
+    let check_id = match releases.insert_check(&row).await {
+        Ok(id) => Some(id),
+        Err(e) => {
+            warn!(hash = ?hash, error = %e, "Failed to record release check");
+            None
+        }
+    };
+    let traits = meta.map(|m| Traits::of(m, &check.policy));
+    let types = traits.as_ref().map_or("[]".to_string(), Traits::types_json);
+    let hosts = traits
+        .as_ref()
+        .map_or("[]".to_string(), Traits::tracker_hosts_json);
+    let report = NewReport {
+        kind: ReportKind::Rejected,
+        check_id,
+        source: Some(check.source.as_str()),
+        watch_folder: Some(&check.watch_folder),
+        stage: Some(Stage::Before.as_str()),
+        name: &check.name,
+        hash,
+        total_size: Some(total),
+        file_count: traits.as_ref().map(|t| t.file_count as i64),
+        types: &types,
+        largest_wanted: traits.as_ref().map(|t| t.largest_wanted as i64),
+        min_size: Some(check.policy.min_size as i64),
+        tracker_hosts: &hosts,
+        is_private: meta.is_some_and(|m| m.private),
+        reason: Some(reason.key()),
+        ..NewReport::default()
+    };
+    if let Err(e) = releases.insert_report(&report).await {
+        warn!(hash = ?hash, error = %e, "Failed to record release report");
+    }
+}
+
 /// File watcher for .torrent and .magnet files (continuous daemon mode)
 /// Configuration for file watcher (hot-reloadable)
 #[derive(Debug, Clone)]
@@ -751,6 +1225,12 @@ impl TorrentWatcher {
             config: Arc::new(StdRwLock::new(config)),
             core: TorrentWatchCore::new(),
         }
+    }
+
+    /// Check watch files with the release check (042 US4)
+    pub fn with_precheck(mut self, precheck: Arc<Prechecker>) -> Self {
+        self.core = self.core.with_precheck(precheck);
+        self
     }
 
     /// Update watcher configuration dynamically (hot reload)

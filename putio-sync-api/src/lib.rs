@@ -213,6 +213,16 @@ fn build_arr(
         settings,
         config.download.target_directory.clone(),
     );
+    let service = match config.resolve_precheck() {
+        Ok(precheck) => service.with_precheck(
+            precheck,
+            putio_sync_core::rules::RuleSet::from_config(&config.download),
+        ),
+        Err(e) => {
+            tracing::warn!(error = %e, "Release pre-check disabled");
+            service
+        }
+    };
     Some(routes::arr::ArrRpc::new(Arc::new(service)))
 }
 
@@ -241,6 +251,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/history", create_history_router())
         .nest("/doctor", routes::system::doctor::router())
         .nest("/arr", routes::arr::router())
+        .nest("/releases", routes::releases::router())
         .route(
             "/status",
             axum::routing::get(routes::system::status::get_status),

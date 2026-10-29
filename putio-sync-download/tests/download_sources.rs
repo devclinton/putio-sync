@@ -162,3 +162,29 @@ async fn failed_transfer_listing_still_queues() {
     assert_eq!(episode.source_type, None);
     assert_eq!(episode.putio_folder.as_deref(), Some("Show"));
 }
+
+/// A transfer whose release check waits for Put.io is not queued (feature 042, R8)
+#[tokio::test]
+async fn pending_release_check_holds_its_transfer() {
+    let (_server, _dir, db, manager, transfers) = setup(200).await;
+    db.releases()
+        .insert_check(&putio_sync_db::NewCheck {
+            hash: Some("c12fe1c06bba254a9dc9f519b335aa7c1367a88a"),
+            name: "Show",
+            source: "magnet",
+            stage: "before",
+            state: None,
+            lookup: Some("not_found"),
+            transfer_id: Some(900),
+            ..putio_sync_db::NewCheck::default()
+        })
+        .await
+        .unwrap();
+
+    let stats = manager.enqueue_tree(0).await.unwrap();
+    assert_eq!(stats.files_downloaded, 2);
+    assert_eq!(stats.files_skipped, 1);
+    assert!(db.queue().get_by_file_id(52).await.unwrap().is_none());
+    assert!(db.queue().get_by_file_id(60).await.unwrap().is_some());
+    transfers.expect(1).assert_async().await;
+}

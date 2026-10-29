@@ -65,8 +65,8 @@ sweep is extended to the new routes.
 - No network sweep (FR-017).
 - A failed setup leaves no failing client in the *arr (FR-023).
 - A config write failure leaves the running daemon unchanged.
-- UI under 225 KB uncompressed (raised from 200 KB with this feature: merged with 040, the UI
-  was 206 KB).
+- UI under 260 KB uncompressed (raised from 200 KB with this feature: merged with 040 and 042,
+  the UI was 230 KB).
 
 **Scale/Scope**: 1–4 applications. About 14 new or changed routes, 2 UI pages, 4 new modules.
 

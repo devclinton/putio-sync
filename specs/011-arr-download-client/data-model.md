@@ -8,7 +8,7 @@
 | `hash` | TEXT NOT NULL UNIQUE | Info hash, 40 lowercase hex characters |
 | `name` | TEXT NOT NULL | Display name: the transfer name first, then the Put.io file name once known |
 | `category` | TEXT NOT NULL | Relative folder path below the reported download folder (`sonarr`, `movies/4k`, or `''`) |
-| `transfer_id` | INTEGER | Put.io transfer id; NULL only if the add failed after hashing (not stored in that case) |
+| `transfer_id` | INTEGER | Put.io transfer id; NULL for items rejected before Put.io (042) |
 | `file_id` | INTEGER | Put.io file or folder the transfer produced, once complete |
 | `output_name` | TEXT | Name of that file or folder on disk (`<target>/<category>/<output_name>`) |
 | `total_size` | INTEGER NOT NULL DEFAULT 0 | Bytes: from Put.io while downloading there, then the sum of accepted files |

@@ -6,4 +6,5 @@
 pub mod arr;
 pub mod local;
 pub mod putio;
+pub mod releases;
 pub mod system;

@@ -421,3 +421,110 @@ async fn watcher_start_stop_keep_tokens_and_say_restart() {
         assert_eq!(config.api.auth_token, None, "{path} wrote the env token");
     }
 }
+
+// ---- Release check (feature 042, T025) ------------------------------------------------
+
+/// `GET /settings/precheck` gives `[precheck]` and, read-only, what it comes to per
+/// category: the video default, or the types of the 009 rule on the category's folder
+#[tokio::test]
+async fn precheck_settings_and_effective() {
+    let app = test_app().await;
+    app.state
+        .config
+        .write()
+        .await
+        .download
+        .rules
+        .push(putio_sync_core::rules::FolderRule {
+            path: "lidarr".into(),
+            preset: Some("audio".into()),
+            ..Default::default()
+        });
+    let path = "/settings/precheck";
+    let mut body = get_ok(&app, path).await;
+    assert_fields(
+        &body,
+        &[
+            "enabled",
+            "dry_run",
+            "min_size_mb",
+            "allow_archives",
+            "magnet_lookup",
+            "lookup_timeout_secs",
+            "caches",
+            "categories",
+            "watch",
+            "effective",
+        ],
+    );
+    assert_eq!(body["dry_run"], json!(false));
+
+    body["categories"] = json!({"lidarr": {}, "software": {"enabled": false, "min_size_mb": 5}});
+    body.as_object_mut().unwrap().remove("effective");
+    let (status, response) = put(&app, path, body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let text = response["message"].as_str().unwrap();
+    assert!(text.contains("Needs a restart: categories"), "{text}");
+    assert!(saved(&app).precheck.categories["software"].enabled == Some(false));
+
+    let effective = get_ok(&app, path).await["effective"].clone();
+    let row = |key: &str| {
+        effective
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["key"] == key)
+            .unwrap_or_else(|| panic!("no row for {key}: {effective}"))
+            .clone()
+    };
+    let software = row("software");
+    assert_eq!(software["enabled"], json!(false));
+    assert_eq!(software["min_size_mb"], json!(5));
+    assert_eq!(software["wanted_from"], Value::Null);
+    assert!(software["wanted"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("mkv")));
+    let lidarr = row("lidarr");
+    assert_eq!(lidarr["wanted_from"], json!("lidarr"));
+    assert!(lidarr["wanted"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("flac")));
+}
+
+/// A bad value is a 400 that changes nothing; a save keeps the file's comments
+#[tokio::test]
+async fn precheck_save_validates_and_keeps_comments() {
+    let app = test_app().await;
+    let path = "/settings/precheck";
+    let file = config_path(&app);
+    let original = std::fs::read_to_string(&file).unwrap();
+    assert!(original.contains("[precheck]\n"), "{original}");
+    let edited = original
+        .replace("[precheck]\n", "# Fakes stay off the NAS\n[precheck]\n")
+        .replace(
+            "\nmin_size_mb = 50\n",
+            "\n# Big enough for an episode\nmin_size_mb = 50\n",
+        );
+    std::fs::write(&file, &edited).unwrap();
+
+    let mut body = get_ok(&app, path).await;
+    body["lookup_timeout_secs"] = json!(0);
+    let (status, response) = put(&app, path, body.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    assert!(response["error"].as_str().unwrap().contains("1..=30"));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), edited);
+
+    body["lookup_timeout_secs"] = json!(10);
+    body["dry_run"] = json!(true);
+    let (status, response) = put(&app, path, body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains("# Fakes stay off the NAS"), "{text}");
+    assert!(
+        text.contains("# Big enough for an episode\nmin_size_mb = 50\n"),
+        "{text}"
+    );
+    assert!(saved(&app).precheck.dry_run);
+}
