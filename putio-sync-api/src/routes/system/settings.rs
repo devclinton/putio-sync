@@ -460,7 +460,12 @@ fn effective_precheck(config: &Config, used: Vec<String>) -> Vec<EffectivePreche
         .arr
         .servers
         .iter()
-        .map(|s| s.category.clone())
+        // The category is read from the *arr now (018): the legacy one, else setup's default
+        .map(|s| {
+            s.category
+                .clone()
+                .unwrap_or_else(|| s.kind.as_str().to_string())
+        })
         .chain(used)
         .chain(precheck.categories.keys().cloned())
         .collect();
