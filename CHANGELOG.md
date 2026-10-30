@@ -34,7 +34,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   Radarr or Sonarr item, the flag can also fail it and blocklist it. A wrong
   rejection can be marked not fake, and any flag can be undone. The Stats page
   sums up the reports and downloads them as CSV or JSON, with the file types,
-  sizes and tracker host but never a link or key (feature 042).
+  sizes and tracker host but never a link or key. Settings → Release check
+  edits all of this and shows, for each category and watch folder, the
+  settings and wanted file types it ends up with. Release records older than
+  400 days are pruned daily (feature 042).
 - A Doctor page that checks the Put.io account and the sync setup: sign-in,
   storage, failed or stalled transfers, empty folders, duplicate files and
   leftover .torrent files, with one-click fixes (feature 010).

@@ -532,6 +532,11 @@ dialog p { margin: 0 0 24px; color: var(--muted); word-break: break-word; }
 .dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .flag-form { display: grid; gap: 16px; }
 .flag-form h2, .flag-form p { margin: 0; }
+.override-table td, .override-table th { padding: 6px 8px 6px 0; }
+.override-table .input { width: 100%; }
+.override-table td:first-child { width: 30%; }
+.override-table select.input { min-width: 8em; padding-right: 8px; }
+.table td.nowrap { white-space: nowrap; }
 
 /* Motion: one entrance per page, and replies to actions */
 
@@ -706,6 +711,7 @@ button.brow:hover { background: var(--surface-2); }
   .table td > .badge { justify-self: start; }
   .table td.actions-cell { grid-template-columns: 1fr; width: 100%; padding-top: 6px; }
   .table td.select-cell { grid-template-columns: 1fr; }
+  .override-table td:first-child { width: 100%; }
   .row-actions { flex-wrap: wrap; justify-content: flex-start; }
   .btn-icon, .btn-small { min-height: 44px; }
   .btn-icon { min-width: 44px; }

@@ -462,6 +462,65 @@ enabled = false
 # category = "sonarr"
 
 # ============================================================================
+# Release check (fake releases)
+# ============================================================================
+# Before a release reaches Put.io, putio-sync reads its file list and rejects it
+# when no file is a wanted type of at least `min_size_mb`, such as a "movie"
+# that is only an .exe or a password-protected .7z. This covers .torrent files
+# and URLs from Radarr/Sonarr and .torrent and .magnet files in watch folders.
+# A rejected *arr item fails with the reason (and is blocklisted with
+# [[arr.servers]]); a rejected watch file isn't uploaded and is renamed
+# <file>.rejected. The wanted types are a folder rule's allow list ([[download.rules]]
+# on the category's or watch folder's Put.io folder), else video.
+#
+# Magnets have no file list, so their .torrent is looked up in public caches.
+# Privacy: only the 40-character info hash is sent to each cache, never the
+# name, trackers or your passkey. A magnet that isn't found goes to Put.io, and
+# its files are checked there before any reach the NAS.
+#
+# Settings > Release check in the web UI edits this section and shows what the
+# check does for each category and watch folder. Restart to apply changes.
+[precheck]
+# Check releases at all. Env: PUTIO_SYNC_PRECHECK_ENABLED. Default: true
+enabled = true
+
+# Check, log and count, but never reject or delete anything. Try this first to
+# see what would be rejected (History and Stats show it). Default: false
+dry_run = false
+
+# The largest wanted file must be at least this big, 0 to 100000. Default: 50
+min_size_mb = 50
+
+# Count archives (.rar, .7z, .zip, split parts) as wanted. Default: false
+allow_archives = false
+
+# Look magnets up in `caches` before adding them. Off sends every magnet
+# straight to Put.io and checks it there.
+# Env: PUTIO_SYNC_PRECHECK_MAGNET_LOOKUP. Default: true
+magnet_lookup = true
+
+# Total time for all caches per magnet, 1 to 30 seconds. Default: 10
+lookup_timeout_secs = 10
+
+# .torrent caches, tried in order. Each is an http(s) URL with {HASH} (upper
+# case) or {hash} (lower case) in place of the info hash.
+caches = ["https://itorrents.net/torrent/{HASH}.torrent"]
+
+# Per *arr category (the folder under the download folder). Unset keys come
+# from above.
+# [precheck.categories.software]
+# enabled = false
+#
+# [precheck.categories.radarr]
+# min_size_mb = 300
+
+# Per [watch].paths entry
+# [precheck.watch."/watch/tv"]
+# min_size_mb = 100
+
+# Checks and reports older than 400 days are deleted at startup and daily.
+
+# ============================================================================
 # Database Configuration (Advanced)
 # ============================================================================
 # Database location (SQLite)

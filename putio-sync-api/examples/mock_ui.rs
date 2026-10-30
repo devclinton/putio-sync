@@ -37,7 +37,9 @@ use chrono::{Duration, Timelike, Utc};
 use putio_sync_api::{extract_download_config, router, AppState};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::cleanup::EmptyFolderCleanup;
-use putio_sync_core::config::{ArrConfig, ArrKind, ArrServer, AuthConfig, Config};
+use putio_sync_core::config::{
+    ArrConfig, ArrKind, ArrServer, AuthConfig, Config, PrecheckOverride,
+};
 use putio_sync_core::rules::FolderRule;
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::models::{DownloadSource, HistoryAction, Origin, QueueStatus, SourceType};
@@ -757,11 +759,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
         ..Default::default()
     };
-    config.download.rules = vec![FolderRule {
-        path: "Shows".to_string(),
-        preset: Some("video".to_string()),
-        ..Default::default()
-    }];
+    config.download.rules = vec![
+        FolderRule {
+            path: "Shows".to_string(),
+            preset: Some("video".to_string()),
+            ..Default::default()
+        },
+        FolderRule {
+            path: "lidarr".to_string(),
+            preset: Some("audio".to_string()),
+            ..Default::default()
+        },
+    ];
+    // The Release check card: one category off, one with its own size and a rule
+    config.precheck.categories = [
+        (
+            "radarr",
+            PrecheckOverride {
+                min_size_mb: Some(300),
+                ..Default::default()
+            },
+        ),
+        ("lidarr", PrecheckOverride::default()),
+        (
+            "software",
+            PrecheckOverride {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        ),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect();
     let config_path = dir.path().join("config.toml");
     config.save(&config_path)?;
     // A comment UI saves must keep (save_keeping_file_credentials edits in place), and an

@@ -93,6 +93,8 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         get("/settings/logging"),
         get("/settings/notifications"),
         (Method::PUT, "/settings/notifications", Some(json!({}))),
+        get("/settings/precheck"),
+        (Method::PUT, "/settings/precheck", Some(json!({}))),
         get("/stats/downloads"),
         get("/stats/transfers"),
         get("/stats/disk"),
