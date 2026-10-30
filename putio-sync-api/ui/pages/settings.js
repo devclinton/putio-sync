@@ -32,8 +32,12 @@ const GROUPS = [
       ["blacklist_patterns", "Never download", "Glob patterns, e.g. *.exe", "s?"],
       ["blocked_extensions", "Blocked extensions", "One per line, without the dot", "l"],
       ["reverse_sort", "Reverse sort", "Queue in the opposite order", "b"],
-      ["skip_existing", "Skip existing", "Skip files already downloaded", "b"],
-      ["resume_enabled", "Resume", "Continue interrupted downloads", "b"],
+      ["on_existing", "When a file already exists", null, [
+        ["resume", "Resume", "Finish a partial file, skip a complete one; a different file is kept and the new one saved as name (1)"],
+        ["overwrite", "Overwrite", "Replace it with the Put.io copy once the download completes"],
+        ["keep_both", "Keep both", "Keep it and save the new file as name (1), (2)…"],
+      ]],
+      ["resume_enabled", "Resume", "Continue a partial download from where it stopped; off starts it again", "b"],
       ["delete_after_download", "Delete from Put.io", "Remove each file from Put.io once downloaded", "b"],
       ["delete_empty_folders", "Delete empty folders", "Remove Put.io folders left empty", "b"],
     ],
@@ -200,9 +204,18 @@ function form(g, data, reload) {
       return h("label", { class: "field check", for: id }, input, h("span", {}, label, hint ? h("small", { text: hint }) : null));
     }
     if (Array.isArray(kind)) {
-      const options = kind.includes(value) || value == null ? kind : [value, ...kind];
-      input = h("select", { class: "input", id }, options.map((o) => h("option", { value: o, selected: o === value, text: o })));
+      // Each option is a value, or [value, label, help]; the help line follows the choice
+      const opts = kind.map((o) => (Array.isArray(o) ? o : [o, o]));
+      if (value != null && !opts.some(([v]) => v === value)) opts.unshift([value, value]);
+      input = h("select", { class: "input", id }, opts.map(([v, text]) => h("option", { value: v, selected: v === value, text })));
       inputs[name] = () => input.value;
+      const help = opts.some((o) => o[2]) ? h("small") : null;
+      if (help) {
+        const update = () => (help.textContent = opts.find(([v]) => v === input.value)?.[2] || "");
+        input.addEventListener("change", update);
+        update();
+        return h("label", { class: "field", for: id }, h("span", { text: label }), input, help);
+      }
     } else if (kind === "l") {
       input = h("textarea", { class: "input", id, rows: 3, spellcheck: "false" });
       input.value = (value || []).join("\n");

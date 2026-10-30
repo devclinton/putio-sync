@@ -15,6 +15,10 @@ const BADGE = { downloaded: "ok", deleted: "warn" };
 const REJECTED = "rejected";
 const STAGES = { before: "Before Put.io", putio: "On Put.io" };
 const REASONS = { no_wanted: "No wanted file", small_wanted: "Wanted file too small", invalid: "Not a valid .torrent", gone: "Transfer gone from Put.io" };
+// feature 040: what happened to a file already at the path ("skipped" stays unbadged)
+const OUTCOME = { resumed: "Resumed", restarted: "Restarted", overwritten: "Overwritten", saved_as: "Saved as copy" };
+/** The saved path, when the file was not written under its own name */
+const savedPath = (e) => (e.local_path && e.local_path.split(/[\\/]/).pop() !== e.filename ? e.local_path : null);
 
 let els = null;
 let offset = 0;
@@ -170,8 +174,13 @@ function row(e) {
     "tr",
     {},
     h("td", { class: "num", "data-label": "Time", text: dateTime(utc(e.timestamp)) }),
-    h("td", { "data-label": "Action" }, h("span", { class: `badge ${BADGE[action] || ""}`, text: action || "—" })),
-    h("td", { class: "name-cell name", "data-label": "Name", text: e.filename }),
+    h(
+      "td",
+      { "data-label": "Action" },
+      h("span", { class: `badge ${BADGE[action] || ""}`, text: action || "—" }),
+      OUTCOME[e.outcome] ? [" ", h("span", { class: "badge", text: OUTCOME[e.outcome] })] : null,
+    ),
+    h("td", { class: "name-cell name", "data-label": "Name" }, e.filename, savedPath(e) ? h("small", { class: "muted block", text: savedPath(e) }) : null),
     h("td", { class: "num right", "data-label": "Size", text: bytes(e.file_size) }),
     h("td", { class: "num right", "data-label": "Speed", text: e.speed_bps ? speed(e.speed_bps) : "—" }),
     actions(flagControl(flags, { target: { history_id: e.id }, name: e.filename, onChange: refresh })),

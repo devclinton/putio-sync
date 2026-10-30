@@ -1,13 +1,17 @@
 //! Download manager for orchestrating downloads
 
 use crate::error::{DownloadError, DownloadResult};
-use crate::files::{check_resume, cleanup_partial, create_temp_path};
+use crate::files::{
+    check_resume, cleanup_partial, crc32_file, crc_equal, create_temp_path, needs_checksum,
+    next_free_name, plan_existing, ExistingAction, LocalState,
+};
 use crate::progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
-use crate::stream::stream_download;
+use crate::stream::{finish_download, stream_to_temp};
 use crate::sync_status::{SyncOutcome, SyncRequestError, SyncStatus};
 use crate::utils::retry_with_stall_detection;
 use putio_sync_client::models::Transfer;
 use putio_sync_client::{error_chain, FileEntry, PutioApiClient};
+use putio_sync_core::config::{ExistingFile, ExistingOutcome};
 use putio_sync_core::rules::{extension, Decision, Effective, RuleSet};
 use putio_sync_db::models::{DownloadSource, DownloadStatus, Origin, SourceType};
 use putio_sync_db::Database;
@@ -27,8 +31,10 @@ use tracing::{debug, error, info, warn};
 pub struct DownloadConfig {
     /// Target directory for downloads
     pub target_directory: PathBuf,
-    /// Skip files that already exist
-    pub skip_existing: bool,
+    /// What to do when a file already exists at its local path (feature 040)
+    pub on_existing: ExistingFile,
+    /// Continue partial downloads instead of starting over
+    pub resume_enabled: bool,
     /// Buffer size in megabytes
     pub buffer_size_mb: usize,
     /// Bandwidth limit in bytes per second (None = unlimited)
@@ -47,14 +53,14 @@ pub struct DownloadConfig {
 
 impl DownloadConfig {
     /// The rules in force in `folder_path` (relative to the Put.io root). Settings no
-    /// folder rule sets take this config's `delete_after_download` and `skip_existing`.
+    /// folder rule sets take this config's `delete_after_download` and `on_existing`.
     pub fn effective(&self, folder_path: &str) -> Effective {
         let mut effective = self.rules.resolve(folder_path);
         if effective.delete_after_download.from.is_none() {
             effective.delete_after_download.value = self.delete_after_download;
         }
-        if effective.skip_existing.from.is_none() {
-            effective.skip_existing.value = self.skip_existing;
+        if effective.on_existing.from.is_none() {
+            effective.on_existing.value = self.on_existing;
         }
         effective
     }
@@ -64,7 +70,8 @@ impl Default for DownloadConfig {
     fn default() -> Self {
         Self {
             target_directory: PathBuf::from("."),
-            skip_existing: true,
+            on_existing: ExistingFile::Resume,
+            resume_enabled: true,
             buffer_size_mb: 64,
             bandwidth_limit_bytes_per_sec: None,
             max_retries: 3,
@@ -78,13 +85,13 @@ impl Default for DownloadConfig {
 
 impl From<&putio_sync_core::config::DownloadConfig> for DownloadConfig {
     /// The one mapping from `[download]` to the manager, used by `daemon`, `server` and
-    /// the settings API. `[download]` fields with no manager counterpart (`resume_enabled`,
-    /// `chunk_size_mb`, `progress_style`, sorting, glob patterns, `delete_empty_folders`,
+    /// the settings API. `[download]` fields with no manager counterpart (`chunk_size_mb`, `progress_style`, sorting, glob patterns, `delete_empty_folders`,
     /// `max_concurrent`) are read by the one-off `download` command only.
     fn from(settings: &putio_sync_core::config::DownloadConfig) -> Self {
         Self {
             target_directory: settings.target_directory.clone(),
-            skip_existing: settings.skip_existing,
+            on_existing: settings.on_existing(),
+            resume_enabled: settings.resume_enabled,
             buffer_size_mb: settings.buffer_size_mb,
             bandwidth_limit_bytes_per_sec: settings.bandwidth_limit_bytes_per_sec,
             max_retries: settings.max_retries,
@@ -160,6 +167,12 @@ pub struct DownloadFile {
     pub file_size: u64,
     /// Download URL
     pub download_url: String,
+    /// Put.io's CRC32 of the file, when known
+    pub crc32: Option<String>,
+    /// Numbered name chosen on an earlier attempt ("keep both"), from the queue row
+    pub save_as: Option<String>,
+    /// The file must keep its path (Radarr/Sonarr): overwrite, never a numbered name
+    pub fixed_path: bool,
 }
 
 /// Result of a download operation
@@ -196,6 +209,9 @@ pub struct ActiveDownload {
     pub eta_seconds: Option<u64>,
     /// Elapsed time in seconds since download started
     pub elapsed_seconds: u64,
+    /// "downloading", or "checking" while a checksum is computed; then the bytes and
+    /// speed measure the checksum read
+    pub phase: &'static str,
 }
 
 /// Statistics for a sync operation
@@ -342,6 +358,84 @@ struct WorkerInfo {
     stats: WorkerStats,
 }
 
+/// Holds a target path for one worker (R7); released on drop
+struct PathClaim {
+    set: Arc<Mutex<HashSet<PathBuf>>>,
+    path: PathBuf,
+}
+
+impl Drop for PathClaim {
+    fn drop(&mut self) {
+        self.set
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.path);
+    }
+}
+
+/// The extra field of an existing-file log line
+enum Detail {
+    /// Resumed from this byte
+    FromBytes(u64),
+    /// Saved under this numbered name, for this reason
+    SavedAs(String, &'static str),
+    /// Why it restarted or overwrote
+    Reason(&'static str),
+}
+
+/// A file found at its local path: logs and counts what happened to it
+struct Existing<'a> {
+    file_id: i64,
+    name: &'a str,
+    choice: ExistingFile,
+}
+
+impl Existing<'_> {
+    /// One structured event per outcome, `error` for refused, and the counter
+    fn record(&self, path: &std::path::Path, outcome: ExistingOutcome, detail: Option<&Detail>) {
+        let (from_bytes, saved_as, reason) = match detail {
+            Some(Detail::FromBytes(n)) => (Some(*n), None, None),
+            Some(Detail::SavedAs(name, reason)) => (None, Some(name.as_str()), Some(*reason)),
+            Some(Detail::Reason(reason)) => (None, None, Some(*reason)),
+            None => (None, None, None),
+        };
+        let path = path.display().to_string();
+        if outcome == ExistingOutcome::Refused {
+            error!(
+                file_id = self.file_id,
+                name = self.name,
+                path = %path,
+                choice = self.choice.as_str(),
+                outcome = outcome.as_str(),
+                "A folder is in the way of {}; not downloaded",
+                self.name
+            );
+        } else {
+            info!(
+                file_id = self.file_id,
+                name = self.name,
+                path = %path,
+                choice = self.choice.as_str(),
+                outcome = outcome.as_str(),
+                from_bytes,
+                saved_as,
+                reason,
+                "Existing file {}: {}",
+                self.name,
+                outcome.as_str()
+            );
+        }
+        telemetry::download::existing(match outcome {
+            ExistingOutcome::Skipped => telemetry::ExistingOutcome::Skipped,
+            ExistingOutcome::Resumed => telemetry::ExistingOutcome::Resumed,
+            ExistingOutcome::Restarted => telemetry::ExistingOutcome::Restarted,
+            ExistingOutcome::Overwritten => telemetry::ExistingOutcome::Overwritten,
+            ExistingOutcome::SavedAs => telemetry::ExistingOutcome::SavedAs,
+            ExistingOutcome::Refused => telemetry::ExistingOutcome::Refused,
+        });
+    }
+}
+
 /// Download manager
 #[derive(Clone)]
 pub struct DownloadManager {
@@ -365,6 +459,10 @@ pub struct DownloadManager {
     sync_status: Arc<RwLock<SyncStatus>>,
     /// Wakes `run_sync_loop` for "sync now"
     sync_notify: Arc<Notify>,
+    /// Target paths a worker is writing (R7)
+    paths_in_use: Arc<Mutex<HashSet<PathBuf>>>,
+    /// Files whose checksum is being computed: bytes read and when it started
+    checking: Arc<Mutex<HashMap<i64, (u64, Instant)>>>,
 }
 
 impl DownloadManager {
@@ -393,6 +491,8 @@ impl DownloadManager {
             decided: Arc::new(Mutex::new(HashSet::new())),
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
+            paths_in_use: Arc::new(Mutex::new(HashSet::new())),
+            checking: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -418,6 +518,8 @@ impl DownloadManager {
             decided: Arc::new(Mutex::new(HashSet::new())),
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
+            paths_in_use: Arc::new(Mutex::new(HashSet::new())),
+            checking: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -711,6 +813,10 @@ impl DownloadManager {
 
     /// Download a single file
     ///
+    /// When something is already at the file's local path, what happens follows the
+    /// `on_existing` choice in force for its folder (feature 040): see
+    /// [`crate::files::plan_existing`].
+    ///
     /// # Arguments
     ///
     /// * `file` - File information
@@ -724,8 +830,8 @@ impl DownloadManager {
         file: DownloadFile,
         progress_callback: Option<Arc<dyn ProgressCallback>>,
     ) -> DownloadResult<DownloadOperationResult> {
-        // Get config snapshot for this download
-        let config = self.config.read().await;
+        // A snapshot, so no read lock is held across the download
+        let config = self.config.read().await.clone();
 
         let file_id = file.file_id;
         let filename = sanitize_filename(&file.filename);
@@ -742,391 +848,427 @@ impl DownloadManager {
             callback.on_file_start(file_id, &filename, file.file_size);
         }
 
-        // Construct full path preserving directory structure
-        let target_path = if file.relative_path.is_empty() {
-            config.target_directory.join(&filename)
+        // Construct the folder, preserving directory structure
+        let dir = if file.relative_path.is_empty() {
+            config.target_directory.clone()
         } else {
-            config
-                .target_directory
-                .join(&file.relative_path)
-                .join(&filename)
+            config.target_directory.join(&file.relative_path)
         };
+        if !dir.exists() {
+            std::fs::create_dir_all(&dir).map_err(DownloadError::IoError)?;
+        }
+
+        let choice = config.effective(&file.relative_path).on_existing.value;
+        // A numbered name chosen on an earlier attempt is kept (FR-010)
+        let name = file
+            .save_as
+            .as_deref()
+            .map(sanitize_filename)
+            .unwrap_or_else(|| filename.clone());
+        let mut target_path = dir.join(&name);
         debug!("Constructed target_path: {}", target_path.display());
 
-        // Ensure parent directory exists
-        if let Some(parent) = target_path.parent() {
-            if !parent.exists() {
-                std::fs::create_dir_all(parent).map_err(DownloadError::IoError)?;
+        // One writer per path (R7): wait while another worker has it
+        let mut claims = vec![self.claim_path(&target_path).await];
+
+        let local = LocalState::of(&target_path).await;
+        let crc_match = match file.crc32.as_deref() {
+            Some(remote) if needs_checksum(local, file.file_size, Some(remote), choice) => {
+                Some(self.checksum_matches(file_id, &target_path, remote).await?)
             }
-        }
-
-        if config.effective(&file.relative_path).skip_existing.value && target_path.exists() {
-            info!("Skipping existing file: {}", filename);
-            return Ok(DownloadOperationResult {
-                file_id,
-                success: true,
-                error: None,
-                bytes_downloaded: 0,
-                file_path: Some(target_path),
-            });
-        }
-
-        let _active = telemetry::download::active();
-        let started = Instant::now();
-
-        // Check for resume capability
-        // Create temporary download path
-        let temp_path = create_temp_path(&target_path)?;
-
-        let resume_bytes = check_resume(&temp_path, file.file_size).await?;
-
-        // Download the file using streaming with range requests for resuming if available
-        let result = if let Some(resume_from) = resume_bytes {
-            // Try to resume using range requests
-            info!(
-                "Attempting to resume download from byte {} of {}",
-                resume_from, file.file_size
-            );
-            self.download_streaming_with_resume(file, progress_callback.clone(), resume_from)
-                .await
-        } else {
-            // Start new download
-            debug!("Starting new streaming download");
-            self.download_streaming(file, progress_callback.clone())
-                .await
+            _ => None,
+        };
+        let action = plan_existing(
+            local,
+            file.file_size,
+            crc_match,
+            choice,
+            config.resume_enabled,
+            file.fixed_path,
+        );
+        let existing = Existing {
+            file_id,
+            name: &filename,
+            choice,
         };
 
-        // Handle result
-        match result {
-            Ok(result) => {
-                // A successful result means the temp file was verified and renamed.
-                if result.success {
-                    telemetry::download::completed(started.elapsed());
-                }
-                if let Some(ref callback) = progress_callback {
-                    callback.on_file_complete(file_id, &filename, result.success);
-                }
-                Ok(result)
+        let temp_path = create_temp_path(&target_path)?;
+        let mut outcome = match action {
+            ExistingAction::Fresh if file.save_as.is_some() => {
+                Some((ExistingOutcome::SavedAs, None))
             }
-            Err(e) => {
+            ExistingAction::Fresh => None,
+            ExistingAction::Skip => {
+                existing.record(&target_path, ExistingOutcome::Skipped, None);
+                self.record_download(&file, &filename, &target_path, 0)
+                    .await;
+                self.record_history(
+                    &file,
+                    &filename,
+                    &target_path,
+                    None,
+                    Some(ExistingOutcome::Skipped),
+                )
+                .await;
+                if let Some(ref callback) = progress_callback {
+                    callback.on_file_complete(file_id, &filename, true);
+                }
+                return Ok(DownloadOperationResult {
+                    file_id,
+                    success: true,
+                    error: None,
+                    bytes_downloaded: 0,
+                    file_path: Some(target_path),
+                });
+            }
+            ExistingAction::Refuse => {
+                existing.record(&target_path, ExistingOutcome::Refused, None);
+                let e = DownloadError::InvalidInput(format!(
+                    "target path is a folder: {}",
+                    target_path.display()
+                ));
                 telemetry::download::failed(e.fail_reason());
-                error!("Download failed for {}: {}", filename, e);
                 if let Some(ref callback) = progress_callback {
                     callback.on_file_complete(file_id, &filename, false);
                 }
-                Err(e)
-            }
-        }
-    }
-
-    /// Download using streaming with resume support
-    async fn download_streaming_with_resume(
-        &self,
-        file: DownloadFile,
-        progress_callback: Option<Arc<dyn ProgressCallback>>,
-        resume_from_byte: u64,
-    ) -> DownloadResult<DownloadOperationResult> {
-        // Get config snapshot for this download
-        let config = self.config.read().await;
-
-        let filename = sanitize_filename(&file.filename);
-        let target_path = if file.relative_path.is_empty() {
-            config.target_directory.join(&filename)
-        } else {
-            config
-                .target_directory
-                .join(&file.relative_path)
-                .join(&filename)
-        };
-
-        // Create progress tracker
-        self.progress_trackers
-            .write()
-            .await
-            .insert(file.file_id, ProgressTracker::new(resume_from_byte));
-
-        // Start download with retry logic
-        let start_time = Instant::now();
-
-        let client = &self.client;
-        let download_url = &file.download_url;
-        let file_size = file.file_size;
-        let buffer_size_mb = config.buffer_size_mb;
-        let bandwidth_limit = config.bandwidth_limit_bytes_per_sec;
-        let max_retries = config.max_retries;
-        let initial_delay = config.retry_initial_delay_secs;
-
-        let result = retry_with_stall_detection(
-            || async {
-                stream_download(
-                    client,
-                    download_url,
-                    &target_path,
-                    &filename,
-                    Some(file_size),
-                    buffer_size_mb,
-                    bandwidth_limit,
-                    Some(resume_from_byte), // Resume from the specified byte
-                )
-                .await
-            },
-            max_retries,
-            initial_delay,
-            &format!("Resume download {}", filename),
-        )
-        .await;
-
-        match result {
-            Ok(retry_result) => {
-                let duration = start_time.elapsed();
-                let download_result = retry_result.value;
-                let retry_count = retry_result.attempts;
-
-                // Calculate total bytes (existing + newly downloaded)
-                let total_bytes_downloaded = resume_from_byte + download_result.bytes_downloaded;
-
-                // Update progress
-                if let Some(ref callback) = progress_callback {
-                    let mut progress =
-                        DownloadProgress::new(file.file_id, filename.clone(), file.file_size);
-                    progress.bytes_downloaded = total_bytes_downloaded;
-                    progress.complete = true;
-                    callback.on_file_progress(&progress);
-                }
-
-                // Save to database with retry count (if database available)
-                if let Some(database) = &self.database {
-                    let repo = database.downloads();
-                    if let Err(e) = repo
-                        .insert_with_retry_count(
-                            file.file_id,
-                            &filename,
-                            file.file_size as i64,
-                            target_path.to_str().unwrap_or(""),
-                            DownloadStatus::Completed,
-                            retry_count as i64,
-                        )
-                        .await
-                    {
-                        warn!("Database error (non-fatal): Failed to record download completion for {}: {}. Download succeeded.", filename, e);
-                    }
-
-                    // Record in history
-                    let history_repo = database.history();
-                    let avg_speed = if duration.as_secs() > 0 {
-                        Some((total_bytes_downloaded / duration.as_secs()) as i64)
-                    } else {
-                        None
-                    };
-
-                    if let Err(e) = history_repo
-                        .insert(
-                            file.file_id,
-                            &filename,
-                            file.file_size as i64,
-                            putio_sync_db::models::HistoryAction::Downloaded,
-                            Some(duration.as_secs() as i64),
-                            avg_speed,
-                        )
-                        .await
-                    {
-                        warn!("Failed to record download history for {}: {}", filename, e);
-                    }
-                } else {
-                    debug!(
-                        "Database not available - skipping download record for {}",
-                        filename
-                    );
-                }
-
-                info!(
-                    "Resume download completed: {} (total {} bytes in {:.2}s)",
-                    filename,
-                    total_bytes_downloaded,
-                    duration.as_secs_f64()
-                );
-
-                Ok(DownloadOperationResult {
-                    file_id: file.file_id,
-                    success: true,
-                    error: None,
-                    bytes_downloaded: total_bytes_downloaded,
-                    file_path: Some(target_path),
-                })
-            }
-            Err(e) => {
-                telemetry::download::failed(e.fail_reason());
-                // Check if it's a 404 error
-                if let DownloadError::ApiError(ref msg) = e {
-                    if msg.contains("404") {
-                        warn!("File no longer available (404): {}", filename);
-                        // Clean up any partial download
-                        let temp_path = create_temp_path(&target_path)?;
-                        cleanup_partial(&temp_path).await;
-                    }
-                }
-
-                Ok(DownloadOperationResult {
-                    file_id: file.file_id,
-                    success: false,
-                    error: Some(e.to_string()),
-                    bytes_downloaded: resume_from_byte, // Return at least the existing bytes
-                    file_path: None,
-                })
-            }
-        }
-    }
-
-    /// Download using streaming (for small files)
-    async fn download_streaming(
-        &self,
-        file: DownloadFile,
-        progress_callback: Option<Arc<dyn ProgressCallback>>,
-    ) -> DownloadResult<DownloadOperationResult> {
-        // Get config snapshot for this download
-        let config = self.config.read().await;
-
-        let filename = sanitize_filename(&file.filename);
-        let target_path = if file.relative_path.is_empty() {
-            config.target_directory.join(&filename)
-        } else {
-            config
-                .target_directory
-                .join(&file.relative_path)
-                .join(&filename)
-        };
-
-        // Create progress tracker
-        self.progress_trackers
-            .write()
-            .await
-            .insert(file.file_id, ProgressTracker::new(0));
-
-        // Start download with retry logic
-        let start_time = Instant::now();
-
-        let client = &self.client;
-        let download_url = &file.download_url;
-        let file_size = file.file_size;
-        let buffer_size_mb = config.buffer_size_mb;
-        let bandwidth_limit = config.bandwidth_limit_bytes_per_sec;
-        let max_retries = config.max_retries;
-        let initial_delay = config.retry_initial_delay_secs;
-
-        let result = retry_with_stall_detection(
-            || async {
-                stream_download(
-                    client,
-                    download_url,
-                    &target_path,
-                    &filename,
-                    Some(file_size),
-                    buffer_size_mb,
-                    bandwidth_limit,
-                    None, // No resume for new downloads
-                )
-                .await
-            },
-            max_retries,
-            initial_delay,
-            &format!("Download {}", filename),
-        )
-        .await;
-
-        match result {
-            Ok(retry_result) => {
-                let duration = start_time.elapsed();
-                let download_result = retry_result.value;
-                let retry_count = retry_result.attempts;
-
-                // Update progress
-                if let Some(ref callback) = progress_callback {
-                    let mut progress =
-                        DownloadProgress::new(file.file_id, filename.clone(), file.file_size);
-                    progress.bytes_downloaded = download_result.bytes_downloaded;
-                    progress.complete = true;
-                    callback.on_file_progress(&progress);
-                }
-
-                // Save to database with retry count (if database available)
-                if let Some(database) = &self.database {
-                    let repo = database.downloads();
-                    if let Err(e) = repo
-                        .insert_with_retry_count(
-                            file.file_id,
-                            &filename,
-                            file.file_size as i64,
-                            target_path.to_str().unwrap_or(""),
-                            DownloadStatus::Completed,
-                            retry_count as i64,
-                        )
-                        .await
-                    {
-                        warn!("Database error (non-fatal): Failed to record download completion for {}: {}. Download succeeded.", filename, e);
-                    }
-
-                    // Record in history
-                    let history_repo = database.history();
-                    let avg_speed = if duration.as_secs() > 0 {
-                        Some((download_result.bytes_downloaded / duration.as_secs()) as i64)
-                    } else {
-                        None
-                    };
-
-                    if let Err(e) = history_repo
-                        .insert(
-                            file.file_id,
-                            &filename,
-                            file.file_size as i64,
-                            putio_sync_db::models::HistoryAction::Downloaded,
-                            Some(duration.as_secs() as i64),
-                            avg_speed,
-                        )
-                        .await
-                    {
-                        warn!("Failed to record download history for {}: {}", filename, e);
-                    }
-                } else {
-                    debug!(
-                        "Database not available - skipping download record for {}",
-                        filename
-                    );
-                }
-
-                info!(
-                    "Download completed: {} ({} bytes in {:.2}s)",
-                    filename,
-                    download_result.bytes_downloaded,
-                    duration.as_secs_f64()
-                );
-
-                Ok(DownloadOperationResult {
-                    file_id: file.file_id,
-                    success: true,
-                    error: None,
-                    bytes_downloaded: download_result.bytes_downloaded,
-                    file_path: Some(target_path),
-                })
-            }
-            Err(e) => {
-                telemetry::download::failed(e.fail_reason());
-                // Check if it's a 404 error
-                if let DownloadError::ApiError(ref msg) = e {
-                    if msg.contains("404") {
-                        warn!("File no longer available (404): {}", filename);
-                        // Clean up any partial download
-                        cleanup_partial(&target_path).await;
-                    }
-                }
-
-                Ok(DownloadOperationResult {
-                    file_id: file.file_id,
+                return Ok(DownloadOperationResult {
+                    file_id,
                     success: false,
                     error: Some(e.to_string()),
                     bytes_downloaded: 0,
                     file_path: None,
+                });
+            }
+            ExistingAction::Resume { from } => {
+                // The partial file continues from its hidden name, so a half-resumed
+                // file never sits at the real name (R3)
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                tokio::fs::rename(&target_path, &temp_path).await?;
+                Some((ExistingOutcome::Resumed, Some(Detail::FromBytes(from))))
+            }
+            ExistingAction::Overwrite { fixed_path } => Some((
+                ExistingOutcome::Overwritten,
+                fixed_path.then_some(Detail::Reason("fixed_path")),
+            )),
+            ExistingAction::SaveAs { reason } => {
+                let numbered = {
+                    let mut in_use = self.paths_in_use.lock().unwrap_or_else(|e| e.into_inner());
+                    let numbered = next_free_name(&dir, &name, &in_use);
+                    in_use.insert(dir.join(&numbered));
+                    numbered
+                };
+                target_path = dir.join(&numbered);
+                claims.push(PathClaim {
+                    set: self.paths_in_use.clone(),
+                    path: target_path.clone(),
+                });
+                if let Some(db) = &self.database {
+                    if let Err(e) = db.queue().set_save_as(file_id, Some(&numbered)).await {
+                        warn!("Failed to keep the numbered name for {}: {}", filename, e);
+                    }
+                }
+                Some((
+                    ExistingOutcome::SavedAs,
+                    Some(Detail::SavedAs(numbered, reason.as_str())),
+                ))
+            }
+        };
+        let temp_path = create_temp_path(&target_path)?;
+
+        let _active = telemetry::download::active();
+        let started = Instant::now();
+
+        let resumed_from = if config.resume_enabled {
+            check_resume(&temp_path, file.file_size).await?
+        } else {
+            // Resume off: a hidden partial file is started over (R9)
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            None
+        };
+        if let Some(from) = resumed_from {
+            info!(
+                "Attempting to resume download from byte {} of {}",
+                from, file.file_size
+            );
+        }
+
+        let mut result = self
+            .transfer(&file, &filename, &target_path, &config, resumed_from)
+            .await;
+
+        // A resumed file is checked as a whole against Put.io's CRC32 (R3)
+        if let (Ok(_), Some(_), Some(remote)) = (&result, resumed_from, file.crc32.as_deref()) {
+            match self.checksum_matches(file_id, &temp_path, remote).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    warn!(
+                        "Resumed file {} does not match Put.io's checksum; downloading it again",
+                        filename
+                    );
+                    let _ = tokio::fs::remove_file(&temp_path).await;
+                    if matches!(outcome, Some((ExistingOutcome::Resumed, _))) {
+                        outcome =
+                            Some((ExistingOutcome::Restarted, Some(Detail::Reason("checksum"))));
+                    }
+                    result = self
+                        .transfer(&file, &filename, &target_path, &config, None)
+                        .await;
+                    if result.is_ok() && !self.checksum_matches(file_id, &temp_path, remote).await?
+                    {
+                        let _ = tokio::fs::remove_file(&temp_path).await;
+                        result = Err(DownloadError::ApiError(format!(
+                            "Checksum mismatch: {} does not match Put.io's CRC32 {}",
+                            filename, remote
+                        )));
+                    }
+                }
+                Err(e) => result = Err(e),
+            }
+        }
+
+        let result = match result {
+            Ok(attempts) => finish_download(&temp_path, &target_path)
+                .await
+                .map(|_| attempts),
+            Err(e) => Err(e),
+        };
+
+        match result {
+            Ok(attempts) => {
+                let duration = started.elapsed();
+                // A successful result means the temp file was verified and renamed.
+                telemetry::download::completed(duration);
+                if let Some((kind, detail)) = &outcome {
+                    existing.record(&target_path, *kind, detail.as_ref());
+                }
+                let fetched = file.file_size - resumed_from.unwrap_or(0);
+                if let Some(ref callback) = progress_callback {
+                    let mut progress =
+                        DownloadProgress::new(file_id, filename.clone(), file.file_size);
+                    progress.bytes_downloaded = file.file_size;
+                    progress.complete = true;
+                    callback.on_file_progress(&progress);
+                }
+                self.record_download(&file, &filename, &target_path, attempts)
+                    .await;
+                let avg_speed =
+                    (duration.as_secs() > 0).then(|| (fetched / duration.as_secs()) as i64);
+                self.record_history(
+                    &file,
+                    &filename,
+                    &target_path,
+                    Some((duration.as_secs() as i64, avg_speed)),
+                    outcome.map(|(kind, _)| kind),
+                )
+                .await;
+                info!(
+                    "Download completed: {} ({} bytes in {:.2}s)",
+                    filename,
+                    file.file_size,
+                    duration.as_secs_f64()
+                );
+                if let Some(ref callback) = progress_callback {
+                    callback.on_file_complete(file_id, &filename, true);
+                }
+                drop(claims);
+                Ok(DownloadOperationResult {
+                    file_id,
+                    success: true,
+                    error: None,
+                    bytes_downloaded: file.file_size,
+                    file_path: Some(target_path),
                 })
             }
+            Err(e) => {
+                telemetry::download::failed(e.fail_reason());
+                error!("Download failed for {}: {}", filename, e);
+                if let DownloadError::ApiError(ref msg) = e {
+                    if msg.contains("404") {
+                        warn!("File no longer available (404): {}", filename);
+                        cleanup_partial(&temp_path).await;
+                    }
+                }
+                if let Some(ref callback) = progress_callback {
+                    callback.on_file_complete(file_id, &filename, false);
+                }
+                Ok(DownloadOperationResult {
+                    file_id,
+                    success: false,
+                    error: Some(e.to_string()),
+                    bytes_downloaded: resumed_from.unwrap_or(0),
+                    file_path: None,
+                })
+            }
+        }
+    }
+
+    /// Wait until no other worker writes `path`, then hold it until the claim drops
+    async fn claim_path(&self, path: &std::path::Path) -> PathClaim {
+        loop {
+            {
+                let mut in_use = self.paths_in_use.lock().unwrap_or_else(|e| e.into_inner());
+                if in_use.insert(path.to_path_buf()) {
+                    return PathClaim {
+                        set: self.paths_in_use.clone(),
+                        path: path.to_path_buf(),
+                    };
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+
+    /// Compare a local file's CRC32 with Put.io's. The file shows as "checking" on the
+    /// Queue page meanwhile, with the bytes read as its progress (R4).
+    async fn checksum_matches(
+        &self,
+        file_id: i64,
+        path: &std::path::Path,
+        remote: &str,
+    ) -> DownloadResult<bool> {
+        let started = Instant::now();
+        self.checking
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(file_id, (0, started));
+        let checking = self.checking.clone();
+        let local = crc32_file(path, move |read| {
+            if let Some(entry) = checking
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(&file_id)
+            {
+                entry.0 = read;
+            }
+        })
+        .await;
+        self.checking
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&file_id);
+        let local = local?;
+        debug!(
+            "Checksum of {}: {} (Put.io {}) in {:.2}s",
+            path.display(),
+            local,
+            remote,
+            started.elapsed().as_secs_f64()
+        );
+        Ok(crc_equal(&local, remote))
+    }
+
+    /// Stream `file` into the hidden file of `target_path`, with retries. Each attempt
+    /// continues from what the hidden file holds, so a retry after a failed attempt
+    /// never asks for a range the file lacks. Returns the retry count.
+    async fn transfer(
+        &self,
+        file: &DownloadFile,
+        filename: &str,
+        target_path: &std::path::Path,
+        config: &DownloadConfig,
+        resume_from: Option<u64>,
+    ) -> DownloadResult<u32> {
+        self.progress_trackers
+            .write()
+            .await
+            .insert(file.file_id, ProgressTracker::new(resume_from.unwrap_or(0)));
+
+        let temp_path = create_temp_path(target_path)?;
+        let client = &self.client;
+        let resume_enabled = config.resume_enabled;
+        let result = retry_with_stall_detection(
+            || async {
+                let from = if resume_enabled {
+                    check_resume(&temp_path, file.file_size).await?
+                } else {
+                    None
+                };
+                stream_to_temp(
+                    client,
+                    &file.download_url,
+                    target_path,
+                    filename,
+                    Some(file.file_size),
+                    config.buffer_size_mb,
+                    config.bandwidth_limit_bytes_per_sec,
+                    from,
+                )
+                .await
+            },
+            config.max_retries,
+            config.retry_initial_delay_secs,
+            &format!("Download {}", filename),
+        )
+        .await;
+        result.map(|r| r.attempts)
+    }
+
+    /// Record a `completed` downloads row, so the file counts as downloaded
+    async fn record_download(
+        &self,
+        file: &DownloadFile,
+        filename: &str,
+        path: &std::path::Path,
+        retry_count: u32,
+    ) {
+        let Some(database) = &self.database else {
+            debug!(
+                "Database not available - skipping download record for {}",
+                filename
+            );
+            return;
+        };
+        if let Err(e) = database
+            .downloads()
+            .insert_with_retry_count(
+                file.file_id,
+                filename,
+                file.file_size as i64,
+                path.to_str().unwrap_or(""),
+                DownloadStatus::Completed,
+                retry_count as i64,
+            )
+            .await
+        {
+            warn!("Database error (non-fatal): Failed to record download completion for {}: {}. Download succeeded.", filename, e);
+        }
+    }
+
+    /// Record a history row with the local path and, for an existing file, the outcome
+    async fn record_history(
+        &self,
+        file: &DownloadFile,
+        filename: &str,
+        path: &std::path::Path,
+        timing: Option<(i64, Option<i64>)>,
+        outcome: Option<ExistingOutcome>,
+    ) {
+        let Some(database) = &self.database else {
+            return;
+        };
+        let history = database.history();
+        let id = match history
+            .insert(
+                file.file_id,
+                filename,
+                file.file_size as i64,
+                putio_sync_db::models::HistoryAction::Downloaded,
+                timing.map(|(secs, _)| secs),
+                timing.and_then(|(_, speed)| speed),
+            )
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                warn!("Failed to record download history for {}: {}", filename, e);
+                return;
+            }
+        };
+        if let Err(e) = history
+            .set_outcome(id, path.to_str(), outcome.map(|o| o.as_str()))
+            .await
+        {
+            warn!("Failed to record the outcome for {}: {}", filename, e);
         }
     }
 
@@ -1141,6 +1283,7 @@ impl DownloadManager {
     pub async fn sync_downloads(&self) -> DownloadResult<SyncStats> {
         let started = Instant::now();
         self.sync_status.write().await.begin();
+        telemetry::sync::started();
         let result = self.sync_downloads_inner().await;
         self.sync_status.write().await.finish(match &result {
             Ok(stats) => SyncOutcome::from(stats),
@@ -1178,13 +1321,18 @@ impl DownloadManager {
     /// Files keep their Put.io path relative to the root, so a folder queued from the UI
     /// lands where the sync would put it.
     pub async fn enqueue_tree(&self, root_id: i64) -> DownloadResult<SyncStats> {
-        Ok(self.enqueue_tree_report(root_id).await?.stats)
+        Ok(self.enqueue_tree_report(root_id, false).await?.stats)
     }
 
     /// [`Self::enqueue_tree`], also returning what happened to each file and the
     /// root's name on disk. The *arr download client (feature 011) uses it to know which
-    /// files an item waits for.
-    pub async fn enqueue_tree_report(&self, root_id: i64) -> DownloadResult<TreeReport> {
+    /// files an item waits for, and passes `fixed_path`: its files then overwrite an
+    /// existing file rather than get a numbered name (feature 040, R6).
+    pub async fn enqueue_tree_report(
+        &self,
+        root_id: i64,
+        fixed_path: bool,
+    ) -> DownloadResult<TreeReport> {
         let mut stats = SyncStats::default();
         let mut report_files = Vec::new();
 
@@ -1343,13 +1491,14 @@ impl DownloadManager {
             let download_url = self.client.get_download_url(file.id);
 
             match queue_repo
-                .add(
+                .add_with_path_kept(
                     file.id,
                     &file.name,
                     file.size,
                     &download_url,
                     &relative_path,
                     0,
+                    fixed_path,
                 )
                 .await
             {
@@ -1643,6 +1792,9 @@ impl DownloadManager {
                     relative_path: queue_item.relative_path.clone(),
                     file_size: file_info.size as u64,
                     download_url: self.client.get_download_url(file_id),
+                    crc32: file_info.crc32.clone(),
+                    save_as: queue_item.save_as.clone(),
+                    fixed_path: queue_item.fixed_path,
                 };
 
                 match self.download_file(download_file, None).await {
@@ -2038,7 +2190,39 @@ impl DownloadManager {
         let progress_trackers = self.progress_trackers.read().await;
         let mut active_downloads = Vec::new();
 
+        let checking = self
+            .checking
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         for item in downloading_items {
+            // A checksum read shows its own progress (R4)
+            if let Some((read, started)) = checking.get(&item.file_id) {
+                let elapsed = started.elapsed();
+                let speed_bps = if elapsed.as_secs_f64() > 0.0 {
+                    *read as f64 / elapsed.as_secs_f64()
+                } else {
+                    0.0
+                };
+                let size = item.file_size as u64;
+                active_downloads.push(ActiveDownload {
+                    file_id: item.file_id,
+                    filename: item.filename,
+                    file_size: size,
+                    bytes_downloaded: *read,
+                    percentage: if size > 0 {
+                        (*read as f64 / size as f64) * 100.0
+                    } else {
+                        0.0
+                    },
+                    speed_bps,
+                    eta_seconds: (speed_bps > 0.0)
+                        .then(|| (size.saturating_sub(*read) as f64 / speed_bps) as u64),
+                    elapsed_seconds: elapsed.as_secs(),
+                    phase: "checking",
+                });
+                continue;
+            }
             // Get progress tracker if exists
             if let Some(tracker) = progress_trackers.get(&item.file_id) {
                 let (avg_speed, elapsed) = tracker.overall_stats();
@@ -2070,6 +2254,7 @@ impl DownloadManager {
                     speed_bps: avg_speed,
                     eta_seconds,
                     elapsed_seconds: elapsed.as_secs(),
+                    phase: "downloading",
                 });
             }
         }
@@ -2204,6 +2389,9 @@ mod tests {
             file_size: 1024,
             download_url: "https://example.com/test.txt".to_string(),
             relative_path: "./".to_string(),
+            crc32: None,
+            save_as: None,
+            fixed_path: false,
         };
 
         assert_eq!(file.file_id, 123);

@@ -20,10 +20,11 @@ axum = "0.7"
 # Logging
 tracing = { workspace = true }
 
-# Disk space (statvfs)
-rustix = { version = "1", features = ["fs"] }
+# Disk space (statvfs) and clock ticks for process CPU time
+rustix = { version = "1", features = ["fs", "param"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 reqwest = { workspace = true }
 tempfile = "3.8"
+tracing-subscriber = { workspace = true }

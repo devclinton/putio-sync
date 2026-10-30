@@ -2315,6 +2315,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "crc",
  "futures-util",
  "indicatif",
  "mockito",
@@ -2380,6 +2381,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

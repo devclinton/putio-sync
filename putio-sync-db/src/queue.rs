@@ -27,6 +27,32 @@ impl<'a> QueueRepository<'a> {
         relative_path: &str,
         priority: i64,
     ) -> DbResult<i64> {
+        self.add_with_path_kept(
+            file_id,
+            filename,
+            file_size,
+            download_url,
+            relative_path,
+            priority,
+            false,
+        )
+        .await
+    }
+
+    /// [`Self::add`], marking the row `fixed_path` when asked: such a file is
+    /// overwritten rather than saved under a numbered name. Once set, a later add
+    /// without it keeps it.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_with_path_kept(
+        &self,
+        file_id: i64,
+        filename: &str,
+        file_size: i64,
+        download_url: &str,
+        relative_path: &str,
+        priority: i64,
+        fixed_path: bool,
+    ) -> DbResult<i64> {
         debug!(
             "Adding to queue: file_id={}, filename={}, size={}, relative_path={}, priority={}",
             file_id, filename, file_size, relative_path, priority
@@ -34,11 +60,12 @@ impl<'a> QueueRepository<'a> {
 
         let result = sqlx::query(
             r#"
-            INSERT INTO download_queue (file_id, filename, file_size, download_url, relative_path, priority, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO download_queue (file_id, filename, file_size, download_url, relative_path, priority, status, fixed_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(file_id) DO UPDATE SET
                 priority = excluded.priority,
                 relative_path = excluded.relative_path,
+                fixed_path = MAX(fixed_path, excluded.fixed_path),
                 updated_at = CURRENT_TIMESTAMP
             "#,
         )
@@ -49,11 +76,24 @@ impl<'a> QueueRepository<'a> {
         .bind(relative_path)
         .bind(priority)
         .bind(QueueStatus::Pending.to_string())
+        .bind(fixed_path)
         .execute(self.pool)
         .await
         .map_err(tracked(DbOp::Queue, "Failed to add to queue"))?;
 
         Ok(result.last_insert_rowid())
+    }
+
+    /// Remember the numbered name a "keep both" download writes to, so a restart
+    /// resumes the same file; `None` clears it
+    pub async fn set_save_as(&self, file_id: i64, save_as: Option<&str>) -> DbResult<()> {
+        sqlx::query("UPDATE download_queue SET save_as = ? WHERE file_id = ?")
+            .bind(save_as)
+            .bind(file_id)
+            .execute(self.pool)
+            .await
+            .map_err(tracked(DbOp::Queue, "Failed to set queue save_as"))?;
+        Ok(())
     }
 
     /// Get all pending items ordered by priority (highest first)

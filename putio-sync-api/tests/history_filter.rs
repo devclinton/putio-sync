@@ -93,3 +93,28 @@ async fn wildcards_match_literally() {
     let body = history(&app, "?name=b_x").await;
     assert_eq!(body["total"], 0);
 }
+
+/// Feature 040: a row saved under a new name reports its path and outcome; older rows
+/// report neither
+#[tokio::test]
+async fn entries_carry_local_path_and_outcome() {
+    let app = seeded().await;
+    let rows = app.db().history();
+    let id = rows
+        .insert(5, "Movie.mkv", 1024, HistoryAction::Downloaded, None, None)
+        .await
+        .unwrap();
+    rows.set_outcome(id, Some("/downloads/Movie (1).mkv"), Some("saved_as"))
+        .await
+        .unwrap();
+
+    let body = history(&app, "?name=Movie").await;
+    let entry = &body["entries"][0];
+    assert_eq!(entry["local_path"], "/downloads/Movie (1).mkv");
+    assert_eq!(entry["outcome"], "saved_as");
+
+    let body = history(&app, "?name=debian").await;
+    let entry = &body["entries"][0];
+    assert_eq!(entry["local_path"], Value::Null);
+    assert_eq!(entry["outcome"], Value::Null);
+}

@@ -187,7 +187,13 @@ pub struct DownloadSettings {
     pub workers: usize,
     pub target_directory: String,
     pub buffer_size_mb: usize,
-    pub skip_existing: bool,
+    /// What to do when a file already exists (feature 040). Missing in a PUT body
+    /// leaves it unchanged, unless an old body sends `skip_existing`.
+    #[serde(default)]
+    pub on_existing: Option<putio_sync_core::config::ExistingFile>,
+    /// Replaced by `on_existing`; still read from an old UI tab, never sent
+    #[serde(default, skip_serializing)]
+    pub skip_existing: Option<bool>,
     pub delete_after_download: bool,
     pub resume_enabled: bool,
     pub chunk_size_mb: Option<usize>,
@@ -352,7 +358,8 @@ const DOWNLOAD_LIVE: &[&str] = &[
     "buffer_size_mb",
     "max_retries",
     "retry_initial_delay_secs",
-    "skip_existing",
+    "on_existing",
+    "resume_enabled",
     "delete_after_download",
     "blocked_extensions",
 ];
@@ -372,7 +379,8 @@ fn download_view(config: &Config) -> DownloadSettings {
             .to_string_lossy()
             .to_string(),
         buffer_size_mb: config.download.buffer_size_mb,
-        skip_existing: config.download.skip_existing,
+        on_existing: Some(config.download.on_existing()),
+        skip_existing: None,
         delete_after_download: config.download.delete_after_download,
         resume_enabled: config.download.resume_enabled,
         chunk_size_mb: config.download.chunk_size_mb,
@@ -512,7 +520,14 @@ async fn update_download_settings(
         config.download.workers = settings.workers;
         config.download.target_directory = settings.target_directory.into();
         config.download.buffer_size_mb = settings.buffer_size_mb;
-        config.download.skip_existing = settings.skip_existing;
+        // An unchanged choice leaves the file as it is, old `skip_existing` included
+        if let Some(choice) = settings
+            .on_existing
+            .or(settings.skip_existing.map(Into::into))
+            .filter(|choice| *choice != config.download.on_existing())
+        {
+            config.download.set_on_existing(choice);
+        }
         config.download.delete_after_download = settings.delete_after_download;
         config.download.resume_enabled = settings.resume_enabled;
         config.download.chunk_size_mb = settings.chunk_size_mb;
