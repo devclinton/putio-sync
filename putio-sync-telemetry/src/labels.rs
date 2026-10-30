@@ -268,6 +268,17 @@ label_enum!(
 );
 
 label_enum!(
+    /// How a held magnet's hold ended (043).
+    HoldResult {
+        FoundPassed => "found_passed",
+        FoundRejected => "found_rejected",
+        RanOut => "ran_out",
+        Removed => "removed",
+        Unchecked => "unchecked",
+    }
+);
+
+label_enum!(
     /// An operator's flag on a release.
     FlagKind {
         Fake => "fake",

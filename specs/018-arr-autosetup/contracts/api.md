@@ -46,8 +46,13 @@ rest of Settings (FR-028).
 ```json
 {"enabled": true,
  "clients_seen": [{"agent": "Sonarr", "last_contact": "2026-10-28T10:01:02Z"}],
- "items": {"putio": 1, "local": 0, "done": 3, "failed": 0}}
+ "items": {"putio": 1, "local": 0, "done": 3, "failed": 0},
+ "held": [{"hash": "…", "name": "Show.S01E04", "since": "2026-10-28T10:00:00Z",
+           "until": "2026-10-28T10:05:00Z", "attempts": 1, "last_lookup": "timeout"}]}
 ```
+
+`held` lists the magnets held until a cache has their file list (feature 043), never the
+magnet. The Queue page shows it.
 
 ## `PUT /arr/client`: Download client form (US3)
 

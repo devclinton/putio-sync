@@ -185,7 +185,7 @@ function render() {
   els.plot = null;
   els.body.replaceChildren(
     h("div", { class: "tiles" }, tile("Files", count(t.files)), tile("Downloaded", bytes(t.bytes)), tile("Time downloading", t.seconds ? duration(t.seconds) : "—"), tile("Average speed", t.avg_bps ? speed(t.avg_bps) : "—")),
-    h("div", { class: "stats-grid" }, card("Bandwidth", empty ? null : bandwidth()), card("When", empty ? null : heatmap()), card("File types", empty ? null : types()), card("Origin", empty ? null : origin()), card("Sources", empty ? null : sources()), rejectedCard(), magnetsCard(), reportsCard()),
+    h("div", { class: "stats-grid" }, card("Bandwidth", empty ? null : bandwidth()), card("When", empty ? null : heatmap()), card("File types", empty ? null : types()), card("Origin", empty ? null : origin()), card("Sources", empty ? null : sources()), rejectedCard(), magnetsCard(), heldCard(), reportsCard()),
   );
   if (els.plot) drawBars();
 }
@@ -532,6 +532,20 @@ function magnetsCard() {
     caches,
     h("p", { class: "muted note", text: "Misses aren't kept per cache, so they share one row. Magnets with lookups off count as sent to Put.io." }),
   );
+}
+
+function heldCard() {
+  const title = "Held magnets";
+  const held = releases && releases.held;
+  const ended = held ? held.found + held.ran_out + held.removed : 0;
+  if (!ended && !(held && held.now)) return h("section", { class: "card" }, h("h2", { text: title }), emptyState(held ? "No magnets held in this range" : "Can't load the release check"));
+  const rows = [
+    { label: "Found on a later ask", count: held.found },
+    { label: "Ran out, sent unchecked", count: held.ran_out },
+    { label: "Removed while held", count: held.removed },
+  ];
+  const median = held.median_found_secs == null ? "" : ` Found ones took ${duration(held.median_found_secs)} (median).`;
+  return h("section", { class: "card" }, h("h2", { text: title }), countList(null, rows, ended), h("p", { text: `${count(held.now)} waiting now.${median}` }));
 }
 
 function reportsCard() {

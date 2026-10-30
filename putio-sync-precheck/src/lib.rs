@@ -150,15 +150,16 @@ impl Prechecker {
         lookup::lookup(&self.lookup_http, hash, &self.config.caches, limit).await
     }
 
-    /// Log and count a magnet that goes to Put.io unchecked
-    pub fn unknown(&self, hash: &str, name: &str, source: PrecheckSource, missed: Missed) {
+    /// Log and count a magnet that goes to Put.io unchecked. `lookup` is the last ask's
+    /// result, as [`Missed::as_str`] gives it.
+    pub fn unknown(&self, hash: &str, name: &str, source: PrecheckSource, lookup: &str) {
         info!(
             hash,
             name,
             source = source.as_str(),
             stage = Stage::Before.as_str(),
             outcome = "unknown",
-            lookup = missed.as_str(),
+            lookup,
             "Release not checked before Put.io"
         );
         metrics::check(source, PrecheckStage::Before, PrecheckOutcome::Unknown);

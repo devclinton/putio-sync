@@ -187,6 +187,49 @@ async fn empty_database_has_every_section() {
         json!({"rejected": 0, "flagged_fake": 0, "flagged_not_fake": 0,
                "top_types": [], "top_trackers": []})
     );
+    assert_eq!(
+        body["held"],
+        json!({"now": 0, "found": 0, "ran_out": 0, "removed": 0, "median_found_secs": null})
+    );
+}
+
+/// How holds ended (043 US5)
+#[tokio::test]
+async fn counts_how_holds_ended() {
+    let app = test_app().await;
+    let db = app.state.database.as_ref().unwrap();
+    let now = chrono::Utc::now().timestamp();
+    for (hash, result, held_for) in [
+        ("a", "found_passed", 60),
+        ("b", "found_rejected", 240),
+        ("c", "ran_out", 300),
+        ("d", "removed", 10),
+        ("e", "found_passed", 120),
+    ] {
+        db.held()
+            .insert(&putio_sync_db::NewHeld {
+                hash,
+                magnet: "magnet:?xt=urn:btih:x",
+                source: "magnet",
+                category: Some("sonarr"),
+                watch_folder: None,
+                check_id: None,
+                last_lookup: Some("not_found"),
+                held_at: now - held_for,
+                next_at: now,
+                until_at: now + 300,
+            })
+            .await
+            .unwrap();
+        db.held().finish(hash, result, now).await.unwrap();
+    }
+    let body = body_json(app.get("/stats/releases").await).await;
+    assert_eq!(
+        body["held"],
+        json!({"now": 0, "found": 3, "ran_out": 1, "removed": 1, "median_found_secs": 120})
+    );
+    // The magnet never shows
+    assert!(!body.to_string().contains("magnet:?"));
 }
 
 #[tokio::test]
