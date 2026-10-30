@@ -271,7 +271,7 @@ renamed `.rejected`.
 **Independent test**: a temporary watch folder holding a fake and a real `.torrent`. After one
 scan, only the real one is uploaded, and the fake is `<name>.torrent.rejected`.
 
-- [ ] T018 [US4] Test, then in `process_torrent_file` in
+- [X] T018 [US4] Test, then in `process_torrent_file` in
   `putio-sync-file-manager/src/watcher.rs`, before upload:
   - `.torrent`: read the bytes, check them with `Policy::for_folder(cfg, rules,
     <upload folder path>, Key::Watch(dir))`;
@@ -287,7 +287,7 @@ scan, only the real one is uploaded, and the fake is `<name>.torrent.rejected`.
   - Pass the policy inputs (config, `RuleSet`, `Prechecker`, DB) through the existing
     constructor arguments rather than globals.
   - Test: `putio-sync-file-manager/tests/watch_precheck.rs`.
-- [ ] T019 [US4] Test, then add a check-on-Put.io pass at the start of `scan_directories`, for
+- [X] T019 [US4] Test, then add a check-on-Put.io pass at the start of `scan_directories`, for
   pending rows with `source = watch_magnet`:
   - list the transfers once;
   - for each completed one with a `file_id`, run T016;

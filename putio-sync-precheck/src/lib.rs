@@ -3,13 +3,16 @@
 
 pub mod fetch;
 pub mod lookup;
+pub mod magnet;
 pub mod metainfo;
 pub mod policy;
+pub mod putio;
 pub mod report;
 pub mod rule;
 
 pub use lookup::{Lookup, Missed};
 pub use metainfo::{Metainfo, ReleaseFile};
+pub use putio::OnPutio;
 pub use putio_sync_telemetry::{PrecheckSource, PrecheckStage};
 pub use report::Traits;
 pub use rule::{Policy, Reason, Stage, Verdict};

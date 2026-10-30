@@ -24,7 +24,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   the info hash is sent, and `magnet_lookup = false` turns it off). A magnet
   that isn't found goes to Put.io, and its files are checked there before
   any reach the NAS: a fake is deleted from Put.io and fails with "(checked
-  on Put.io)" (feature 042).
+  on Put.io)". Watch-folder `.torrent` and `.magnet` files are checked the
+  same way: a fake isn't uploaded and is renamed `<file>.rejected`
+  (feature 042).
 - A Doctor page that checks the Put.io account and the sync setup: sign-in,
   storage, failed or stalled transfers, empty folders, duplicate files and
   leftover .torrent files, with one-click fixes (feature 010).
