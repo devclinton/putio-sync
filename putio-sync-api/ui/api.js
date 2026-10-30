@@ -119,3 +119,8 @@ export function arrStatus() {
 export function testArrServer(index) {
   return post(`/arr/servers/${index}/test`);
 }
+
+/** What the release pre-check rejected in `range`: `{range, rejected, magnets, reports}`. */
+export function releaseStats(range, tz) {
+  return get(`/stats/releases?${new URLSearchParams({ range, tz: String(tz) })}`);
+}
