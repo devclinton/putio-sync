@@ -38,6 +38,18 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   edits all of this and shows, for each category and watch folder, the
   settings and wanted file types it ends up with. Release records older than
   400 days are pruned daily (feature 042).
+- A magnet link that no cache knows yet is held instead of going straight to
+  Put.io. Sonarr or Radarr sees it as queued, and the Queue page lists it under
+  "Waiting for a file list". The cache is asked again every 30 s for up to
+  5 minutes. If the file list turns up it's checked like a .torrent, so a fake
+  never reaches Put.io. If it doesn't, the magnet goes to Put.io and is checked
+  there as before. The first ask now waits 3 s instead of up to 10 s. Set
+  `hold_magnet_secs = 0` under `[precheck]` to turn holding off
+  (`hold_retry_secs` and `first_lookup_secs` set the other two times; all
+  three are on the Settings page's Release check card). A `.magnet` file in a
+  watch folder is held the same way and stays in the folder; deleting it ends
+  the hold. The Stats page's "Held magnets" tile shows how holds ended and how
+  long the found ones took (feature 043).
 - Metrics for putio-sync's own CPU, memory, threads, open files and disk I/O
   (`putio_sync_process_*`, Linux and Docker only), and
   `putio_sync_sync_in_progress`, which is 1 while a sync runs (feature 041).

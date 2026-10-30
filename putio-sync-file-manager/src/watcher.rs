@@ -9,7 +9,9 @@ use anyhow::{Context, Result};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use putio_sync_client::{error_chain, PutioApiClient, Transfer};
 use putio_sync_db::models::{Origin, TransferOrigin};
-use putio_sync_db::{CheckState, Database, NewCheck, NewReport, PendingCheck, ReportKind};
+use putio_sync_db::{
+    CheckState, Database, Held, NewCheck, NewHeld, NewReport, PendingCheck, ReportKind,
+};
 use putio_sync_precheck::magnet::from_magnet;
 use putio_sync_precheck::metainfo::info_hash;
 use putio_sync_precheck::policy::Key;
@@ -17,7 +19,8 @@ use putio_sync_precheck::putio::{self as putio_check, OnPutio};
 use putio_sync_precheck::{
     Lookup, Metainfo, Outcome, Policy, PrecheckSource, Prechecker, Reason, Stage, Traits,
 };
-use putio_sync_telemetry::watch as watch_metrics;
+use putio_sync_telemetry::labels::HoldResult;
+use putio_sync_telemetry::{precheck as precheck_metrics, watch as watch_metrics};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -42,6 +45,8 @@ pub struct WatchStats {
     pub files_rejected: usize,
     /// Number of already-uploaded files removed or archived by this scan
     pub cleaned_up: usize,
+    /// Number of magnets waiting for a cache to have their file list (043 US4)
+    pub files_held: usize,
 }
 
 /// What `process_torrent_file` did with a watch file
@@ -59,6 +64,16 @@ pub enum ProcessOutcome {
     Unsupported,
     /// Failed the release check: not uploaded, renamed `.rejected` (042 US4)
     Rejected(String),
+    /// A magnet no cache knows yet: left in the folder and asked about again (043 US4)
+    Held,
+}
+
+/// A watch file's check before upload
+enum FileCheck {
+    /// Checked now; boxed, as it is far bigger than `Held`
+    Done(Box<(WatchCheck, Outcome)>),
+    /// Held for a later ask
+    Held,
 }
 
 /// Folders above an upload folder read for its path, so a loop can't hang a scan
@@ -273,6 +288,10 @@ impl TorrentWatchCore {
                     }
                     // Renamed `.rejected`: no archive or delete step
                     Ok(ProcessOutcome::Rejected(_)) => stats.files_rejected += 1,
+                    Ok(ProcessOutcome::Held) => {
+                        stats.files_held += 1;
+                        debug!("Held: {}", file_path.display());
+                    }
                     Ok(ProcessOutcome::Gone) | Ok(ProcessOutcome::Unsupported) => {
                         stats.files_skipped += 1;
                         debug!("Skipped: {}", file_path.display());
@@ -289,6 +308,9 @@ impl TorrentWatchCore {
                         error!("Failed to process {}: {}", file_path.display(), e);
                     }
                 }
+            }
+            if let Some(db) = database {
+                self.end_holds_of_deleted_files(dir, db).await;
             }
         }
 
@@ -403,11 +425,18 @@ impl TorrentWatchCore {
         };
         info!("🔼 Processing new .{} file: {}", file_type, path.display());
 
-        let check = match self.precheck_file(path, client, parent_id).await? {
-            Some((check, Outcome::Rejected(meta, reason))) => {
-                return Ok(self.reject_file(path, &check, meta, reason, database).await);
-            }
-            other => other,
+        let check = match self
+            .precheck_file(path, client, parent_id, database)
+            .await?
+        {
+            Some(FileCheck::Held) => return Ok(ProcessOutcome::Held),
+            Some(FileCheck::Done(done)) => match *done {
+                (check, Outcome::Rejected(meta, reason)) => {
+                    return Ok(self.reject_file(path, &check, meta, reason, database).await);
+                }
+                done => Some(done),
+            },
+            None => None,
         };
 
         // Process based on file type
@@ -613,7 +642,8 @@ impl TorrentWatchCore {
         path: &Path,
         client: &PutioApiClient,
         parent_id: Option<i64>,
-    ) -> Result<Option<(WatchCheck, Outcome)>> {
+        database: Option<&Database>,
+    ) -> Result<Option<FileCheck>> {
         let Some(precheck) = &self.precheck else {
             return Ok(None);
         };
@@ -621,7 +651,28 @@ impl TorrentWatchCore {
         let dir = path.parent().unwrap_or(Path::new(""));
         let folder = self.folder_path(client, parent_id).await?;
         let policy = precheck.policy(&folder, Key::Watch(dir));
+        let content = if self.is_magnet_file(path) {
+            tokio::fs::read_to_string(path).await.unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let magnet = from_magnet(content.trim());
+        // A hold from an earlier scan (043 US4)
+        let held = match (database, &magnet) {
+            (Some(db), Some((hash, _))) => match db.held().get(hash).await {
+                Ok(held) => held.filter(|h| h.source == PrecheckSource::WatchMagnet.as_str()),
+                Err(e) => {
+                    warn!(hash = %hash, error = %e, "Failed to read held magnet");
+                    None
+                }
+            },
+            _ => None,
+        };
         if !policy.enabled {
+            // Turned off while held: sent on as it is
+            if let (Some(db), Some(held)) = (database, &held) {
+                end_hold(db, held, HoldResult::Unchecked).await;
+            }
             return Ok(None);
         }
         let stem = path
@@ -631,22 +682,96 @@ impl TorrentWatchCore {
         let watch_folder = dir.display().to_string();
 
         if self.is_magnet_file(path) {
-            let content = tokio::fs::read_to_string(path).await.unwrap_or_default();
-            let Some((hash, name)) = from_magnet(content.trim()) else {
+            let Some((hash, name)) = magnet else {
                 debug!(path = %path.display(), "Magnet has no info hash; not checked");
                 return Ok(None);
             };
+            let config = precheck.config();
+            let now = unix_now();
+            if held.as_ref().is_some_and(|h| now < h.next_at) {
+                return Ok(Some(FileCheck::Held));
+            }
             let source = PrecheckSource::WatchMagnet;
             let name = name.unwrap_or(stem);
-            let limit = Duration::from_secs(precheck.config().lookup_timeout_secs);
+            let limit = Duration::from_secs(config.lookup_timeout_secs);
             let found = precheck.lookup(&hash, limit).await;
             let lookup = Some(found.as_str());
             let (outcome, cache) = match found {
                 Lookup::Found { meta, cache } => {
-                    (precheck.check_meta(meta, &policy, source), Some(cache))
+                    let outcome = precheck.check_meta(meta, &policy, source);
+                    if let (Some(db), Some(held)) = (database, &held) {
+                        let result = match outcome {
+                            Outcome::Rejected(..) => HoldResult::FoundRejected,
+                            _ => HoldResult::FoundPassed,
+                        };
+                        end_hold(db, held, result).await;
+                    }
+                    (outcome, Some(cache))
+                }
+                Lookup::Missed(missed) if config.holding() && database.is_some() => {
+                    let db = database.expect("checked above");
+                    match &held {
+                        // Asked again and still missing: wait for the next ask
+                        Some(held) if now < held.until_at => {
+                            let next = (now + config.hold_retry_secs as i64).min(held.until_at);
+                            debug!(hash = %hash, lookup = missed.as_str(), next, "Held watch magnet still missing");
+                            if let Err(e) = db.held().reschedule(&hash, next, missed.as_str()).await
+                            {
+                                warn!(hash = %hash, error = %e, "Failed to reschedule held magnet");
+                            }
+                            return Ok(Some(FileCheck::Held));
+                        }
+                        // Ran out: sent on unchecked, as 042 US4 does
+                        Some(held) => {
+                            end_hold(db, held, HoldResult::RanOut).await;
+                            precheck.unknown(&hash, &name, source, missed.as_str());
+                        }
+                        None => {
+                            let until = now + config.hold_magnet_secs as i64;
+                            let hold = NewHeld {
+                                hash: &hash,
+                                magnet: content.trim(),
+                                source: source.as_str(),
+                                category: None,
+                                watch_folder: Some(&watch_folder),
+                                check_id: None,
+                                last_lookup: Some(missed.as_str()),
+                                held_at: now,
+                                next_at: (now + config.hold_retry_secs as i64).min(until),
+                                until_at: until,
+                            };
+                            match db.held().insert(&hold).await {
+                                Ok(()) => {
+                                    info!(
+                                        hash = %hash,
+                                        name = %name,
+                                        path = %path.display(),
+                                        lookup = missed.as_str(),
+                                        hold_secs = config.hold_magnet_secs,
+                                        "Watch magnet held until a cache has its file list"
+                                    );
+                                    update_held_gauge(db).await;
+                                    return Ok(Some(FileCheck::Held));
+                                }
+                                // Sent on unchecked rather than lost
+                                Err(e) => {
+                                    warn!(hash = %hash, error = %e, "Failed to hold watch magnet");
+                                    precheck.unknown(&hash, &name, source, missed.as_str());
+                                }
+                            }
+                        }
+                    }
+                    let outcome = Outcome::Unknown {
+                        hash: hash.clone(),
+                        name: Some(name.clone()),
+                    };
+                    (outcome, None)
                 }
                 Lookup::Missed(missed) => {
-                    precheck.unknown(&hash, &name, source, missed);
+                    if let (Some(db), Some(held)) = (database, &held) {
+                        end_hold(db, held, HoldResult::RanOut).await;
+                    }
+                    precheck.unknown(&hash, &name, source, missed.as_str());
                     let outcome = Outcome::Unknown {
                         hash: hash.clone(),
                         name: Some(name.clone()),
@@ -663,7 +788,7 @@ impl TorrentWatchCore {
                 cache,
                 policy,
             };
-            return Ok(Some((check, outcome)));
+            return Ok(Some(FileCheck::Done(Box::new((check, outcome)))));
         }
 
         let bytes = tokio::fs::read(path)
@@ -681,7 +806,36 @@ impl TorrentWatchCore {
             cache: None,
             policy,
         };
-        Ok(Some((check, outcome)))
+        Ok(Some(FileCheck::Done(Box::new((check, outcome)))))
+    }
+
+    /// End the holds of `dir`'s magnets whose file is gone (043 US4): nothing is sent to
+    /// Put.io
+    async fn end_holds_of_deleted_files(&self, dir: &Path, db: &Database) {
+        let holds = match db.held().in_watch_folder(&dir.display().to_string()).await {
+            Ok(holds) => holds,
+            Err(e) => {
+                warn!(dir = %dir.display(), error = %e, "Failed to list watch folder holds");
+                return;
+            }
+        };
+        if holds.is_empty() {
+            return;
+        }
+        let mut present = HashSet::new();
+        for path in self.find_torrent_files(dir).unwrap_or_default() {
+            if !self.is_magnet_file(&path) {
+                continue;
+            }
+            let content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+            if let Some((hash, _)) = from_magnet(content.trim()) {
+                present.insert(hash);
+            }
+        }
+        for held in holds.iter().filter(|h| !present.contains(&h.hash)) {
+            info!(hash = %held.hash, dir = %dir.display(), "Held watch magnet's file is gone; hold ended");
+            end_hold(db, held, HoldResult::Removed).await;
+        }
     }
 
     /// A watch file that failed the check: not uploaded, marked processed, recorded, and
@@ -1074,6 +1228,35 @@ pub fn calculate_string_checksum(content: &str) -> String {
     hasher.update(content.as_bytes());
     let result = hasher.finalize();
     format!("{:x}", result)
+}
+
+/// Unix seconds now, the time `held_magnets` uses
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// End a watch magnet's hold, for the Stats page and metrics. A failure is logged.
+async fn end_hold(db: &Database, held: &Held, result: HoldResult) {
+    let now = unix_now();
+    match db.held().finish(&held.hash, result.as_str(), now).await {
+        Ok(Some(held)) => {
+            let secs = (now - held.held_at).max(0) as u64;
+            precheck_metrics::hold_ended(result, Duration::from_secs(secs));
+        }
+        Ok(None) => {}
+        Err(e) => warn!(hash = %held.hash, error = %e, "Failed to end hold"),
+    }
+    update_held_gauge(db).await;
+}
+
+/// Set the held magnets gauge
+async fn update_held_gauge(db: &Database) {
+    match db.held().count().await {
+        Ok(count) => precheck_metrics::set_held(count),
+        Err(e) => warn!(error = %e, "Failed to count held magnets"),
+    }
 }
 
 /// Write the check row of an uploaded watch file: passed, or pending its check on Put.io

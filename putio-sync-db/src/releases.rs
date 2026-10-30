@@ -4,6 +4,7 @@
 
 use super::analytics::RangePreset;
 use super::error::{tracked, DbError, DbResult};
+use super::held::{HeldRepository, HoldStats};
 use putio_sync_telemetry::DbOp;
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
@@ -181,6 +182,18 @@ impl Default for NewReport<'_> {
     }
 }
 
+/// How a held magnet's check settled, for [`ReleasesRepository::settle_held`]
+#[derive(Debug, Clone, Copy)]
+pub struct HeldSettle<'a> {
+    pub state: CheckState,
+    /// `found` when a later ask had it; `None` keeps the first ask's result
+    pub lookup: Option<&'a str>,
+    pub lookup_cache: Option<&'a str>,
+    pub total_size: i64,
+    pub reason: Option<&'a str>,
+    pub transfer_id: Option<i64>,
+}
+
 /// Repository for `release_checks` and `release_reports`
 pub struct ReleasesRepository<'a> {
     pool: &'a SqlitePool,
@@ -246,6 +259,44 @@ impl<'a> ReleasesRepository<'a> {
         .execute(self.pool)
         .await
         .map_err(tracked(DbOp::Other, "Failed to resolve release check"))?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Settle a held magnet's pending check before Put.io (feature 043): found on a later
+    /// ask, or sent on unchecked. A row already settled is left alone.
+    pub async fn settle_held(&self, id: i64, held: &HeldSettle<'_>) -> DbResult<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE release_checks SET
+                state = ?, lookup = COALESCE(?, lookup), lookup_cache = ?, total_size = ?,
+                reason = ?, transfer_id = ?, resolved_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND state = 'pending'
+            "#,
+        )
+        .bind(held.state.as_str())
+        .bind(held.lookup)
+        .bind(held.lookup_cache)
+        .bind(held.total_size)
+        .bind(held.reason)
+        .bind(held.transfer_id)
+        .bind(id)
+        .execute(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to settle held release check"))?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Give a pending check its Put.io transfer, so the check on Put.io (042 US3) picks it
+    /// up: a held magnet whose hold ran out (feature 043)
+    pub async fn set_check_transfer(&self, id: i64, transfer_id: i64) -> DbResult<bool> {
+        let result = sqlx::query(
+            "UPDATE release_checks SET transfer_id = ? WHERE id = ? AND state = 'pending'",
+        )
+        .bind(transfer_id)
+        .bind(id)
+        .execute(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to set release check transfer"))?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -652,6 +703,7 @@ impl<'a> ReleasesRepository<'a> {
             caches.into_values().partition(|c| c.cache.is_some());
         named.extend(missed);
         stats.magnets.caches = named;
+        stats.held = HeldRepository::new(self.pool).stats(from).await?;
 
         let rows = sqlx::query(
             r#"
@@ -730,7 +782,11 @@ impl<'a> ReleasesRepository<'a> {
                 .execute(self.pool)
                 .await
                 .map_err(tracked(DbOp::Other, "Failed to prune release reports"))?;
-        Ok(checks.rows_affected() + reports.rows_affected())
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let holds = HeldRepository::new(self.pool).prune(days, now).await?;
+        Ok(checks.rows_affected() + reports.rows_affected() + holds)
     }
 }
 
@@ -811,6 +867,44 @@ mod tests {
             total_size: 1024,
             ..NewCheck::default()
         }
+    }
+
+    #[tokio::test]
+    async fn held_checks_settle_once_and_take_a_transfer() {
+        let (_dir, db) = db().await;
+        let repo = db.releases();
+        let held = NewCheck {
+            transfer_id: None,
+            ..check(None)
+        };
+        let id = repo.insert_check(&held).await.unwrap();
+        // No transfer yet: the check on Put.io leaves it alone
+        assert!(repo.pending_transfer_ids().await.unwrap().is_empty());
+
+        let settle = HeldSettle {
+            state: CheckState::Passed,
+            lookup: Some("found"),
+            lookup_cache: Some("itorrents.net"),
+            total_size: 2048,
+            reason: None,
+            transfer_id: Some(11),
+        };
+        assert!(repo.settle_held(id, &settle).await.unwrap());
+        assert!(!repo.settle_held(id, &settle).await.unwrap());
+        let (state, lookup, transfer): (String, String, i64) =
+            sqlx::query_as("SELECT state, lookup, transfer_id FROM release_checks WHERE id = ?")
+                .bind(id)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            (state.as_str(), lookup.as_str(), transfer),
+            ("passed", "found", 11)
+        );
+
+        let ran_out = repo.insert_check(&held).await.unwrap();
+        assert!(repo.set_check_transfer(ran_out, 12).await.unwrap());
+        assert_eq!(repo.pending_transfer_ids().await.unwrap(), vec![12]);
     }
 
     #[tokio::test]
@@ -1045,6 +1139,8 @@ pub struct ReleaseStats {
     pub rejected: RejectedStats,
     pub magnets: MagnetStats,
     pub reports: ReportStats,
+    /// Held magnets (feature 043)
+    pub held: HoldStats,
 }
 
 /// The range counted, UTC epoch seconds; `from` is `None` for everything

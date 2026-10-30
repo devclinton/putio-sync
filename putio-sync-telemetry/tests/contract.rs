@@ -49,6 +49,9 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_precheck_fallback_total",
     "putio_sync_precheck_fallback_putio_bytes_total",
     "putio_sync_release_flags_total",
+    "putio_sync_precheck_held_total",
+    "putio_sync_precheck_held",
+    "putio_sync_precheck_held_seconds",
     "putio_sync_db_errors_total",
     "putio_sync_disk_free_bytes",
     "putio_sync_disk_total_bytes",
@@ -175,6 +178,8 @@ fn record_everything(t: &Telemetry) {
     t.precheck_lookup_time(Duration::from_millis(300));
     t.precheck_fallback(FallbackResult::Rejected, 1024);
     t.release_flag(FlagKind::Fake);
+    t.precheck_hold_ended(HoldResult::FoundPassed, Duration::from_secs(90));
+    t.set_precheck_held(1);
     t.set_transfers_stalled(2);
     t.db_error(DbOp::Queue);
     t.set_queue_counts(&[(QueueState::Pending, 2)]);
@@ -215,6 +220,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v.extend(strs(ArrSetupResult::ALL, ArrSetupResult::as_str));
             v.extend(strs(LookupResult::ALL, LookupResult::as_str));
             v.extend(strs(FallbackResult::ALL, FallbackResult::as_str));
+            v.extend(strs(HoldResult::ALL, HoldResult::as_str));
             v
         }
         "kind" => {

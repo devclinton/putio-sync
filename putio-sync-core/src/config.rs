@@ -223,6 +223,13 @@ pub struct PrecheckConfig {
     pub lookup_timeout_secs: u64,
     /// .torrent cache URLs with `{HASH}` (upper case) or `{hash}` (lower case)
     pub caches: Vec<String>,
+    /// How long a magnet missed on the first ask waits for a cache to fetch it, 0..=3600;
+    /// 0 sends it to Put.io at once (feature 043)
+    pub hold_magnet_secs: u64,
+    /// Time between cache asks for a held magnet, 10..=600
+    pub hold_retry_secs: u64,
+    /// The first ask's limit while holding is on, 1..=`lookup_timeout_secs`
+    pub first_lookup_secs: u64,
     /// Per *arr category (the folder below the download dir)
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub categories: BTreeMap<String, PrecheckOverride>,
@@ -256,6 +263,9 @@ impl Default for PrecheckConfig {
             magnet_lookup: true,
             lookup_timeout_secs: 10,
             caches: vec![DEFAULT_PRECHECK_CACHE.to_string()],
+            hold_magnet_secs: 300,
+            hold_retry_secs: 30,
+            first_lookup_secs: 3,
             categories: BTreeMap::new(),
             watch: BTreeMap::new(),
         }
@@ -263,6 +273,11 @@ impl Default for PrecheckConfig {
 }
 
 impl PrecheckConfig {
+    /// A magnet missed on the first ask is held and asked again (feature 043)
+    pub fn holding(&self) -> bool {
+        self.enabled && self.magnet_lookup && self.hold_magnet_secs > 0
+    }
+
     /// Check the ranges and cache URLs. A `watch` key that is not in `watch_paths` is
     /// only a warning, so removing a watch path doesn't break startup.
     pub fn validate(&self, watch_paths: &[PathBuf]) -> CoreResult<()> {
@@ -283,6 +298,27 @@ impl PrecheckConfig {
                 "precheck.lookup_timeout_secs",
                 &self.lookup_timeout_secs.to_string(),
                 "1..=30",
+            ));
+        }
+        if self.hold_magnet_secs > 3600 {
+            return Err(invalid(
+                "precheck.hold_magnet_secs",
+                &self.hold_magnet_secs.to_string(),
+                "0..=3600",
+            ));
+        }
+        if !(10..=600).contains(&self.hold_retry_secs) {
+            return Err(invalid(
+                "precheck.hold_retry_secs",
+                &self.hold_retry_secs.to_string(),
+                "10..=600",
+            ));
+        }
+        if !(1..=self.lookup_timeout_secs).contains(&self.first_lookup_secs) {
+            return Err(invalid(
+                "precheck.first_lookup_secs",
+                &self.first_lookup_secs.to_string(),
+                &format!("1..={} (lookup_timeout_secs)", self.lookup_timeout_secs),
             ));
         }
         for cache in &self.caches {
@@ -3561,6 +3597,10 @@ mod precheck_tests {
         assert!(p.magnet_lookup);
         assert_eq!(p.lookup_timeout_secs, 10);
         assert_eq!(p.caches, vec![DEFAULT_PRECHECK_CACHE.to_string()]);
+        assert_eq!(p.hold_magnet_secs, 300);
+        assert_eq!(p.hold_retry_secs, 30);
+        assert_eq!(p.first_lookup_secs, 3);
+        assert!(p.holding());
         assert!(p.validate(&[]).is_ok());
     }
 
@@ -3583,6 +3623,16 @@ mod precheck_tests {
         assert!(error("[precheck.categories.tv]\nmin_size_mb = 200000\n").contains("0..=100000"));
         assert!(error("[precheck]\nlookup_timeout_secs = 0\n").contains("1..=30"));
         assert!(error("[precheck]\nlookup_timeout_secs = 31\n").contains("1..=30"));
+        assert!(error("[precheck]\nhold_magnet_secs = 3601\n").contains("0..=3600"));
+        assert!(error("[precheck]\nhold_retry_secs = 9\n").contains("10..=600"));
+        assert!(error("[precheck]\nhold_retry_secs = 601\n").contains("10..=600"));
+        assert!(error("[precheck]\nfirst_lookup_secs = 0\n").contains("1..=10"));
+        assert!(
+            error("[precheck]\nlookup_timeout_secs = 5\nfirst_lookup_secs = 6\n").contains("1..=5")
+        );
+        let off: Config = toml::from_str("[precheck]\nhold_magnet_secs = 0\n").unwrap();
+        assert!(off.validate().is_ok());
+        assert!(!off.precheck.holding());
         assert!(error("[precheck]\ncaches = [\"ftp://x/{HASH}\"]\n").contains("precheck cache"));
         assert!(error("[precheck]\ncaches = [\"https://x/a.torrent\"]\n").contains("{HASH}"));
         let ok: Config =
