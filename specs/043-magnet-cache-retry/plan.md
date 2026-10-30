@@ -155,7 +155,7 @@ pieces.
 
 ## Coordination
 
-- **042**: must be merged first (043's branch sits on 042's US3 tip). US4 here waits for 042 US4.
+- **042**: merged first; 043 is rebased on it.
   042's `release_checks` rows gain two settle paths but no schema change.
 - **011**: a new `putio_status` value `HELD`, only meaningful while `transfer_id` is NULL.
 - **038 (pipeline)**: could show "Waiting for file list" as a pre-download step later.

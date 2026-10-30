@@ -71,7 +71,6 @@ async function load() {
     get("/local/queue").catch(failure),
     get("/local/downloads").catch(failure),
     watchingSync ? get("/status").catch(() => null) : null,
-    // Magnets held before Put.io (043); a failure only hides the section
     get("/arr").catch(() => null),
   ]);
   if (mine !== seq || !els) return; // a newer load already rendered, or page left
@@ -320,44 +319,35 @@ function reflag() {
   load().catch(() => {});
 }
 
-/** "Waiting for file list (n min left)": magnets held until a cache has their file list. */
+/** Magnets held until a cache has their file list (043) */
 function renderHeld(list) {
-  els.held.hidden = list.length === 0;
-  swap("held", { list, minute: Math.floor(Date.now() / 60000) }, () => {
-    if (list.length === 0) return [];
-    const rows = list.map((m) => {
-      const left = Math.max(0, Math.ceil((Date.parse(m.until) - Date.now()) / 60000));
-      return h(
-        "tr",
-        {},
-        h("td", { class: "name-cell name", "data-label": "Name", text: m.name }),
-        h("td", { "data-label": "State" }, h("span", { class: "badge warn", text: `Waiting for file list (${left} min left)` })),
-        h("td", { class: "num right", "data-label": "Asks", text: String(m.attempts) }),
-        h("td", { "data-label": "Held", text: relative(m.since) }),
-      );
-    });
-    return [
-      h("h2", { text: `Waiting for a file list (${list.length})` }),
-      h("p", { class: "muted", text: "Magnet links no cache knew yet. Each is asked about again, then sent to Put.io." }),
-      h(
-        "table",
-        { class: "table" },
-        h(
-          "thead",
-          {},
+  els.held.hidden = !list.length;
+  swap("held", { list, minute: Math.floor(Date.now() / 60000) }, () =>
+    list.length
+      ? [
+          h("h2", { text: `Waiting for a file list (${list.length})` }),
           h(
-            "tr",
-            {},
-            h("th", { text: "Name" }),
-            h("th", { text: "State" }),
-            h("th", { class: "right", text: "Asks" }),
-            h("th", { text: "Held" }),
+            "table",
+            { class: "table" },
+            h("thead", {}, h("tr", {}, ["Name", "Left", "Asks", "Held"].map((t) => h("th", { text: t })))),
+            h(
+              "tbody",
+              {},
+              list.map((m) =>
+                h(
+                  "tr",
+                  {},
+                  h("td", { class: "name-cell name", "data-label": "Name", text: m.name }),
+                  h("td", { "data-label": "Left", text: `${Math.max(0, Math.ceil((Date.parse(m.until) - Date.now()) / 60000))} min` }),
+                  h("td", { class: "num", "data-label": "Asks", text: String(m.attempts) }),
+                  h("td", { "data-label": "Held", text: relative(m.since) }),
+                ),
+              ),
+            ),
           ),
-        ),
-        h("tbody", {}, rows),
-      ),
-    ];
-  });
+        ]
+      : [],
+  );
 }
 
 function renderDownloads(res) {

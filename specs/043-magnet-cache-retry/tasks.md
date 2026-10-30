@@ -159,13 +159,11 @@ hold continue; remove a held item through the Transmission API and see no Put.io
 
 **Independent test**: as 042 US4's watch test, with a cache that misses first and hits later.
 
-**Blocked until 042 US4 (042 T018–T019) is merged.**
-
-- [ ] T020 [US4] Tests in `putio-sync-file-manager/tests/watch_precheck.rs` (042's file), each
+- [X] T020 [US4] Tests in `putio-sync-file-manager/tests/watch_precheck.rs` (042's file), each
   failing first: a miss holds the file (`source = watch_magnet`, `watch_folder` set) and leaves
   it unprocessed; a later hit is checked and processed as 042 US4 does; a deleted file ends the
   hold with no Put.io call; the hold ending falls back as 042 US4 does.
-- [ ] T021 [US4] Implement in `putio-sync-file-manager/src/watcher.rs`: hold on a miss, and
+- [X] T021 [US4] Implement in `putio-sync-file-manager/src/watcher.rs`: hold on a miss, and
   re-ask the due watch holds at the start of `scan_directories`, sharing `HeldRepository`.
 
 ## Phase 7: User Story 5 - The operator can see whether holding pays off (P3)
@@ -174,20 +172,20 @@ hold continue; remove a held item through the Transmission API and see no Put.io
 
 **Independent test**: drive holds to each outcome, then read `/stats/releases` and `/metrics`.
 
-- [ ] T022 **Blocked until 042 T020 (`/stats/releases`) is built.** [US5] Test, then add the `held` block (`now`, `found`, `ran_out`, `removed`,
+- [X] T022 [US5] Test, then add the `held` block (`now`, `found`, `ran_out`, `removed`,
   `median_found_secs`) to `GET /stats/releases` in
-  `putio-sync-api/src/routes/system/stats.rs`, read from `release_checks` (settled rows with a
-  `stage = before` and a `checked_at`→`resolved_at` gap) and `held().count()`. Add the query to
-  `putio-sync-db/src/releases.rs`.
-- [ ] T023 **Blocked until 042 T021 (the stats tiles) is built.** [P] [US5] Add a "Held magnets" tile in `putio-sync-api/ui/pages/stats.js`, in its
+  `putio-sync-api/src/routes/system/stats.rs`, read from a `hold_ends` table (one row per
+  ended hold, written by `HeldRepository::finish`, pruned with the checks) and
+  `held().count()`.
+- [X] T023 [P] [US5] Add a "Held magnets" tile in `putio-sync-api/ui/pages/stats.js`, in its
   own render function next to 042's "Magnet lookups" tile.
 
 ## Phase 8: Polish
 
-- [ ] T024 **Blocked until 042 T025 (the Release check card) is built.** [P] Add the three keys to the `precheck` block of `GET/PUT /settings`
+- [X] T024 [P] Add the three keys to the `precheck` block of `GET/PUT /settings`
   (`putio-sync-api/src/routes/system/settings.rs`) and to 042's "Release check" card in
   `putio-sync-api/ui/pages/settings.js`. Test that a save keeps the file's comments.
-- [ ] T025 **Blocked until 042 T027 (the `[precheck]` docs) is built.** [P] Document the keys in `config.example.toml` and the README's pre-check section:
+- [X] T025 [P] Document the keys in `config.example.toml` and the README's pre-check section:
   what holding does, the delay it adds to magnet-only releases, and that it contacts nothing new.
 - [X] T026 [P] Add a `CHANGELOG.md` entry, and mark 043 in `ROADMAP.md` as shipped (move it out
   of the queue).

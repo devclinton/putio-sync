@@ -27,17 +27,20 @@ empty when none are held. Never the magnet:
           "until": "2026-10-28T10:05:00Z", "attempts": 4, "last_lookup": "timeout"}]
 ```
 
-## `GET /stats/releases`: new `held` block (waits for 042 T020)
+## `GET /stats/releases`: new `held` block
 
 ```json
 "held": {"now": 2, "found": 15, "ran_out": 1, "removed": 0,
          "median_found_secs": 150}
 ```
 
-## `GET /settings` and `PUT /settings`: three new keys in `precheck` (waits for 042 T025)
+`found` counts holds a later ask found, passed or rejected. `median_found_secs` is `null` with
+none found. Ends with precheck turned off (`unchecked`) count in the metric only.
+
+## `GET /settings/precheck` and `PUT /settings/precheck`: three new keys
 
 ```json
-"precheck": { "…": "…", "hold_magnet_secs": 300, "hold_retry_secs": 30, "first_lookup_secs": 3 }
+{ "…": "…", "hold_magnet_secs": 300, "hold_retry_secs": 30, "first_lookup_secs": 3 }
 ```
 
 Validation errors use 042's format, for example

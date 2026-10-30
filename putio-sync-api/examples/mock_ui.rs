@@ -402,6 +402,36 @@ async fn seed_held(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
             until_at: now + 720,
         })
         .await?;
+    // Ended holds for the Stats page's "Held magnets" tile
+    for (i, (result, held_for)) in [
+        ("found_passed", 95),
+        ("found_passed", 150),
+        ("found_rejected", 210),
+        ("found_passed", 120),
+        ("ran_out", 300),
+        ("removed", 40),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let hash = format!("{i:040x}");
+        let ended = now - 3600 * (i as i64 + 1);
+        db.held()
+            .insert(&putio_sync_db::NewHeld {
+                hash: &hash,
+                magnet: "magnet:?xt=urn:btih:0",
+                source: "magnet",
+                category: Some("sonarr"),
+                watch_folder: None,
+                check_id: None,
+                last_lookup: Some("not_found"),
+                held_at: ended - held_for,
+                next_at: ended,
+                until_at: ended,
+            })
+            .await?;
+        db.held().finish(&hash, result, ended).await?;
+    }
     Ok(())
 }
 

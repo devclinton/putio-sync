@@ -393,3 +393,177 @@ async fn pending_magnet_dry_run_changes_nothing_on_putio() {
         ("putio", "passed")
     );
 }
+
+// --- Held watch magnets (043 US4) ---
+
+/// Holding on, against a test cache
+fn holding(cache: &ServerGuard) -> PrecheckConfig {
+    PrecheckConfig {
+        caches: vec![format!("{}/t/{{HASH}}.torrent", cache.url())],
+        ..PrecheckConfig::default()
+    }
+}
+
+async fn cache_answer(cache: &mut ServerGuard, hash: &str, status: usize, body: Vec<u8>) -> Mock {
+    cache
+        .mock(
+            "GET",
+            format!("/t/{}.torrent", hash.to_uppercase()).as_str(),
+        )
+        .with_status(status)
+        .with_body(body)
+        .create_async()
+        .await
+}
+
+/// A .magnet file for `bytes`' info hash; returns the hash
+fn drop_magnet(f: &Fixture, file: &str, bytes: &[u8]) -> String {
+    let (hash, _) = putio_sync_precheck::metainfo::info_hash(bytes).unwrap();
+    std::fs::write(
+        f.watch.join(file),
+        format!("magnet:?xt=urn:btih:{hash}&dn=Show.S01E01"),
+    )
+    .unwrap();
+    hash
+}
+
+/// Make the held magnets due now; `ran_out` also ends their time
+async fn make_due(f: &Fixture, ran_out: bool) {
+    let until = if ran_out { ", until_at = 0" } else { "" };
+    sqlx::query(&format!("UPDATE held_magnets SET next_at = 0{until}"))
+        .execute(f.db.pool())
+        .await
+        .unwrap();
+}
+
+async fn hold_ends(f: &Fixture) -> Vec<String> {
+    sqlx::query_scalar("SELECT result FROM hold_ends ORDER BY id")
+        .fetch_all(f.db.pool())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn missed_watch_magnet_is_held_then_uploaded_when_found() {
+    let mut f = Fixture::new().await;
+    let real = torrent("Show.S01E01", &[("Show.S01E01.mkv", 2048 * MB)]);
+    let hash = drop_magnet(&f, "show.magnet", &real);
+    let mut cache = mockito::Server::new_async().await;
+    let miss = cache_answer(&mut cache, &hash, 404, vec![]).await;
+    let none = f.uploads("/transfers/add", 0).await;
+
+    let stats = f.scan(holding(&cache)).await;
+    assert_eq!((stats.files_held, stats.files_processed), (1, 0));
+    assert!(f.has("show.magnet"));
+    let held = f.db.held().get(&hash).await.unwrap().unwrap();
+    assert_eq!(held.source, "watch_magnet");
+    assert_eq!(held.watch_folder, f.folder());
+    assert!(f.checks().await.is_empty());
+
+    // Not due yet: the next scan neither asks nor uploads
+    miss.remove_async().await;
+    let stats = f.scan(holding(&cache)).await;
+    assert_eq!(stats.files_held, 1);
+    none.assert_async().await;
+    none.remove_async().await;
+
+    let _hit = cache_answer(&mut cache, &hash, 200, real).await;
+    make_due(&f, false).await;
+    let upload = f.uploads("/transfers/add", 1).await;
+    let stats = f.scan(holding(&cache)).await;
+    upload.assert_async().await;
+    assert_eq!((stats.files_held, stats.files_processed), (0, 1));
+    assert_eq!(f.db.held().count().await.unwrap(), 0);
+    assert_eq!(hold_ends(&f).await, ["found_passed"]);
+    let checks = f.checks().await;
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].2, "passed");
+}
+
+#[tokio::test]
+async fn held_watch_magnet_found_fake_is_rejected_without_putio() {
+    let mut f = Fixture::new().await;
+    let fake = torrent("Show.S01E01", &[("Show.S01E01.exe", 1500 * MB)]);
+    let hash = drop_magnet(&f, "show.magnet", &fake);
+    let mut cache = mockito::Server::new_async().await;
+    let miss = cache_answer(&mut cache, &hash, 404, vec![]).await;
+    let none = f.uploads("/transfers/add", 0).await;
+    f.scan(holding(&cache)).await;
+    miss.remove_async().await;
+
+    let _hit = cache_answer(&mut cache, &hash, 200, fake).await;
+    make_due(&f, false).await;
+    let stats = f.scan(holding(&cache)).await;
+    none.assert_async().await;
+    assert_eq!(stats.files_rejected, 1);
+    assert!(f.has("show.magnet.rejected"));
+    assert_eq!(hold_ends(&f).await, ["found_rejected"]);
+}
+
+#[tokio::test]
+async fn deleting_a_held_watch_magnet_ends_the_hold_without_putio() {
+    let mut f = Fixture::new().await;
+    let real = torrent("Show.S01E01", &[("Show.S01E01.mkv", 2048 * MB)]);
+    let hash = drop_magnet(&f, "show.magnet", &real);
+    let mut cache = mockito::Server::new_async().await;
+    let _miss = cache_answer(&mut cache, &hash, 404, vec![]).await;
+    let none = f.uploads("/transfers/add", 0).await;
+    f.scan(holding(&cache)).await;
+    assert_eq!(f.db.held().count().await.unwrap(), 1);
+
+    std::fs::remove_file(f.watch.join("show.magnet")).unwrap();
+    f.scan(holding(&cache)).await;
+    none.assert_async().await;
+    assert_eq!(f.db.held().count().await.unwrap(), 0);
+    assert_eq!(hold_ends(&f).await, ["removed"]);
+}
+
+#[tokio::test]
+async fn held_watch_magnet_that_runs_out_is_uploaded_with_its_check_pending() {
+    let mut f = Fixture::new().await;
+    let real = torrent("Show.S01E01", &[("Show.S01E01.mkv", 2048 * MB)]);
+    let hash = drop_magnet(&f, "show.magnet", &real);
+    let mut cache = mockito::Server::new_async().await;
+    let _miss = cache_answer(&mut cache, &hash, 404, vec![]).await;
+    let none = f.uploads("/transfers/add", 0).await;
+    f.scan(holding(&cache)).await;
+    none.assert_async().await;
+    none.remove_async().await;
+
+    make_due(&f, true).await;
+    let upload = f.uploads("/transfers/add", 1).await;
+    let stats = f.scan(holding(&cache)).await;
+    upload.assert_async().await;
+    assert_eq!(stats.files_processed, 1);
+    assert_eq!(hold_ends(&f).await, ["ran_out"]);
+    assert_eq!(
+        f.checks().await,
+        vec![(
+            "watch_magnet".into(),
+            "before".into(),
+            "pending".into(),
+            None,
+            Some(77),
+            f.folder()
+        )]
+    );
+}
+
+#[tokio::test]
+async fn held_watch_magnet_goes_on_unchecked_when_the_check_is_turned_off() {
+    let mut f = Fixture::new().await;
+    let real = torrent("Show.S01E01", &[("Show.S01E01.mkv", 2048 * MB)]);
+    let hash = drop_magnet(&f, "show.magnet", &real);
+    let mut cache = mockito::Server::new_async().await;
+    let _miss = cache_answer(&mut cache, &hash, 404, vec![]).await;
+    f.scan(holding(&cache)).await;
+
+    let upload = f.uploads("/transfers/add", 1).await;
+    let off = PrecheckConfig {
+        enabled: false,
+        ..holding(&cache)
+    };
+    f.scan(off).await;
+    upload.assert_async().await;
+    assert_eq!(hold_ends(&f).await, ["unchecked"]);
+}

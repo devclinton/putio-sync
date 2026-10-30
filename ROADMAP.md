@@ -215,20 +215,13 @@ Radarr and Sonarr must not import an item before its pipeline is done:
   import back forever: after a set number of retries the item completes
   without it, and the failure shows on the item and in notifications.
 
-### 043 Hold magnets and ask the cache again
+### Magnet file lists from peers (deferred from 043)
 
-Follow-up to 042. When no .torrent cache has a magnet's file list on the
-first ask, accept the add but don't send it to Put.io yet. Ask the cache
-again every 30 s for up to 5 minutes, then check it as a .torrent, or send it
-to Put.io unchecked as 042 does today. With holding on, the first ask gets
-3 s instead of 10 s. Research found itorrents.net fetches hashes it doesn't
-have: 16 of 17 first-time misses were there a few minutes later.
-
-Spec, research and plan are in `specs/043-magnet-cache-retry`. Holding,
-the short first ask and the Queue page are built on 042's branch; watch
-folders, the stats tile and the settings card wait for the same parts of 042. Fetching the file list from BitTorrent peers (DHT) was
-researched and deferred: it reveals the NAS's IP to the swarm and costs about
-93 crates.
+When the .torrent caches never have a magnet's file list, fetch it from
+BitTorrent peers (DHT and the metadata extension), with no piece data. Deferred
+in 043: it reveals the NAS's IP to the swarm and costs about 93 crates. The
+Stats page's "Held magnets" tile shows how often holds run out, which is what
+this would fix. Research is in `specs/043-magnet-cache-retry/research.md`.
 
 ## Queued: packaging
 

@@ -1496,6 +1496,7 @@ async fn held_magnet_found_later_goes_to_putio_after_a_restart() {
         )]
     );
     assert_eq!(h.db.held().count().await.unwrap(), 0);
+    assert_eq!(h.db.held().stats(0).await.unwrap().found, 1);
     assert!(!h.db.releases().has_pending().await.unwrap());
     added.assert_async().await;
 }

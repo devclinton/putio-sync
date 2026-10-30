@@ -45,8 +45,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   never reaches Put.io. If it doesn't, the magnet goes to Put.io and is checked
   there as before. The first ask now waits 3 s instead of up to 10 s. Set
   `hold_magnet_secs = 0` under `[precheck]` to turn holding off
-  (`hold_retry_secs` and `first_lookup_secs` set the other two times;
-  feature 043).
+  (`hold_retry_secs` and `first_lookup_secs` set the other two times; all
+  three are on the Settings page's Release check card). A `.magnet` file in a
+  watch folder is held the same way and stays in the folder; deleting it ends
+  the hold. The Stats page's "Held magnets" tile shows how holds ended and how
+  long the found ones took (feature 043).
 - Metrics for putio-sync's own CPU, memory, threads, open files and disk I/O
   (`putio_sync_process_*`, Linux and Docker only), and
   `putio_sync_sync_in_progress`, which is 1 while a sync runs (feature 041).
