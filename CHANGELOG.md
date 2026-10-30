@@ -14,6 +14,30 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Fake releases are caught before they reach Put.io. When Radarr or Sonarr
+  sends a .torrent (or an indexer URL) that has no video file of at least
+  50 MB, such as an `.exe` or a password-protected `.7z`, it's listed as failed
+  with the reason and blocklisted, with no Put.io transfer created. Configure it
+  under `[precheck]` (`enabled`, `dry_run`, `min_size_mb`, `allow_archives`, and
+  per-category or per-watch-folder overrides). Magnet links are checked by
+  looking their .torrent up in a public cache (itorrents.net by default; only
+  the info hash is sent, and `magnet_lookup = false` turns it off). A magnet
+  that isn't found goes to Put.io, and its files are checked there before
+  any reach the NAS: a fake is deleted from Put.io and fails with "(checked
+  on Put.io)". Watch-folder `.torrent` and `.magnet` files are checked the
+  same way: a fake isn't uploaded and is renamed `<file>.rejected`. The Stats
+  page shows how many releases were rejected and the bytes kept off the NAS,
+  split by where they were checked and why, and how many magnets were found in
+  a cache or sent to Put.io, with the fakes among those. History lists the
+  rejected releases with the reason. A release the check missed can be
+  flagged fake from the Put.io, Queue or History pages, with a note. For a
+  Radarr or Sonarr item, the flag can also fail it and blocklist it. A wrong
+  rejection can be marked not fake, and any flag can be undone. The Stats page
+  sums up the reports and downloads them as CSV or JSON, with the file types,
+  sizes and tracker host but never a link or key. Settings → Release check
+  edits all of this and shows, for each category and watch folder, the
+  settings and wanted file types it ends up with. Release records older than
+  400 days are pruned daily (feature 042).
 - Metrics for putio-sync's own CPU, memory, threads, open files and disk I/O
   (`putio_sync_process_*`, Linux and Docker only), and
   `putio_sync_sync_in_progress`, which is 1 while a sync runs (feature 041).

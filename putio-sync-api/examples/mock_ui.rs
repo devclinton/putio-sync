@@ -25,6 +25,13 @@
 //! a duplicate of Sintel in Shows, an orphaned `.torrent` at the top, queue row 501 for a
 //! deleted file, failed queue row 403, a stale partial download in `Movies/` and an
 //! unknown key in the config file. Its fixes run against the same mocks.
+//! Feature 042: the Stats page's "Rejected releases" and "Magnet lookups" tiles count a
+//! week of seeded release checks: fakes rejected before and on Put.io, magnets found in
+//! itorrents.net or sent to Put.io, and one older reject that only 30d and longer show.
+//! Flags (US6): `Movies/setup.exe` is flagged fake with a note, so it shows the badge and
+//! Undo. `Shows/Example.Show.S01E01.1080p.mkv` belongs to a Sonarr item, so its Flag
+//! dialog offers "Also fail and blocklist it". History → Rejected releases offers
+//! "Not fake" on each row, and the Stats page's "Release reports" card downloads them.
 //! Feature 040: History badges some rows Saved as copy (with the `(1)` path under the
 //! name), Resumed or Overwritten; Settings has "When a file already exists" set to Keep
 //! both, and `Movies` has an Overwrite rule.
@@ -33,11 +40,13 @@ use chrono::{Duration, Timelike, Utc};
 use putio_sync_api::{extract_download_config, router, AppState};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::cleanup::EmptyFolderCleanup;
-use putio_sync_core::config::{ArrConfig, ArrKind, ArrServer, AuthConfig, Config, ExistingFile};
+use putio_sync_core::config::{
+    ArrConfig, ArrKind, ArrServer, AuthConfig, Config, ExistingFile, PrecheckOverride,
+};
 use putio_sync_core::rules::FolderRule;
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::models::{DownloadSource, HistoryAction, Origin, QueueStatus, SourceType};
-use putio_sync_db::Database;
+use putio_sync_db::{CheckState, Database, NewArrItem, NewCheck, NewReport, ReportKind};
 use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadManager;
 use putio_sync_telemetry::RuleDecision;
@@ -463,6 +472,255 @@ async fn seed_stats(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// A week of release checks for the Stats page's release tiles (feature 042), with one
+/// older reject that only the 30d range and longer count
+async fn seed_releases(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
+    const GB: i64 = 1_073_741_824;
+    // (days ago, name, source, stage, state, reason, lookup, cache, size, Put.io bytes)
+    type Row = (
+        i64,
+        &'static str,
+        &'static str,
+        &'static str,
+        CheckState,
+        Option<&'static str>,
+        Option<&'static str>,
+        Option<&'static str>,
+        i64,
+        i64,
+    );
+    use CheckState::{Passed, Rejected};
+    const ROWS: [Row; 12] = [
+        (
+            0,
+            "Movie.2024.2160p",
+            "torrent",
+            "before",
+            Rejected,
+            Some("no_wanted"),
+            None,
+            None,
+            2 * GB,
+            0,
+        ),
+        (
+            1,
+            "Movie.2024.1080p",
+            "url",
+            "before",
+            Rejected,
+            Some("no_wanted"),
+            None,
+            None,
+            1_500_000_000,
+            0,
+        ),
+        (
+            1,
+            "Show.S02E04",
+            "watch_torrent",
+            "before",
+            Rejected,
+            Some("small_wanted"),
+            None,
+            None,
+            40_000_000,
+            0,
+        ),
+        (
+            2,
+            "Movie.2023.REPACK",
+            "magnet",
+            "putio",
+            Rejected,
+            Some("no_wanted"),
+            Some("not_found"),
+            None,
+            1_800_000_000,
+            1_800_000_000,
+        ),
+        (
+            3,
+            "Album.FLAC",
+            "magnet",
+            "putio",
+            Passed,
+            None,
+            Some("timeout"),
+            None,
+            600_000_000,
+            600_000_000,
+        ),
+        (
+            3,
+            "Show.S02E03",
+            "magnet",
+            "before",
+            Passed,
+            None,
+            Some("found"),
+            Some("itorrents.net"),
+            900_000_000,
+            0,
+        ),
+        (
+            4,
+            "Show.S02E02",
+            "magnet",
+            "before",
+            Rejected,
+            Some("no_wanted"),
+            Some("found"),
+            Some("itorrents.net"),
+            1_200_000_000,
+            0,
+        ),
+        (
+            4,
+            "Old.Movie.1999",
+            "watch_magnet",
+            "putio",
+            Rejected,
+            Some("gone"),
+            Some("not_found"),
+            None,
+            0,
+            0,
+        ),
+        (
+            5,
+            "Show.S02E01",
+            "torrent",
+            "before",
+            Passed,
+            None,
+            None,
+            None,
+            1_100_000_000,
+            0,
+        ),
+        (
+            5,
+            "Movie.2022",
+            "magnet",
+            "putio",
+            Rejected,
+            Some("small_wanted"),
+            Some("wrong_hash"),
+            None,
+            300_000_000,
+            300_000_000,
+        ),
+        (
+            6,
+            "Show.S01E10",
+            "magnet",
+            "before",
+            Passed,
+            None,
+            Some("found"),
+            Some("itorrents.net"),
+            1_000_000_000,
+            0,
+        ),
+        (
+            20,
+            "Movie.2021",
+            "torrent",
+            "before",
+            Rejected,
+            Some("invalid"),
+            None,
+            None,
+            0,
+            0,
+        ),
+    ];
+    let releases = db.releases();
+    for (days, name, source, stage, state, reason, lookup, cache, size, putio_bytes) in ROWS {
+        let id = releases
+            .insert_check(&NewCheck {
+                name,
+                source,
+                stage,
+                state: Some(state),
+                reason,
+                lookup,
+                lookup_cache: cache,
+                total_size: size,
+                ..NewCheck::default()
+            })
+            .await?;
+        let at = format!("-{days} days");
+        sqlx::query(
+            "UPDATE release_checks SET checked_at = datetime('now', ?), resolved_at = datetime('now', ?), putio_bytes = ? WHERE id = ?",
+        )
+        .bind(&at)
+        .bind(&at)
+        .bind(putio_bytes)
+        .bind(id)
+        .execute(db.pool())
+        .await?;
+        if reason.is_some_and(|r| r != "gone") {
+            let types = if source.contains("magnet") {
+                r#"[{"ext":"7z","count":1,"largest":900000000},{"ext":"txt","count":1,"largest":120}]"#
+            } else {
+                r#"[{"ext":"exe","count":1,"largest":1400000000},{"ext":"nfo","count":1,"largest":900}]"#
+            };
+            let report = releases
+                .insert_report(&NewReport {
+                    kind: ReportKind::Rejected,
+                    check_id: Some(id),
+                    source: Some(source),
+                    stage: Some(stage),
+                    name,
+                    total_size: Some(size),
+                    types,
+                    tracker_hosts: r#"["tracker.opentrackr.org"]"#,
+                    reason,
+                    ..NewReport::default()
+                })
+                .await?;
+            sqlx::query("UPDATE release_reports SET created_at = datetime('now', ?) WHERE id = ?")
+                .bind(&at)
+                .bind(report)
+                .execute(db.pool())
+                .await?;
+        }
+    }
+
+    // One fake flagged by hand, and a Sonarr item the Shows episode belongs to
+    releases
+        .upsert_flag(&NewReport {
+            kind: ReportKind::FlaggedFake,
+            source: Some("putio"),
+            name: "setup.exe",
+            file_id: Some(102),
+            total_size: Some(52_428_800),
+            types: r#"[{"ext":"exe","count":1,"largest":52428800}]"#,
+            file_count: Some(1),
+            largest_wanted: Some(0),
+            tracker_hosts: "[]",
+            note: Some("An installer in a movie folder"),
+            ..NewReport::default()
+        })
+        .await?;
+    db.arr()
+        .insert(&NewArrItem {
+            hash: "8f14e45fceea167a5a36dedd4bea2543f1f2a3b4",
+            name: "Example.Show.S01E01.1080p",
+            category: "sonarr",
+            transfer_id: None,
+            putio_status: "COMPLETED",
+            total_size: 1_610_612_736,
+        })
+        .await?;
+    sqlx::query("UPDATE arr_items SET file_id = 201 WHERE category = 'sonarr'")
+        .execute(db.pool())
+        .await?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -560,7 +818,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             on_existing: Some(ExistingFile::Overwrite),
             ..Default::default()
         },
+        FolderRule {
+            path: "lidarr".to_string(),
+            preset: Some("audio".to_string()),
+            ..Default::default()
+        },
     ];
+    // The Release check card: one category off, one with its own size and a rule
+    config.precheck.categories = [
+        (
+            "radarr",
+            PrecheckOverride {
+                min_size_mb: Some(300),
+                ..Default::default()
+            },
+        ),
+        ("lidarr", PrecheckOverride::default()),
+        (
+            "software",
+            PrecheckOverride {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        ),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect();
     let config_path = dir.path().join("config.toml");
     config.save(&config_path)?;
     // A comment UI saves must keep (save_keeping_file_credentials edits in place), and an
@@ -624,6 +908,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     seed_history(&db).await?;
     seed_stats(&db).await?;
+    seed_releases(&db).await?;
     seed_partial(dir.path())?;
     db.rule_decisions()
         .record(

@@ -49,7 +49,7 @@ impl RangePreset {
     }
 
     /// The range's length, or `None` for everything
-    fn length(self) -> Option<Duration> {
+    pub fn length(self) -> Option<Duration> {
         match self {
             RangePreset::Day => Some(Duration::hours(24)),
             RangePreset::Week => Some(Duration::days(7)),

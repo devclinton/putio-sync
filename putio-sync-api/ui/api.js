@@ -167,3 +167,35 @@ export function saveArrApplication(index, body) {
 export function deleteArrApplication(index) {
   return del(`/arr/applications/${index}`);
 }
+
+/** What the release pre-check rejected in `range`: `{range, rejected, magnets, reports}`. */
+export function releaseStats(range, tz) {
+  return get(`/stats/releases?${new URLSearchParams({ range, tz: String(tz) })}`);
+}
+
+/**
+ * Save the release reports for `range` as `format` ("json" or "csv"). The export needs the
+ * token, so it is fetched here and handed to the browser as a file.
+ */
+export async function downloadReports(range, format) {
+  const path = `/releases/reports?${new URLSearchParams({ range, format })}`;
+  const headers = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let res;
+  try {
+    res = await fetch(path, { headers });
+  } catch {
+    throw new ApiError(0, "Can't reach the daemon");
+  }
+  if (!res.ok) return request("GET", path); // for the error, and the 401 handling
+  const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "");
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name ? name[1] : `putio-sync-releases-${range}.${format}`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

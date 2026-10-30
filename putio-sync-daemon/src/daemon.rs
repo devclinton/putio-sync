@@ -8,12 +8,14 @@
 use crate::error::DaemonResult;
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::cleanup::EmptyFolderCleanup;
+use putio_sync_core::config::PrecheckConfig;
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::Database;
 use putio_sync_doctor::Doctor;
 use putio_sync_download::{DownloadConfig, DownloadManager};
 use putio_sync_file_manager::watcher::WatcherConfig;
 use putio_sync_file_manager::TorrentWatcher;
+use putio_sync_precheck::Prechecker;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -57,7 +59,13 @@ pub struct DaemonConfig {
     pub stall_threshold: Duration,
     /// Seconds between checks of the Put.io transfer list for stalls
     pub stall_check_interval: u64,
+    /// The release check for watch files (042), from `Config::resolve_precheck`. `None`
+    /// uploads them unchecked.
+    pub precheck: Option<PrecheckConfig>,
 }
+
+/// Days the release checks and reports are kept (042 research R10)
+const RELEASE_KEEP_DAYS: i64 = 400;
 
 /// (Put.io sync interval, queue worker interval) in seconds.
 /// The sync loop used to run on `watch_interval`, which made `--download-interval` a no-op.
@@ -82,6 +90,7 @@ impl Default for DaemonConfig {
             api_url: None,
             stall_threshold: Duration::from_secs(6 * 3600),
             stall_check_interval: 600,
+            precheck: None,
         }
     }
 }
@@ -232,7 +241,7 @@ impl PutioDaemon {
 
         // Initialize file watcher (shared Arc for hot reload via API)
         if !config.watch_dirs.is_empty() {
-            let file_watcher = Arc::new(TorrentWatcher::from_config(WatcherConfig {
+            let file_watcher = TorrentWatcher::from_config(WatcherConfig {
                 archive_dir: config.archive_dir.clone(),
                 delete_after_upload: config.delete_after_upload,
                 ..WatcherConfig::new(
@@ -240,7 +249,14 @@ impl PutioDaemon {
                     config.parent_id,
                     config.watch_interval,
                 )
-            }));
+            });
+            let file_watcher = Arc::new(match &config.precheck {
+                Some(precheck) => file_watcher.with_precheck(Arc::new(Prechecker::new(
+                    precheck.clone(),
+                    config.download.rules.clone(),
+                ))),
+                None => file_watcher,
+            });
             self.file_watcher = Some(file_watcher);
             info!(
                 "File watcher initialized for {} directories",
@@ -347,6 +363,10 @@ impl PutioDaemon {
             .doctor
             .clone()
             .map(|doctor| tokio::spawn(putio_sync_doctor::run_scheduled(doctor)));
+        let prune_task = self
+            .database
+            .clone()
+            .map(|db| tokio::spawn(Self::run_release_prune(db)));
         // Spawn the stall check task (feature 007): flags Put.io transfers whose bytes stop
         let interval = self.config.read().await.stall_check_interval;
         let stall_task = self.client.clone().map(|client| {
@@ -440,9 +460,26 @@ impl PutioDaemon {
         if let Some(task) = doctor_task {
             task.abort();
         }
+        if let Some(task) = prune_task {
+            task.abort();
+        }
 
         info!("Daemon shutting down...");
         Ok(())
+    }
+
+    /// Delete release checks and reports older than `RELEASE_KEEP_DAYS` (feature 042), at
+    /// startup and once a day
+    async fn run_release_prune(database: Arc<Database>) {
+        let mut tick = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
+        loop {
+            tick.tick().await;
+            match database.releases().prune(RELEASE_KEEP_DAYS).await {
+                Ok(0) => {}
+                Ok(rows) => info!(rows, "Pruned old release checks and reports"),
+                Err(e) => warn!(error = %e, "Failed to prune release checks and reports"),
+            }
+        }
     }
 
     /// Check the Put.io transfer list for stalls every `interval_secs`

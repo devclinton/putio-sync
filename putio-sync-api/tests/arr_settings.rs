@@ -129,7 +129,7 @@ async fn status_has_the_counts_and_contacts() {
             hash: "0123456789abcdef0123456789abcdef01234567",
             name: "Show.S01E01",
             category: "tv",
-            transfer_id: 1,
+            transfer_id: Some(1),
             putio_status: "DOWNLOADING",
             total_size: 0,
         })

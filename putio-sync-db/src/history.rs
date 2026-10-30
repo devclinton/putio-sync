@@ -157,6 +157,26 @@ impl<'a> HistoryRepository<'a> {
         Ok(history)
     }
 
+    /// One history row
+    pub async fn get(&self, id: i64) -> DbResult<Option<DownloadHistory>> {
+        sqlx::query_as::<_, DownloadHistory>("SELECT * FROM download_history WHERE id = ?")
+            .bind(id)
+            .fetch_optional(self.pool)
+            .await
+            .map_err(tracked(DbOp::History, "Failed to get history row"))
+    }
+
+    /// The latest history row of a Put.io file
+    pub async fn latest_for_file(&self, file_id: i64) -> DbResult<Option<DownloadHistory>> {
+        sqlx::query_as::<_, DownloadHistory>(
+            "SELECT * FROM download_history WHERE file_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+        )
+        .bind(file_id)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(tracked(DbOp::History, "Failed to get history row"))
+    }
+
     /// Query history with date range filter
     ///
     /// # Arguments

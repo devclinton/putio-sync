@@ -1,9 +1,11 @@
 // Queue page: active downloads and the queue, polled every 3 s, with every queue action
 // and "sync now". Reordering, skip, pause and resume are reversible, so only clearing
-// completed rows and cancelling a download ask first.
+// completed rows and cancelling a download ask first. Queue rows can be flagged as fake
+// (feature 042); flags reload when the rows or a flag change, not on every poll.
 
 import { del, get, post, syncNow } from "../api.js";
 import { confirm, empty, h, poll, toast } from "../app.js";
+import { flagControl, loadFlags } from "../flags.js";
 import { bytes, duration, percent, relative, speed, utc } from "../format.js";
 
 const REFRESH_MS = 3000;
@@ -22,6 +24,8 @@ let items = [];
 let els = null;
 let shown = { downloads: null, queue: null };
 let watchingSync = false;
+let flags = null;
+let flagged = { ids: null, version: 0 };
 
 export function mount(el) {
   els = {
@@ -37,6 +41,8 @@ export function mount(el) {
   shown = { downloads: null, queue: null };
   watchingSync = false;
   items = [];
+  flags = null;
+  flagged = { ids: null, version: 0 };
   el.append(
     h(
       "div",
@@ -67,6 +73,13 @@ async function load() {
   ]);
   if (mine !== seq || !els) return; // a newer load already rendered, or page left
   for (const r of [queue, downloads]) if (r && r.failed && passUp(r.err)) throw r.err;
+  const ids = queue && !queue.failed ? (queue.items || []).map((i) => i.file_id).join(",") : null;
+  if (ids && ids !== flagged.ids) {
+    const next = await loadFlags(ids.split(",").map((id) => ({ file_id: Number(id) })));
+    if (mine !== seq || !els) return;
+    flags = next;
+    flagged = { ids, version: flagged.version + 1 };
+  }
   renderQueue(queue);
   renderDownloads(downloads);
   if (status && status.sync) renderSync(status.sync);
@@ -213,7 +226,7 @@ function renderQueue(res) {
   setToolbar(counts);
 
   // The minute keeps the "Added" ages fresh when nothing else changes
-  swap("queue", { items, minute: Math.floor(Date.now() / 60000) }, () => {
+  swap("queue", { items, minute: Math.floor(Date.now() / 60000), flags: flagged.version }, () => {
     if (items.length === 0) {
       return [h("h2", { text: "Queue" }), empty("Nothing is queued", "New files in watched Put.io folders are added on the next sync.")];
     }
@@ -283,6 +296,7 @@ function queueRow(item, index, last) {
       "Skip",
     ),
   );
+  buttons.unshift(flagControl(flags, { target: { file_id: id }, name: item.filename, onChange: reflag }));
   return h(
     "tr",
     {},
@@ -294,6 +308,12 @@ function queueRow(item, index, last) {
     h("td", { "data-label": "Added", title: item.created_at, text: relative(utc(item.created_at)) }),
     h("td", { class: "actions-cell", "data-label": "Actions" }, h("div", { class: "row-actions" }, buttons)),
   );
+}
+
+/** After a flag changes: refetch the flags on the next load */
+function reflag() {
+  flagged.ids = null;
+  load().catch(() => {});
 }
 
 function renderDownloads(res) {
