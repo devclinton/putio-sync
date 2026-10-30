@@ -1,11 +1,14 @@
-//! `GET /stats/releases` behind the Stats page's release tiles (042 US5, contracts/api.md).
+//! `GET /stats/releases` behind the Stats page's release tiles (042 US5), and the flags
+//! and reports under `/releases` (042 US6), as in contracts/api.md.
 
 mod common;
 
 use axum::http::{Method, StatusCode};
-use common::{body_json, test_app, test_app_without_db, TestApp};
-use putio_sync_db::{CheckState, NewCheck, NewReport, ReportKind};
-use serde_json::json;
+use common::{body_json, test_app, test_app_with, test_app_without_db, TestApp};
+use putio_sync_core::config::ArrConfig;
+use putio_sync_db::models::{DownloadSource, HistoryAction, Origin, SourceType};
+use putio_sync_db::{CheckState, NewArrItem, NewCheck, NewReport, ReportKind};
+use serde_json::{json, Value};
 
 const GB: i64 = 1024 * 1024 * 1024;
 
@@ -312,4 +315,382 @@ async fn reports_as_csv() {
         lines[1]
     );
     assert!(lines[1].contains(",a.example;b.example,"), "{}", lines[1]);
+}
+
+// ---- Flags (042 US6) --------------------------------------------------------------
+
+const HASH: &str = "c12fe1c06bba254a9dc9f519b335aa7c1367a88a";
+
+/// `GET /files/<id>` for one file
+async fn putio_file(app: &mut TestApp, id: i64, name: &str, size: i64) -> mockito::Mock {
+    app.mock_file(
+        id,
+        json!({ "status": "OK", "file": {
+            "id": id, "name": name, "size": size, "file_type": "VIDEO", "parent_id": 0,
+            "is_folder": false, "is_shared": false,
+        }}),
+    )
+    .await
+}
+
+async fn flag(app: &TestApp, body: Value) -> (StatusCode, Value) {
+    let response = app.post_json("/releases/flags", body).await;
+    let status = response.status();
+    (status, body_json(response).await)
+}
+
+/// The one report saved, as `/releases/reports` lists it
+async fn only_report(app: &TestApp) -> Value {
+    let rows = body_json(app.get("/releases/reports").await).await;
+    assert_eq!(rows.as_array().unwrap().len(), 1, "{rows}");
+    rows[0].clone()
+}
+
+#[tokio::test]
+async fn flags_refuse_bad_bodies() {
+    let app = test_app().await;
+    let response = app
+        .req(Method::POST, "/releases/flags", None, Some(json!({})))
+        .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let long = "x".repeat(501);
+    for body in [
+        json!({ "target": { "path": "/x" }, "kind": "fake" }),
+        json!({ "target": { "file_id": 1, "arr_hash": HASH }, "kind": "fake" }),
+        json!({ "target": { "file_id": 1 }, "kind": "maybe" }),
+        json!({ "target": { "file_id": 1 }, "kind": "fake", "note": long }),
+        json!({ "target": { "file_id": 1 }, "kind": "not_fake", "blocklist": true }),
+    ] {
+        let (status, _) = flag(&app, body.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+    let (status, _) = flag(
+        &app,
+        json!({ "target": { "history_id": 9 }, "kind": "fake" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = flag(
+        &app,
+        json!({ "target": { "arr_hash": HASH }, "kind": "fake" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        app.req(Method::DELETE, "/releases/flags/9", Some(&app.token), None)
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn flag_a_file_fake_then_undo() {
+    let mut app = test_app().await;
+    let _file = putio_file(&mut app, 31, "Movie.2024.mkv", 1503238553).await;
+    app.db()
+        .sources()
+        .record(
+            31,
+            &DownloadSource {
+                transfer_id: Some(5),
+                source_type: Some(SourceType::Torrent),
+                tracker_host: Some("tracker.example.org".to_string()),
+                is_private: true,
+                origin: Origin::Watch,
+                watch_folder: Some("/watch/movies".to_string()),
+                putio_folder: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let body = json!({ "target": { "file_id": 31 }, "kind": "fake", "note": "password .7z" });
+    let (status, created) = flag(&app, body).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created["kind"], "flagged_fake");
+    assert_eq!(created["name"], "Movie.2024.mkv");
+    assert_eq!(created["blocklisted"], false);
+
+    let row = only_report(&app).await;
+    assert_eq!(row["kind"], "flagged_fake");
+    assert_eq!(row["file_id"], 31);
+    assert_eq!(row["transfer_id"], 5);
+    assert_eq!(row["source"], "watch");
+    assert_eq!(row["watch_folder"], "/watch/movies");
+    assert_eq!(row["stage"], Value::Null);
+    assert_eq!(row["file_count"], 1);
+    assert_eq!(row["total_size"], 1503238553_i64);
+    assert_eq!(row["largest_wanted"], 1503238553_i64);
+    assert_eq!(
+        row["types"],
+        json!([{ "ext": "mkv", "count": 1, "largest": 1503238553_i64 }])
+    );
+    assert_eq!(row["tracker_hosts"], json!(["tracker.example.org"]));
+    assert_eq!(row["is_private"], true);
+    assert_eq!(row["note"], "password .7z");
+
+    // A second "Fake" replaces the note; the row on screen shows it
+    let body = json!({ "target": { "file_id": 31 }, "kind": "fake", "note": "exe inside" });
+    let (_, again) = flag(&app, body).await;
+    assert_eq!(again["id"], created["id"]);
+    let flags = body_json(app.get("/releases/flags?file_id=31&file_id=32").await).await;
+    assert_eq!(
+        flags,
+        json!({ "flags": [{
+            "id": created["id"], "kind": "flagged_fake", "target": { "file_id": 31 },
+            "note": "exe inside",
+        }], "arr_file_ids": [] })
+    );
+
+    // Not fake needs a rejection first
+    let (status, _) = flag(
+        &app,
+        json!({ "target": { "file_id": 31 }, "kind": "not_fake" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // Neither a file of no *arr item can be blocklisted
+    let body = json!({ "target": { "file_id": 31 }, "kind": "fake", "blocklist": true });
+    assert_eq!(flag(&app, body).await.0, StatusCode::BAD_REQUEST);
+
+    let path = format!("/releases/flags/{}", created["id"]);
+    let undo = app.req(Method::DELETE, &path, Some(&app.token), None).await;
+    assert_eq!(undo.status(), StatusCode::NO_CONTENT);
+    let flags = body_json(app.get("/releases/flags?file_id=31").await).await;
+    assert_eq!(flags, json!({ "flags": [], "arr_file_ids": [] }));
+    let undo = app.req(Method::DELETE, &path, Some(&app.token), None).await;
+    assert_eq!(undo.status(), StatusCode::NOT_FOUND);
+}
+
+/// Put.io no longer has the file: the history row gives the traits
+#[tokio::test]
+async fn flag_a_history_row() {
+    let app = test_app().await;
+    let id = app
+        .db()
+        .history()
+        .insert(
+            41,
+            "Show.S01E01.exe",
+            1200,
+            HistoryAction::Downloaded,
+            Some(1),
+            None,
+        )
+        .await
+        .unwrap();
+    let (status, created) = flag(
+        &app,
+        json!({ "target": { "history_id": id }, "kind": "fake" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let row = only_report(&app).await;
+    assert_eq!(row["name"], "Show.S01E01.exe");
+    assert_eq!(row["file_id"], 41);
+    assert_eq!(
+        row["types"],
+        json!([{ "ext": "exe", "count": 1, "largest": 1200 }])
+    );
+    assert_eq!(row["largest_wanted"], 0);
+
+    let path = format!("/releases/flags?history_id={id}");
+    let flags = body_json(app.get(&path).await).await;
+    assert_eq!(flags["flags"][0]["target"], json!({ "history_id": id }));
+}
+
+#[tokio::test]
+async fn flag_a_rejection_not_fake() {
+    let app = test_app().await;
+    let rejected = app
+        .db()
+        .releases()
+        .insert_report(&NewReport {
+            kind: ReportKind::Rejected,
+            source: Some("watch_torrent"),
+            stage: Some("before"),
+            name: "Movie.2024",
+            hash: Some(HASH),
+            total_size: Some(1000),
+            types: r#"[{"ext":"mkv","count":1,"largest":1000}]"#,
+            min_size: Some(52428800),
+            reason: Some("small_wanted"),
+            ..NewReport::default()
+        })
+        .await
+        .unwrap();
+
+    let target = json!({ "report_id": rejected });
+    let (status, _) = flag(&app, json!({ "target": target, "kind": "fake" })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, created) = flag(&app, json!({ "target": target, "kind": "not_fake" })).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created["kind"], "flagged_not_fake");
+
+    let rows = body_json(app.get("/releases/reports").await).await;
+    let not_fake = &rows[0];
+    assert_eq!(not_fake["kind"], "flagged_not_fake");
+    assert_eq!(not_fake["hash"], HASH);
+    assert_eq!(
+        not_fake["types"],
+        json!([{ "ext": "mkv", "count": 1, "largest": 1000 }])
+    );
+    assert_eq!(not_fake["min_size"], 52428800);
+    assert_eq!(not_fake["stage"], Value::Null);
+
+    let flags = body_json(
+        app.get(&format!("/releases/flags?report_id={rejected}"))
+            .await,
+    )
+    .await;
+    assert_eq!(flags["flags"][0]["id"], created["id"]);
+
+    // The rejection itself can't be undone
+    let path = format!("/releases/flags/{rejected}");
+    let undo = app.req(Method::DELETE, &path, Some(&app.token), None).await;
+    assert_eq!(undo.status(), StatusCode::CONFLICT);
+
+    // A bad .torrent has no hash: its check keeps the flag on it
+    let check = app
+        .db()
+        .releases()
+        .insert_check(&NewCheck {
+            name: "Movie.2021",
+            source: "watch_torrent",
+            stage: "before",
+            ..NewCheck::default()
+        })
+        .await
+        .unwrap();
+    let invalid = app
+        .db()
+        .releases()
+        .insert_report(&NewReport {
+            kind: ReportKind::Rejected,
+            check_id: Some(check),
+            source: Some("watch_torrent"),
+            stage: Some("before"),
+            name: "Movie.2021",
+            reason: Some("invalid"),
+            ..NewReport::default()
+        })
+        .await
+        .unwrap();
+    let target = json!({ "report_id": invalid });
+    let (_, first) = flag(&app, json!({ "target": target, "kind": "not_fake" })).await;
+    let (_, again) = flag(
+        &app,
+        json!({ "target": target, "kind": "not_fake", "note": "real" }),
+    )
+    .await;
+    assert_eq!(first["id"], again["id"]);
+    let path = format!("/releases/flags?report_id={invalid}&report_id={rejected}");
+    let flags = body_json(app.get(&path).await).await;
+    assert_eq!(flags["flags"].as_array().unwrap().len(), 2, "{flags}");
+    assert_eq!(flags["flags"][0]["note"], "real");
+}
+
+async fn arr_app(dry_run: bool) -> TestApp {
+    let app = test_app_with(|config| {
+        config.arr = ArrConfig {
+            enabled: true,
+            password: Some("arr-password".to_string()),
+            ..ArrConfig::default()
+        };
+        config.precheck.magnet_lookup = false;
+        config.precheck.dry_run = dry_run;
+    })
+    .await;
+    app.db()
+        .arr()
+        .insert(&NewArrItem {
+            hash: HASH,
+            name: "Movie.2024",
+            category: "radarr",
+            transfer_id: Some(5),
+            putio_status: "COMPLETED",
+            total_size: 1000,
+        })
+        .await
+        .unwrap();
+    sqlx::query("UPDATE arr_items SET file_id = 50")
+        .execute(app.db().pool())
+        .await
+        .unwrap();
+    app
+}
+
+async fn deletes(app: &mut TestApp, expect: usize) -> mockito::Mock {
+    app.putio
+        .mock("POST", "/files/delete")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"OK"}"#)
+        .expect(expect)
+        .create_async()
+        .await
+}
+
+#[tokio::test]
+async fn fail_and_blocklist_under_dry_run_changes_nothing() {
+    let mut app = arr_app(true).await;
+    let _file = putio_file(&mut app, 50, "Movie.2024.mkv", 1000).await;
+    let delete = deletes(&mut app, 0).await;
+    let flags = body_json(app.get("/releases/flags?file_id=50&file_id=51").await).await;
+    assert_eq!(flags["arr_file_ids"], json!([50]));
+    let body = json!({ "target": { "file_id": 50 }, "kind": "fake", "blocklist": true });
+    let (status, created) = flag(&app, body).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created["blocklisted"], false);
+    assert_eq!(created["dry_run"], true);
+    delete.assert_async().await;
+
+    let item = app.db().arr().get_by_hash(HASH).await.unwrap().unwrap();
+    assert_ne!(item.state, putio_sync_db::ArrState::Failed);
+    let row = only_report(&app).await;
+    assert_eq!(row["arr_hash"], HASH);
+    assert_eq!(row["category"], "radarr");
+}
+
+#[tokio::test]
+async fn fail_and_blocklist_fails_the_item_and_deletes_it() {
+    let mut app = arr_app(false).await;
+    let _file = putio_file(&mut app, 50, "Movie.2024.mkv", 1000).await;
+    let delete = deletes(&mut app, 1).await;
+    let body = json!({ "target": { "arr_hash": HASH }, "kind": "fake", "blocklist": true });
+    let (status, created) = flag(&app, body).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created.get("dry_run"), None);
+    delete.assert_async().await;
+
+    let item = app.db().arr().get_by_hash(HASH).await.unwrap().unwrap();
+    assert_eq!(item.state, putio_sync_db::ArrState::Failed);
+    assert_eq!(item.error.as_deref(), Some("flagged fake by the operator"));
+
+    // A plain fake flag on the same item only records it
+    let mut quiet = arr_app(false).await;
+    let delete = deletes(&mut quiet, 0).await;
+    let (status, _) = flag(
+        &quiet,
+        json!({ "target": { "arr_hash": HASH }, "kind": "fake" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    delete.assert_async().await;
+}
+
+#[tokio::test]
+async fn flags_query_is_bounded() {
+    let app = test_app().await;
+    let many: Vec<String> = (0..201).map(|i| format!("file_id={i}")).collect();
+    let response = app
+        .get(&format!("/releases/flags?{}", many.join("&")))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let response = app.get("/releases/flags?file_id=x").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let flags = body_json(app.get("/releases/flags").await).await;
+    assert_eq!(flags, json!({ "flags": [], "arr_file_ids": [] }));
 }

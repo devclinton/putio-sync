@@ -106,8 +106,9 @@ network: Put.io, the caches, indexer URLs and the *arr API are mocked with mocki
     the note), `delete_flag(id) -> Deleted | NotFound | NotAFlag`, `flags_for(targets)`;
   - `reports(range)`, `release_stats(range)` returning the contracts/api.md `/stats/releases`
     shape;
-  - *MVP note*: `upsert_flag`, `delete_flag` and `flags_for` are not built yet; they land
-    with T023 (flags). `release_stats` landed with T020, and `reports` with T022.
+  - *MVP note*: `upsert_flag`, `delete_flag` and `flags_for` landed with T023, and
+    `release_stats` with T020, and `reports` with T022. A flag's release is the `arr_hash`,
+    else the `file_id`, else the `hash`, else the `check_id` (for a rejection with none).
   - `prune(older_than)`.
 - [X] T007 [P] Test, then add the metrics in `putio-sync-telemetry/src/precheck.rs`, with the
   exact families and bounded label enums from research R12:
@@ -334,7 +335,7 @@ items. A CSV/JSON export.
 - the blocklist runs only when chosen;
 - the export lists both.
 
-- [ ] T023 [US6] Test, then add `putio-sync-api/src/routes/releases.rs`, mounted at `/releases`
+- [X] T023 [US6] Test, then add `putio-sync-api/src/routes/releases.rs`, mounted at `/releases`
   in `putio-sync-api/src/lib.rs`, with the bodies and status codes exactly as in
   contracts/api.md:
   - `POST /releases/flags`;
@@ -360,7 +361,12 @@ items. A CSV/JSON export.
   - CSV flattening (`exe:1:1503238553;txt:1:120`);
   - extend `tests/secrets_sweep.rs` so no magnet, indexer URL or API key appears in reports,
     exports or responses.
-- [ ] T024 [US6] UI: add a "Flag" menu to rows on the Put.io page, Queue and History
+
+  *Note*: two contract additions, both in contracts/api.md. A `{report_id}` target lets
+  History's rejected rows be marked "Not fake" when the release never reached Put.io. `GET
+  /releases/flags` also returns `arr_file_ids`, so the UI offers "also fail and blocklist" only
+  on files an *arr item holds. A `file_id` an *arr item holds is flagged as that item.
+- [X] T024 [US6] UI: add a "Flag" menu to rows on the Put.io page, Queue and History
   (`putio-sync-api/ui/pages/{putio,queue,history}.js`).
   - The menu offers "Fake" with an optional note and, for *arr items, "also fail and blocklist",
     plus "Not fake" on rejected rows.
@@ -369,6 +375,11 @@ items. A CSV/JSON export.
   - Load the flags for visible rows with one `GET /releases/flags` per page render.
   - Add a reports summary and download buttons to the Stats page.
   - Add mock fixtures.
+
+  *Note*: the controls live in `ui/flags.js` (`loadFlags`, `flagControl`). Rows get a "Flag"
+  button rather than a menu, since each row has one choice: "Fake", or "Not fake" on rejected
+  rows. The Queue polls, so it reloads flags only when its rows or a flag change. The Stats card
+  downloads through `downloadReports()` in `ui/api.js`, because the export needs the token.
 
 ## Phase 9: Polish
 

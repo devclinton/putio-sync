@@ -369,48 +369,181 @@ impl<'a> ReleasesRepository<'a> {
     /// `/releases/reports`)
     pub async fn reports(&self, range: RangePreset, now: i64) -> DbResult<Vec<ReportRow>> {
         let from = range.length().map_or(0, |l| now - l.num_seconds());
-        let rows = sqlx::query(
-            r#"
-            SELECT id, kind, check_id, arr_hash, file_id, transfer_id, source, category,
-                   watch_folder, stage, name, hash, total_size, file_count, types,
-                   largest_wanted, min_size, tracker_hosts, is_private, reason, note,
-                   created_at
-            FROM release_reports
-            WHERE created_at >= datetime(?, 'unixepoch')
-            ORDER BY created_at DESC, id DESC
-            "#,
-        )
+        let rows = sqlx::query(&format!(
+            "SELECT {REPORT_COLUMNS} FROM release_reports \
+             WHERE created_at >= datetime(?, 'unixepoch') ORDER BY created_at DESC, id DESC"
+        ))
         .bind(from)
         .fetch_all(self.pool)
         .await
         .map_err(tracked(DbOp::Other, "Failed to list release reports"))?;
-        Ok(rows
-            .into_iter()
-            .map(|row| ReportRow {
-                id: row.get("id"),
-                kind: row.get("kind"),
-                check_id: row.get("check_id"),
-                arr_hash: row.get("arr_hash"),
-                file_id: row.get("file_id"),
-                transfer_id: row.get("transfer_id"),
-                source: row.get("source"),
-                category: row.get("category"),
-                watch_folder: row.get("watch_folder"),
-                stage: row.get("stage"),
-                name: row.get("name"),
-                hash: row.get("hash"),
-                total_size: row.get("total_size"),
-                file_count: row.get("file_count"),
-                types: json_list(&row, "types"),
-                largest_wanted: row.get("largest_wanted"),
-                min_size: row.get("min_size"),
-                tracker_hosts: json_list(&row, "tracker_hosts"),
-                is_private: row.get("is_private"),
-                reason: row.get("reason"),
-                note: row.get("note"),
-                created_at: row.get("created_at"),
-            })
-            .collect())
+        Ok(rows.iter().map(report_from_row).collect())
+    }
+
+    /// One report
+    pub async fn report(&self, id: i64) -> DbResult<Option<ReportRow>> {
+        let row = sqlx::query(&format!(
+            "SELECT {REPORT_COLUMNS} FROM release_reports WHERE id = ?"
+        ))
+        .bind(id)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to get release report"))?;
+        Ok(row.as_ref().map(report_from_row))
+    }
+
+    /// Record a flag, or replace the note of the same kind of flag on the same release;
+    /// returns its id. The release is the `arr_hash`, else the `file_id`, else the `hash`,
+    /// else the `check_id` of a rejection with none of those (data-model.md: one active flag
+    /// per release and kind).
+    pub async fn upsert_flag(&self, flag: &NewReport<'_>) -> DbResult<i64> {
+        let key = match (flag.arr_hash, flag.file_id, flag.hash) {
+            (Some(h), _, _) => Some(("arr_hash", Key::Text(h))),
+            (None, Some(id), _) => Some(("file_id", Key::Int(id))),
+            (None, None, Some(h)) => Some(("hash", Key::Text(h))),
+            _ => flag.check_id.map(|id| ("check_id", Key::Int(id))),
+        };
+        if let Some((column, value)) = key {
+            let sql = format!("SELECT id FROM release_reports WHERE kind = ? AND {column} = ? ORDER BY id DESC LIMIT 1");
+            let q = sqlx::query_scalar::<_, i64>(&sql).bind(flag.kind.as_str());
+            let q = match value {
+                Key::Text(t) => q.bind(t),
+                Key::Int(i) => q.bind(i),
+            };
+            let existing = q
+                .fetch_optional(self.pool)
+                .await
+                .map_err(tracked(DbOp::Other, "Failed to find release flag"))?;
+            if let Some(id) = existing {
+                if flag
+                    .note
+                    .is_some_and(|n| n.chars().count() > MAX_NOTE_CHARS)
+                {
+                    return Err(DbError::DatabaseError(format!(
+                        "note is longer than {MAX_NOTE_CHARS} characters"
+                    )));
+                }
+                sqlx::query("UPDATE release_reports SET note = ? WHERE id = ?")
+                    .bind(flag.note)
+                    .bind(id)
+                    .execute(self.pool)
+                    .await
+                    .map_err(tracked(DbOp::Other, "Failed to update release flag"))?;
+                return Ok(id);
+            }
+        }
+        self.insert_report(flag).await
+    }
+
+    /// Undo a flag: delete its row. A `rejected` row is not a flag and stays.
+    pub async fn delete_flag(&self, id: i64) -> DbResult<FlagUndo> {
+        let kind: Option<String> =
+            sqlx::query_scalar("SELECT kind FROM release_reports WHERE id = ?")
+                .bind(id)
+                .fetch_optional(self.pool)
+                .await
+                .map_err(tracked(DbOp::Other, "Failed to find release flag"))?;
+        match kind.as_deref() {
+            None => Ok(FlagUndo::NotFound),
+            Some("rejected") => Ok(FlagUndo::NotAFlag),
+            Some(_) => {
+                sqlx::query("DELETE FROM release_reports WHERE id = ?")
+                    .bind(id)
+                    .execute(self.pool)
+                    .await
+                    .map_err(tracked(DbOp::Other, "Failed to delete release flag"))?;
+                Ok(FlagUndo::Deleted)
+            }
+        }
+    }
+
+    /// The flags on any of these *arr hashes, Put.io files, info hashes or checks
+    pub async fn flags_for(
+        &self,
+        arr_hashes: &[String],
+        file_ids: &[i64],
+        hashes: &[String],
+        check_ids: &[i64],
+    ) -> DbResult<Vec<ReportRow>> {
+        let list = |n: usize| vec!["?"; n].join(",");
+        let mut wheres = Vec::new();
+        if !arr_hashes.is_empty() {
+            wheres.push(format!("arr_hash IN ({})", list(arr_hashes.len())));
+        }
+        if !file_ids.is_empty() {
+            wheres.push(format!("file_id IN ({})", list(file_ids.len())));
+        }
+        if !hashes.is_empty() {
+            wheres.push(format!("hash IN ({})", list(hashes.len())));
+        }
+        if !check_ids.is_empty() {
+            wheres.push(format!("check_id IN ({})", list(check_ids.len())));
+        }
+        if wheres.is_empty() {
+            return Ok(Vec::new());
+        }
+        let sql = format!(
+            "SELECT {REPORT_COLUMNS} FROM release_reports \
+             WHERE kind != 'rejected' AND ({}) ORDER BY id",
+            wheres.join(" OR ")
+        );
+        let mut q = sqlx::query(&sql);
+        for h in arr_hashes {
+            q = q.bind(h);
+        }
+        for id in file_ids {
+            q = q.bind(id);
+        }
+        for h in hashes {
+            q = q.bind(h);
+        }
+        for id in check_ids {
+            q = q.bind(id);
+        }
+        let rows = q
+            .fetch_all(self.pool)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to list release flags"))?;
+        Ok(rows.iter().map(report_from_row).collect())
+    }
+
+    /// Whether the check rejected this release: a `rejected` report on its *arr hash or
+    /// info hash
+    pub async fn was_rejected(&self, arr_hash: Option<&str>, hash: Option<&str>) -> DbResult<bool> {
+        if arr_hash.is_none() && hash.is_none() {
+            return Ok(false);
+        }
+        let found: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM release_reports WHERE kind = 'rejected' \
+             AND ((? IS NOT NULL AND arr_hash = ?) OR (? IS NOT NULL AND hash = ?)) LIMIT 1",
+        )
+        .bind(arr_hash)
+        .bind(arr_hash)
+        .bind(hash)
+        .bind(hash)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to look up release rejection"))?;
+        Ok(found.is_some())
+    }
+
+    /// The latest check of a release, by info hash or Put.io transfer
+    pub async fn latest_check(
+        &self,
+        hash: Option<&str>,
+        transfer_id: Option<i64>,
+    ) -> DbResult<Option<i64>> {
+        sqlx::query_scalar(
+            "SELECT id FROM release_checks WHERE (? IS NOT NULL AND hash = ?) \
+             OR (? IS NOT NULL AND transfer_id = ?) ORDER BY id DESC LIMIT 1",
+        )
+        .bind(hash)
+        .bind(hash)
+        .bind(transfer_id)
+        .bind(transfer_id)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to look up release check"))
     }
 
     /// Everything the Stats page's release tiles draw, for checks made since the start of
@@ -615,6 +748,56 @@ mod tests {
 
     const HASH: &str = "0123456789abcdef0123456789abcdef01234567";
 
+    fn flag(
+        kind: ReportKind,
+        file_id: Option<i64>,
+        note: Option<&'static str>,
+    ) -> NewReport<'static> {
+        NewReport {
+            kind,
+            file_id,
+            name: "Movie.2024",
+            note,
+            ..NewReport::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_second_flag_replaces_the_note_and_undo_deletes_it() {
+        let (_dir, db) = db().await;
+        let repo = db.releases();
+        let fake = flag(ReportKind::FlaggedFake, Some(7), Some("archive"));
+        let id = repo.upsert_flag(&fake).await.unwrap();
+        let again = flag(ReportKind::FlaggedFake, Some(7), Some("password"));
+        assert_eq!(repo.upsert_flag(&again).await.unwrap(), id);
+        let other = repo
+            .upsert_flag(&flag(ReportKind::FlaggedNotFake, Some(7), None))
+            .await
+            .unwrap();
+        assert_ne!(other, id);
+
+        let flags = repo.flags_for(&[], &[7, 8], &[], &[]).await.unwrap();
+        assert_eq!(flags.len(), 2);
+        assert_eq!(flags[0].note.as_deref(), Some("password"));
+
+        let rejected = repo
+            .insert_report(&NewReport {
+                hash: Some(HASH),
+                ..flag(ReportKind::Rejected, None, None)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.delete_flag(rejected).await.unwrap(),
+            FlagUndo::NotAFlag
+        );
+        assert_eq!(repo.delete_flag(id).await.unwrap(), FlagUndo::Deleted);
+        assert_eq!(repo.delete_flag(id).await.unwrap(), FlagUndo::NotFound);
+        assert!(repo.was_rejected(None, Some(HASH)).await.unwrap());
+        assert!(!repo.was_rejected(Some(HASH), None).await.unwrap());
+        assert!(!repo.was_rejected(None, None).await.unwrap());
+    }
+
     fn check(state: Option<CheckState>) -> NewCheck<'static> {
         NewCheck {
             hash: Some(HASH),
@@ -763,6 +946,52 @@ mod tests {
         assert_eq!(repo.prune(400).await.unwrap(), 2);
         assert!(repo.has_pending().await.unwrap());
     }
+}
+
+const REPORT_COLUMNS: &str = "id, kind, check_id, arr_hash, file_id, transfer_id, source, \
+     category, watch_folder, stage, name, hash, total_size, file_count, types, largest_wanted, \
+     min_size, tracker_hosts, is_private, reason, note, created_at";
+
+fn report_from_row(row: &sqlx::sqlite::SqliteRow) -> ReportRow {
+    ReportRow {
+        id: row.get("id"),
+        kind: row.get("kind"),
+        check_id: row.get("check_id"),
+        arr_hash: row.get("arr_hash"),
+        file_id: row.get("file_id"),
+        transfer_id: row.get("transfer_id"),
+        source: row.get("source"),
+        category: row.get("category"),
+        watch_folder: row.get("watch_folder"),
+        stage: row.get("stage"),
+        name: row.get("name"),
+        hash: row.get("hash"),
+        total_size: row.get("total_size"),
+        file_count: row.get("file_count"),
+        types: json_list(row, "types"),
+        largest_wanted: row.get("largest_wanted"),
+        min_size: row.get("min_size"),
+        tracker_hosts: json_list(row, "tracker_hosts"),
+        is_private: row.get("is_private"),
+        reason: row.get("reason"),
+        note: row.get("note"),
+        created_at: row.get("created_at"),
+    }
+}
+
+/// A flag's release key
+enum Key<'a> {
+    Text(&'a str),
+    Int(i64),
+}
+
+/// What [`ReleasesRepository::delete_flag`] did
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlagUndo {
+    Deleted,
+    NotFound,
+    /// The row is a `rejected` report, which can't be undone
+    NotAFlag,
 }
 
 /// A JSON list column; empty when it doesn't parse

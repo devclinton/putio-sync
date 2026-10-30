@@ -110,6 +110,15 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         ),
         get("/arr"),
         post("/arr/servers/0/test"),
+        get("/stats/releases"),
+        get("/releases/reports"),
+        get("/releases/flags"),
+        (
+            Method::POST,
+            "/releases/flags",
+            Some(json!({ "target": { "file_id": 1 }, "kind": "fake" })),
+        ),
+        (Method::DELETE, "/releases/flags/1", None),
         // Unknown paths fall through to the protected fallback
         get("/robots.txt"),
     ]
@@ -335,6 +344,28 @@ async fn no_tracker_passkey_in_responses_or_sources() {
     let text = body_text(app.get("/stats/summary?range=24h").await).await;
     assert!(text.contains("tracker.example.org"), "{text}");
     assert!(!text.contains(PASSKEY), "{text}");
+
+    // A flag keeps the host only, in the response and both exports (042 US6)
+    let flagged = app
+        .post_json(
+            "/releases/flags",
+            json!({ "target": { "file_id": 31 }, "kind": "fake" }),
+        )
+        .await;
+    assert_eq!(flagged.status(), StatusCode::CREATED);
+    let mut texts = vec![body_text(flagged).await];
+    for path in [
+        "/releases/reports",
+        "/releases/reports?format=csv",
+        "/releases/flags?file_id=31",
+    ] {
+        texts.push(body_text(app.get(path).await).await);
+    }
+    assert!(texts[1].contains("tracker.example.org"), "{}", texts[1]);
+    for text in texts {
+        assert!(!text.contains(PASSKEY), "{text}");
+        assert!(!text.contains("magnet:"), "{text}");
+    }
 }
 
 /// The download client's password and the *arr API keys never reach a response or a

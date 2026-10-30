@@ -1,10 +1,12 @@
 // History page: downloads and deletions, newest first, filtered by action and name,
 // 50 per page, with totals from /history/stats. "Rejected releases" lists what the
 // release pre-check turned away, from /releases/reports (feature 042). Loads on filter
-// or page change only.
+// or page change only. Rows can be flagged fake, and rejected rows marked not fake, with
+// the flags for the page loaded in one request.
 
 import { get } from "../api.js";
 import { empty, h } from "../app.js";
+import { flagControl, loadFlags } from "../flags.js";
 import { bytes, dateTime, speed, utc } from "../format.js";
 
 const PAGE = 50;
@@ -18,6 +20,7 @@ let els = null;
 let offset = 0;
 let seq = 0;
 let typing = null;
+let flags = null;
 
 export function mount(el) {
   offset = 0;
@@ -97,6 +100,8 @@ async function load() {
     offset = Math.floor((res.total - 1) / PAGE) * PAGE;
     return load();
   }
+  flags = await loadFlags(entries.map((e) => ({ history_id: e.id })));
+  if (mine !== seq || !els) return;
   render(entries, res.total, Boolean(name || els.action.value));
 }
 
@@ -124,7 +129,10 @@ async function loadRejected(mine) {
   const name = els.name.value.trim().toLowerCase();
   const rows = res.filter((r) => r.kind === REJECTED && (!name || r.name.toLowerCase().includes(name)));
   if (offset >= rows.length && offset > 0) offset = Math.floor((rows.length - 1) / PAGE) * PAGE;
-  renderRejected(rows.slice(offset, offset + PAGE), rows.length, Boolean(name));
+  const page = rows.slice(offset, offset + PAGE);
+  flags = await loadFlags(page.map((r) => ({ report_id: r.id })));
+  if (mine !== seq || !els) return;
+  renderRejected(page, rows.length, Boolean(name));
 }
 
 // ---- Rendering --------------------------------------------------------------
@@ -149,7 +157,7 @@ function render(entries, total, filtered) {
     h(
       "table",
       { class: "table" },
-      h("thead", {}, h("tr", {}, h("th", { text: "Time" }), h("th", { text: "Action" }), h("th", { text: "Name" }), h("th", { class: "right", text: "Size" }), h("th", { class: "right", text: "Speed" }))),
+      h("thead", {}, h("tr", {}, h("th", { text: "Time" }), h("th", { text: "Action" }), h("th", { text: "Name" }), h("th", { class: "right", text: "Size" }), h("th", { class: "right", text: "Speed" }), h("th", { class: "right", text: "Actions" }))),
       h("tbody", {}, entries.map(row)),
     ),
   );
@@ -166,6 +174,7 @@ function row(e) {
     h("td", { class: "name-cell name", "data-label": "Name", text: e.filename }),
     h("td", { class: "num right", "data-label": "Size", text: bytes(e.file_size) }),
     h("td", { class: "num right", "data-label": "Speed", text: e.speed_bps ? speed(e.speed_bps) : "—" }),
+    actions(flagControl(flags, { target: { history_id: e.id }, name: e.filename, onChange: refresh })),
   );
 }
 
@@ -180,7 +189,7 @@ function renderRejected(rows, total, filtered) {
     h(
       "table",
       { class: "table" },
-      h("thead", {}, h("tr", {}, h("th", { text: "Time" }), h("th", { text: "Checked" }), h("th", { text: "Name" }), h("th", { text: "Reason" }), h("th", { class: "right", text: "Size" }))),
+      h("thead", {}, h("tr", {}, h("th", { text: "Time" }), h("th", { text: "Checked" }), h("th", { text: "Name" }), h("th", { text: "Reason" }), h("th", { class: "right", text: "Size" }), h("th", { class: "right", text: "Actions" }))),
       h("tbody", {}, rows.map(rejectedRow)),
     ),
   );
@@ -204,5 +213,8 @@ function rejectedRow(r) {
     h("td", { class: "name-cell name", "data-label": "Name", text: r.name }),
     h("td", { "data-label": "Reason", text: why(r) }),
     h("td", { class: "num right", "data-label": "Size", text: r.total_size ? bytes(r.total_size) : "—" }),
+    actions(flagControl(flags, { target: { report_id: r.id }, name: r.name, rejected: true, onChange: refresh })),
   );
 }
+
+const actions = (control) => h("td", { class: "actions-cell", "data-label": "Actions" }, h("div", { class: "row-actions" }, control));

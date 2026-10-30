@@ -3,8 +3,8 @@
 // and magnet lookups from GET /stats/releases (feature 042). Filters live in the hash
 // query, so a reload or a shared link keeps them. Loads on filter change and Refresh only.
 
-import { get, releaseStats } from "../api.js";
-import { empty as emptyState, h } from "../app.js";
+import { downloadReports, get, releaseStats } from "../api.js";
+import { empty as emptyState, h, toastError } from "../app.js";
 import { bytes, duration, speed } from "../format.js";
 
 const RANGES = { "24h": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "90d": "Last 90 days", "1y": "Last year", all: "All time" };
@@ -185,7 +185,7 @@ function render() {
   els.plot = null;
   els.body.replaceChildren(
     h("div", { class: "tiles" }, tile("Files", count(t.files)), tile("Downloaded", bytes(t.bytes)), tile("Time downloading", t.seconds ? duration(t.seconds) : "—"), tile("Average speed", t.avg_bps ? speed(t.avg_bps) : "—")),
-    h("div", { class: "stats-grid" }, card("Bandwidth", empty ? null : bandwidth()), card("When", empty ? null : heatmap()), card("File types", empty ? null : types()), card("Origin", empty ? null : origin()), card("Sources", empty ? null : sources()), rejectedCard(), magnetsCard()),
+    h("div", { class: "stats-grid" }, card("Bandwidth", empty ? null : bandwidth()), card("When", empty ? null : heatmap()), card("File types", empty ? null : types()), card("Origin", empty ? null : origin()), card("Sources", empty ? null : sources()), rejectedCard(), magnetsCard(), reportsCard()),
   );
   if (els.plot) drawBars();
 }
@@ -531,5 +531,48 @@ function magnetsCard() {
     h("p", { text: fake }),
     caches,
     h("p", { class: "muted note", text: "Misses aren't kept per cache, so they share one row. Magnets with lookups off count as sent to Put.io." }),
+  );
+}
+
+function reportsCard() {
+  const title = "Release reports";
+  if (!releases) return h("section", { class: "card" }, h("h2", { text: title }), emptyState("Can't load the release check"));
+  const r = releases.reports;
+  const total = r.rejected + r.flagged_fake + r.flagged_not_fake;
+  const save = (format) =>
+    h(
+      "button",
+      {
+        type: "button",
+        class: "btn btn-small",
+        disabled: !total,
+        onclick: async (ev) => {
+          const button = ev.currentTarget;
+          button.disabled = true;
+          try {
+            await downloadReports(f.range, format);
+          } catch (e) {
+            toastError(e);
+          } finally {
+            button.disabled = false;
+          }
+        },
+      },
+      `Download ${format.toUpperCase()}`,
+    );
+  const kinds = [
+    { label: "Rejected by the check", count: r.rejected },
+    { label: "Flagged fake", count: r.flagged_fake },
+    { label: "Flagged not fake", count: r.flagged_not_fake },
+  ];
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: title }),
+    total ? countList(null, kinds, total) : emptyState("No reports in this range", "Rejections and the flags you set are kept here."),
+    r.top_types.length ? countList("Top file types", r.top_types.map((t) => ({ label: `.${t.ext}`, count: t.count })), total) : null,
+    r.top_trackers.length ? countList("Top trackers", r.top_trackers.map((t) => ({ label: t.host, count: t.count })), total) : null,
+    h("div", { class: "toolbar spaced" }, save("csv"), save("json")),
+    h("p", { class: "muted note", text: "Each report keeps the file types, sizes and tracker host, never a link or a key." }),
   );
 }
