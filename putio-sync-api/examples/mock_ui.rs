@@ -807,6 +807,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_body(r#"{"appName":"Sonarr","version":"4.0.15.2941"}"#)
         .create_async()
         .await;
+    // Its putio-sync client, whose category the Applications list shows (feature 018)
+    let _sonarr_clients = putio
+        .mock("GET", "/api/v3/downloadclient")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"[{"id":1,"name":"putio-sync","implementation":"Transmission","enable":true,
+                "fields":[{"name":"host","value":"putio-sync"},{"name":"port","value":15432},
+                {"name":"urlBase","value":"/transmission/"},{"name":"tvCategory","value":"tv"}]}]"#,
+        )
+        .create_async()
+        .await;
+    // Its path mappings and filesystem don't include the temp download folder, so the
+    // path check (US6) reports it as not visible
+    let _sonarr_mappings = putio
+        .mock("GET", "/api/v3/remotepathmapping")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"[{"id":1,"host":"nas","remotePath":"/downloads/","localPath":"/data/downloads/"}]"#,
+        )
+        .create_async()
+        .await;
+    let _sonarr_filesystem = putio
+        .mock("GET", "/api/v3/filesystem")
+        .match_query(mockito::Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"directories":[{"type":"folder","name":"tv"}],"files":[]}"#)
+        .create_async()
+        .await;
 
     let dir = tempfile::tempdir()?;
     let mut config = Config {
@@ -824,13 +855,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 kind: ArrKind::Sonarr,
                 url: putio.url(),
                 api_key: Some("mock-sonarr-key".to_string()),
-                category: "sonarr".to_string(),
+                name: None,
+                category: Some("sonarr".to_string()),
             },
             ArrServer {
                 kind: ArrKind::Radarr,
                 url: "http://127.0.0.1:7878".to_string(),
                 api_key: None,
-                category: "radarr".to_string(),
+                name: None,
+                category: Some("radarr".to_string()),
             },
         ],
         ..Default::default()
@@ -984,6 +1017,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .contacts()
             .record(Some("Sonarr/4.0.15.2941 (ubuntu 22.04)"));
     }
+    putio_sync_api::spawn_arr_refresh(&state).await;
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     let addr = listener.local_addr()?;

@@ -71,7 +71,7 @@ async function load() {
     get("/local/queue").catch(failure),
     get("/local/downloads").catch(failure),
     watchingSync ? get("/status").catch(() => null) : null,
-    get("/arr").catch(() => null),
+    get("/arr/status").catch(() => null),
   ]);
   if (mine !== seq || !els) return; // a newer load already rendered, or page left
   for (const r of [queue, downloads]) if (r && r.failed && passUp(r.err)) throw r.err;

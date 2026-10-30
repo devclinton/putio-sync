@@ -41,6 +41,7 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_arr_rpc_requests_total",
     "putio_sync_arr_items",
     "putio_sync_arr_blocklist_total",
+    "putio_sync_arr_setup_total",
     "putio_sync_precheck_total",
     "putio_sync_precheck_avoided_bytes_total",
     "putio_sync_precheck_cache_lookups_total",
@@ -165,6 +166,7 @@ fn record_everything(t: &Telemetry) {
     t.arr_rpc_request(ArrMethod::TorrentAdd, ArrOutcome::AuthFailed);
     t.set_arr_items(ArrItemState::Done, 2);
     t.arr_blocklist(BlocklistOutcome::Error);
+    t.arr_setup(ArrSetupKind::Radarr, ArrSetupResult::Created);
     t.precheck(
         PrecheckSource::Torrent,
         PrecheckStage::Before,
@@ -215,6 +217,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
         }
         "result" => {
             let mut v = strs(SyncResult::ALL, SyncResult::as_str);
+            v.extend(strs(ArrSetupResult::ALL, ArrSetupResult::as_str));
             v.extend(strs(LookupResult::ALL, LookupResult::as_str));
             v.extend(strs(FallbackResult::ALL, FallbackResult::as_str));
             v.extend(strs(HoldResult::ALL, HoldResult::as_str));
@@ -222,6 +225,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
         }
         "kind" => {
             let mut v = strs(SyncKind::ALL, SyncKind::as_str);
+            v.extend(strs(ArrSetupKind::ALL, ArrSetupKind::as_str));
             v.extend(strs(FlagKind::ALL, FlagKind::as_str));
             v
         }

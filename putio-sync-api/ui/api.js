@@ -110,14 +110,62 @@ export function syncNow() {
   return post("/local/sync");
 }
 
-/** The Radarr / Sonarr download client: connection details, servers, item counts. */
+/** The Status page's Radarr / Sonarr card: `{enabled, clients_seen, items}` */
+export function arrRuntime() {
+  return get("/arr/status");
+}
+
+/** The Radarr / Sonarr card: `{client, applications}`. Never a password or API key. */
 export function arrStatus() {
   return get("/arr");
 }
 
-/** Test the *arr server at `index`. Resolves with `{ok, app, version}` or `{ok: false, reason, detail}`. */
-export function testArrServer(index) {
-  return post(`/arr/servers/${index}/test`);
+/** Save the download client form `{enabled, username, password}`; an empty password keeps it. */
+export function saveArrClient(body) {
+  return put("/arr/client", body);
+}
+
+/** Look for Radarr and Sonarr (at most 10 s). Resolves with `{instances, tried}`; 409 while one runs. */
+export function discoverArr() {
+  return post("/arr/discover");
+}
+
+/** What auto-setup would change. Resolves with a plan, or `{ok: false, reason, detail}`. */
+export function previewArrSetup(req) {
+  return post("/arr/setup/preview", req);
+}
+
+/** Run auto-setup. Resolves with a result whose `outcome` may be `failed`. */
+export function runArrSetup(req) {
+  return post("/arr/setup", req);
+}
+
+/**
+ * Test the saved application at `index` and re-read its categories. Resolves with
+ * `{ok, app, version, categories, client_present}` or `{ok: false, reason, detail}`.
+ */
+export function testArrApplication(index) {
+  return post(`/arr/applications/${index}/test`);
+}
+
+/** Test unsaved form values; an empty `api_key` with `index` uses that application's saved key. */
+export function testArrForm(body) {
+  return post("/arr/applications/test", body);
+}
+
+/** Add an application `{kind, name, host, port, ssl, url_base, api_key}`. Resolves with `{index, message}`. */
+export function addArrApplication(body) {
+  return post("/arr/applications", body);
+}
+
+/** Edit the application at `index`; an empty `api_key` keeps the saved one. */
+export function saveArrApplication(index, body) {
+  return put(`/arr/applications/${index}`, body);
+}
+
+/** Remove the application at `index` from the config. Radarr/Sonarr itself is left as it is. */
+export function deleteArrApplication(index) {
+  return del(`/arr/applications/${index}`);
 }
 
 /** What the release pre-check rejected in `range`: `{range, rejected, magnets, reports}`. */

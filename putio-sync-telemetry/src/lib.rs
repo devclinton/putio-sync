@@ -92,6 +92,7 @@ pub struct Telemetry {
     pub(crate) arr_rpc_requests: IntCounterVec,
     pub(crate) arr_items: IntGaugeVec,
     pub(crate) arr_blocklist: IntCounterVec,
+    pub(crate) arr_setup: IntCounterVec,
     // Feature 042
     pub(crate) precheck: IntCounterVec,
     pub(crate) precheck_avoided_bytes: IntCounterVec,
@@ -384,6 +385,14 @@ impl Telemetry {
                 &["outcome"],
             )
             .unwrap(),
+            arr_setup: IntCounterVec::new(
+                opts(
+                    "arr_setup_total",
+                    "Radarr/Sonarr auto-setups, by app kind and result.",
+                ),
+                &["kind", "result"],
+            )
+            .unwrap(),
             precheck: IntCounterVec::new(
                 opts(
                     "precheck_total",
@@ -531,6 +540,7 @@ impl Telemetry {
             Box::new(self.arr_rpc_requests.clone()),
             Box::new(self.arr_items.clone()),
             Box::new(self.arr_blocklist.clone()),
+            Box::new(self.arr_setup.clone()),
             Box::new(self.precheck.clone()),
             Box::new(self.precheck_avoided_bytes.clone()),
             Box::new(self.precheck_cache_lookups.clone()),
@@ -598,6 +608,11 @@ impl Telemetry {
         }
         for o in BlocklistOutcome::ALL {
             self.arr_blocklist.with_label_values(&[o.as_str()]);
+        }
+        for k in ArrSetupKind::ALL {
+            for r in ArrSetupResult::ALL {
+                self.arr_setup.with_label_values(&[k.as_str(), r.as_str()]);
+            }
         }
         for source in PrecheckSource::ALL {
             for stage in PrecheckStage::ALL {
