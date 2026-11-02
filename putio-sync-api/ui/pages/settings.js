@@ -438,7 +438,8 @@ function arrCard(mine) {
     card.replaceChildren(title(), h("p", { class: "muted", text: "Loading…" }));
     try {
       const data = await arrStatus();
-      if (mine === seq) card.replaceChildren(title(), ...arrBody(data, load, mine));
+      // replaceChildren prints null as text, unlike h(), so drop the optional parts
+      if (mine === seq) card.replaceChildren(title(), ...arrBody(data, load, mine).filter(Boolean));
     } catch (e) {
       if (mine !== seq || e.status === 401 || e.status === 429) return;
       card.replaceChildren(
