@@ -113,6 +113,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   It now looks again for up to 10 minutes.
 - The Radarr / Sonarr settings card no longer shows a stray "null" under its
   title.
+- The Local files page no longer deletes or renames putio-sync's own database
+  (`.putiosync.db` and its `-wal`, `-shm` and `-journal` files) when it sits in
+  the download folder; they show as in use, like a partial that's downloading.
 - `resume_enabled = false` and `--no-resume` now start partial downloads
   over; before, they did nothing. `--skip-existing` now works in daemon mode
   (feature 040).

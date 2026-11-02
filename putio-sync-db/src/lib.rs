@@ -65,7 +65,7 @@ use putio_sync_telemetry::DbOp;
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::{debug, info};
@@ -73,6 +73,7 @@ use tracing::{debug, info};
 /// Database connection pool and management
 pub struct Database {
     pool: SqlitePool,
+    path: PathBuf,
 }
 
 impl Database {
@@ -127,7 +128,10 @@ impl Database {
             .await
             .map_err(tracked(DbOp::Migrate, "Failed to connect to database"))?;
 
-        let db = Database { pool };
+        let db = Database {
+            pool,
+            path: path.to_path_buf(),
+        };
 
         // Run migrations
         db.migrate().await?;
@@ -140,6 +144,22 @@ impl Database {
     /// Get the underlying connection pool
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    /// The database file, as given to [`Database::new`]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The database file and the journal files SQLite keeps beside it
+    pub fn files(&self) -> Vec<PathBuf> {
+        let mut files = vec![self.path.clone()];
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let mut name = self.path.clone().into_os_string();
+            name.push(suffix);
+            files.push(name.into());
+        }
+        files
     }
 
     /// Get a download repository
