@@ -1444,6 +1444,16 @@ impl TorrentWatcher {
         self.config.read().unwrap().clone()
     }
 
+    /// Forget `path` as processed, so the next scan checks it again (044 re-queue)
+    pub fn forget(&self, path: &Path) {
+        let canonical = path.canonicalize().ok();
+        let processed = self.core.processed_files();
+        processed
+            .lock()
+            .unwrap()
+            .retain(|p| p != path && p.canonicalize().ok() != canonical);
+    }
+
     /// Get runtime statistics
     ///
     /// Returns current watcher statistics including processed files count
