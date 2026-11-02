@@ -146,7 +146,7 @@ async fn report_lists_each_decision() {
         .await
         .unwrap();
 
-    let report = manager.enqueue_tree_report(FOLDER_ID).await.unwrap();
+    let report = manager.enqueue_tree_report(FOLDER_ID, false).await.unwrap();
     assert_eq!(report.root_name.as_deref(), Some("Show"));
     let mut decisions: Vec<_> = report
         .files
@@ -165,7 +165,7 @@ async fn report_lists_each_decision() {
     assert!(report.files[0].decision.accepted());
     assert_eq!(report.stats.files_skipped, 2);
 
-    let single = manager.enqueue_tree_report(1).await.unwrap();
+    let single = manager.enqueue_tree_report(1, false).await.unwrap();
     assert_eq!(single.root_name.as_deref(), Some("a.mkv"));
     assert_eq!(single.files.len(), 1);
 }

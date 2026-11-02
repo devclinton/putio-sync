@@ -35,10 +35,12 @@ pub mod arr;
 pub mod decisions;
 pub mod downloads;
 pub mod error;
+pub mod held;
 pub mod history;
 pub mod models;
 pub mod pipeline;
 pub mod queue;
+pub mod releases;
 pub mod schema;
 pub mod sources;
 pub mod stats;
@@ -48,9 +50,14 @@ pub use arr::{ArrItem, ArrRepository, ArrState, BlocklistState, NewArrItem, Puti
 pub use decisions::{RuleDecisionRecord, RuleDecisionsRepository};
 pub use downloads::DownloadRepository;
 pub use error::{DbError, DbResult};
+pub use held::{Held, HeldRepository, HoldStats, NewHeld};
 pub use history::HistoryRepository;
 pub use pipeline::{FinishedRepository, FlagsRepository, HoldsRepository};
 pub use queue::{QueueRepository, QueueStats};
+pub use releases::{
+    CheckState, FlagUndo, HeldSettle, NewCheck, NewReport, PendingCheck, ReleaseStats,
+    ReleasesRepository, ReportKind, ReportRow,
+};
 pub use sources::SourcesRepository;
 pub use stats::{ExtensionStats, StatsRepository};
 pub use torrents::ProcessedTorrentsRepository;
@@ -167,6 +174,16 @@ impl Database {
         ArrRepository::new(&self.pool)
     }
 
+    /// Get the release pre-check repository (feature 042)
+    pub fn releases(&self) -> ReleasesRepository<'_> {
+        ReleasesRepository::new(&self.pool)
+    }
+
+    /// Get the held magnets repository (feature 043)
+    pub fn held(&self) -> HeldRepository<'_> {
+        HeldRepository::new(&self.pool)
+    }
+
     /// Get a rule decisions repository (feature 009)
     pub fn rule_decisions(&self) -> RuleDecisionsRepository<'_> {
         RuleDecisionsRepository::new(&self.pool)
@@ -267,6 +284,17 @@ impl Database {
         // Migrate: Add relative_path column to download_queue if it doesn't exist
         self.migrate_add_relative_path_column().await?;
 
+        // Existing-file handling (feature 040)
+        for (table, column, declaration) in [
+            ("download_queue", "save_as", "TEXT"),
+            ("download_queue", "fixed_path", "INTEGER NOT NULL DEFAULT 0"),
+            ("download_history", "local_path", "TEXT"),
+            ("download_history", "outcome", "TEXT"),
+        ] {
+            self.add_column_if_missing(table, column, declaration)
+                .await?;
+        }
+
         // Create processed_torrents table
         sqlx::query(schema::CREATE_PROCESSED_TORRENTS_TABLE)
             .execute(&self.pool)
@@ -311,6 +339,24 @@ impl Database {
             (
                 schema::CREATE_PIPELINE_FINISHED_TABLE,
                 "Failed to create pipeline_finished table",
+            ),
+            // Release pre-check (feature 042)
+            (
+                schema::CREATE_RELEASE_CHECKS_TABLE,
+                "Failed to create release_checks table",
+            ),
+            (
+                schema::CREATE_RELEASE_REPORTS_TABLE,
+                "Failed to create release_reports table",
+            ),
+            // Held magnets (feature 043)
+            (
+                schema::CREATE_HELD_MAGNETS_TABLE,
+                "Failed to create held_magnets table",
+            ),
+            (
+                schema::CREATE_HOLD_ENDS_TABLE,
+                "Failed to create hold_ends table",
             ),
         ] {
             sqlx::query(sql)
@@ -358,6 +404,33 @@ impl Database {
         }
     }
 
+    /// `ALTER TABLE table ADD COLUMN column declaration`, unless the column exists
+    async fn add_column_if_missing(
+        &self,
+        table: &str,
+        column: &str,
+        declaration: &str,
+    ) -> DbResult<()> {
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?")
+                .bind(table)
+                .bind(column)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(tracked(DbOp::Migrate, "Failed to read table columns"))?;
+        if count > 0 {
+            return Ok(());
+        }
+        sqlx::query(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {declaration}"
+        ))
+        .execute(&self.pool)
+        .await
+        .map_err(tracked(DbOp::Migrate, "Failed to add column"))?;
+        info!(table, column, "Added database column");
+        Ok(())
+    }
+
     /// Close the database connection
     pub async fn close(self) -> DbResult<()> {
         self.pool.close().await;
@@ -391,6 +464,43 @@ mod tests {
         assert!(db_path.parent().unwrap().exists());
 
         db.close().await.unwrap();
+    }
+
+    /// Feature 040 columns reach a database made before them, and a re-run keeps them
+    #[tokio::test]
+    async fn existing_file_columns_are_added_once() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db = Database::new(&db_path).await.unwrap();
+        sqlx::query("ALTER TABLE download_queue DROP COLUMN save_as")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE download_history DROP COLUMN outcome")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        db.close().await.unwrap();
+
+        for _ in 0..2 {
+            let db = Database::new(&db_path).await.unwrap();
+            for (table, column) in [
+                ("download_queue", "save_as"),
+                ("download_queue", "fixed_path"),
+                ("download_history", "local_path"),
+                ("download_history", "outcome"),
+            ] {
+                let (count,): (i64,) =
+                    sqlx::query_as("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?")
+                        .bind(table)
+                        .bind(column)
+                        .fetch_one(db.pool())
+                        .await
+                        .unwrap();
+                assert_eq!(count, 1, "{table}.{column}");
+            }
+            db.close().await.unwrap();
+        }
     }
 
     #[tokio::test]
@@ -453,6 +563,73 @@ mod tests {
         .execute(db.pool())
         .await;
         assert!(bad.is_err(), "outcome is done or failed");
+        db.close().await.unwrap();
+    }
+
+    /// A database from before features 039, 040, 042 and 043 gets all their tables,
+    /// columns and indexes in one run, keeping its rows
+    #[tokio::test]
+    async fn migrate_upgrades_a_database_from_before_039_and_040_to_043() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let tables = [
+            "pipeline_holds",
+            "daemon_flags",
+            "pipeline_finished",
+            "release_checks",
+            "release_reports",
+            "held_magnets",
+            "hold_ends",
+        ];
+
+        let db = Database::new(&db_path).await.unwrap();
+        db.queue()
+            .add(1, "a.mkv", 10, "", "", 0, models::QueueStatus::Pending)
+            .await
+            .unwrap();
+        for table in tables {
+            sqlx::query(&format!("DROP TABLE {table}"))
+                .execute(db.pool())
+                .await
+                .unwrap();
+        }
+        for (table, column) in [
+            ("download_queue", "save_as"),
+            ("download_queue", "fixed_path"),
+            ("download_history", "local_path"),
+            ("download_history", "outcome"),
+        ] {
+            sqlx::query(&format!("ALTER TABLE {table} DROP COLUMN {column}"))
+                .execute(db.pool())
+                .await
+                .unwrap();
+        }
+        db.close().await.unwrap();
+
+        let db = Database::new(&db_path).await.unwrap();
+        for table in tables {
+            let result = sqlx::query(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(db.pool())
+                .await;
+            assert!(result.is_ok(), "{table} exists");
+        }
+        for index in [
+            "idx_download_sources_transfer_id",
+            "idx_release_checks_transfer_id",
+            "idx_held_magnets_next_at",
+        ] {
+            let (count,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+            )
+            .bind(index)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+            assert_eq!(count, 1, "{index}");
+        }
+        let item = db.queue().get_by_file_id(1).await.unwrap().unwrap();
+        assert!(!item.fixed_path);
+        assert_eq!(item.save_as, None);
         db.close().await.unwrap();
     }
 }

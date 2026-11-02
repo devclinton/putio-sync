@@ -4,7 +4,7 @@
 //! (see `specs/003-telemetry-prometheus/contracts/metrics.md`), the closed label sets and
 //! the metrics listener. Engine crates record through the free functions in [`api`],
 //! [`sync`], [`download`], [`watch`], [`cleanup`] and [`db`], which use the process-wide [`global`]
-//! instance. Tests build their own instance with [`Telemetry::new`].
+//! instance. [`process`] reads the process's own CPU and memory figures at scrape time. Tests build their own instance with [`Telemetry::new`].
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
@@ -24,6 +24,8 @@ pub mod download;
 pub mod gauges;
 pub mod labels;
 pub mod pipeline;
+pub mod precheck;
+pub mod process;
 pub mod server;
 pub mod sync;
 pub mod transfers;
@@ -33,6 +35,9 @@ pub use labels::*;
 
 const API_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0];
 const DOWNLOAD_BUCKETS: &[f64] = &[1.0, 5.0, 15.0, 60.0, 300.0, 900.0, 1800.0, 3600.0, 7200.0];
+const LOOKUP_BUCKETS: &[f64] = &[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0];
+/// How long a magnet was held (043)
+const HOLD_BUCKETS: &[f64] = &[30.0, 60.0, 120.0, 180.0, 300.0, 600.0];
 const SYNC_BUCKETS: &[f64] = &[1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0];
 
 /// Every metric family, registered in one registry.
@@ -53,6 +58,7 @@ pub struct Telemetry {
     pub(crate) last_success: GaugeVec,
     pub(crate) last_sync_files: IntGaugeVec,
     pub(crate) files_blocked: IntCounter,
+    pub(crate) sync_in_progress: IntGauge,
     pub(crate) rule_decisions: IntCounterVec,
 
     pub(crate) queue_items: IntGaugeVec,
@@ -60,6 +66,7 @@ pub struct Telemetry {
     pub(crate) download_workers: IntGauge,
     pub(crate) downloads_completed: IntCounter,
     pub(crate) downloads_failed: IntCounterVec,
+    pub(crate) existing_files: IntCounterVec,
     pub(crate) downloaded_bytes: IntCounter,
     pub(crate) download_duration: Histogram,
     pub(crate) worker_state: IntGaugeVec,
@@ -90,6 +97,19 @@ pub struct Telemetry {
     pub(crate) arr_rpc_requests: IntCounterVec,
     pub(crate) arr_items: IntGaugeVec,
     pub(crate) arr_blocklist: IntCounterVec,
+    pub(crate) arr_setup: IntCounterVec,
+    // Feature 042
+    pub(crate) precheck: IntCounterVec,
+    pub(crate) precheck_avoided_bytes: IntCounterVec,
+    pub(crate) precheck_cache_lookups: IntCounterVec,
+    pub(crate) precheck_cache_lookup_seconds: Histogram,
+    pub(crate) precheck_fallback: IntCounterVec,
+    pub(crate) precheck_fallback_putio_bytes: IntCounter,
+    pub(crate) release_flags: IntCounterVec,
+    // Feature 043
+    pub(crate) precheck_held: IntCounterVec,
+    pub(crate) precheck_held_now: IntGauge,
+    pub(crate) precheck_held_seconds: HistogramVec,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -201,6 +221,11 @@ impl Telemetry {
                 &["state"],
             )
             .unwrap(),
+            sync_in_progress: IntGauge::with_opts(opts(
+                "sync_in_progress",
+                "1 while a Put.io sync run is in progress.",
+            ))
+            .unwrap(),
             transfers_stalled: IntGauge::with_opts(opts(
                 "transfers_stalled",
                 "Put.io transfers with no progress for the stall threshold, at the last check.",
@@ -277,6 +302,14 @@ impl Telemetry {
             downloads_failed: IntCounterVec::new(
                 opts("downloads_failed_total", "Downloads that ended in failure."),
                 &["reason"],
+            )
+            .unwrap(),
+            existing_files: IntCounterVec::new(
+                opts(
+                    "existing_files_total",
+                    "Files that already existed locally, by what was done with them.",
+                ),
+                &["outcome"],
             )
             .unwrap(),
             downloaded_bytes: IntCounter::with_opts(opts(
@@ -378,6 +411,84 @@ impl Telemetry {
                 &["outcome"],
             )
             .unwrap(),
+            arr_setup: IntCounterVec::new(
+                opts(
+                    "arr_setup_total",
+                    "Radarr/Sonarr auto-setups, by app kind and result.",
+                ),
+                &["kind", "result"],
+            )
+            .unwrap(),
+            precheck: IntCounterVec::new(
+                opts(
+                    "precheck_total",
+                    "Release pre-checks, by source, stage and outcome.",
+                ),
+                &["source", "stage", "outcome"],
+            )
+            .unwrap(),
+            precheck_avoided_bytes: IntCounterVec::new(
+                opts(
+                    "precheck_avoided_bytes_total",
+                    "Bytes in the file lists of rejected releases.",
+                ),
+                &["stage"],
+            )
+            .unwrap(),
+            precheck_cache_lookups: IntCounterVec::new(
+                opts(
+                    "precheck_cache_lookups_total",
+                    "Magnet .torrent cache lookups, by cache host and result.",
+                ),
+                &["cache", "result"],
+            )
+            .unwrap(),
+            precheck_cache_lookup_seconds: Histogram::with_opts(hopts(
+                "precheck_cache_lookup_seconds",
+                "Time to look one magnet up across the caches.",
+                LOOKUP_BUCKETS,
+            ))
+            .unwrap(),
+            precheck_fallback: IntCounterVec::new(
+                opts(
+                    "precheck_fallback_total",
+                    "Magnets added to Put.io unchecked, by how the check on Put.io went.",
+                ),
+                &["result"],
+            )
+            .unwrap(),
+            precheck_fallback_putio_bytes: IntCounter::with_opts(opts(
+                "precheck_fallback_putio_bytes_total",
+                "Bytes Put.io downloaded for unchecked magnets that were then rejected.",
+            ))
+            .unwrap(),
+            release_flags: IntCounterVec::new(
+                opts("release_flags_total", "Operator flags on releases, by kind."),
+                &["kind"],
+            )
+            .unwrap(),
+            precheck_held: IntCounterVec::new(
+                opts(
+                    "precheck_held_total",
+                    "Magnets held for a later cache ask, by how the hold ended.",
+                ),
+                &["result"],
+            )
+            .unwrap(),
+            precheck_held_now: IntGauge::with_opts(opts(
+                "precheck_held",
+                "Magnets held now, waiting for a cache to have their file list.",
+            ))
+            .unwrap(),
+            precheck_held_seconds: HistogramVec::new(
+                hopts(
+                    "precheck_held_seconds",
+                    "How long a magnet was held, by how the hold ended.",
+                    HOLD_BUCKETS,
+                ),
+                &["result"],
+            )
+            .unwrap(),
 
             db_errors: IntCounterVec::new(
                 opts("db_errors_total", "Database errors."),
@@ -426,12 +537,14 @@ impl Telemetry {
             Box::new(self.last_success.clone()),
             Box::new(self.last_sync_files.clone()),
             Box::new(self.files_blocked.clone()),
+            Box::new(self.sync_in_progress.clone()),
             Box::new(self.rule_decisions.clone()),
             Box::new(self.queue_items.clone()),
             Box::new(self.downloads_active.clone()),
             Box::new(self.download_workers.clone()),
             Box::new(self.downloads_completed.clone()),
             Box::new(self.downloads_failed.clone()),
+            Box::new(self.existing_files.clone()),
             Box::new(self.downloaded_bytes.clone()),
             Box::new(self.download_duration.clone()),
             Box::new(self.worker_state.clone()),
@@ -456,11 +569,23 @@ impl Telemetry {
             Box::new(self.arr_rpc_requests.clone()),
             Box::new(self.arr_items.clone()),
             Box::new(self.arr_blocklist.clone()),
+            Box::new(self.arr_setup.clone()),
+            Box::new(self.precheck.clone()),
+            Box::new(self.precheck_avoided_bytes.clone()),
+            Box::new(self.precheck_cache_lookups.clone()),
+            Box::new(self.precheck_cache_lookup_seconds.clone()),
+            Box::new(self.precheck_fallback.clone()),
+            Box::new(self.precheck_fallback_putio_bytes.clone()),
+            Box::new(self.precheck_held.clone()),
+            Box::new(self.precheck_held_now.clone()),
+            Box::new(self.precheck_held_seconds.clone()),
+            Box::new(self.release_flags.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
             Box::new(self.disk_total.clone()),
             Box::new(self.start_time.clone()),
             Box::new(self.build_info.clone()),
+            Box::new(process::ProcessCollector::new()),
         ];
         for c in collectors {
             r.register(c).expect("metric families have unique names");
@@ -492,6 +617,9 @@ impl Telemetry {
         for r in FailReason::ALL {
             self.downloads_failed.with_label_values(&[r.as_str()]);
         }
+        for o in ExistingOutcome::ALL {
+            self.existing_files.with_label_values(&[o.as_str()]);
+        }
         for t in CleanupTrigger::ALL {
             for r in SyncResult::ALL {
                 self.empty_folder_runs
@@ -518,6 +646,35 @@ impl Telemetry {
         }
         for o in BlocklistOutcome::ALL {
             self.arr_blocklist.with_label_values(&[o.as_str()]);
+        }
+        for k in ArrSetupKind::ALL {
+            for r in ArrSetupResult::ALL {
+                self.arr_setup.with_label_values(&[k.as_str(), r.as_str()]);
+            }
+        }
+        for source in PrecheckSource::ALL {
+            for stage in PrecheckStage::ALL {
+                for outcome in PrecheckOutcome::ALL {
+                    self.precheck.with_label_values(&[
+                        source.as_str(),
+                        stage.as_str(),
+                        outcome.as_str(),
+                    ]);
+                }
+            }
+        }
+        for stage in PrecheckStage::ALL {
+            self.precheck_avoided_bytes
+                .with_label_values(&[stage.as_str()]);
+        }
+        for r in FallbackResult::ALL {
+            self.precheck_fallback.with_label_values(&[r.as_str()]);
+        }
+        for k in FlagKind::ALL {
+            self.release_flags.with_label_values(&[k.as_str()]);
+        }
+        for r in HoldResult::ALL {
+            self.precheck_held.with_label_values(&[r.as_str()]);
         }
         for op in DbOp::ALL {
             self.db_errors.with_label_values(&[op.as_str()]);

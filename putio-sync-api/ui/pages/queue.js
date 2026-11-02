@@ -1,9 +1,11 @@
 // Queue page: active downloads and the queue, polled every 3 s, with every queue action
 // and "sync now". Reordering, skip, pause and resume are reversible, so only clearing
-// completed rows and cancelling a download ask first.
+// completed rows and cancelling a download ask first. Queue rows can be flagged as fake
+// (feature 042); flags reload when the rows or a flag change, not on every poll.
 
 import { del, get, post, syncNow } from "../api.js";
 import { confirm, empty, h, poll, toast } from "../app.js";
+import { flagControl, loadFlags } from "../flags.js";
 import { bytes, duration, percent, relative, speed, utc } from "../format.js";
 
 const REFRESH_MS = 3000;
@@ -20,8 +22,10 @@ let timer = null;
 let seq = 0;
 let items = [];
 let els = null;
-let shown = { downloads: null, queue: null };
+let shown = { downloads: null, queue: null, held: null };
 let watchingSync = false;
+let flags = null;
+let flagged = { ids: null, version: 0 };
 
 export function mount(el) {
   els = {
@@ -33,10 +37,13 @@ export function mount(el) {
     syncBtn: h("button", { type: "button", class: "btn btn-primary", onclick: onSync }, "Sync now"),
     downloads: h("section", { class: "card wide" }),
     queue: h("section", { class: "card wide" }),
+    held: h("section", { class: "card wide", hidden: true }),
   };
-  shown = { downloads: null, queue: null };
+  shown = { downloads: null, queue: null, held: null };
   watchingSync = false;
   items = [];
+  flags = null;
+  flagged = { ids: null, version: 0 };
   el.append(
     h(
       "div",
@@ -44,7 +51,7 @@ export function mount(el) {
       h("div", {}, h("h1", { text: "Queue" }), els.summary, els.sync),
       h("div", { class: "toolbar" }, els.pause, els.resume, els.clear, els.syncBtn),
     ),
-    h("div", { class: "stack" }, els.downloads, els.queue),
+    h("div", { class: "stack" }, els.downloads, els.held, els.queue),
   );
   timer = poll(load, REFRESH_MS);
 }
@@ -60,16 +67,25 @@ export function unmount() {
 
 async function load() {
   const mine = ++seq;
-  const [queue, downloads, status] = await Promise.all([
+  const [queue, downloads, status, arr] = await Promise.all([
     get("/local/queue").catch(failure),
     get("/local/downloads").catch(failure),
     watchingSync ? get("/status").catch(() => null) : null,
+    get("/arr/status").catch(() => null),
   ]);
   if (mine !== seq || !els) return; // a newer load already rendered, or page left
   for (const r of [queue, downloads]) if (r && r.failed && passUp(r.err)) throw r.err;
+  const ids = queue && !queue.failed ? (queue.items || []).map((i) => i.file_id).join(",") : null;
+  if (ids && ids !== flagged.ids) {
+    const next = await loadFlags(ids.split(",").map((id) => ({ file_id: Number(id) })));
+    if (mine !== seq || !els) return;
+    flags = next;
+    flagged = { ids, version: flagged.version + 1 };
+  }
   renderQueue(queue);
   renderDownloads(downloads);
   if (status && status.sync) renderSync(status.sync);
+  renderHeld((arr && arr.held) || []);
 }
 
 /** Keep a failed section's error so the other section still renders. */
@@ -213,7 +229,7 @@ function renderQueue(res) {
   setToolbar(counts);
 
   // The minute keeps the "Added" ages fresh when nothing else changes
-  swap("queue", { items, minute: Math.floor(Date.now() / 60000) }, () => {
+  swap("queue", { items, minute: Math.floor(Date.now() / 60000), flags: flagged.version }, () => {
     if (items.length === 0) {
       return [h("h2", { text: "Queue" }), empty("Nothing is queued", "New files in watched Put.io folders are added on the next sync.")];
     }
@@ -283,6 +299,7 @@ function queueRow(item, index, last) {
       "Skip",
     ),
   );
+  buttons.unshift(flagControl(flags, { target: { file_id: id }, name: item.filename, onChange: reflag }));
   return h(
     "tr",
     {},
@@ -293,6 +310,43 @@ function queueRow(item, index, last) {
     h("td", { class: "num right", "data-label": "Priority", text: String(item.priority) }),
     h("td", { "data-label": "Added", title: item.created_at, text: relative(utc(item.created_at)) }),
     h("td", { class: "actions-cell", "data-label": "Actions" }, h("div", { class: "row-actions" }, buttons)),
+  );
+}
+
+/** After a flag changes: refetch the flags on the next load */
+function reflag() {
+  flagged.ids = null;
+  load().catch(() => {});
+}
+
+/** Magnets held until a cache has their file list (043) */
+function renderHeld(list) {
+  els.held.hidden = !list.length;
+  swap("held", { list, minute: Math.floor(Date.now() / 60000) }, () =>
+    list.length
+      ? [
+          h("h2", { text: `Waiting for a file list (${list.length})` }),
+          h(
+            "table",
+            { class: "table" },
+            h("thead", {}, h("tr", {}, ["Name", "Left", "Asks", "Held"].map((t) => h("th", { text: t })))),
+            h(
+              "tbody",
+              {},
+              list.map((m) =>
+                h(
+                  "tr",
+                  {},
+                  h("td", { class: "name-cell name", "data-label": "Name", text: m.name }),
+                  h("td", { "data-label": "Left", text: `${Math.max(0, Math.ceil((Date.parse(m.until) - Date.now()) / 60000))} min` }),
+                  h("td", { class: "num", "data-label": "Asks", text: String(m.attempts) }),
+                  h("td", { "data-label": "Held", text: relative(m.since) }),
+                ),
+              ),
+            ),
+          ),
+        ]
+      : [],
   );
 }
 
@@ -322,8 +376,13 @@ function renderDownloads(res) {
           { class: "num", "data-label": "Progress" },
           h("div", {}, percent(pct), h("div", { class: "bar" }, h("span", { style: `width:${clamp(pct)}%` }))),
         ),
-        h("td", { class: "num right", "data-label": "Speed", text: speed(d.speed_bps) }),
-        h("td", { class: "num right", "data-label": "ETA", text: d.eta_seconds != null ? duration(d.eta_seconds) : "—" }),
+        // feature 040: reading a local file's checksum has no speed or ETA
+        d.phase === "checking"
+          ? h("td", { class: "num right", "data-label": "Speed", colspan: 2 }, h("span", { class: "badge active", text: "Checking" }))
+          : [
+              h("td", { class: "num right", "data-label": "Speed", text: speed(d.speed_bps) }),
+              h("td", { class: "num right", "data-label": "ETA", text: d.eta_seconds != null ? duration(d.eta_seconds) : "—" }),
+            ],
         h(
           "td",
           { class: "actions-cell", "data-label": "Actions" },

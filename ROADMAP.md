@@ -215,6 +215,14 @@ Radarr and Sonarr must not import an item before its pipeline is done:
   import back forever: after a set number of retries the item completes
   without it, and the failure shows on the item and in notifications.
 
+### Magnet file lists from peers (deferred from 043)
+
+When the .torrent caches never have a magnet's file list, fetch it from
+BitTorrent peers (DHT and the metadata extension), with no piece data. Deferred
+in 043: it reveals the NAS's IP to the swarm and costs about 93 crates. The
+Stats page's "Held magnets" tile shows how often holds run out, which is what
+this would fix. Research is in `specs/043-magnet-cache-retry/research.md`.
+
 ## Queued: packaging
 
 - **Minimal runtime image** on Docker Hardened Images (dhi.io), plus a

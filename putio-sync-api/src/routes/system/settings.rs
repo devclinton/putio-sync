@@ -7,6 +7,8 @@
 //! - PUT  /settings/watcher - Update file watcher configuration
 //! - GET  /settings/cleanup - Get the Put.io empty-folder cleanup settings
 //! - PUT  /settings/cleanup - Update the Put.io empty-folder cleanup settings
+//! - GET  /settings/precheck - Get the release check settings and what they come to
+//! - PUT  /settings/precheck - Update the release check settings
 
 use crate::error::ApiError;
 use crate::models::SuccessResponse;
@@ -22,10 +24,15 @@ use std::path::PathBuf;
 pub use crate::AppState;
 use crate::Engine;
 use putio_sync_core::config::{
-    CleanupConfig, Config, NotificationBackend, ProgressStyle, SortOrder,
+    CleanupConfig, Config, NotificationBackend, PrecheckConfig, PrecheckOverride, ProgressStyle,
+    SortOrder,
 };
 use putio_sync_core::error::CoreError;
 use putio_sync_core::logging::ConsoleFormat;
+use putio_sync_precheck::policy::Key;
+use putio_sync_precheck::rule::Policy;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 /// A malformed or mistyped body is a 400 with a JSON `error`, like a failed validation
 pub(crate) fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
@@ -180,7 +187,13 @@ pub struct DownloadSettings {
     pub workers: usize,
     pub target_directory: String,
     pub buffer_size_mb: usize,
-    pub skip_existing: bool,
+    /// What to do when a file already exists (feature 040). Missing in a PUT body
+    /// leaves it unchanged, unless an old body sends `skip_existing`.
+    #[serde(default)]
+    pub on_existing: Option<putio_sync_core::config::ExistingFile>,
+    /// Replaced by `on_existing`; still read from an old UI tab, never sent
+    #[serde(default, skip_serializing)]
+    pub skip_existing: Option<bool>,
     pub delete_after_download: bool,
     pub resume_enabled: bool,
     pub chunk_size_mb: Option<usize>,
@@ -244,6 +257,92 @@ fn default_nested() -> bool {
     CleanupConfig::default().nested
 }
 
+/// The release check settings (`[precheck]`, feature 042). A PUT body leaves out
+/// `effective`; a missing field means its default.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PrecheckSettings {
+    pub enabled: bool,
+    pub dry_run: bool,
+    pub min_size_mb: u64,
+    pub allow_archives: bool,
+    pub magnet_lookup: bool,
+    pub lookup_timeout_secs: u64,
+    /// How long a magnet no cache knows is held before Put.io (043); 0 turns it off
+    pub hold_magnet_secs: u64,
+    pub hold_retry_secs: u64,
+    pub first_lookup_secs: u64,
+    pub caches: Vec<String>,
+    pub categories: BTreeMap<String, PrecheckOverride>,
+    pub watch: BTreeMap<String, PrecheckOverride>,
+}
+
+impl Default for PrecheckSettings {
+    fn default() -> Self {
+        Self::from_config(&PrecheckConfig::default())
+    }
+}
+
+impl PrecheckSettings {
+    fn from_config(p: &PrecheckConfig) -> Self {
+        Self {
+            enabled: p.enabled,
+            dry_run: p.dry_run,
+            min_size_mb: p.min_size_mb,
+            allow_archives: p.allow_archives,
+            magnet_lookup: p.magnet_lookup,
+            lookup_timeout_secs: p.lookup_timeout_secs,
+            hold_magnet_secs: p.hold_magnet_secs,
+            hold_retry_secs: p.hold_retry_secs,
+            first_lookup_secs: p.first_lookup_secs,
+            caches: p.caches.clone(),
+            categories: p.categories.clone(),
+            watch: p.watch.clone(),
+        }
+    }
+
+    fn into_config(self) -> PrecheckConfig {
+        PrecheckConfig {
+            enabled: self.enabled,
+            dry_run: self.dry_run,
+            min_size_mb: self.min_size_mb,
+            allow_archives: self.allow_archives,
+            magnet_lookup: self.magnet_lookup,
+            lookup_timeout_secs: self.lookup_timeout_secs,
+            hold_magnet_secs: self.hold_magnet_secs,
+            hold_retry_secs: self.hold_retry_secs,
+            first_lookup_secs: self.first_lookup_secs,
+            caches: self.caches,
+            categories: self.categories,
+            watch: self.watch,
+        }
+    }
+}
+
+/// What the check does for one category or watch folder (FR-020); read-only
+#[derive(Debug, Serialize)]
+pub struct EffectivePrecheck {
+    /// "category" or "watch"
+    pub kind: &'static str,
+    pub key: String,
+    pub enabled: bool,
+    pub min_size_mb: u64,
+    pub allow_archives: bool,
+    /// The wanted types. `None` for a watch folder: its Put.io upload folder's rule
+    /// decides them.
+    pub wanted: Option<Vec<String>>,
+    /// The 009 rule path the wanted types come from; `None` for the video default
+    pub wanted_from: Option<String>,
+}
+
+/// GET /settings/precheck
+#[derive(Debug, Serialize)]
+pub struct PrecheckView {
+    #[serde(flatten)]
+    pub settings: PrecheckSettings,
+    pub effective: Vec<EffectivePrecheck>,
+}
+
 /// Create the settings router
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -257,6 +356,8 @@ pub fn router() -> Router<AppState> {
         .route("/notifications", put(update_notification_settings))
         .route("/cleanup", get(get_cleanup_settings))
         .route("/cleanup", put(update_cleanup_settings))
+        .route("/precheck", get(get_precheck_settings))
+        .route("/precheck", put(update_precheck_settings))
 }
 
 /// Download fields the engine's download manager picks up for the next download
@@ -267,7 +368,8 @@ const DOWNLOAD_LIVE: &[&str] = &[
     "buffer_size_mb",
     "max_retries",
     "retry_initial_delay_secs",
-    "skip_existing",
+    "on_existing",
+    "resume_enabled",
     "delete_after_download",
     "blocked_extensions",
 ];
@@ -287,7 +389,8 @@ fn download_view(config: &Config) -> DownloadSettings {
             .to_string_lossy()
             .to_string(),
         buffer_size_mb: config.download.buffer_size_mb,
-        skip_existing: config.download.skip_existing,
+        on_existing: Some(config.download.on_existing()),
+        skip_existing: None,
         delete_after_download: config.download.delete_after_download,
         resume_enabled: config.download.resume_enabled,
         chunk_size_mb: config.download.chunk_size_mb,
@@ -344,6 +447,60 @@ fn cleanup_view(config: &Config) -> CleanupSettings {
     }
 }
 
+fn precheck_view(config: &Config) -> PrecheckSettings {
+    PrecheckSettings::from_config(&config.precheck)
+}
+
+/// One `effective` row per category (the `[[arr.servers]]` ones, the ones items used,
+/// and the overridden ones) and per watch folder
+fn effective_precheck(config: &Config, used: Vec<String>) -> Vec<EffectivePrecheck> {
+    let precheck = &config.precheck;
+    const MB: u64 = 1024 * 1024;
+    let categories: BTreeSet<String> = config
+        .arr
+        .servers
+        .iter()
+        // The category is read from the *arr now (018): the legacy one, else setup's default
+        .map(|s| {
+            s.category
+                .clone()
+                .unwrap_or_else(|| s.kind.as_str().to_string())
+        })
+        .chain(used)
+        .chain(precheck.categories.keys().cloned())
+        .collect();
+    let row = |kind, key: String, policy: Policy, wanted| EffectivePrecheck {
+        kind,
+        key,
+        enabled: policy.enabled,
+        min_size_mb: policy.min_size / MB,
+        allow_archives: policy.allow_archives,
+        wanted_from: if wanted { policy.wanted_from } else { None },
+        wanted: wanted.then(|| policy.wanted.into_iter().collect()),
+    };
+    let rules = &putio_sync_core::rules::RuleSet::from_config(&config.download);
+    let mut rows: Vec<EffectivePrecheck> = categories
+        .into_iter()
+        .map(|c| {
+            // Arr items land in the Put.io folder named after their category
+            let policy = Policy::for_folder(precheck, rules, &c, Key::Category(&c));
+            row("category", c, policy, true)
+        })
+        .collect();
+    let watch: BTreeSet<String> = config
+        .watch
+        .paths
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .chain(precheck.watch.keys().cloned())
+        .collect();
+    rows.extend(watch.into_iter().map(|w| {
+        let policy = Policy::for_folder(precheck, rules, "", Key::Watch(Path::new(&w)));
+        row("watch", w, policy, false)
+    }));
+    rows
+}
+
 fn notification_view(config: &Config) -> NotificationSettings {
     NotificationSettings {
         enabled: config.notifications.enabled,
@@ -378,7 +535,14 @@ async fn update_download_settings(
         config.download.workers = settings.workers;
         config.download.target_directory = settings.target_directory.into();
         config.download.buffer_size_mb = settings.buffer_size_mb;
-        config.download.skip_existing = settings.skip_existing;
+        // An unchanged choice leaves the file as it is, old `skip_existing` included
+        if let Some(choice) = settings
+            .on_existing
+            .or(settings.skip_existing.map(Into::into))
+            .filter(|choice| *choice != config.download.on_existing())
+        {
+            config.download.set_on_existing(choice);
+        }
         config.download.delete_after_download = settings.delete_after_download;
         config.download.resume_enabled = settings.resume_enabled;
         config.download.chunk_size_mb = settings.chunk_size_mb;
@@ -665,6 +829,45 @@ async fn update_cleanup_settings(
             "Applies from the next run",
             &notes,
         ),
+    }))
+}
+
+/// Get the release check settings and what they come to per folder
+///
+/// GET /settings/precheck
+async fn get_precheck_settings(
+    State(state): State<AppState>,
+) -> Result<Json<PrecheckView>, ApiError> {
+    // The categories items used; without a database, only the configured ones
+    let used = match state.database.as_deref() {
+        Some(db) => db.arr().categories().await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let config = state.config.read().await;
+    Ok(Json(PrecheckView {
+        settings: precheck_view(&config),
+        effective: effective_precheck(&config, used),
+    }))
+}
+
+/// Update the release check settings
+///
+/// PUT /settings/precheck
+async fn update_precheck_settings(
+    State(state): State<AppState>,
+    settings: Result<Json<PrecheckSettings>, JsonRejection>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let settings = body(settings)?.into_config();
+
+    // The *arr service and the watcher build their check at startup
+    let changed = update(&state, precheck_view, |config| {
+        config.precheck = settings;
+        Ok(())
+    })
+    .await?;
+
+    Ok(Json(SuccessResponse {
+        message: saved_message("Release check", &changed, &[], "", &[]),
     }))
 }
 

@@ -27,6 +27,8 @@ async fn arr_app() -> TestApp {
             password: Some(PASSWORD.to_string()),
             ..ArrConfig::default()
         };
+        // No cache requests from tests (Constitution III)
+        config.precheck.magnet_lookup = false;
     })
     .await
 }
@@ -84,6 +86,33 @@ async fn disabled_is_404() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
+/// Feature 018: turning the client on, or changing its password, needs no restart
+#[tokio::test]
+async fn settings_apply_without_restart() {
+    let app = test_app().await;
+    let arr = app
+        .state
+        .arr
+        .clone()
+        .expect("built whenever a database exists");
+    let mut settings = (*arr.service.settings()).clone();
+    settings.enabled = true;
+    settings.password = Some(PASSWORD.to_string());
+    arr.service.apply(settings.clone());
+    session_id(&app).await;
+
+    settings.password = Some("new-password".to_string());
+    arr.service.apply(settings.clone());
+    let old = basic("putio-sync", PASSWORD);
+    let response = send(&app, Method::POST, Some(&old), None, "{}").await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    settings.enabled = false;
+    arr.service.apply(settings);
+    let response = send(&app, Method::POST, None, None, "{}").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn enabled_without_password_is_503() {
     let app = test_app_with(|config| config.arr.enabled = true).await;
@@ -95,8 +124,23 @@ async fn enabled_without_password_is_503() {
 #[tokio::test]
 async fn only_post() {
     let app = arr_app().await;
-    let response = send(&app, Method::GET, None, None, "").await;
+    let session = session_id(&app).await;
+    let auth = basic("putio-sync", PASSWORD);
+    let response = send(&app, Method::GET, Some(&auth), Some(&session), "").await;
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+/// Radarr 6 opens the handshake with a GET, as real Transmission allows
+#[tokio::test]
+async fn a_get_handshake_gets_the_session_id() {
+    let app = arr_app().await;
+    let response = send(&app, Method::GET, None, None, "").await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let auth = basic("putio-sync", PASSWORD);
+    let response = send(&app, Method::GET, Some(&auth), None, "").await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(response.headers().contains_key("X-Transmission-Session-Id"));
 }
 
 #[tokio::test]
@@ -319,8 +363,8 @@ async fn torrent_file_add() {
         .create_async()
         .await;
 
-    let torrent =
-        b"d4:infod6:lengthi1e4:name9:Movie.mkv12:piece lengthi1e6:pieces20:aaaaaaaaaaaaaaaaaaaaee";
+    // 2 GB, so the release pre-check (042) passes it
+    let torrent = b"d4:infod6:lengthi2147483648e4:name9:Movie.mkv12:piece lengthi1e6:pieces20:aaaaaaaaaaaaaaaaaaaaee";
     let metainfo = base64::engine::general_purpose::STANDARD.encode(torrent);
     let reply = call(
         &app,
@@ -330,5 +374,49 @@ async fn torrent_file_add() {
     .await;
     assert_eq!(reply["result"], "success", "{reply}");
     assert_eq!(reply["arguments"]["torrent-added"]["name"], "Movie.mkv");
+    upload.assert_async().await;
+}
+
+#[tokio::test]
+async fn fake_torrent_is_added_failed_without_putio() {
+    let mut app = arr_app().await;
+    let session = session_id(&app).await;
+    let upload = app
+        .putio
+        .mock("POST", "/files/upload")
+        .expect(0)
+        .create_async()
+        .await;
+
+    // An .exe and a .txt: no video file (042 contracts/api.md)
+    let torrent = b"d4:infod5:filesld6:lengthi1572864000e4:pathl15:Show.S01E03.exeeed6:lengthi1000e4:pathl10:readme.txteee4:name17:Show.S01E03.1080p12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee";
+    let metainfo = base64::engine::general_purpose::STANDARD.encode(torrent);
+    let reply = call(
+        &app,
+        &session,
+        json!({"method": "torrent-add", "arguments": {"metainfo": metainfo}}),
+    )
+    .await;
+    assert_eq!(reply["result"], "success", "{reply}");
+    let added = &reply["arguments"]["torrent-added"];
+    assert_eq!(added["name"], "Show.S01E03.1080p");
+
+    let reply = call(
+        &app,
+        &session,
+        json!({"method": "torrent-get", "arguments": {
+            "fields": ["id", "error", "errorString", "isFinished", "status", "percentDone"]}}),
+    )
+    .await;
+    let item = &reply["arguments"]["torrents"][0];
+    assert_eq!(item["id"], added["id"]);
+    assert_eq!(item["error"], 3);
+    assert_eq!(
+        item["errorString"],
+        "rejected before Put.io: no video file (found .exe, .txt)"
+    );
+    assert_eq!(item["isFinished"], false);
+    assert_eq!(item["status"], 0);
+    assert_eq!(item["percentDone"], 0.0);
     upload.assert_async().await;
 }

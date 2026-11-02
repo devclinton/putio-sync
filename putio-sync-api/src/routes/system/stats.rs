@@ -5,6 +5,7 @@
 //! - GET  /stats/transfers - Statistics about current transfers
 //! - GET  /stats/disk     - Disk space information
 //! - GET  /stats/summary  - Everything the Stats page draws (feature 006)
+//! - GET  /stats/releases - What the release pre-check rejected (feature 042)
 
 use crate::error::ApiError;
 use axum::{
@@ -14,7 +15,7 @@ use axum::{
 };
 use putio_sync_db::analytics::{StatsParams, StatsQuery, StatsSummary};
 use putio_sync_db::models::HistoryAction;
-use putio_sync_db::StatsRepository;
+use putio_sync_db::{ReleaseStats, StatsRepository};
 use serde::Serialize;
 use tracing::error;
 
@@ -54,6 +55,7 @@ pub fn router() -> Router<AppState> {
         .route("/transfers", get(transfer_stats))
         .route("/disk", get(disk_stats))
         .route("/summary", get(summary))
+        .route("/releases", get(releases))
 }
 
 /// Pre-aggregated download statistics for one range and filter set
@@ -77,6 +79,30 @@ async fn summary(
         .map_err(|e| {
             error!("Failed to build stats summary: {}", e);
             ApiError::InternalError("Failed to build stats summary".to_string())
+        })
+}
+
+/// Rejections, magnet lookups and fake reports for one range
+///
+/// GET /stats/releases?range=&tz=
+async fn releases(
+    State(state): State<AppState>,
+    Query(params): Query<StatsParams>,
+) -> Result<Json<ReleaseStats>, ApiError> {
+    let query = StatsQuery::try_from(params)
+        .map_err(|e| ApiError::BadRequest("Invalid query".to_string()).with_details(e))?;
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
+
+    db.releases()
+        .release_stats(query.range, chrono::Utc::now().timestamp())
+        .await
+        .map(Json)
+        .map_err(|e| {
+            error!("Failed to build release stats: {}", e);
+            ApiError::InternalError("Failed to build release stats".to_string())
         })
 }
 

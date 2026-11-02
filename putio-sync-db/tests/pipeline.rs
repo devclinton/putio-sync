@@ -218,7 +218,7 @@ async fn transfer_origins_prefer_the_arr_category() {
             hash: "abc",
             name: "Film",
             category: "radarr",
-            transfer_id: 2,
+            transfer_id: Some(2),
             putio_status: "IN_QUEUE",
             total_size: 0,
         })

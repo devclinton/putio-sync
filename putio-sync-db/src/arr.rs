@@ -134,8 +134,8 @@ pub struct NewArrItem<'a> {
     pub name: &'a str,
     /// Normalised category
     pub category: &'a str,
-    /// Put.io transfer id
-    pub transfer_id: i64,
+    /// Put.io transfer id; `None` for an item rejected before Put.io (042)
+    pub transfer_id: Option<i64>,
     /// Put.io status at creation
     pub putio_status: &'a str,
     /// Size Put.io reported, 0 while unknown
@@ -226,6 +226,43 @@ impl<'a> ArrRepository<'a> {
         Ok(row.as_ref().map(item_from_row))
     }
 
+    /// The item whose Put.io folder or accepted files include `file_id`
+    pub async fn get_by_file_id(&self, file_id: i64) -> DbResult<Option<ArrItem>> {
+        let sql = format!(
+            "SELECT {COLUMNS} FROM arr_items WHERE file_id = ? \
+             OR hash IN (SELECT hash FROM arr_item_files WHERE file_id = ?) LIMIT 1"
+        );
+        let row = sqlx::query(&sql)
+            .bind(file_id)
+            .bind(file_id)
+            .fetch_optional(self.pool)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to get arr item by file"))?;
+        Ok(row.as_ref().map(item_from_row))
+    }
+
+    /// Which of `file_ids` belong to an item, for the UI's "fail and blocklist" (042 US6)
+    pub async fn arr_file_ids(&self, file_ids: &[i64]) -> DbResult<Vec<i64>> {
+        if file_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let list = vec!["?"; file_ids.len()].join(",");
+        let sql = format!(
+            "SELECT file_id FROM arr_items WHERE file_id IN ({list}) \
+             UNION SELECT file_id FROM arr_item_files WHERE file_id IN ({list})"
+        );
+        let mut query = sqlx::query_scalar(&sql);
+        for _ in 0..2 {
+            for id in file_ids {
+                query = query.bind(id);
+            }
+        }
+        query
+            .fetch_all(self.pool)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to look up arr files"))
+    }
+
     /// The item with this Transmission id
     pub async fn get_by_id(&self, id: i64) -> DbResult<Option<ArrItem>> {
         let row = sqlx::query(&format!("SELECT {COLUMNS} FROM arr_items WHERE id = ?"))
@@ -243,6 +280,42 @@ impl<'a> ArrRepository<'a> {
             .await
             .map_err(tracked(DbOp::Other, "Failed to list arr items"))?;
         Ok(rows.iter().map(item_from_row).collect())
+    }
+
+    /// The categories items have used, sorted
+    pub async fn categories(&self) -> DbResult<Vec<String>> {
+        sqlx::query_scalar("SELECT DISTINCT category FROM arr_items ORDER BY category")
+            .fetch_all(self.pool)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to list arr categories"))
+    }
+
+    /// A held magnet went to Put.io (feature 043): store its transfer and Put.io's view
+    /// of it. `false` when the item is gone.
+    pub async fn set_transfer(
+        &self,
+        hash: &str,
+        transfer_id: i64,
+        progress: &PutioProgress<'_>,
+    ) -> DbResult<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE arr_items SET
+                transfer_id = ?, putio_status = ?, putio_percent = ?, putio_eta = ?,
+                total_size = COALESCE(?, total_size), updated_at = CURRENT_TIMESTAMP
+            WHERE hash = ?
+            "#,
+        )
+        .bind(transfer_id)
+        .bind(progress.status)
+        .bind(progress.percent.clamp(0, 100))
+        .bind(progress.eta)
+        .bind(progress.size)
+        .bind(hash)
+        .execute(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to set arr item transfer"))?;
+        Ok(result.rows_affected() > 0)
     }
 
     /// Store Put.io's view of the transfer. A known size replaces `total_size`.
@@ -462,7 +535,7 @@ mod tests {
             hash,
             name: "Show.S01E01",
             category: "sonarr",
-            transfer_id: 77,
+            transfer_id: Some(77),
             putio_status: "IN_QUEUE",
             total_size: 0,
         }

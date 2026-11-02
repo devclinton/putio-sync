@@ -11,6 +11,7 @@ members = [
     "putio-sync-telemetry",
     "putio-sync-doctor",
     "putio-sync-arr",
+    "putio-sync-precheck",
 ]
 resolver = "2"
 

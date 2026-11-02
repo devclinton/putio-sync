@@ -14,6 +14,7 @@ putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 # Internal dependencies
 putio-sync-client = { path = "../putio-sync-client" }
 putio-sync-db = { path = "../putio-sync-db" }
+putio-sync-precheck = { path = "../putio-sync-precheck" }
 
 # Async runtime
 tokio = { workspace = true }
@@ -35,6 +36,8 @@ sha2 = "0.10"
 ctrlc = "3.4"
 
 [dev-dependencies]
+putio-sync-core = { path = "../putio-sync-core" }
+sqlx = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.8"
 mockito = "1.2"

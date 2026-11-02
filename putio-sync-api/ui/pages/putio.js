@@ -4,9 +4,11 @@
 // run first, then a confirm with the count). Feature 008: tick rows (or Select all) to
 // download or delete several at once; queued files can't be ticked. Feature 009: the
 // folder's rule card, and "blocked" / "skipped" badges on files its rule won't download.
+// Feature 042: flag a file as fake, and undo it.
 
 import { del, get, post } from "../api.js";
 import { confirm, empty, h, toast } from "../app.js";
+import { flagControl, loadFlags } from "../flags.js";
 import { bytes, dateTime, utc } from "../format.js";
 import { ruleCard } from "../rules.js";
 import { selection } from "../select.js";
@@ -19,6 +21,7 @@ let crumbs = [ROOT];
 let folder = 0;
 let files = [];
 let queued = new Set();
+let flags = null;
 let seq = 0;
 let els = null;
 let sel = null;
@@ -78,6 +81,19 @@ async function load() {
     return;
   }
   files = listing.items || [];
+  flags = await loadFlags(fileTargets());
+  if (mine !== seq || !els) return;
+  renderList();
+}
+
+const fileTargets = () => files.filter((f) => !isFolder(f)).map((f) => ({ file_id: f.id }));
+
+/** After a flag changes: reload the flags only */
+async function reflag() {
+  const mine = seq;
+  const next = await loadFlags(fileTargets());
+  if (mine !== seq || !els) return;
+  flags = next;
   renderList();
 }
 
@@ -346,6 +362,7 @@ function fileRow(f) {
       h(
         "div",
         { class: "row-actions" },
+        isFolder(f) ? null : flagControl(flags, { target: { file_id: f.id }, name: f.name, onChange: reflag }),
         h("button", { type: "button", class: "btn btn-small", "aria-label": `Download ${f.name}`, onclick: (ev) => onDownload(ev.currentTarget, f) }, "Download"),
         keep
           ? h("span", { class: "badge active", title: "In the queue; skip or cancel it to delete", text: "queued" })

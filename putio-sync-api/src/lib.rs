@@ -93,8 +93,9 @@ pub struct AppState {
     pub stall_tracker: Arc<StallTracker>,
     /// The Put.io doctor (feature 010); under `daemon`, the one its schedule runs
     pub doctor: Arc<Doctor>,
-    /// Radarr/Sonarr download client (feature 011); `None` unless `[arr] enabled` and
-    /// a database exists
+    /// Radarr/Sonarr download client (feature 011); `None` without a database. It's built
+    /// even when `[arr]` is off, so turning it on from Settings needs no restart
+    /// (feature 018); the RPC checks `enabled` per request.
     pub arr: Option<routes::arr::ArrRpc>,
 }
 
@@ -182,25 +183,29 @@ impl AppState {
     }
 }
 
-/// The download client when `[arr]` enables it. It needs the database to track items.
+/// The download client; it needs the database to track items. Off settings when `[arr]`
+/// is invalid, so the rest of the API still starts.
 fn build_arr(
     config: &Config,
     client: &Arc<PutioApiClient>,
     database: Option<&Arc<Database>>,
     download_manager: &Arc<DownloadManager>,
 ) -> Option<routes::arr::ArrRpc> {
-    let settings = match config.resolve_arr() {
-        Ok(settings) if settings.enabled => settings,
-        Ok(_) => return None,
-        Err(e) => {
-            tracing::warn!(error = %e, "Radarr/Sonarr download client disabled");
-            return None;
-        }
-    };
     let Some(database) = database else {
-        tracing::warn!("Radarr/Sonarr download client disabled: it needs the database");
+        if config.arr.enabled {
+            tracing::warn!("Radarr/Sonarr download client disabled: it needs the database");
+        }
         return None;
     };
+    let settings = config.resolve_arr().unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "Radarr/Sonarr download client disabled");
+        putio_sync_core::config::ArrSettings {
+            enabled: false,
+            username: config.arr.username.clone(),
+            password: None,
+            servers: Vec::new(),
+        }
+    });
     let service = putio_sync_arr::ArrService::new(
         client.clone(),
         database.clone(),
@@ -208,7 +213,42 @@ fn build_arr(
         settings,
         config.download.target_directory.clone(),
     );
-    Some(routes::arr::ArrRpc::new(Arc::new(service)))
+    let service = match config.resolve_precheck() {
+        Ok(precheck) => service.with_precheck(
+            precheck,
+            putio_sync_core::rules::RuleSet::from_config(&config.download),
+        ),
+        Err(e) => {
+            tracing::warn!(error = %e, "Release pre-check disabled");
+            service
+        }
+    };
+    let service = Arc::new(service);
+    spawn_hold_ticker(&service);
+    Some(routes::arr::ArrRpc::new(service))
+}
+
+/// How often held magnets are looked at (043); each has its own next ask time
+const HOLD_TICK: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Ask the caches again about held magnets that are due. Outside a runtime (some unit
+/// tests build the state without one) nothing runs.
+fn spawn_hold_ticker(service: &Arc<putio_sync_arr::ArrService>) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let service = Arc::downgrade(service);
+    runtime.spawn(async move {
+        let mut tick = tokio::time::interval(HOLD_TICK);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            let Some(service) = service.upgrade() else {
+                return;
+            };
+            service.release_held(putio_sync_arr::unix_now()).await;
+        }
+    });
 }
 
 /// Build the router for `state`: protected routes behind the auth middleware, plus the
@@ -237,6 +277,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/doctor", routes::system::doctor::router())
         .nest("/arr", routes::arr::router())
         .route("/active", axum::routing::get(routes::active::get_active))
+        .nest("/releases", routes::releases::router())
         .route(
             "/status",
             axum::routing::get(routes::system::status::get_status),
@@ -368,14 +409,32 @@ pub async fn create_app(
         warn!("{}", e);
     }
 
-    Ok(router(AppState::new(
+    let state = AppState::new(
         config,
         config_path,
         client,
         database,
         Arc::new(download_manager),
         file_watcher,
-    )))
+    );
+    spawn_arr_refresh(&state).await;
+    Ok(router(state))
+}
+
+/// Read each saved Radarr/Sonarr's categories now, then every 15 minutes (feature 018, R4)
+pub async fn spawn_arr_refresh(state: &AppState) {
+    let Some(arr) = &state.arr else {
+        return;
+    };
+    let port = state
+        .config
+        .read()
+        .await
+        .resolve_api()
+        .map(|r| r.value.bind.port())
+        .unwrap_or(15432);
+    let hosts = putio_sync_arr::setup::candidate_hosts(None, None);
+    arr.service.spawn_category_refresh(port, hosts);
 }
 
 // New route constructors with proper state types
