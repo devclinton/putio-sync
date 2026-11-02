@@ -64,6 +64,17 @@ impl<'a> ProcessedTorrentsRepository<'a> {
         Ok(())
     }
 
+    /// Forget a processed torrent, so the watcher uploads it again (044 re-queue).
+    /// Returns whether a row was removed.
+    pub async fn forget(&self, checksum: &str) -> DbResult<bool> {
+        let result = sqlx::query("DELETE FROM processed_torrents WHERE file_checksum = ?")
+            .bind(checksum)
+            .execute(self.pool)
+            .await
+            .map_err(tracked(DbOp::Uploads, "Failed to forget processed torrent"))?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Get all processed torrents
     pub async fn get_all(&self) -> DbResult<Vec<ProcessedTorrent>> {
         let torrents = sqlx::query_as::<_, ProcessedTorrent>(

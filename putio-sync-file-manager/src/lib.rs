@@ -4,6 +4,7 @@
 //! detecting and uploading .torrent and .magnet files to Put.io.
 
 pub mod error;
+pub mod local_files;
 pub mod watcher;
 
 // Re-export commonly used types
