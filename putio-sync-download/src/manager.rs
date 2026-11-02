@@ -359,7 +359,7 @@ struct WorkerInfo {
 }
 
 /// Holds a target path for one worker (R7); released on drop
-struct PathClaim {
+pub struct PathClaim {
     set: Arc<Mutex<HashSet<PathBuf>>>,
     path: PathBuf,
 }
@@ -774,6 +774,16 @@ impl DownloadManager {
         Ok(count)
     }
 
+    /// The `.downloading` paths workers are writing now: one per claimed target (044)
+    pub fn partial_paths_in_use(&self) -> Vec<PathBuf> {
+        self.paths_in_use
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter_map(|target| create_temp_path(target).ok())
+            .collect()
+    }
+
     /// Get current worker count (for monitoring)
     pub async fn active_workers(&self) -> usize {
         self.workers.read().await.len()
@@ -1103,7 +1113,7 @@ impl DownloadManager {
     }
 
     /// Wait until no other worker writes `path`, then hold it until the claim drops
-    async fn claim_path(&self, path: &std::path::Path) -> PathClaim {
+    pub async fn claim_path(&self, path: &std::path::Path) -> PathClaim {
         loop {
             {
                 let mut in_use = self.paths_in_use.lock().unwrap_or_else(|e| e.into_inner());
