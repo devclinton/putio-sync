@@ -215,7 +215,7 @@ pub fn canonical_in_use(paths: impl IntoIterator<Item = PathBuf>) -> HashSet<Pat
         .collect()
 }
 
-/// Whether `path` is a partial in `in_use`, or a folder holding one
+/// Whether `path` is in `in_use` (a partial or a database file), or a folder holding one
 fn is_in_use(path: &Path, kind: EntryKind, in_use: &HashSet<PathBuf>) -> bool {
     match kind {
         EntryKind::Dir => in_use.iter().any(|p| p.starts_with(path)),

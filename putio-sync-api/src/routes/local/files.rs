@@ -167,9 +167,17 @@ async fn resolve(state: &AppState, key: &str, rel: &str) -> Result<(Root, Resolv
     Ok((root, resolved))
 }
 
-/// Partial downloads a worker writes now, canonical so they compare with resolved paths
+/// Partial downloads a worker writes now and putio-sync's own database files, canonical so
+/// they compare with resolved paths
 fn in_use(state: &AppState) -> HashSet<PathBuf> {
-    local_files::canonical_in_use(state.download_manager.partial_paths_in_use())
+    let database = state.database.as_deref().map(|db| db.files());
+    local_files::canonical_in_use(
+        state
+            .download_manager
+            .partial_paths_in_use()
+            .into_iter()
+            .chain(database.into_iter().flatten()),
+    )
 }
 
 fn entry_info(entry: Entry) -> EntryInfo {
