@@ -17,7 +17,15 @@ async fn seeded() -> TestApp {
     let queue = app.db().queue();
     for (file_id, name, priority) in [(1, "a", 0), (2, "b", 1), (3, "c", 2), (4, "d", -1)] {
         queue
-            .add(file_id, name, 1024, "http://unused", "", priority)
+            .add(
+                file_id,
+                name,
+                1024,
+                "http://unused",
+                "",
+                priority,
+                QueueStatus::Pending,
+            )
             .await
             .unwrap();
     }
@@ -125,7 +133,15 @@ async fn moves_keep_a_raised_row_ahead_unless_moved_above() {
     let queue = app.db().queue();
     for (file_id, name, priority) in [(1, "a", 0), (2, "b", 0), (3, "resume", 1000)] {
         queue
-            .add(file_id, name, 1024, "http://unused", "", priority)
+            .add(
+                file_id,
+                name,
+                1024,
+                "http://unused",
+                "",
+                priority,
+                QueueStatus::Pending,
+            )
             .await
             .unwrap();
     }
@@ -144,7 +160,7 @@ async fn moves_keep_a_raised_row_ahead_unless_moved_above() {
     assert_eq!(order(&app).await, ["resume", "a", "b"]);
     // Rows the sync adds later (priority 0) still queue behind it
     queue
-        .add(4, "new", 1024, "http://unused", "", 0)
+        .add(4, "new", 1024, "http://unused", "", 0, QueueStatus::Pending)
         .await
         .unwrap();
     assert_eq!(order(&app).await, ["resume", "a", "b", "new"]);
@@ -169,7 +185,15 @@ async fn moves_reorder_equal_priorities() {
     let queue = app.db().queue();
     for (file_id, name) in [(1, "a"), (2, "b"), (3, "c")] {
         queue
-            .add(file_id, name, 1024, "http://unused", "", 0)
+            .add(
+                file_id,
+                name,
+                1024,
+                "http://unused",
+                "",
+                0,
+                QueueStatus::Pending,
+            )
             .await
             .unwrap();
     }

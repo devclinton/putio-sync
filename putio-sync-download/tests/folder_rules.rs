@@ -244,7 +244,15 @@ async fn delete_blocked_deletes_only_unqueued_type_blocked_files() {
     let (mut server, _dir, db, manager) = setup(rules).await;
     // setup.exe was queued by hand before the rule: it is left alone
     db.queue()
-        .add(13, "setup.exe", 100, "http://unused", "Movies", 0)
+        .add(
+            13,
+            "setup.exe",
+            100,
+            "http://unused",
+            "Movies",
+            0,
+            putio_sync_db::models::QueueStatus::Pending,
+        )
         .await
         .unwrap();
     let delete = server
@@ -372,7 +380,15 @@ async fn download_extras(
         std::fs::write(&target, [1u8; 100]).unwrap();
     }
     db.queue()
-        .add(21, "notes.txt", 100, "http://unused", "Movies/Extras", 0)
+        .add(
+            21,
+            "notes.txt",
+            100,
+            "http://unused",
+            "Movies/Extras",
+            0,
+            putio_sync_db::models::QueueStatus::Pending,
+        )
         .await
         .unwrap();
     assert!(manager.process_queue().await.unwrap());

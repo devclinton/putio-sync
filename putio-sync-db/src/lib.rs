@@ -38,6 +38,7 @@ pub mod error;
 pub mod held;
 pub mod history;
 pub mod models;
+pub mod pipeline;
 pub mod queue;
 pub mod releases;
 pub mod schema;
@@ -51,6 +52,7 @@ pub use downloads::DownloadRepository;
 pub use error::{DbError, DbResult};
 pub use held::{Held, HeldRepository, HoldStats, NewHeld};
 pub use history::HistoryRepository;
+pub use pipeline::{FinishedRepository, FlagsRepository, HoldsRepository};
 pub use queue::{QueueRepository, QueueStats};
 pub use releases::{
     CheckState, FlagUndo, HeldSettle, NewCheck, NewReport, PendingCheck, ReleaseStats,
@@ -212,6 +214,40 @@ impl Database {
         ProcessedTorrentsRepository::new(&self.pool)
     }
 
+    /// Get the transfer holds repository (feature 039)
+    pub fn holds(&self) -> HoldsRepository<'_> {
+        HoldsRepository::new(&self.pool)
+    }
+
+    /// Get the daemon flags repository (feature 039)
+    pub fn flags(&self) -> FlagsRepository<'_> {
+        FlagsRepository::new(&self.pool)
+    }
+
+    /// Get the Recently finished repository (feature 039)
+    pub fn finished(&self) -> FinishedRepository<'_> {
+        FinishedRepository::new(&self.pool)
+    }
+
+    /// The files the Active transfers pipeline is built from (feature 039, R1, R6): every
+    /// queued file, the files of `transfer_ids`, and files done within `retention_hours`
+    pub async fn pipeline_files(
+        &self,
+        transfer_ids: &[i64],
+        retention_hours: u64,
+    ) -> DbResult<Vec<pipeline::PipelineFile>> {
+        pipeline::pipeline_files(&self.pool, transfer_ids, retention_hours).await
+    }
+
+    /// How putio-sync got each of `transfer_ids`, when it knows (feature 039):
+    /// `arr:<category>` for Radarr/Sonarr releases, else `watch` or `manual`
+    pub async fn transfer_origins(
+        &self,
+        transfer_ids: &[i64],
+    ) -> DbResult<std::collections::HashMap<i64, String>> {
+        pipeline::transfer_origins(&self.pool, transfer_ids).await
+    }
+
     /// SQLite's `PRAGMA quick_check`; `["ok"]` means healthy (doctor, feature 010)
     pub async fn quick_check(&self) -> DbResult<Vec<String>> {
         sqlx::query_scalar("PRAGMA quick_check")
@@ -310,6 +346,19 @@ impl Database {
             (
                 schema::CREATE_RULE_DECISIONS_TABLE,
                 "Failed to create rule_decisions table",
+            ),
+            // Active transfers pipeline (feature 039)
+            (
+                schema::CREATE_PIPELINE_HOLDS_TABLE,
+                "Failed to create pipeline_holds table",
+            ),
+            (
+                schema::CREATE_DAEMON_FLAGS_TABLE,
+                "Failed to create daemon_flags table",
+            ),
+            (
+                schema::CREATE_PIPELINE_FINISHED_TABLE,
+                "Failed to create pipeline_finished table",
             ),
             // Release pre-check (feature 042)
             (
@@ -497,6 +546,110 @@ mod tests {
             .await;
         assert!(result.is_ok());
 
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn migrate_adds_the_pipeline_tables_to_an_existing_database() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+
+        // A database from before feature 039, with a queued file
+        let db = Database::new(&db_path).await.unwrap();
+        for table in ["pipeline_holds", "daemon_flags", "pipeline_finished"] {
+            sqlx::query(&format!("DROP TABLE {table}"))
+                .execute(db.pool())
+                .await
+                .unwrap();
+        }
+        db.queue()
+            .add(1, "a.mkv", 10, "", "", 0, models::QueueStatus::Pending)
+            .await
+            .unwrap();
+        db.close().await.unwrap();
+
+        let db = Database::new(&db_path).await.unwrap();
+        for table in ["pipeline_holds", "daemon_flags", "pipeline_finished"] {
+            let result = sqlx::query(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(db.pool())
+                .await;
+            assert!(result.is_ok(), "{table} exists");
+        }
+        assert!(db.queue().get_by_file_id(1).await.unwrap().is_some());
+        let bad = sqlx::query(
+            "INSERT INTO pipeline_finished (key, name, size, outcome, done_at) \
+             VALUES ('k', 'n', 1, 'other', CURRENT_TIMESTAMP)",
+        )
+        .execute(db.pool())
+        .await;
+        assert!(bad.is_err(), "outcome is done or failed");
+        db.close().await.unwrap();
+    }
+
+    /// A database from before features 039, 040, 042 and 043 gets all their tables,
+    /// columns and indexes in one run, keeping its rows
+    #[tokio::test]
+    async fn migrate_upgrades_a_database_from_before_039_and_040_to_043() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let tables = [
+            "pipeline_holds",
+            "daemon_flags",
+            "pipeline_finished",
+            "release_checks",
+            "release_reports",
+            "held_magnets",
+            "hold_ends",
+        ];
+
+        let db = Database::new(&db_path).await.unwrap();
+        db.queue()
+            .add(1, "a.mkv", 10, "", "", 0, models::QueueStatus::Pending)
+            .await
+            .unwrap();
+        for table in tables {
+            sqlx::query(&format!("DROP TABLE {table}"))
+                .execute(db.pool())
+                .await
+                .unwrap();
+        }
+        for (table, column) in [
+            ("download_queue", "save_as"),
+            ("download_queue", "fixed_path"),
+            ("download_history", "local_path"),
+            ("download_history", "outcome"),
+        ] {
+            sqlx::query(&format!("ALTER TABLE {table} DROP COLUMN {column}"))
+                .execute(db.pool())
+                .await
+                .unwrap();
+        }
+        db.close().await.unwrap();
+
+        let db = Database::new(&db_path).await.unwrap();
+        for table in tables {
+            let result = sqlx::query(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(db.pool())
+                .await;
+            assert!(result.is_ok(), "{table} exists");
+        }
+        for index in [
+            "idx_download_sources_transfer_id",
+            "idx_release_checks_transfer_id",
+            "idx_held_magnets_next_at",
+        ] {
+            let (count,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+            )
+            .bind(index)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+            assert_eq!(count, 1, "{index}");
+        }
+        let item = db.queue().get_by_file_id(1).await.unwrap().unwrap();
+        assert!(!item.fixed_path);
+        assert_eq!(item.save_as, None);
         db.close().await.unwrap();
     }
 }

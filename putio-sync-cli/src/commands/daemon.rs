@@ -287,6 +287,7 @@ fn daemon_config(
             config.transfers.stall_threshold_hours.saturating_mul(3600),
         ),
         stall_check_interval: config.transfers.stall_check_interval_secs,
+        finished_retention_hours: config.transfers.finished_retention_hours,
         precheck: config
             .resolve_precheck()
             .map_err(|e| tracing::warn!(error = %e, "Release pre-check disabled for watch folders"))

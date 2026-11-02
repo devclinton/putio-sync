@@ -1,5 +1,6 @@
 //! Queue columns for existing-file handling (feature 040)
 
+use putio_sync_db::models::QueueStatus;
 use putio_sync_db::Database;
 
 #[tokio::test]
@@ -11,14 +12,26 @@ async fn fixed_path_survives_a_later_add_and_save_as_round_trips() {
     let queue = db.queue();
 
     queue
-        .add_with_path_kept(1, "Movie.mkv", 10, "", "Movies", 0, true)
+        .add_with_path_kept(
+            1,
+            "Movie.mkv",
+            10,
+            "",
+            "Movies",
+            0,
+            QueueStatus::Pending,
+            true,
+        )
         .await
         .unwrap();
     queue
-        .add(1, "Movie.mkv", 10, "", "Movies", 0)
+        .add(1, "Movie.mkv", 10, "", "Movies", 0, QueueStatus::Pending)
         .await
         .unwrap();
-    queue.add(2, "Other.mkv", 10, "", "", 0).await.unwrap();
+    queue
+        .add(2, "Other.mkv", 10, "", "", 0, QueueStatus::Pending)
+        .await
+        .unwrap();
 
     let item = queue.get_by_file_id(1).await.unwrap().unwrap();
     assert!(item.fixed_path);

@@ -25,6 +25,12 @@
 //! a duplicate of Sintel in Shows, an orphaned `.torrent` at the top, queue row 501 for a
 //! deleted file, failed queue row 403, a stale partial download in `Movies/` and an
 //! unknown key in the config file. Its fixes run against the same mocks.
+//! Feature 039: `#/active` shows the season pack Some.Show.S02.1080p (Sonarr, seeding, 4 of
+//! 12 files on the NAS), Some.Movie.2025.2160p (Radarr) queued on Put.io, the stalled and
+//! failed transfers, Elephants.Dream waiting for the next sync, the folder `Photos/2026`
+//! with no transfer, and the failed and paused queue rows. `MOCK_PUTIO_DOWN=1` makes
+//! `/transfers/list` answer 503 after the first list, so the page shows Put.io figures out
+//! of date; `MOCK_ACTIVE_COUNT=200` adds that many generated transfers.
 //! Feature 042: the Stats page's "Rejected releases" and "Magnet lookups" tiles count a
 //! week of seeded release checks: fakes rejected before and on Put.io, magnets found in
 //! itorrents.net or sent to Put.io, and one older reject that only 30d and longer show.
@@ -38,14 +44,16 @@
 
 use chrono::{Duration, Timelike, Utc};
 use putio_sync_api::{extract_download_config, router, AppState};
-use putio_sync_client::PutioApiClient;
+use putio_sync_client::{PutioApiClient, RetryPolicy};
 use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::{
     ArrConfig, ArrKind, ArrServer, AuthConfig, Config, ExistingFile, PrecheckOverride,
 };
 use putio_sync_core::rules::FolderRule;
 use putio_sync_core::stall::StallTracker;
-use putio_sync_db::models::{DownloadSource, HistoryAction, Origin, QueueStatus, SourceType};
+use putio_sync_db::models::{
+    DownloadSource, DownloadStatus, HistoryAction, Origin, QueueStatus, SourceType,
+};
 use putio_sync_db::{CheckState, Database, NewArrItem, NewCheck, NewReport, ReportKind};
 use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadManager;
@@ -134,7 +142,45 @@ fn transfers() -> Vec<Value> {
     done["down_speed"] = json!(0);
     let mut seeding = transfer(7, "Elephants.Dream.2006.720p", "SEEDING", 100);
     seeding["down_speed"] = json!(0);
-    vec![sintel, stalled, failed, done, seeding]
+    // Feature 039: a Sonarr season pack on its way to the NAS, a Radarr film on Put.io
+    let mut pack = transfer(SEASON_PACK, "Some.Show.S02.1080p", "SEEDING", 100);
+    pack["down_speed"] = json!(0);
+    pack["size"] = json!(12 * EPISODE);
+    let film = transfer(RADARR_FILM, "Some.Movie.2025.2160p", "IN_QUEUE", 0);
+    let mut list = vec![sintel, stalled, failed, done, seeding, pack, film];
+    list.extend(generated_transfers());
+    list
+}
+
+/// Feature 039 fixtures: a 12-episode season pack and a film Radarr added
+const SEASON_PACK: i64 = 8;
+const RADARR_FILM: i64 = 9;
+const EPISODE: i64 = 1_610_612_736;
+
+/// `MOCK_ACTIVE_COUNT` generated transfers across the Put.io states, for SC-005
+fn generated_transfers() -> Vec<Value> {
+    let count: i64 = std::env::var("MOCK_ACTIVE_COUNT")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    const STATUSES: [&str; 4] = ["DOWNLOADING", "IN_QUEUE", "WAITING", "COMPLETING"];
+    (0..count)
+        .map(|n| {
+            let status = STATUSES[n as usize % STATUSES.len()];
+            let percent = if status == "IN_QUEUE" { 0 } else { n % 100 };
+            transfer(
+                10_000 + n,
+                &format!("Generated.Transfer.{n:03}"),
+                status,
+                percent,
+            )
+        })
+        .collect()
+}
+
+/// `MOCK_PUTIO_DOWN=1`: Put.io stops answering the transfer list after the first one
+fn putio_down() -> bool {
+    std::env::var("MOCK_PUTIO_DOWN").is_ok_and(|v| v == "1")
 }
 
 /// Persistent mocks for every Put.io call the UI can trigger
@@ -205,11 +251,6 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
             "GET",
             format!("/files/list?parent_id={EXTRAS}"),
             listing(extras.clone(), vec![]),
-        ),
-        json_mock(
-            "GET",
-            "/transfers/list".into(),
-            json!({ "status": "OK", "transfers": transfers }).to_string(),
         ),
         // Retry answers with the transfer as Put.io reports it afterwards
         json_mock(
@@ -961,7 +1002,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let top = rows.len() as i64;
     for (index, (file_id, name, size, status)) in rows.into_iter().enumerate() {
         queue
-            .add(file_id, name, size, "http://unused", "", top - index as i64)
+            .add(
+                file_id,
+                name,
+                size,
+                "http://unused",
+                "",
+                top - index as i64,
+                QueueStatus::Pending,
+            )
             .await?;
         if status != QueueStatus::Pending {
             queue.update_status(file_id, status).await?;
@@ -984,12 +1033,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
 
-    let client = Arc::new(PutioApiClient::with_base_url(
-        PUTIO_TOKEN.to_string(),
-        putio.url(),
-    ));
+    seed_pipeline(&db).await?;
+
+    // With Put.io down, give up at once instead of retrying a 503 for ~30 s
+    let mut client = PutioApiClient::with_base_url(PUTIO_TOKEN.to_string(), putio.url());
+    if putio_down() {
+        client = client.with_retry_policy(RetryPolicy {
+            max_attempts: 1,
+            ..RetryPolicy::default()
+        });
+    }
+    let client = Arc::new(client);
     let manager =
         DownloadManager::new(client.clone(), db.clone(), extract_download_config(&config));
+    let list = putio
+        .mock("GET", "/transfers/list")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(json!({ "status": "OK", "transfers": transfers() }).to_string())
+        .expect_at_least(0)
+        .create_async()
+        .await;
+    // A list cached at once, as the daemon's pipeline loop would, so the Status card
+    // shows Put.io items before the Active page is opened
+    manager
+        .transfers_snapshot(std::time::Duration::ZERO)
+        .await?;
+    let _list = if putio_down() {
+        // The cached list is the one the Active page falls back on; then 503s
+        list.remove_async().await;
+        putio
+            .mock("GET", "/transfers/list")
+            .with_status(503)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status":"ERROR","error_type":"ServiceUnavailable"}"#)
+            .expect_at_least(0)
+            .create_async()
+            .await
+    } else {
+        list
+    };
     let tracker = seeded_tracker();
     let cleanup = Arc::new(EmptyFolderCleanup::from_config(client.clone(), &config));
     let doctor = Doctor::new(
@@ -1033,6 +1116,95 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = tokio::signal::ctrl_c().await;
     })
     .await?;
+    Ok(())
+}
+
+/// Feature 039: the season pack's files (4 done, 1 downloading, 7 queued), the Radarr
+/// and Sonarr origins, Big Buck Bunny's queued file, and a folder with no transfer
+async fn seed_pipeline(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
+    let queue = db.queue();
+    let sources = db.sources();
+    let source = |transfer_id: Option<i64>| DownloadSource {
+        transfer_id,
+        source_type: Some(SourceType::Torrent),
+        tracker_host: None,
+        is_private: false,
+        origin: Origin::Putio,
+        watch_folder: None,
+        putio_folder: Some("Shows".to_string()),
+    };
+    for episode in 1..=12_i64 {
+        let file_id = 800 + episode;
+        let name = format!("Some.Show.S02E{episode:02}.1080p.mkv");
+        sources.record(file_id, &source(Some(SEASON_PACK))).await?;
+        if episode <= 4 {
+            db.downloads()
+                .insert(
+                    file_id,
+                    &name,
+                    EPISODE,
+                    "Shows/Some.Show.S02.1080p",
+                    DownloadStatus::Completed,
+                )
+                .await?;
+            continue;
+        }
+        queue
+            .add(
+                file_id,
+                &name,
+                EPISODE,
+                "http://unused",
+                "Some.Show.S02.1080p",
+                0,
+                QueueStatus::Pending,
+            )
+            .await?;
+        if episode == 5 {
+            queue
+                .update_status(file_id, QueueStatus::Downloading)
+                .await?;
+        }
+    }
+    sources.record(101, &source(Some(6))).await?;
+    for (hash, name, category, transfer_id) in [
+        (
+            "mock-sonarr-pack",
+            "Some.Show.S02.1080p",
+            "sonarr",
+            SEASON_PACK,
+        ),
+        (
+            "mock-radarr-film",
+            "Some.Movie.2025.2160p",
+            "radarr",
+            RADARR_FILM,
+        ),
+    ] {
+        db.arr()
+            .insert(&NewArrItem {
+                hash,
+                name,
+                category,
+                transfer_id: Some(transfer_id),
+                putio_status: "SEEDING",
+                total_size: 0,
+            })
+            .await?;
+    }
+    for (file_id, name) in [(601, "IMG_0001.jpg"), (602, "IMG_0002.jpg")] {
+        queue
+            .add(
+                file_id,
+                name,
+                3_145_728,
+                "http://unused",
+                "Photos/2026",
+                0,
+                QueueStatus::Pending,
+            )
+            .await?;
+    }
     Ok(())
 }
 

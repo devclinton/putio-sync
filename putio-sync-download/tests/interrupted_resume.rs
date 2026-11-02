@@ -51,9 +51,18 @@ async fn interrupted_download_is_requeued_and_resumes_from_partial_file() {
     );
     let queue = db.queue();
     // The crashed download (highest priority), a pending row and a paused row
-    queue.add(1, "movie.mkv", 8192, "", "", 5).await.unwrap();
-    queue.add(2, "other.mkv", 8192, "", "", 1).await.unwrap();
-    queue.add(3, "held.mkv", 8192, "", "", 9).await.unwrap();
+    queue
+        .add(1, "movie.mkv", 8192, "", "", 5, QueueStatus::Pending)
+        .await
+        .unwrap();
+    queue
+        .add(2, "other.mkv", 8192, "", "", 1, QueueStatus::Pending)
+        .await
+        .unwrap();
+    queue
+        .add(3, "held.mkv", 8192, "", "", 9, QueueStatus::Pending)
+        .await
+        .unwrap();
     queue
         .update_status(1, QueueStatus::Downloading)
         .await

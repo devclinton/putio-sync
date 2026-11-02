@@ -212,6 +212,61 @@ label_enum!(
 );
 
 label_enum!(
+    /// Stage of an active transfer on the Active page (feature 039).
+    PipelineStage {
+        Putio => "putio",
+        Nas => "nas",
+    }
+);
+
+label_enum!(
+    /// State of an active transfer within its stage (feature 039).
+    PipelineState {
+        Queued => "queued",
+        Downloading => "downloading",
+        Stalled => "stalled",
+        Finishing => "finishing",
+        Error => "error",
+        WaitingForSync => "waiting_for_sync",
+        Paused => "paused",
+        Failed => "failed",
+    }
+);
+
+/// The states each stage can be in: 5 for Put.io and 5 for the NAS.
+pub const PIPELINE_STATES: &[(PipelineStage, &[PipelineState])] = &[
+    (
+        PipelineStage::Putio,
+        &[
+            PipelineState::Queued,
+            PipelineState::Downloading,
+            PipelineState::Stalled,
+            PipelineState::Finishing,
+            PipelineState::Error,
+        ],
+    ),
+    (
+        PipelineStage::Nas,
+        &[
+            PipelineState::WaitingForSync,
+            PipelineState::Queued,
+            PipelineState::Downloading,
+            PipelineState::Paused,
+            PipelineState::Failed,
+        ],
+    ),
+];
+
+label_enum!(
+    /// An operator action on the Active page (feature 039).
+    PipelineAction {
+        Pause => "pause",
+        Hold => "hold",
+        Resume => "resume",
+    }
+);
+
+label_enum!(
     /// Outcome of one *arr blocklist call.
     BlocklistOutcome {
         Ok => "ok",

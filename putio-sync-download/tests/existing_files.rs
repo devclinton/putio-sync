@@ -8,7 +8,7 @@ use std::sync::Arc;
 use mockito::{Matcher, Mock, ServerGuard};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::ExistingFile;
-use putio_sync_db::models::DownloadHistory;
+use putio_sync_db::models::{DownloadHistory, QueueStatus};
 use putio_sync_db::Database;
 use putio_sync_download::{DownloadConfig, DownloadFile, DownloadManager};
 
@@ -85,7 +85,16 @@ impl Setup {
     async fn queue(&self, id: i64, fixed_path: bool) {
         self.db
             .queue()
-            .add_with_path_kept(id, "movie.mkv", SIZE as i64, "", "", 0, fixed_path)
+            .add_with_path_kept(
+                id,
+                "movie.mkv",
+                SIZE as i64,
+                "",
+                "",
+                0,
+                QueueStatus::Pending,
+                fixed_path,
+            )
             .await
             .unwrap();
     }

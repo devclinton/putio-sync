@@ -19,7 +19,11 @@ async fn closed_pool_counts_one_queue_error() {
     db.pool().close().await;
 
     let before = queue_errors();
-    assert!(db.queue().add(1, "a.mkv", 1, "", "", 0).await.is_err());
+    assert!(db
+        .queue()
+        .add(1, "a.mkv", 1, "", "", 0, QueueStatus::Pending)
+        .await
+        .is_err());
     assert_eq!(queue_errors() - before, 1.0);
 }
 
@@ -30,7 +34,10 @@ async fn counts_by_status_groups_gauged_states() {
         .await
         .unwrap();
     for id in 1..=4 {
-        db.queue().add(id, "f.mkv", 1, "", "", 0).await.unwrap();
+        db.queue()
+            .add(id, "f.mkv", 1, "", "", 0, QueueStatus::Pending)
+            .await
+            .unwrap();
     }
     db.queue()
         .update_status(3, QueueStatus::Failed)

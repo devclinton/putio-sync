@@ -38,6 +38,9 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_empty_folder_delete_failures_total",
     "putio_sync_empty_folder_last_success_timestamp_seconds",
     "putio_sync_transfers_stalled",
+    "putio_sync_pipeline_items",
+    "putio_sync_pipeline_actions_total",
+    "putio_sync_nas_downloads_paused",
     "putio_sync_arr_rpc_requests_total",
     "putio_sync_arr_items",
     "putio_sync_arr_blocklist_total",
@@ -206,7 +209,11 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v
         }
         "source" => strs(PrecheckSource::ALL, PrecheckSource::as_str),
-        "stage" => strs(PrecheckStage::ALL, PrecheckStage::as_str),
+        "stage" => {
+            let mut v = strs(PrecheckStage::ALL, PrecheckStage::as_str);
+            v.extend(strs(PipelineStage::ALL, PipelineStage::as_str));
+            v
+        }
         // Host names from the config's cache list
         "cache" => vec!["itorrents.net"],
         "method" => strs(ArrMethod::ALL, ArrMethod::as_str),
@@ -232,8 +239,10 @@ fn closed_set(label: &str) -> Vec<&'static str> {
         "state" => {
             let mut v = strs(QueueState::ALL, QueueState::as_str);
             v.extend(strs(ArrItemState::ALL, ArrItemState::as_str));
+            v.extend(strs(PipelineState::ALL, PipelineState::as_str));
             v
         }
+        "action" => strs(PipelineAction::ALL, PipelineAction::as_str),
         "trigger" => strs(CleanupTrigger::ALL, CleanupTrigger::as_str),
         "decision" => strs(RuleDecision::ALL, RuleDecision::as_str),
         other => panic!("unexpected label {}", other),
@@ -430,6 +439,44 @@ fn transfers_stalled_reads_the_last_count() {
     assert_eq!(t.sample("putio_sync_transfers_stalled", &[]), Some(3.0));
     t.set_transfers_stalled(0);
     assert_eq!(t.sample("putio_sync_transfers_stalled", &[]), Some(0.0));
+}
+
+/// Feature 039: pipeline gauges start at zero for every stage and state, and hold the last
+/// values set
+#[test]
+fn pipeline_metrics() {
+    let t = Telemetry::new();
+    let items = |stage, state| {
+        t.sample(
+            "putio_sync_pipeline_items",
+            &[("stage", stage), ("state", state)],
+        )
+    };
+    for (stage, states) in PIPELINE_STATES {
+        for state in *states {
+            assert_eq!(items(stage.as_str(), state.as_str()), Some(0.0));
+        }
+    }
+    assert_eq!(items("putio", "waiting_for_sync"), None);
+    assert_eq!(t.sample("putio_sync_nas_downloads_paused", &[]), Some(0.0));
+
+    t.set_pipeline_items(PipelineStage::Nas, PipelineState::Downloading, 4);
+    assert_eq!(items("nas", "downloading"), Some(4.0));
+    assert_eq!(items("putio", "downloading"), Some(0.0));
+
+    t.pipeline_action(PipelineAction::Hold);
+    t.pipeline_action(PipelineAction::Hold);
+    assert_eq!(
+        t.sample("putio_sync_pipeline_actions_total", &[("action", "hold")]),
+        Some(2.0)
+    );
+    assert_eq!(
+        t.sample("putio_sync_pipeline_actions_total", &[("action", "pause")]),
+        Some(0.0)
+    );
+
+    t.set_nas_downloads_paused(true);
+    assert_eq!(t.sample("putio_sync_nas_downloads_paused", &[]), Some(1.0));
 }
 
 /// Feature 010: doctor series appear after the first run and hold the last result

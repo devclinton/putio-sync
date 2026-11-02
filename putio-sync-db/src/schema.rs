@@ -161,6 +161,42 @@ CREATE TABLE IF NOT EXISTS rule_decisions (
 )
 "#;
 
+/// SQL to create the pipeline_holds table (feature 039): transfers paused while still on
+/// Put.io. Their files are queued as `paused` when the sync finds them.
+pub const CREATE_PIPELINE_HOLDS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS pipeline_holds (
+    transfer_id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    held_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"#;
+
+/// SQL to create the daemon_flags table (feature 039): runtime switches that survive a
+/// restart. `value` is "1" or "0"; a missing key means off.
+pub const CREATE_DAEMON_FLAGS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS daemon_flags (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"#;
+
+/// SQL to create the pipeline_finished table (feature 039): Recently finished items,
+/// pruned after `[transfers] finished_retention_hours`
+pub const CREATE_PIPELINE_FINISHED_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS pipeline_finished (
+    key TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    outcome TEXT NOT NULL CHECK (outcome IN ('done', 'failed')),
+    reason TEXT,
+    added_at TIMESTAMP,
+    putio_done_at TIMESTAMP,
+    queued_at TIMESTAMP,
+    done_at TIMESTAMP NOT NULL
+)
+"#;
+
 /// SQL to create the release_checks table (feature 042): one row per release pre-check
 pub const CREATE_RELEASE_CHECKS_TABLE: &str = r#"
 CREATE TABLE IF NOT EXISTS release_checks (
@@ -272,6 +308,10 @@ CREATE INDEX IF NOT EXISTS idx_processed_torrents_timestamp ON processed_torrent
 
 -- Index for the newest rule decisions
 CREATE INDEX IF NOT EXISTS idx_rule_decisions_decided_at ON rule_decisions(decided_at);
+
+-- Indexes for the pipeline file lookup (feature 039)
+CREATE INDEX IF NOT EXISTS idx_download_sources_transfer_id ON download_sources(transfer_id);
+CREATE INDEX IF NOT EXISTS idx_downloads_downloaded_at ON downloads(downloaded_at);
 
 -- Release pre-check (feature 042): the sync gate's pending lookup, ranges and transfers
 CREATE INDEX IF NOT EXISTS idx_release_checks_pending ON release_checks(state) WHERE state = 'pending';

@@ -2,7 +2,8 @@
 
 import { arrRuntime, get, syncNow } from "../api.js";
 import { empty, h, poll, toast, toastError } from "../app.js";
-import { bytes, duration, percent, relative, speed } from "../format.js";
+import { bytes, duration, percent, relative } from "../format.js";
+import { BADGE, LABEL, STAGES } from "./active.js";
 
 const REFRESH_MS = 3000;
 
@@ -65,7 +66,7 @@ function render(s, arr) {
   grid.replaceChildren(
     syncCard(s.sync),
     queueCard(s.queue, reasons.get("queue")),
-    downloadsCard(s.downloads, reasons.get("downloads")),
+    activeCard(s.active, reasons.get("active")),
     workersCard(s.workers),
     diskCard(s.disk, reasons.get("disk")),
     watcherCard(s.watcher),
@@ -164,52 +165,34 @@ function queueCard(q, reason) {
   );
 }
 
-function downloadsCard(list, reason) {
-  if (!list) {
-    const c = unavailableCard("Active downloads", reason);
-    c.classList.add("wide");
-    return c;
+/** The Active transfers card (feature 039): totals and the busiest few, linking to Active */
+function activeCard(a, reason) {
+  const section = (...body) => h("section", { class: "card wide" }, h("h2", { text: "Active transfers" }), ...body);
+  if (!a) return section(h("p", { class: "muted", text: `Unavailable: ${reason || "no data"}` }));
+  if (a.total === 0) {
+    return section(empty("Nothing is downloading right now", "Transfers you add on Put.io show up here until their files are on the NAS."));
   }
-  if (list.length === 0) {
-    return h("section", { class: "card wide" }, h("h2", { text: "Active downloads" }), empty("Nothing is downloading", "Queued files start here when a download slot is free."));
-  }
-  const rows = list.map((d) =>
+  const parts = [`${a.putio} on Put.io`, `${a.nas} on the NAS`];
+  const sentence = h(
+    "p",
+    {},
+    `${a.total} active: ${parts.join(", ")}`,
+    a.failed ? [" · ", h("span", { class: "error-text", text: `${a.failed} failed` })] : null,
+  );
+  const lines = (a.top || []).map((i) =>
     h(
-      "tr",
+      "li",
       {},
-      h("td", { class: "name-cell name", "data-label": "Name", text: d.filename }),
-      h("td", { "data-label": "Done", class: "num" }, `${bytes(d.bytes_downloaded)} of ${bytes(d.file_size)}`),
-      h(
-        "td",
-        { "data-label": "Progress", class: "num" },
-        h("div", {}, percent(d.percentage), h("div", { class: "bar" }, h("span", { style: `width:${clamp(d.percentage)}%` }))),
-      ),
-      h("td", { "data-label": "Speed", class: "num right", text: speed(d.speed_bps) }),
-      h("td", { "data-label": "ETA", class: "num right", text: d.eta_seconds != null ? duration(d.eta_seconds) : "—" }),
+      h("span", { class: "name" }, i.name),
+      " ",
+      h("span", { class: "badges" }, h("span", { class: "badge", text: STAGES[i.stage] }), h("span", { class: `badge ${BADGE[i.state] || ""}`, text: LABEL[i.state] || i.state })),
+      h("span", { class: "muted num" }, ` ${percent(i.percent)}`, i.eta_seconds > 0 ? ` · ${duration(i.eta_seconds)} left` : null),
     ),
   );
-  return h(
-    "section",
-    { class: "card wide" },
-    h("h2", { text: "Active downloads" }),
-    h(
-      "table",
-      { class: "table" },
-      h(
-        "thead",
-        {},
-        h(
-          "tr",
-          {},
-          h("th", { text: "Name" }),
-          h("th", { text: "Done" }),
-          h("th", { text: "Progress" }),
-          h("th", { class: "right", text: "Speed" }),
-          h("th", { class: "right", text: "ETA" }),
-        ),
-      ),
-      h("tbody", {}, rows),
-    ),
+  return section(
+    sentence,
+    h("ul", { class: "lines spaced" }, lines),
+    h("p", { class: "spaced" }, h("a", { href: "#/active" }, a.total > lines.length ? `See all ${a.total}` : "See all")),
   );
 }
 

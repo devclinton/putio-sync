@@ -562,7 +562,8 @@ fn env_value(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
-/// `[transfers]`: when a Put.io transfer counts as stalled (feature 007)
+/// `[transfers]`: when a Put.io transfer counts as stalled (feature 007), and how long the
+/// Active page keeps finished transfers (feature 039)
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(default)]
 pub struct TransfersConfig {
@@ -570,6 +571,8 @@ pub struct TransfersConfig {
     pub stall_threshold_hours: u64,
     /// Seconds between checks of the Put.io transfer list
     pub stall_check_interval_secs: u64,
+    /// Hours a finished transfer stays in the Active page's Recently finished list (1–720)
+    pub finished_retention_hours: u64,
 }
 
 impl Default for TransfersConfig {
@@ -577,7 +580,24 @@ impl Default for TransfersConfig {
         Self {
             stall_threshold_hours: 6,
             stall_check_interval_secs: 600,
+            finished_retention_hours: 24,
         }
+    }
+}
+
+/// Largest `[transfers] finished_retention_hours` (30 days)
+pub const MAX_FINISHED_RETENTION_HOURS: u64 = 720;
+
+impl TransfersConfig {
+    /// Check `finished_retention_hours`
+    pub fn validate(&self) -> CoreResult<()> {
+        if !(1..=MAX_FINISHED_RETENTION_HOURS).contains(&self.finished_retention_hours) {
+            return Err(CoreError::ConfigError(format!(
+                "transfers finished_retention_hours must be from 1 to {}, got {}",
+                MAX_FINISHED_RETENTION_HOURS, self.finished_retention_hours
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -1307,6 +1327,7 @@ impl Config {
         crate::rules::validate(&self.download.rules, &self.download.presets)?;
         self.cleanup.validate()?;
         self.arr.validate()?;
+        self.transfers.validate()?;
         self.precheck.validate(&self.watch.paths)?;
 
         Ok(())
@@ -2165,6 +2186,27 @@ mod tests {
             toml::from_str("[transfers]\nstall_threshold_hours = 12\n").unwrap();
         assert_eq!(config.transfers.stall_threshold_hours, 12);
         assert_eq!(config.transfers.stall_check_interval_secs, 600);
+    }
+
+    #[test]
+    fn finished_retention_hours_default_and_range() {
+        let config: super::Config = toml::from_str("").unwrap();
+        assert_eq!(config.transfers.finished_retention_hours, 24);
+        assert!(config.transfers.validate().is_ok());
+
+        for (hours, ok) in [(1, true), (720, true), (0, false), (721, false)] {
+            let transfers = super::TransfersConfig {
+                finished_retention_hours: hours,
+                ..Default::default()
+            };
+            match transfers.validate() {
+                Ok(()) => assert!(ok, "{hours} should be refused"),
+                Err(e) => {
+                    assert!(!ok, "{hours} should be accepted");
+                    assert!(e.to_string().contains("must be from 1 to 720"), "{e}");
+                }
+            }
+        }
     }
 
     use super::*;

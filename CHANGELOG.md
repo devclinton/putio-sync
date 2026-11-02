@@ -14,6 +14,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- An Active page listing every transfer on its way to the NAS, once each, in
+  its Put.io or NAS stage, with counts by state that filter the list. The
+  Status page's Active transfers card summarises it, and the
+  `putio_sync_pipeline_items` metric counts items by stage and state
+  (feature 039).
 - A Local files page in the web UI lists the download folder (with its
   `radarr/` and `sonarr/` folders) and each watch folder when watching is on,
   with sizes and times, and marks partial `.downloading` files and rejected

@@ -216,7 +216,8 @@ async fn counts_how_holds_ended() {
                 check_id: None,
                 last_lookup: Some("not_found"),
                 held_at: now - held_for,
-                next_at: now,
+                // Not due, so the app's hold ticker leaves it to this test
+                next_at: now + 300,
                 until_at: now + 300,
             })
             .await
