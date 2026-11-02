@@ -80,6 +80,7 @@ async fn every_referenced_asset_resolves() {
         "status",
         "queue",
         "putio",
+        "files",
         "transfers",
         "history",
         "stats",

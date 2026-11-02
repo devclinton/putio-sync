@@ -19,6 +19,16 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   Status page's Active transfers card summarises it, and the
   `putio_sync_pipeline_items` metric counts items by stage and state
   (feature 039).
+- A Local files page in the web UI lists the download folder (with its
+  `radarr/` and `sonarr/` folders) and each watch folder when watching is on,
+  with sizes and times, and marks partial `.downloading` files and rejected
+  watch files. Files and folders can be deleted (after a confirmation that
+  shows a folder's size) or renamed, and a `.rejected` watch file can be
+  re-checked: it gets its name back and the watcher checks it again on its
+  next scan. A partial that is still downloading can't be deleted. This
+  replaces the old `/local/files` API routes, whose path check could be
+  passed with `..`; every path now stays inside its folder, and symlinks are
+  not followed out of it (feature 044).
 - Fake releases are caught before they reach Put.io. When Radarr or Sonarr
   sends a .torrent (or an indexer URL) that has no video file of at least
   50 MB, such as an `.exe` or a password-protected `.7z`, it's listed as failed
