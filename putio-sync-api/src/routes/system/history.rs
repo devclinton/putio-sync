@@ -38,6 +38,11 @@ pub struct HistoryEntry {
     pub duration_seconds: Option<u64>,
     pub speed_bps: Option<f64>,
     pub timestamp: String,
+    /// The path written, when it was recorded (feature 040; older rows have none)
+    pub local_path: Option<String>,
+    /// What happened to a file already at that path: skipped, resumed, restarted,
+    /// overwritten or saved_as; none for a fresh download
+    pub outcome: Option<String>,
 }
 
 /// History response
@@ -121,6 +126,8 @@ async fn get_history(
             duration_seconds: entry.duration_seconds.map(|d| d as u64),
             speed_bps: entry.average_speed.map(|s| s as f64),
             timestamp: entry.timestamp,
+            local_path: entry.local_path,
+            outcome: entry.outcome,
         })
         .collect();
 

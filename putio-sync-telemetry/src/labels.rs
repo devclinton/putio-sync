@@ -130,6 +130,18 @@ label_enum!(
 );
 
 label_enum!(
+    /// What happened to a file that already existed locally (feature 040).
+    ExistingOutcome {
+        Skipped => "skipped",
+        Resumed => "resumed",
+        Restarted => "restarted",
+        Overwritten => "overwritten",
+        SavedAs => "saved_as",
+        Refused => "refused",
+    }
+);
+
+label_enum!(
     /// Database area, by the module that ran the query.
     DbOp {
         Queue => "queue",
@@ -168,6 +180,34 @@ label_enum!(
         Local => "local",
         Done => "done",
         Failed => "failed",
+    }
+);
+
+label_enum!(
+    /// Kind of *arr app an auto-setup ran against (feature 018).
+    ArrSetupKind {
+        Radarr => "radarr",
+        Sonarr => "sonarr",
+    }
+);
+
+label_enum!(
+    /// Result of one *arr auto-setup (feature 018, data-model "Failure reasons").
+    ArrSetupResult {
+        Created => "created",
+        Updated => "updated",
+        Unchanged => "unchanged",
+        Unreachable => "unreachable",
+        TimedOut => "timed_out",
+        UntrustedCertificate => "untrusted_certificate",
+        Unauthorized => "unauthorized",
+        NotArr => "not_arr",
+        UnsupportedVersion => "unsupported_version",
+        InvalidCategory => "invalid_category",
+        ArrCannotReach => "arr_cannot_reach",
+        ArrTestFailed => "arr_test_failed",
+        ArrRefused => "arr_refused",
+        ConfigWriteFailed => "config_write_failed",
     }
 );
 
@@ -232,6 +272,72 @@ label_enum!(
         Ok => "ok",
         NotFound => "not_found",
         Error => "error",
+    }
+);
+
+label_enum!(
+    /// Where a pre-checked release came from (feature 042).
+    PrecheckSource {
+        Torrent => "torrent",
+        Url => "url",
+        Magnet => "magnet",
+        WatchTorrent => "watch_torrent",
+        WatchMagnet => "watch_magnet",
+    }
+);
+
+label_enum!(
+    /// Where a release's file list was checked.
+    PrecheckStage {
+        Before => "before",
+        Putio => "putio",
+    }
+);
+
+label_enum!(
+    /// Outcome of one pre-check; `unknown` when no file list could be had.
+    PrecheckOutcome {
+        Passed => "passed",
+        Rejected => "rejected",
+        Unknown => "unknown",
+    }
+);
+
+label_enum!(
+    /// Result of one .torrent cache lookup.
+    LookupResult {
+        Found => "found",
+        NotFound => "not_found",
+        Timeout => "timeout",
+        WrongHash => "wrong_hash",
+        Error => "error",
+    }
+);
+
+label_enum!(
+    /// How a magnet that went to Put.io unchecked turned out.
+    FallbackResult {
+        Passed => "passed",
+        Rejected => "rejected",
+    }
+);
+
+label_enum!(
+    /// How a held magnet's hold ended (043).
+    HoldResult {
+        FoundPassed => "found_passed",
+        FoundRejected => "found_rejected",
+        RanOut => "ran_out",
+        Removed => "removed",
+        Unchecked => "unchecked",
+    }
+);
+
+label_enum!(
+    /// An operator's flag on a release.
+    FlagKind {
+        Fake => "fake",
+        NotFake => "not_fake",
     }
 );
 

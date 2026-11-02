@@ -1,6 +1,6 @@
-// Status page: one GET /status every 3 s, answering "is it working?".
+// Status page: GET /status and GET /arr/status every 3 s, answering "is it working?".
 
-import { get, syncNow } from "../api.js";
+import { arrRuntime, get, syncNow } from "../api.js";
 import { empty, h, poll, toast, toastError } from "../app.js";
 import { bytes, duration, percent, relative } from "../format.js";
 import { BADGE, LABEL, STAGES } from "./active.js";
@@ -30,6 +30,8 @@ export function unmount() {
 
 async function refresh() {
   let data;
+  // The Radarr / Sonarr card is optional: its failure shows in the card only
+  const arr = arrRuntime().catch((e) => ({ error: e.error || String(e) }));
   try {
     data = await get("/status");
   } catch (e) {
@@ -37,7 +39,7 @@ async function refresh() {
     summary.replaceChildren(h("span", { class: "error-text", text: `Status unavailable: ${e.error}` }));
     return;
   }
-  render(data);
+  render(data, await arr);
 }
 
 async function onSync() {
@@ -54,7 +56,7 @@ async function onSync() {
 
 // ---- Rendering --------------------------------------------------------------
 
-function render(s) {
+function render(s, arr) {
   const reasons = new Map((s.unavailable || []).map((u) => [u.section, u.reason]));
   const syncing = Boolean(s.sync && s.sync.in_progress);
   syncButton.disabled = syncing;
@@ -69,6 +71,7 @@ function render(s) {
     diskCard(s.disk, reasons.get("disk")),
     watcherCard(s.watcher),
     connectionsCard(s.reachability, s.auth),
+    arrCard(arr),
     buildCard(s.build, s.uptime_seconds),
   );
 }
@@ -250,6 +253,29 @@ function connectionsCard(r, auth) {
       auth ? ["Put.io sign-in", PUTIO_AUTH[auth.putio] || auth.putio] : null,
     ]),
   );
+}
+
+const ARR_STATES = [
+  ["putio", "On Put.io"],
+  ["local", "Downloading"],
+  ["done", "Done"],
+  ["failed", "Failed"],
+];
+
+/** Download-client items by state and each *arr's last contact (feature 018, FR-002) */
+function arrCard(a) {
+  const title = "Radarr / Sonarr";
+  if (!a || a.error) return unavailableCard(title, a && a.error);
+  if (!a.enabled) {
+    return card(
+      title,
+      h("p", { class: "muted" }, "The download client is off. ", h("a", { href: "#/settings", text: "Turn it on in Settings" })),
+    );
+  }
+  const seen = a.clients_seen.length
+    ? a.clients_seen.map((c) => [`${c.agent} last contact`, relative(c.last_contact)])
+    : [["Last contact", "never"]];
+  return card(title, kv([...ARR_STATES.map(([k, label]) => [label, String(a.items[k] ?? 0)]), ...seen]));
 }
 
 function buildCard(build, uptime) {

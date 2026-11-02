@@ -13,6 +13,7 @@ putio-sync-client = { path = "../putio-sync-client" }
 putio-sync-core = { path = "../putio-sync-core" }
 putio-sync-db = { path = "../putio-sync-db" }
 putio-sync-download = { path = "../putio-sync-download" }
+putio-sync-precheck = { path = "../putio-sync-precheck" }
 putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 
 # Async runtime
@@ -26,9 +27,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = "0.22"
 
-# Info hash of .torrent files (research R4)
-sha1 = "0.10"
-
 # Error handling
 thiserror = { workspace = true }
 
@@ -40,3 +38,7 @@ chrono = "0.4"
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.8"
 mockito = "1.2"
+# The infohash tests compute the expected hash
+sha1 = "0.10"
+# Reading release_checks rows (042)
+sqlx = { workspace = true }

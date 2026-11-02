@@ -93,6 +93,8 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         get("/settings/logging"),
         get("/settings/notifications"),
         (Method::PUT, "/settings/notifications", Some(json!({}))),
+        get("/settings/precheck"),
+        (Method::PUT, "/settings/precheck", Some(json!({}))),
         get("/stats/downloads"),
         get("/stats/transfers"),
         get("/stats/disk"),
@@ -109,7 +111,25 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
             Some(json!({ "items": ["1"], "confirm": true })),
         ),
         get("/arr"),
-        post("/arr/servers/0/test"),
+        get("/arr/status"),
+        post("/arr/applications/0/test"),
+        post("/arr/applications/test"),
+        post("/arr/applications"),
+        (Method::PUT, "/arr/applications/0", Some(json!({}))),
+        (Method::DELETE, "/arr/applications/0", None),
+        (Method::PUT, "/arr/client", Some(json!({}))),
+        post("/arr/discover"),
+        post("/arr/setup/preview"),
+        post("/arr/setup"),
+        get("/stats/releases"),
+        get("/releases/reports"),
+        get("/releases/flags"),
+        (
+            Method::POST,
+            "/releases/flags",
+            Some(json!({ "target": { "file_id": 1 }, "kind": "fake" })),
+        ),
+        (Method::DELETE, "/releases/flags/1", None),
         // Unknown paths fall through to the protected fallback
         get("/robots.txt"),
     ]
@@ -335,6 +355,28 @@ async fn no_tracker_passkey_in_responses_or_sources() {
     let text = body_text(app.get("/stats/summary?range=24h").await).await;
     assert!(text.contains("tracker.example.org"), "{text}");
     assert!(!text.contains(PASSKEY), "{text}");
+
+    // A flag keeps the host only, in the response and both exports (042 US6)
+    let flagged = app
+        .post_json(
+            "/releases/flags",
+            json!({ "target": { "file_id": 31 }, "kind": "fake" }),
+        )
+        .await;
+    assert_eq!(flagged.status(), StatusCode::CREATED);
+    let mut texts = vec![body_text(flagged).await];
+    for path in [
+        "/releases/reports",
+        "/releases/reports?format=csv",
+        "/releases/flags?file_id=31",
+    ] {
+        texts.push(body_text(app.get(path).await).await);
+    }
+    assert!(texts[1].contains("tracker.example.org"), "{}", texts[1]);
+    for text in texts {
+        assert!(!text.contains(PASSKEY), "{text}");
+        assert!(!text.contains("magnet:"), "{text}");
+    }
 }
 
 /// The download client's password and the *arr API keys never reach a response or a
@@ -343,6 +385,7 @@ async fn no_tracker_passkey_in_responses_or_sources() {
 async fn no_arr_secret_in_responses_or_logs() {
     const ARR_PASSWORD: &str = "arr-secret-password";
     const ARR_KEY: &str = "0123456789abcdefarrkey";
+    const ARR_NEW_PASSWORD: &str = "arr-new-secret-password";
     let logs = captured_logs();
     let mut arr = mockito::Server::new_async().await;
     arr.mock("GET", "/api/v3/system/status")
@@ -357,15 +400,17 @@ async fn no_arr_secret_in_responses_or_logs() {
             servers: vec![
                 putio_sync_core::config::ArrServer {
                     kind: putio_sync_core::config::ArrKind::Sonarr,
-                    url: arr_url,
+                    url: arr_url.clone(),
                     api_key: Some(ARR_KEY.to_string()),
-                    category: "sonarr".to_string(),
+                    name: None,
+                    category: Some("sonarr".to_string()),
                 },
                 putio_sync_core::config::ArrServer {
                     kind: putio_sync_core::config::ArrKind::Radarr,
                     url: "http://127.0.0.1:9".to_string(),
                     api_key: Some(ARR_KEY.to_string()),
-                    category: "radarr".to_string(),
+                    name: None,
+                    category: Some("radarr".to_string()),
                 },
             ],
             ..Default::default()
@@ -374,11 +419,89 @@ async fn no_arr_secret_in_responses_or_logs() {
     .await;
 
     let mut texts = Vec::new();
-    for path in ["/arr/servers/0/test", "/arr/servers/1/test"] {
+    for path in ["/arr/applications/0/test", "/arr/applications/1/test"] {
         texts.push(body_text(app.post_json(path, json!({})).await).await);
     }
+    let port: u16 = arr_url.rsplit(':').next().unwrap().parse().unwrap();
+    let form = json!({"kind": "sonarr", "host": "127.0.0.1", "port": port, "api_key": "",
+                      "index": 0});
+    texts.push(body_text(app.post_json("/arr/applications/test", form.clone()).await).await);
+    let response = app
+        .req(
+            Method::PUT,
+            "/arr/applications/0",
+            Some(&app.token),
+            Some(form),
+        )
+        .await;
+    texts.push(body_text(response).await);
     texts.push(body_text(app.get("/arr").await).await);
+    texts.push(body_text(app.get("/arr/status").await).await);
     texts.push(body_text(app.get("/settings/download").await).await);
+
+    // Setup: a preview, then each outcome. The key is sent in the body and the password to
+    // the *arr, never back.
+    let mut good = mockito::Server::new_async().await;
+    good.mock("GET", "/api/v3/system/status")
+        .with_body(r#"{"appName":"Sonarr","version":"4.0.15.2941"}"#)
+        .create_async()
+        .await;
+    good.mock("GET", "/api/v3/downloadclient")
+        .with_body("[]")
+        .create_async()
+        .await;
+    good.mock("GET", "/api/v3/downloadclient/schema")
+        .with_body(
+            json!([{"implementation": "Transmission", "configContract": "TransmissionSettings",
+                    "fields": [{"name": "host"}, {"name": "password"}, {"name": "tvCategory"}]}])
+            .to_string(),
+        )
+        .create_async()
+        .await;
+    good.mock("POST", "/api/v3/downloadclient/test")
+        .create_async()
+        .await;
+    good.mock("POST", "/api/v3/downloadclient")
+        .with_status(201)
+        .with_body(r#"{"id": 5, "name": "putio-sync"}"#)
+        .create_async()
+        .await;
+    good.mock("GET", "/api/v3/remotepathmapping")
+        .with_body("[]")
+        .create_async()
+        .await;
+    good.mock("GET", "/api/v3/filesystem")
+        .match_query(mockito::Matcher::Any)
+        .with_body(r#"{"directories": [], "files": []}"#)
+        .create_async()
+        .await;
+    for (url, path) in [
+        (good.url(), "/arr/setup/preview"),
+        (good.url(), "/arr/setup"),
+        (arr_url.clone(), "/arr/setup"),
+        ("http://127.0.0.1:9".to_string(), "/arr/setup"),
+    ] {
+        let req = json!({"target": {"url": url}, "api_key": ARR_KEY, "remember": true});
+        texts.push(body_text(app.post_json(path, req).await).await);
+    }
+    texts.push(
+        body_text(
+            app.post_json("/arr/setup", json!({"target": {"application": 0}}))
+                .await,
+        )
+        .await,
+    );
+    // A new password is accepted and never shown
+    let response = app
+        .req(
+            Method::PUT,
+            "/arr/client",
+            Some(&app.token),
+            Some(json!({"enabled": true, "username": "putio-sync", "password": ARR_NEW_PASSWORD})),
+        )
+        .await;
+    texts.push(body_text(response).await);
+    texts.push(body_text(app.get("/arr").await).await);
     for auth in ["Basic Zm9vOmJhcg==", "Basic !!!"] {
         let request = axum::http::Request::builder()
             .method(Method::POST)
@@ -397,5 +520,10 @@ async fn no_arr_secret_in_responses_or_logs() {
     for text in texts.iter().chain([&logs]) {
         assert!(!text.contains(ARR_PASSWORD), "{text}");
         assert!(!text.contains(ARR_KEY), "{text}");
+        assert!(!text.contains(ARR_NEW_PASSWORD), "{text}");
     }
+    // The setups ran: a created client, and a refused key
+    let all = texts.join("\n");
+    assert!(all.contains(r#""outcome":"created""#), "{all}");
+    assert!(all.contains(r#""reason":"unauthorized""#), "{all}");
 }

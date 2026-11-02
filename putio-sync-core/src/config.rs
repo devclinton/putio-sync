@@ -20,8 +20,100 @@ fn default_delete_empty_folders() -> bool {
     true
 }
 
-fn default_skip_existing() -> bool {
-    true
+/// What to do when a file already exists at its local path (`[download] on_existing`,
+/// feature 040)
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExistingFile {
+    /// Skip complete files, continue partial ones
+    #[default]
+    Resume,
+    /// Download again, replacing the old file once the new one is complete
+    Overwrite,
+    /// Keep the old file and save the new one as `name (1).ext`
+    #[serde(alias = "rename")]
+    KeepBoth,
+}
+
+impl ExistingFile {
+    /// The config value
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ExistingFile::Resume => "resume",
+            ExistingFile::Overwrite => "overwrite",
+            ExistingFile::KeepBoth => "keep_both",
+        }
+    }
+}
+
+impl From<bool> for ExistingFile {
+    /// The old `skip_existing`: `true` is resume, `false` overwrite
+    fn from(skip_existing: bool) -> Self {
+        if skip_existing {
+            ExistingFile::Resume
+        } else {
+            ExistingFile::Overwrite
+        }
+    }
+}
+
+impl std::fmt::Display for ExistingFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// What happened to a file that already existed locally (feature 040)
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExistingOutcome {
+    /// Complete already; nothing downloaded
+    Skipped,
+    /// The partial file was continued
+    Resumed,
+    /// A resumed file failed its checksum and was downloaded again
+    Restarted,
+    /// Replaced by a new download
+    Overwritten,
+    /// Kept, with the new download under a numbered name
+    SavedAs,
+    /// A folder is in the way; nothing downloaded
+    Refused,
+}
+
+impl ExistingOutcome {
+    /// Every outcome
+    pub const ALL: [ExistingOutcome; 6] = [
+        ExistingOutcome::Skipped,
+        ExistingOutcome::Resumed,
+        ExistingOutcome::Restarted,
+        ExistingOutcome::Overwritten,
+        ExistingOutcome::SavedAs,
+        ExistingOutcome::Refused,
+    ];
+
+    /// The stored and logged name
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ExistingOutcome::Skipped => "skipped",
+            ExistingOutcome::Resumed => "resumed",
+            ExistingOutcome::Restarted => "restarted",
+            ExistingOutcome::Overwritten => "overwritten",
+            ExistingOutcome::SavedAs => "saved_as",
+            ExistingOutcome::Refused => "refused",
+        }
+    }
+}
+
+impl std::str::FromStr for ExistingOutcome {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        ExistingOutcome::ALL
+            .into_iter()
+            .find(|o| o.as_str() == s)
+            .ok_or(())
+    }
 }
 
 /// Extensions that are never downloaded unless `blocked_extensions` overrides them.
@@ -77,6 +169,9 @@ pub struct Config {
     /// Scheduled doctor runs (feature 010)
     #[serde(default)]
     pub doctor: DoctorConfig,
+    /// Release pre-check (feature 042)
+    #[serde(default)]
+    pub precheck: PrecheckConfig,
 }
 
 /// `[doctor]`: how often the daemon runs the doctor's checks (feature 010). The CLI and
@@ -103,6 +198,145 @@ impl DoctorConfig {
     /// Time between scheduled runs
     pub fn interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_minutes.max(5) * 60)
+    }
+}
+
+/// The default magnet lookup cache (research R3)
+pub const DEFAULT_PRECHECK_CACHE: &str = "https://itorrents.net/torrent/{HASH}.torrent";
+
+/// `[precheck]`: read a release's file list before it reaches Put.io and reject it when
+/// no file is a wanted type of at least the minimum size (feature 042)
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct PrecheckConfig {
+    /// Default for every *arr category and the watch folder
+    pub enabled: bool,
+    /// Check, log and count, but never reject or delete (Constitution IV)
+    pub dry_run: bool,
+    /// The largest wanted file must be at least this big
+    pub min_size_mb: u64,
+    /// Count archives (`.rar`, `.7z`, split parts) as wanted
+    pub allow_archives: bool,
+    /// Look magnets up in `caches` before adding them
+    pub magnet_lookup: bool,
+    /// Total time for all caches, 1..=30
+    pub lookup_timeout_secs: u64,
+    /// .torrent cache URLs with `{HASH}` (upper case) or `{hash}` (lower case)
+    pub caches: Vec<String>,
+    /// How long a magnet missed on the first ask waits for a cache to fetch it, 0..=3600;
+    /// 0 sends it to Put.io at once (feature 043)
+    pub hold_magnet_secs: u64,
+    /// Time between cache asks for a held magnet, 10..=600
+    pub hold_retry_secs: u64,
+    /// The first ask's limit while holding is on, 1..=`lookup_timeout_secs`
+    pub first_lookup_secs: u64,
+    /// Per *arr category (the folder below the download dir)
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub categories: BTreeMap<String, PrecheckOverride>,
+    /// Per `[watch].paths` entry
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub watch: BTreeMap<String, PrecheckOverride>,
+}
+
+/// Settings one category or watch folder changes; unset ones come from `[precheck]`
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct PrecheckOverride {
+    /// Check this folder at all
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Its minimum size
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_size_mb: Option<u64>,
+    /// Its archive setting
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_archives: Option<bool>,
+}
+
+impl Default for PrecheckConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            dry_run: false,
+            min_size_mb: 50,
+            allow_archives: false,
+            magnet_lookup: true,
+            lookup_timeout_secs: 10,
+            caches: vec![DEFAULT_PRECHECK_CACHE.to_string()],
+            hold_magnet_secs: 300,
+            hold_retry_secs: 30,
+            first_lookup_secs: 3,
+            categories: BTreeMap::new(),
+            watch: BTreeMap::new(),
+        }
+    }
+}
+
+impl PrecheckConfig {
+    /// A magnet missed on the first ask is held and asked again (feature 043)
+    pub fn holding(&self) -> bool {
+        self.enabled && self.magnet_lookup && self.hold_magnet_secs > 0
+    }
+
+    /// Check the ranges and cache URLs. A `watch` key that is not in `watch_paths` is
+    /// only a warning, so removing a watch path doesn't break startup.
+    pub fn validate(&self, watch_paths: &[PathBuf]) -> CoreResult<()> {
+        let sizes = std::iter::once(("precheck.min_size_mb", self.min_size_mb)).chain(
+            self.categories
+                .values()
+                .chain(self.watch.values())
+                .filter_map(|o| o.min_size_mb)
+                .map(|v| ("precheck override min_size_mb", v)),
+        );
+        for (setting, value) in sizes {
+            if value > 100_000 {
+                return Err(invalid(setting, &value.to_string(), "0..=100000"));
+            }
+        }
+        if !(1..=30).contains(&self.lookup_timeout_secs) {
+            return Err(invalid(
+                "precheck.lookup_timeout_secs",
+                &self.lookup_timeout_secs.to_string(),
+                "1..=30",
+            ));
+        }
+        if self.hold_magnet_secs > 3600 {
+            return Err(invalid(
+                "precheck.hold_magnet_secs",
+                &self.hold_magnet_secs.to_string(),
+                "0..=3600",
+            ));
+        }
+        if !(10..=600).contains(&self.hold_retry_secs) {
+            return Err(invalid(
+                "precheck.hold_retry_secs",
+                &self.hold_retry_secs.to_string(),
+                "10..=600",
+            ));
+        }
+        if !(1..=self.lookup_timeout_secs).contains(&self.first_lookup_secs) {
+            return Err(invalid(
+                "precheck.first_lookup_secs",
+                &self.first_lookup_secs.to_string(),
+                &format!("1..={} (lookup_timeout_secs)", self.lookup_timeout_secs),
+            ));
+        }
+        for cache in &self.caches {
+            let http = cache.starts_with("http://") || cache.starts_with("https://");
+            if !http || !(cache.contains("{HASH}") || cache.contains("{hash}")) {
+                return Err(invalid(
+                    "precheck cache",
+                    cache,
+                    "an http(s):// URL containing {HASH} or {hash}",
+                ));
+            }
+        }
+        for key in self.watch.keys() {
+            if !watch_paths.iter().any(|p| p == Path::new(key)) {
+                tracing::warn!(path = %key, "[precheck.watch] names a path not in [watch].paths");
+            }
+        }
+        Ok(())
     }
 }
 
@@ -177,26 +411,31 @@ impl ArrKind {
     }
 }
 
-/// `[[arr.servers]]`: one *arr app and the category it sends
+/// `[[arr.servers]]`: one *arr app (an "application" in the UI)
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ArrServer {
     /// `radarr` or `sonarr`
     pub kind: ArrKind,
+    /// Name shown in the UI; [`Config::resolve_arr`] fills in "Radarr"/"Sonarr" (feature 018)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// Base URL, e.g. `http://192.168.1.34:8989`
     pub url: String,
     /// API key. `PUTIO_SYNC_RADARR_API_KEY` / `PUTIO_SYNC_SONARR_API_KEY` override it
     /// for the first server of that kind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
-    /// The category set on the *arr's Transmission client (the folder under the
-    /// download folder)
-    pub category: String,
+    /// Legacy (feature 011): the category typed for this server. The category is now read
+    /// from the *arr; this one is only a fallback for blocklisting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
 
 impl std::fmt::Debug for ArrServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ArrServer")
             .field("kind", &self.kind)
+            .field("name", &self.name)
             .field("url", &self.url)
             .field("api_key", &redacted(&self.api_key))
             .field("category", &self.category)
@@ -232,7 +471,8 @@ pub fn normalize_arr_category(category: &str) -> Option<String> {
 }
 
 impl ArrConfig {
-    /// Check each server's URL and category, and that categories are unique
+    /// Check the username and each server's URL, and that no URL is used twice. A legacy
+    /// `category` isn't checked: it's ignored when it isn't a valid folder.
     pub fn validate(&self) -> CoreResult<()> {
         if self.username.is_empty() || self.username.contains(':') {
             return Err(CoreError::ConfigError(
@@ -248,17 +488,10 @@ impl ArrConfig {
             if rest.is_none_or(|r| r.is_empty() || r.chars().any(char::is_whitespace)) {
                 return Err(invalid("arr server url", &server.url, "an http(s):// URL"));
             }
-            let category = normalize_arr_category(&server.category).ok_or_else(|| {
-                invalid(
-                    "arr server category",
-                    &server.category,
-                    "a relative folder without empty, . or .. segments",
-                )
-            })?;
-            if !seen.insert(category.clone()) {
+            if !seen.insert(url.to_ascii_lowercase()) {
                 return Err(CoreError::ConfigError(format!(
-                    "arr server category '{}' is used twice",
-                    category
+                    "arr server url '{}' is used twice",
+                    url
                 )));
             }
         }
@@ -291,11 +524,42 @@ impl std::fmt::Debug for ArrSettings {
 }
 
 impl ArrSettings {
-    /// The server whose category is `category` (normalised)
+    /// The server whose legacy typed category is `category` (normalised)
     pub fn server_for(&self, category: &str) -> Option<&ArrServer> {
         let category = normalize_arr_category(category)?;
-        self.servers.iter().find(|s| s.category == category)
+        self.servers
+            .iter()
+            .find(|s| s.category.as_deref() == Some(category.as_str()))
     }
+
+    /// `PUTIO_SYNC_ARR_PASSWORD` sets the password, so the UI can't change it
+    pub fn password_from_env() -> bool {
+        env_value(ARR_PASSWORD_VAR).is_some()
+    }
+
+    /// The API key of server `index` comes from `PUTIO_SYNC_RADARR_API_KEY` /
+    /// `PUTIO_SYNC_SONARR_API_KEY` (the first server of its kind)
+    pub fn api_key_from_env(servers: &[ArrServer], index: usize) -> bool {
+        let Some(server) = servers.get(index) else {
+            return false;
+        };
+        env_value(arr_key_var(server.kind)).is_some()
+            && servers.iter().position(|s| s.kind == server.kind) == Some(index)
+    }
+}
+
+const ARR_PASSWORD_VAR: &str = "PUTIO_SYNC_ARR_PASSWORD";
+
+fn arr_key_var(kind: ArrKind) -> &'static str {
+    match kind {
+        ArrKind::Radarr => "PUTIO_SYNC_RADARR_API_KEY",
+        ArrKind::Sonarr => "PUTIO_SYNC_SONARR_API_KEY",
+    }
+}
+
+/// An environment variable; empty counts as unset
+fn env_value(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
 /// `[transfers]`: when a Put.io transfer counts as stalled (feature 007), and how long the
@@ -474,12 +738,16 @@ pub struct DownloadConfig {
     pub buffer_size_mb: usize,
     /// Chunk size in MB for chunked downloads (None to disable - Put.io doesn't support range requests)
     pub chunk_size_mb: Option<usize>,
-    /// Enable resume support for interrupted downloads
+    /// Continue interrupted and partial downloads instead of starting over
     pub resume_enabled: bool,
-    /// Skip files that already exist in the target directory (default true; false
-    /// re-downloads and overwrites them)
-    #[serde(default = "default_skip_existing")]
-    pub skip_existing: bool,
+    /// What to do when a file already exists locally; absent, `skip_existing` decides
+    /// (see [`DownloadConfig::on_existing`])
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_existing: Option<ExistingFile>,
+    /// Replaced by `on_existing` and still read: `true` is resume, `false` overwrite.
+    /// Saves from the web UI drop it once `on_existing` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_existing: Option<bool>,
     /// Delete files from Put.io after successful download
     pub delete_after_download: bool,
     /// Progress bar display style
@@ -655,7 +923,8 @@ impl Default for DownloadConfig {
             buffer_size_mb: 16,
             chunk_size_mb: None, // Disabled - Put.io doesn't support range requests
             resume_enabled: true,
-            skip_existing: true,
+            on_existing: None,
+            skip_existing: None,
             delete_after_download: false,
             progress_style: ProgressStyle::PerFile,
             sort_order: SortOrder::ByDate,
@@ -670,6 +939,36 @@ impl Default for DownloadConfig {
             rules: Vec::new(),
             presets: BTreeMap::new(),
         }
+    }
+}
+
+impl DownloadConfig {
+    /// The global choice for existing files: `on_existing`, else the old
+    /// `skip_existing`, else resume
+    pub fn on_existing(&self) -> ExistingFile {
+        self.on_existing
+            .unwrap_or_else(|| self.skip_existing.unwrap_or(true).into())
+    }
+
+    /// Set the global choice, dropping the old `skip_existing` so a save writes one key
+    pub fn set_on_existing(&mut self, choice: ExistingFile) {
+        self.on_existing = Some(choice);
+        self.skip_existing = None;
+    }
+
+    /// Where both `on_existing` and the old `skip_existing` are set (the `[download]`
+    /// table or a rule path); `on_existing` wins in each
+    pub fn both_existing_keys(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        if self.on_existing.is_some() && self.skip_existing.is_some() {
+            found.push("download".to_string());
+        }
+        for rule in &self.rules {
+            if rule.on_existing.is_some() && rule.skip_existing.is_some() {
+                found.push(format!("download.rules {}", rule.path));
+            }
+        }
+        found
     }
 }
 
@@ -800,6 +1099,13 @@ impl Config {
             eprintln!("❌ Path expansion failed: {}", e);
             e
         })?;
+
+        for table in config.download.both_existing_keys() {
+            tracing::warn!(
+                table,
+                "Both on_existing and skip_existing are set; on_existing wins"
+            );
+        }
 
         eprintln!("✅ Configuration loaded and processed successfully");
         Ok(config)
@@ -1022,6 +1328,7 @@ impl Config {
         self.cleanup.validate()?;
         self.arr.validate()?;
         self.transfers.validate()?;
+        self.precheck.validate(&self.watch.paths)?;
 
         Ok(())
     }
@@ -1140,9 +1447,15 @@ impl ConfigBuilder {
         self
     }
 
-    /// Set whether to skip existing downloads
+    /// Set whether to skip existing downloads (the old key: `true` is resume)
     pub fn skip_existing(mut self, skip: bool) -> Self {
-        self.download.skip_existing = skip;
+        self.download.skip_existing = Some(skip);
+        self
+    }
+
+    /// Set what to do when a file already exists locally
+    pub fn on_existing(mut self, choice: ExistingFile) -> Self {
+        self.download.set_on_existing(choice);
         self
     }
 
@@ -1259,6 +1572,7 @@ impl ConfigBuilder {
             transfers: TransfersConfig::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
+            precheck: PrecheckConfig::default(),
         }
     }
 }
@@ -1483,29 +1797,42 @@ impl Config {
     /// kind). An empty variable counts as unset. Errors never echo a secret.
     pub fn resolve_arr(&self) -> CoreResult<ArrSettings> {
         self.arr.validate()?;
-        let env = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
 
-        let password = env("PUTIO_SYNC_ARR_PASSWORD")
+        let password = env_value(ARR_PASSWORD_VAR)
             .or_else(|| self.arr.password.clone())
             .filter(|p| !p.is_empty());
         let mut servers = self.arr.servers.clone();
-        for (kind, var) in [
-            (ArrKind::Radarr, "PUTIO_SYNC_RADARR_API_KEY"),
-            (ArrKind::Sonarr, "PUTIO_SYNC_SONARR_API_KEY"),
-        ] {
-            if let Some(key) = env(var) {
+        for kind in [ArrKind::Radarr, ArrKind::Sonarr] {
+            if let Some(key) = env_value(arr_key_var(kind)) {
                 if let Some(server) = servers.iter_mut().find(|s| s.kind == kind) {
                     server.api_key = Some(key);
                 }
             }
         }
+        let mut names = std::collections::HashSet::new();
         for server in &mut servers {
             server.url = server.url.trim_end_matches('/').to_string();
-            // validate() has checked it
-            server.category = normalize_arr_category(&server.category).unwrap_or_default();
+            // A legacy category that isn't a valid folder is ignored
+            server.category = server
+                .category
+                .as_deref()
+                .and_then(normalize_arr_category)
+                .filter(|c| !c.is_empty());
             if server.api_key.as_deref() == Some("") {
                 server.api_key = None;
             }
+            let name = server
+                .name
+                .clone()
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or_else(|| server.kind.app_name().to_string());
+            let mut unique = name.clone();
+            let mut n = 2;
+            while !names.insert(unique.clone()) {
+                unique = format!("{name} ({n})");
+                n += 1;
+            }
+            server.name = Some(unique);
         }
 
         Ok(ArrSettings {
@@ -1514,6 +1841,76 @@ impl Config {
             password,
             servers,
         })
+    }
+
+    /// Write `arr` as the file's `[arr]` section (feature 018). Every other table, its
+    /// comments and the credentials stay as on disk; only `[arr]` keys that differ from the
+    /// file are edited. The caller merges secrets the form left empty and never passes an
+    /// environment override. Same file handling as
+    /// [`Config::save_keeping_file_credentials`].
+    pub fn save_arr_section<P: AsRef<Path>>(path: P, arr: &ArrConfig) -> CoreResult<()> {
+        let path = path.as_ref();
+        let unreadable = |what: &str| {
+            CoreError::ConfigError(format!(
+                "Failed to {what} {}; settings not saved",
+                path.display()
+            ))
+        };
+        let section = |arr: &ArrConfig| -> CoreResult<toml::Table> {
+            let value = toml::Value::try_from(arr).map_err(|e| {
+                CoreError::ConfigError(format!("Failed to serialize config: {}", e))
+            })?;
+            Ok(toml::Table::from_iter([("arr".to_string(), value)]))
+        };
+        let after = section(arr)?;
+
+        if !path.exists() {
+            let contents = toml::to_string_pretty(&after).map_err(|e| {
+                CoreError::ConfigError(format!("Failed to serialize config: {}", e))
+            })?;
+            return write_atomically(path, &contents, None);
+        }
+
+        let path = fs::canonicalize(path).map_err(|_| unreadable("read"))?;
+        let contents = fs::read_to_string(&path).map_err(|_| unreadable("read"))?;
+        let mut document: toml_edit::DocumentMut =
+            contents.parse().map_err(|_| unreadable("parse"))?;
+        let on_disk: Config = toml::from_str(&contents).map_err(|_| unreadable("parse"))?;
+        let before = section(&on_disk.arr)?;
+
+        edit_table(document.as_table_mut(), &before, &after);
+        let permissions = fs::metadata(&path).ok().map(|m| m.permissions());
+        write_atomically(&path, &document.to_string(), permissions)
+    }
+}
+
+impl Config {
+    /// Resolve `[precheck]`, applying `PUTIO_SYNC_PRECHECK_ENABLED` and
+    /// `PUTIO_SYNC_PRECHECK_MAGNET_LOOKUP`. An empty variable counts as unset.
+    pub fn resolve_precheck(&self) -> CoreResult<PrecheckConfig> {
+        self.precheck.validate(&self.watch.paths)?;
+        let mut out = self.precheck.clone();
+        for (name, setting, field) in [
+            (
+                "PUTIO_SYNC_PRECHECK_ENABLED",
+                "precheck.enabled",
+                &mut out.enabled,
+            ),
+            (
+                "PUTIO_SYNC_PRECHECK_MAGNET_LOOKUP",
+                "precheck.magnet_lookup",
+                &mut out.magnet_lookup,
+            ),
+        ] {
+            if let Some(v) = std::env::var(name).ok().filter(|v| !v.is_empty()) {
+                *field = match v.as_str() {
+                    "true" | "1" => true,
+                    "false" | "0" => false,
+                    _ => return Err(invalid(setting, &v, "true, false, 1, 0")),
+                };
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -1584,7 +1981,8 @@ fn settings_table(config: &Config) -> CoreResult<toml::Table> {
     let mut table = toml::Table::try_from(config)
         .map_err(|e| CoreError::ConfigError(format!("Failed to serialize config: {}", e)))?;
     table.remove("auth");
-    // No settings route edits `[arr]`, so it keeps its password and API keys as on disk
+    // `[arr]` has its own writer (`save_arr_section`), so this save keeps its password
+    // and API keys as on disk
     table.remove("arr");
     if let Some(toml::Value::Table(api)) = table.get_mut("api") {
         api.remove("auth_token");
@@ -1829,7 +2227,8 @@ mod tests {
                 buffer_size_mb: 16,
                 chunk_size_mb: Some(256),
                 resume_enabled: true,
-                skip_existing: false,
+                on_existing: None,
+                skip_existing: Some(false),
                 delete_after_download: false,
                 progress_style: ProgressStyle::PerFile,
                 sort_order: SortOrder::ByDate,
@@ -1860,6 +2259,7 @@ mod tests {
             transfers: TransfersConfig::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
+            precheck: PrecheckConfig::default(),
         }
     }
 
@@ -1972,7 +2372,7 @@ mod tests {
         assert_eq!(config.download.buffer_size_mb, 16);
         assert_eq!(config.download.chunk_size_mb, None);
         assert!(config.download.resume_enabled);
-        assert!(config.download.skip_existing);
+        assert_eq!(config.download.on_existing(), ExistingFile::Resume);
         assert!(!config.download.delete_after_download);
         assert_eq!(config.download.progress_style, ProgressStyle::PerFile);
         assert_eq!(config.download.sort_order, SortOrder::ByDate);
@@ -2091,7 +2491,7 @@ mod tests {
         assert_eq!(config.buffer_size_mb, 16);
         assert_eq!(config.chunk_size_mb, None);
         assert!(config.resume_enabled);
-        assert!(config.skip_existing);
+        assert_eq!(config.on_existing(), ExistingFile::Resume);
         assert!(!config.delete_after_download);
         assert_eq!(config.progress_style, ProgressStyle::PerFile);
         assert_eq!(config.sort_order, SortOrder::ByDate);
@@ -2122,15 +2522,55 @@ mod tests {
     }
 
     #[test]
-    fn test_skip_existing_missing_key_defaults_to_true() {
-        let mut value = toml::Value::try_from(DownloadConfig {
-            skip_existing: false,
-            ..DownloadConfig::default()
-        })
-        .unwrap();
-        value.as_table_mut().unwrap().remove("skip_existing");
-        let config: DownloadConfig = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
-        assert!(config.skip_existing);
+    fn test_existing_keys_missing_default_to_resume() {
+        let config: DownloadConfig =
+            toml::from_str(&toml::to_string(&DownloadConfig::default()).unwrap()).unwrap();
+        assert_eq!(config.on_existing, None);
+        assert_eq!(config.skip_existing, None);
+        assert_eq!(config.on_existing(), ExistingFile::Resume);
+    }
+
+    fn with_download_key(extra: &str) -> CoreResult<DownloadConfig> {
+        Ok(toml::from_str(&format!(
+            "{}{extra}\n",
+            download_toml_without_blocked()
+        ))?)
+    }
+
+    #[test]
+    fn test_old_skip_existing_maps_to_on_existing() {
+        let config = with_download_key("skip_existing = false").unwrap();
+        assert_eq!(config.on_existing(), ExistingFile::Overwrite);
+        let config = with_download_key("skip_existing = true").unwrap();
+        assert_eq!(config.on_existing(), ExistingFile::Resume);
+    }
+
+    #[test]
+    fn test_on_existing_values() {
+        let config = with_download_key("on_existing = \"keep_both\"").unwrap();
+        assert_eq!(config.on_existing(), ExistingFile::KeepBoth);
+        let config = with_download_key("on_existing = \"rename\"").unwrap();
+        assert_eq!(config.on_existing(), ExistingFile::KeepBoth);
+        let config = with_download_key("on_existing = \"overwrite\"").unwrap();
+        assert_eq!(config.on_existing(), ExistingFile::Overwrite);
+    }
+
+    #[test]
+    fn test_on_existing_unknown_value_lists_choices() {
+        let message = with_download_key("on_existing = \"replace\"")
+            .unwrap_err()
+            .to_string();
+        for value in ["resume", "overwrite", "keep_both"] {
+            assert!(message.contains(value), "{message}");
+        }
+    }
+
+    #[test]
+    fn test_on_existing_wins_over_skip_existing() {
+        let config =
+            with_download_key("on_existing = \"keep_both\"\nskip_existing = false").unwrap();
+        assert_eq!(config.on_existing(), ExistingFile::KeepBoth);
+        assert_eq!(config.both_existing_keys(), ["download"]);
     }
 
     #[test]
@@ -2508,6 +2948,36 @@ mod save_keeping_file_credentials_tests {
         assert_eq!(saved.download.workers, 7);
         assert_eq!(saved.api.auth_token, None);
         assert!(!fs::read_to_string(&path).unwrap().contains("env-api"));
+    }
+
+    /// A UI save of the new key drops the old one and keeps the comments
+    #[test]
+    fn on_existing_save_drops_skip_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut on_disk = Config::default();
+        on_disk.download.skip_existing = Some(false);
+        on_disk.save(&path).unwrap();
+        let contents = fs::read_to_string(&path)
+            .unwrap()
+            .replace("[download]\n", "[download]\n# my downloads\n");
+        fs::write(&path, contents).unwrap();
+
+        let mut memory: Config = written(&path);
+        memory.download.set_on_existing(ExistingFile::Overwrite);
+        memory.save_keeping_file_credentials(&path).unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(
+            contents.contains("on_existing = \"overwrite\""),
+            "{contents}"
+        );
+        assert!(!contents.contains("skip_existing"), "{contents}");
+        assert!(contents.contains("# my downloads"), "{contents}");
+        assert_eq!(
+            written(&path).download.on_existing(),
+            ExistingFile::Overwrite
+        );
     }
 
     #[test]
@@ -2960,7 +3430,9 @@ category = "movies"
         assert!(r.enabled);
         assert_eq!(r.password.as_deref(), Some("file-pass"));
         assert_eq!(r.servers[0].url, "http://nas:8989");
-        assert_eq!(r.servers[0].category, "tv");
+        assert_eq!(r.servers[0].category.as_deref(), Some("tv"));
+        assert_eq!(r.servers[0].name.as_deref(), Some("Sonarr"));
+        assert_eq!(r.servers[1].name.as_deref(), Some("Radarr"));
         assert_eq!(r.servers[0].api_key.as_deref(), Some("file-sonarr-key"));
         assert_eq!(r.servers[1].api_key, None);
         assert_eq!(r.server_for("/tv").map(|s| s.kind), Some(ArrKind::Sonarr));
@@ -3008,18 +3480,90 @@ category = "movies"
 
     #[test]
     fn bad_servers_are_rejected() {
-        let server = |url: &str, category: &str| {
-            format!(
-                "[[arr.servers]]\nkind = \"sonarr\"\nurl = \"{url}\"\ncategory = \"{category}\"\n"
-            )
-        };
-        assert!(arr_error(&server("nas:8989", "tv")).contains("arr server url"));
-        assert!(arr_error(&server("ftp://nas", "tv")).contains("arr server url"));
-        assert!(arr_error(&server("http://nas", "../tv")).contains("arr server category"));
-        assert!(arr_error(&server("http://nas", "tv//x")).contains("arr server category"));
-        let twice = format!("{}{}", server("http://a", "tv"), server("http://b", "/tv"));
+        let server = |url: &str| format!("[[arr.servers]]\nkind = \"sonarr\"\nurl = \"{url}\"\n");
+        assert!(arr_error(&server("nas:8989")).contains("arr server url"));
+        assert!(arr_error(&server("ftp://nas")).contains("arr server url"));
+        let twice = format!("{}{}", server("http://a:8989"), server("http://A:8989/"));
         assert!(arr_error(&twice).contains("used twice"));
         assert!(arr_error("[arr]\nusername = \"a:b\"\n").contains("arr username"));
+    }
+
+    /// Feature 018: the typed category is legacy; an invalid one no longer stops loading
+    #[test]
+    fn legacy_category_is_optional() {
+        let config: Config = toml::from_str(
+            "[[arr.servers]]\nkind = \"radarr\"\nurl = \"http://a\"\ncategory = \"../x\"\n\n[[arr.servers]]\nkind = \"radarr\"\nurl = \"http://b\"\n",
+        )
+        .unwrap();
+        config.validate().unwrap();
+        let r = with_env(&[], || config.resolve_arr().unwrap());
+        assert_eq!(r.servers[0].category, None);
+        assert_eq!(r.servers[1].category, None);
+        assert_eq!(r.servers[0].name.as_deref(), Some("Radarr"));
+        assert_eq!(r.servers[1].name.as_deref(), Some("Radarr (2)"));
+    }
+
+    #[test]
+    fn env_flags() {
+        let config: Config = toml::from_str(TWO_SERVERS).unwrap();
+        let servers = &config.arr.servers;
+        with_env(&[("PUTIO_SYNC_SONARR_API_KEY", "k")], || {
+            assert!(!ArrSettings::password_from_env());
+            assert!(ArrSettings::api_key_from_env(servers, 0));
+            assert!(!ArrSettings::api_key_from_env(servers, 1));
+            assert!(!ArrSettings::api_key_from_env(servers, 9));
+        });
+        with_env(&[("PUTIO_SYNC_ARR_PASSWORD", "p")], || {
+            assert!(ArrSettings::password_from_env());
+            assert!(!ArrSettings::api_key_from_env(servers, 0));
+        });
+    }
+
+    /// Feature 018: `[arr]` is written on its own; the rest of the file is untouched
+    #[test]
+    fn save_arr_section_edits_only_arr() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let other = "# keep me\n[cleanup]\nenabled = true # on\n";
+        fs::write(&path, format!("{other}{TWO_SERVERS}")).unwrap();
+
+        let mut arr: ArrConfig = toml::from_str::<Config>(TWO_SERVERS).unwrap().arr;
+        arr.enabled = false;
+        arr.password = Some("new-pass".to_string());
+        arr.servers.remove(1);
+        arr.servers[0].name = Some("TV".to_string());
+        Config::save_arr_section(&path, &arr).unwrap();
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with(other), "{text}");
+        let saved: Config = toml::from_str(&text).unwrap();
+        assert_eq!(saved.arr, arr);
+        assert!(text.contains("api_key = \"file-sonarr-key\""));
+        assert!(!text.contains("radarr"));
+    }
+
+    #[test]
+    fn save_arr_section_creates_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let arr = ArrConfig {
+            enabled: true,
+            password: Some("p".to_string()),
+            ..ArrConfig::default()
+        };
+        Config::save_arr_section(&path, &arr).unwrap();
+        let saved: Config = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.arr, arr);
+    }
+
+    #[test]
+    fn save_arr_section_refuses_a_bad_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "not = [toml").unwrap();
+        let err = Config::save_arr_section(&path, &ArrConfig::default()).unwrap_err();
+        assert!(err.to_string().contains("settings not saved"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "not = [toml");
     }
 
     #[test]
@@ -3047,5 +3591,122 @@ category = "movies"
         assert!(text.contains("workers = 9"));
         assert!(!text.contains("memory-pass"));
         assert!(text.contains(TWO_SERVERS.trim()));
+    }
+}
+
+#[cfg(test)]
+mod precheck_tests {
+    use super::*;
+
+    /// Serialises tests that change the `[precheck]` env overrides
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    const VARS: [&str; 2] = [
+        "PUTIO_SYNC_PRECHECK_ENABLED",
+        "PUTIO_SYNC_PRECHECK_MAGNET_LOOKUP",
+    ];
+
+    fn with_env<R>(vars: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        for v in VARS {
+            std::env::remove_var(v);
+        }
+        for (k, v) in vars {
+            std::env::set_var(k, v);
+        }
+        let out = f();
+        for v in VARS {
+            std::env::remove_var(v);
+        }
+        out
+    }
+
+    fn error(text: &str) -> String {
+        let config: Config = toml::from_str(text).unwrap();
+        match config.precheck.validate(&config.watch.paths) {
+            Err(CoreError::ConfigError(msg)) => msg,
+            other => panic!("expected a config error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn defaults() {
+        let p = Config::default().precheck;
+        assert!(p.enabled);
+        assert!(!p.dry_run);
+        assert_eq!(p.min_size_mb, 50);
+        assert!(!p.allow_archives);
+        assert!(p.magnet_lookup);
+        assert_eq!(p.lookup_timeout_secs, 10);
+        assert_eq!(p.caches, vec![DEFAULT_PRECHECK_CACHE.to_string()]);
+        assert_eq!(p.hold_magnet_secs, 300);
+        assert_eq!(p.hold_retry_secs, 30);
+        assert_eq!(p.first_lookup_secs, 3);
+        assert!(p.holding());
+        assert!(p.validate(&[]).is_ok());
+    }
+
+    #[test]
+    fn overrides_parse() {
+        let config: Config = toml::from_str(
+            "[precheck]\nmin_size_mb = 80\n\n[precheck.categories.software]\nenabled = false\n\n[precheck.watch.\"/watch/tv\"]\nmin_size_mb = 100\n",
+        )
+        .unwrap();
+        assert_eq!(config.precheck.min_size_mb, 80);
+        assert_eq!(config.precheck.categories["software"].enabled, Some(false));
+        assert_eq!(config.precheck.watch["/watch/tv"].min_size_mb, Some(100));
+        // A watch key that is not a watch path only warns
+        assert!(config.precheck.validate(&[]).is_ok());
+    }
+
+    #[test]
+    fn validation() {
+        assert!(error("[precheck]\nmin_size_mb = 100001\n").contains("0..=100000"));
+        assert!(error("[precheck.categories.tv]\nmin_size_mb = 200000\n").contains("0..=100000"));
+        assert!(error("[precheck]\nlookup_timeout_secs = 0\n").contains("1..=30"));
+        assert!(error("[precheck]\nlookup_timeout_secs = 31\n").contains("1..=30"));
+        assert!(error("[precheck]\nhold_magnet_secs = 3601\n").contains("0..=3600"));
+        assert!(error("[precheck]\nhold_retry_secs = 9\n").contains("10..=600"));
+        assert!(error("[precheck]\nhold_retry_secs = 601\n").contains("10..=600"));
+        assert!(error("[precheck]\nfirst_lookup_secs = 0\n").contains("1..=10"));
+        assert!(
+            error("[precheck]\nlookup_timeout_secs = 5\nfirst_lookup_secs = 6\n").contains("1..=5")
+        );
+        let off: Config = toml::from_str("[precheck]\nhold_magnet_secs = 0\n").unwrap();
+        assert!(off.validate().is_ok());
+        assert!(!off.precheck.holding());
+        assert!(error("[precheck]\ncaches = [\"ftp://x/{HASH}\"]\n").contains("precheck cache"));
+        assert!(error("[precheck]\ncaches = [\"https://x/a.torrent\"]\n").contains("{HASH}"));
+        let ok: Config =
+            toml::from_str("[precheck]\ncaches = [\"https://c.example/{hash}.torrent\"]\n")
+                .unwrap();
+        assert!(ok.validate().is_ok());
+    }
+
+    #[test]
+    fn env_overrides() {
+        let config = Config::default();
+        let p = with_env(
+            &[
+                ("PUTIO_SYNC_PRECHECK_ENABLED", "0"),
+                ("PUTIO_SYNC_PRECHECK_MAGNET_LOOKUP", ""),
+            ],
+            || config.resolve_precheck().unwrap(),
+        );
+        assert!(!p.enabled);
+        assert!(p.magnet_lookup);
+        let err = with_env(&[("PUTIO_SYNC_PRECHECK_MAGNET_LOOKUP", "no")], || {
+            config.resolve_precheck().unwrap_err().to_string()
+        });
+        assert!(err.contains("precheck.magnet_lookup 'no'"), "{err}");
+    }
+
+    /// FR-006: the check rejects archives; the sync's block list stays as it was
+    #[test]
+    fn blocked_extensions_unchanged() {
+        for ext in ["7z", "zip", "rar"] {
+            assert!(!DEFAULT_BLOCKED_EXTENSIONS.contains(&ext), "{ext}");
+        }
+        assert_eq!(DEFAULT_BLOCKED_EXTENSIONS.len(), 15);
     }
 }

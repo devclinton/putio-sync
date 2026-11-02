@@ -4,7 +4,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use putio_sync_core::cleanup::EmptyFolderCleanup;
-use putio_sync_core::config::{AuthMethod, Config};
+use putio_sync_core::config::{AuthMethod, Config, ExistingFile};
 use putio_sync_daemon::{DaemonConfig, PutioDaemon};
 use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadConfig;
@@ -22,7 +22,7 @@ pub async fn execute_daemon(
     watch_interval: u64,
     watch_paths: Vec<PathBuf>,
     filter: Option<String>,
-    skip_existing: bool,
+    on_existing: Option<ExistingFile>,
     delete_after: bool,
     delete_empty_folders: Option<bool>,
     parent_id: Option<i64>,
@@ -70,9 +70,6 @@ pub async fn execute_daemon(
     if filter.is_some() {
         warn!("--filter flag not yet supported in daemon mode, ignoring");
     }
-    if skip_existing {
-        warn!("--skip-existing flag not yet supported in daemon mode, ignoring");
-    }
     if delete_after {
         warn!("--delete-after flag not yet supported in daemon mode, ignoring");
     }
@@ -93,7 +90,7 @@ pub async fn execute_daemon(
     }
 
     // Create daemon configuration
-    let daemon_config = daemon_config(
+    let mut daemon_config = daemon_config(
         &config,
         oauth_token,
         watch_dirs,
@@ -101,6 +98,10 @@ pub async fn execute_daemon(
         download_interval,
         parent_id,
     );
+    // --on-existing / --skip-existing for this run; folder rules still win per folder
+    if let Some(choice) = on_existing {
+        daemon_config.download.on_existing = choice;
+    }
 
     let queue_db = Arc::new(OnceLock::new());
     crate::telemetry::start(
@@ -150,7 +151,8 @@ pub async fn execute_daemon(
         "  Retries: {} (initial delay {}s)",
         download.max_retries, download.retry_initial_delay_secs
     );
-    info!("  Skip existing: {}", download.skip_existing);
+    info!("  On existing: {}", download.on_existing);
+    info!("  Resume partial downloads: {}", download.resume_enabled);
     info!("  Parent folder ID: {:?}", daemon_config.parent_id);
     info!(
         "  Delete after download: {}",
@@ -286,6 +288,10 @@ fn daemon_config(
         ),
         stall_check_interval: config.transfers.stall_check_interval_secs,
         finished_retention_hours: config.transfers.finished_retention_hours,
+        precheck: config
+            .resolve_precheck()
+            .map_err(|e| tracing::warn!(error = %e, "Release pre-check disabled for watch folders"))
+            .ok(),
     }
 }
 
@@ -307,6 +313,15 @@ mod tests {
         assert_eq!(daemon.stall_check_interval, 120);
     }
 
+    /// `[precheck]` reaches the watch folders' release check (042 US4)
+    #[test]
+    fn daemon_config_takes_the_precheck() {
+        let mut config = Config::default();
+        config.precheck.dry_run = true;
+        let daemon = daemon_config(&config, "t".to_string(), vec![], 60, 300, None);
+        assert!(daemon.precheck.is_some_and(|p| p.dry_run));
+    }
+
     /// Every `[download]` setting the manager has reaches the daemon, not only the
     /// target directory, workers, buffer, delete-after and blocklist it used to copy
     #[test]
@@ -315,7 +330,8 @@ mod tests {
         config.download.target_directory = PathBuf::from("/srv/putio");
         config.download.workers = 5;
         config.download.buffer_size_mb = 48;
-        config.download.skip_existing = true;
+        config.download.on_existing = Some(ExistingFile::KeepBoth);
+        config.download.resume_enabled = false;
         config.download.delete_after_download = true;
         config.download.bandwidth_limit_bytes_per_sec = Some(2_097_152);
         config.download.max_retries = 8;
@@ -327,7 +343,8 @@ mod tests {
             daemon.download,
             DownloadConfig {
                 target_directory: PathBuf::from("/srv/putio"),
-                skip_existing: true,
+                on_existing: ExistingFile::KeepBoth,
+                resume_enabled: false,
                 buffer_size_mb: 48,
                 bandwidth_limit_bytes_per_sec: Some(2_097_152),
                 max_retries: 8,

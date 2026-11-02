@@ -17,6 +17,7 @@ What changed in each build is in [CHANGELOG.md](CHANGELOG.md); planned work is i
 - **Folder Rules**: Per-folder type presets (video, audio, ebooks, no binaries, or your own), skip a folder, or delete blocked files from Put.io; child folders inherit
 - **Transfer Management**: Add torrents from files or magnet links
 - **Radarr / Sonarr**: acts as their Transmission download client: Put.io transfer, local download, progress, completion and blocklisting of failed releases ([details](#radarr-and-sonarr))
+- **Release check**: fake releases (an `.exe` posing as a movie, a locked `.7z`) are rejected before they reach Put.io or the NAS ([details](#release-check))
 - **Watch Mode**: Automatically upload .torrent and .magnet files from watched directories with smart deduplication
 - **Post-Processing**: Archive or delete processed torrent files after upload
 - **Advanced Daemon**: Unified daemon with live log-level changes and graceful worker scaling
@@ -245,8 +246,9 @@ Options:
   -d, --dir <PATH>          Download directory [default: from config]
   -w, --workers <N>         Number of concurrent workers [default: from config]
   --buffer-size <SIZE>      Buffer size for streaming (e.g., 16MB) [default: from config]
-  --no-resume               Disable resume of partial downloads
-  --skip-existing           Skip files already downloaded
+  --no-resume               Start partial downloads over instead of resuming them
+  --on-existing <CHOICE>    A file already on disk: resume, overwrite, keep-both [default: from config]
+  --skip-existing           Same as --on-existing resume
   --delete-after            Delete from Put.io after download
   --sort <ORDER>            Sort order: by-date, by-name, by-extension, by-size
   --reverse                 Reverse sort order
@@ -484,8 +486,38 @@ Configure download behavior including streaming buffer size and resume support:
 [download]
 buffer_size_mb = 16        # Stream buffer size for downloads
 resume_enabled = true      # Enable automatic resume
-skip_existing = true       # Skip files that already exist locally
+on_existing = "resume"     # A file already on disk: resume, overwrite or keep_both
 ```
+
+### When a file already exists
+
+If a file is already at its local path and the download history does not list it as
+done, `[download] on_existing` decides what happens:
+
+| Choice | What is on disk | Result |
+|---|---|---|
+| `resume` (default) | Same size and CRC32 as on Put.io | Skipped, and recorded as downloaded |
+| | Smaller | Continued from where it stops, then checked against Put.io's CRC32; a mismatch downloads it again from the start |
+| | Larger, or same size with another CRC32 | Kept; the new file is saved as `name (1).ext` |
+| `overwrite` | Anything | Downloaded again; the old file is replaced only once the new copy is complete |
+| `keep_both` | A complete copy | Skipped |
+| | Anything else | Kept; the new file is saved as `name (1).ext`, `name (2).ext`, … |
+
+- Complete means the same size as on Put.io, and the same CRC32 when Put.io has one. The
+  check reads the local file once; the Queue page shows "Checking" meanwhile.
+- A folder at the file's path is never touched: the download fails with an error.
+- A numbered name is kept on the queue row, so a restart resumes the same file.
+- Radarr/Sonarr download-client items never get a numbered name, since those apps expect
+  the file at its own path: they overwrite instead.
+- `resume_enabled = false` (or `--no-resume`) starts partial files over instead of
+  continuing them.
+- `skip_existing` is replaced and still read: `true` is `resume`, `false` is `overwrite`. A
+  save from the web UI writes `on_existing` and removes it.
+- `--on-existing` sets it for one `download` or `daemon` run; folder rules can set it per
+  folder.
+- History shows the path a file was saved to when it differs, and a badge for resumed,
+  restarted, overwritten and saved-as files; `putio_sync_existing_files_total` counts each
+  outcome.
 
 ### Basic Configuration
 
@@ -499,7 +531,7 @@ workers = 2
 target_directory = "~/Downloads/putio"  # Supports ~, absolute, and relative paths
 buffer_size_mb = 16                     # Stream buffer size for downloads
 resume_enabled = true                   # Enable automatic resume
-skip_existing = true                    # Skip files that already exist
+on_existing = "resume"                  # Skip complete files, continue partial ones
 delete_after_download = true            # Clean up Put.io after successful downloads
 progress_style = "per-file"             # Progress bar style
 sort_order = "by-date"                  # File sorting order
@@ -586,6 +618,7 @@ H = histogram.
 | `putio_sync_last_sync_files` | gauge | `kind` | Counts from the latest run |
 | `putio_sync_files_blocked_total` | counter | — | Files blocked or skipped by a folder rule or the blocked-extension list (once per file id) |
 | `putio_sync_rule_decisions_total` | counter | `decision` | Folder rule decisions: `blocked`, `skipped`, `deleted` (from Put.io) |
+| `putio_sync_sync_in_progress` | gauge | — | 1 while a sync run is in progress, else 0 |
 | `putio_sync_queue_items` | gauge | `state` | Queue rows by state, refreshed every 15 s and at startup |
 | `putio_sync_downloads_active` | gauge | — | Downloads in progress |
 | `putio_sync_download_workers` | gauge | — | Configured worker count |
@@ -593,6 +626,7 @@ H = histogram.
 | `putio_sync_downloads_failed_total` | counter | `reason` | Downloads that ended in failure |
 | `putio_sync_downloaded_bytes_total` | counter | — | Bytes written to disk; `rate()` gives throughput |
 | `putio_sync_download_duration_seconds` | H | — | Time per completed download |
+| `putio_sync_existing_files_total` | counter | `outcome` | A file already at its path: `skipped`, `resumed`, `restarted`, `overwritten`, `saved_as`, `refused` |
 | `putio_sync_worker_state` | gauge | `worker` | **detailed only.** 0 idle, 1 downloading |
 | `putio_sync_worker_inflight_bytes` | gauge | `worker` | **detailed only.** Bytes written so far for the current file |
 | `putio_sync_watch_scans_total` | counter | — | Watch-folder scans |
@@ -615,8 +649,28 @@ H = histogram.
 | `putio_sync_arr_rpc_requests_total` | counter | `method`, `outcome` | Transmission RPC requests from Radarr/Sonarr; `outcome` is `ok`, `error` or `auth_failed` |
 | `putio_sync_arr_items` | gauge | `state` | Radarr/Sonarr items by state: `putio`, `local`, `done`, `failed` |
 | `putio_sync_arr_blocklist_total` | counter | `outcome` | Calls asking Radarr/Sonarr to blocklist a failed release: `ok`, `not_found`, `error` |
+| `putio_sync_precheck_total` | counter | `source`, `stage`, `outcome` | Release checks: `source` is `torrent`, `url`, `magnet`, `watch_torrent`, `watch_magnet`; `stage` is `before` (Put.io) or `putio`; `outcome` is `passed`, `rejected`, `unknown` |
+| `putio_sync_precheck_avoided_bytes_total` | counter | `stage` | Bytes in the file lists of rejected releases |
+| `putio_sync_precheck_cache_lookups_total` | counter | `cache`, `result` | Magnet cache requests by cache host: `found`, `not_found`, `timeout`, `wrong_hash`, `error` |
+| `putio_sync_precheck_cache_lookup_seconds` | H | — | Time to look one magnet up across the caches |
+| `putio_sync_precheck_fallback_total` | counter | `result` | Magnets sent to Put.io unchecked, by how the check there went: `passed`, `rejected` |
+| `putio_sync_precheck_fallback_putio_bytes_total` | counter | — | Bytes Put.io fetched for unchecked magnets that were then rejected |
+| `putio_sync_release_flags_total` | counter | `kind` | Operator flags: `fake`, `not_fake` |
 | `putio_sync_start_time_seconds` | gauge | — | Process start, Unix seconds |
 | `putio_sync_build_info` | gauge (=1) | `version`, `commit` | Build identity |
+| `putio_sync_process_cpu_seconds_total` | counter | — | CPU time used (user + system); `rate()` gives cores in use |
+| `putio_sync_process_resident_memory_bytes` | gauge | — | Memory in use (RSS) |
+| `putio_sync_process_virtual_memory_bytes` | gauge | — | Memory reserved (virtual size) |
+| `putio_sync_process_threads` | gauge | — | OS threads |
+| `putio_sync_process_open_fds` | gauge | — | Open files and sockets |
+| `putio_sync_process_max_fds` | gauge | — | Soft open-file limit; absent when unlimited |
+| `putio_sync_process_disk_read_bytes_total` | counter | — | Bytes read from storage |
+| `putio_sync_process_disk_written_bytes_total` | counter | — | Bytes written to storage |
+
+The `putio_sync_process_*` figures are read from `/proc` at each scrape, so they exist on
+Linux only (including the Docker image). Elsewhere they are absent, and putio-sync logs one
+warning, `Process metrics unavailable`, at the first scrape. A figure the kernel hides, such
+as disk I/O in some containers, is left out on its own.
 
 Label values are fixed sets, listed in
 [specs/003-telemetry-prometheus/data-model.md](specs/003-telemetry-prometheus/data-model.md#closed-label-sets).
@@ -633,6 +687,10 @@ Label values are fixed sets, listed in
 | DB errors | `increase(putio_sync_db_errors_total[1d])` |
 | Transfers stuck | `putio_sync_transfers_stalled > 0` |
 | Doctor problems | `putio_sync_doctor_check_status == 2` |
+| Fakes rejected this week | `sum(increase(putio_sync_precheck_total{outcome="rejected"}[7d]))` |
+| Caches failing | `sum by (cache, result) (increase(putio_sync_precheck_cache_lookups_total{result!="found"}[1d]))` |
+| CPU in use (cores) | `rate(putio_sync_process_cpu_seconds_total[5m])` |
+| Memory in use | `putio_sync_process_resident_memory_bytes` |
 
 ## Web UI
 
@@ -762,9 +820,10 @@ daemon's download manager and watcher:
 | Group | Applies live | Needs a restart |
 |---|---|---|
 | Logging | `level`, `module_filters`, within 10 s (ignored while `RUST_LOG` is set) | `console_format`, `console_enabled`, `file_*` |
-| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `skip_existing`, `delete_after_download`, `blocked_extensions`, for the next download | `target_directory` (new downloads go there at once, but the queue database and disk figures stay on the startup folder), and the rest of the group |
+| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, for the next download | `target_directory` (new downloads go there at once, but the queue database and disk figures stay on the startup folder), and the rest of the group |
 | Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
+| Release check | — | everything |
 | Notifications | — | everything |
 
 Under `server`, the logging rows are the same (when the config file existed at
@@ -805,14 +864,26 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /putio/transfers/{id}/readd` | Cancel a transfer and add its magnet again to the same folder; answers `{"cancelled_id", "transfer"}`. 400 without a magnet link (nothing cancelled); 500 with the magnet in `details` if the add fails after the cancel |
 | `GET /history?action=&name=&limit=&offset=` | History; `name` is a case-insensitive substring |
 | `GET /history/stats`, `GET /stats/{downloads,transfers,disk}` | Totals |
-| `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications}` | Settings (see above) |
+| `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
+| `GET /stats/releases?range=` | Rejected releases and bytes kept off the NAS, by stage and reason; magnet lookups by cache; fallbacks to Put.io; report counts with the top file types and trackers |
+| `GET /releases/reports?range=&format=json\|csv` | The rejection and flag reports as a download: file types, sizes and tracker hosts, never a link, magnet or passkey |
+| `GET /releases/flags?file_id=&history_id=&arr_hash=&report_id=` | The flags on up to 200 releases, and which of the `file_id`s a Radarr/Sonarr item holds |
+| `POST /releases/flags` | `{"target": {"file_id": 1}, "kind": "fake" \| "not_fake", "note", "blocklist"}`: flag a release. With `blocklist` on a Radarr/Sonarr item, it fails, its Put.io files are deleted and it's blocklisted (not under `dry_run`) |
+| `DELETE /releases/flags/{id}` | Undo a flag. A blocklist already sent isn't undone |
 | `GET /local/watcher/status`, `GET /local/workers` | Watcher and worker state |
 | `GET /doctor` | The latest doctor report; 404 before the first run |
 | `POST /doctor/run` | Run every check now and answer with the report (a run already going is joined, not repeated) |
 | `POST /doctor/fixes/{fix}/preview` | Check again and list the items the fix would act on; changes nothing |
 | `POST /doctor/fixes/{fix}/apply` | `{"items": ["key", ...], "confirm": true}` → `{"done", "skipped", "failed", "check"}`. Only items that still qualify are touched. 400 without `confirm` for a fix that deletes, 404 for an unknown fix, 409 while an empty-folder cleanup runs |
-| `GET /arr` | The Radarr / Sonarr card: enabled, username, URL base, download folder, last contact, servers, item counts. Never the password or API keys |
-| `POST /arr/servers/{index}/test` | Test one `[[arr.servers]]` entry → `{"ok": true, "app", "version"}` or `{"ok": false, "reason", "detail"}` |
+| `GET /arr` | The Settings card: the download client (enabled, username, connection values, download folder) and the applications with their categories and path check. Never the password or API keys |
+| `GET /arr/status` | The Status card: `{"enabled", "clients_seen", "items"}` |
+| `PUT /arr/client` | `{"enabled", "username", "password"}`; an empty password keeps the current one. Applies without a restart; 400 when turned on with no password |
+| `POST /arr/applications` | Add an application (`{"kind", "name", "host", "port", "ssl", "url_base", "api_key"}`) → 201 `{"index"}`; 400 for a duplicate URL |
+| `PUT`/`DELETE /arr/applications/{index}` | Edit (an empty key keeps it) or remove one; the app itself is not changed |
+| `POST /arr/applications/test`, `POST /arr/applications/{index}/test` | Test form values or a saved application → `{"ok": true, "app", "version", "categories", "client_present", "path_check"}` or `{"ok": false, "reason", "detail"}` |
+| `POST /arr/discover` | Look for Radarr and Sonarr for up to 10 s → `{"instances", "tried"}`; 409 while one runs |
+| `POST /arr/setup/preview` | What setup would change; changes nothing |
+| `POST /arr/setup` | `{"target": {"url"} or {"application"}, "api_key", "category", "remember", "disable_blackhole"}` → `{"outcome": "created"/"updated"/"unchanged"/"failed", ...}` |
 | `GET /rules` | Folder rules, presets (built-in and your own, with the rules using each) and the global defaults |
 | `GET`/`PUT`/`DELETE /rules/folder/{id}` | A folder's rule and its effective settings, each with the rule it comes from; `PUT` an empty body clears it; 400 for the root |
 | `POST /rules/delete` | `{"path": "Shows"}`: remove a rule by path |
@@ -830,23 +901,48 @@ at `/transmission/rpc` on the API port, so the apps add it as a **Transmission**
 send it magnets and .torrent files; putio-sync adds each to Put.io, downloads the result, and
 reports progress and completion with the local path, so the apps import it themselves.
 
-### Setup
+Everything below is set in the web UI under Settings → Radarr / Sonarr. Saves apply without a
+restart and keep the rest of `config.toml`. The client needs the API listener and the database
+(the `daemon` has both). The Status page shows item counts and when each app last connected.
 
-1. In `config.toml`:
+### Set up automatically
 
-   ```toml
-   [arr]
-   enabled = true
-   # password = "..."   # or PUTIO_SYNC_ARR_PASSWORD (preferred)
-   ```
+1. Click **Set up automatically**. putio-sync looks for Radarr and Sonarr for up to 10 s: at
+   the `radarr` and `sonarr` container names, the Docker host, this machine and the address
+   your browser used, on ports 7878 and 8989. It never scans the network. If yours isn't found,
+   type its address (a bare host like `nas` tries both ports).
+2. Pick the app and paste its API key (Settings → General in the app). Tick **Remember** to
+   save it as an application. **Disable Torrent Blackhole** is off unless you tick it.
+3. Check the preview, then **Set up**. putio-sync turns its download client on (generating a
+   password if it has none), then has the app test each address it might use for putio-sync
+   (`putio-sync`, the Docker host, …) and saves the client with the first that passes. A
+   failed test leaves nothing in the app. Running it again updates the client in place.
 
-   Then restart. The client needs the API listener and the database (the `daemon` has both).
-2. In Radarr or Sonarr, open Settings → Download Clients → + → Transmission and set:
-   - Host: the putio-sync machine. Port: `15432`. URL Base: `/transmission/`.
-   - Username: `putio-sync`. Password: the one from step 1.
-   - Category: for example `radarr` or `sonarr`.
-3. Click Test. Settings in the web UI shows the values to enter, and when each app last
-   connected.
+### Download client and applications
+
+- **Download client**: on/off, username and password (with Generate). After a password change,
+  the page offers to update the apps' clients.
+- **Applications**: Add Radarr / Add Sonarr, then Test and Save, like in Prowlarr. Each row
+  shows the category read from that app's putio-sync client, and whether the app can see the
+  download folder. Delete removes it from putio-sync only.
+
+### Manual setup
+
+The section can still be written by hand:
+
+```toml
+[arr]
+enabled = true
+# password = "..."   # or PUTIO_SYNC_ARR_PASSWORD (preferred)
+```
+
+Then in Radarr or Sonarr, open Settings → Download Clients → + → Transmission and set:
+
+- Host: the putio-sync machine. Port: `15432`. URL Base: `/transmission/`.
+- Username: `putio-sync`. Password: the one above.
+- Category: for example `radarr` or `sonarr`.
+
+Click Test in the app. Settings in the web UI shows the values to enter.
 
 ### How it works
 
@@ -866,24 +962,49 @@ reports progress and completion with the local path, so the apps import it thems
 ### Blocklisting failed releases
 
 Radarr and Sonarr show a Transmission item with an error as a warning; they don't blocklist
-it or search again on their own. To have putio-sync do it, add the app with its API key (Settings → General in the app):
+it or search again on their own. To have putio-sync do it, add the app under Applications (or
+set it up with Remember ticked). By hand:
 
 ```toml
 [[arr.servers]]
 kind = "sonarr"                     # or "radarr"
 url = "http://192.168.1.10:8989"
-category = "sonarr"                 # the category set on the download client
+# name = "Sonarr 4K"                # optional
 # api_key = "..."                   # or PUTIO_SYNC_SONARR_API_KEY / PUTIO_SYNC_RADARR_API_KEY
 ```
 
-When an item fails, putio-sync finds it in that app's queue, removes it and blocklists the
-release, so the app searches again. Failed calls are retried, up to 5 times. Use the Test
-button in Settings to check the URL and key.
+When an item fails, putio-sync finds the app whose putio-sync client has that item's category,
+removes the item from its queue and blocklists the release, so the app searches again. The
+categories are read from each app at startup, every 15 minutes, and on Test, Save and setup.
+Failed calls are retried, up to 5 times. A `category` from older versions is ignored; the UI
+warns when it differs from the app's client.
 
-### Paths and the blackhole
+### Path mapping
 
-- If Radarr/Sonarr see the download folder under another path, for example a different Docker
-  mount, add a Remote Path Mapping in the app from putio-sync's folder to theirs.
+Radarr and Sonarr import from putio-sync's download folder, so they must see it. The simplest
+setup mounts the same host folder at the same path in every container:
+
+```yaml
+services:
+  putio-sync:
+    volumes:
+      - /volume1/downloads:/downloads   # target_directory = "/downloads"
+  sonarr:
+    volumes:
+      - /volume1/downloads:/downloads
+```
+
+If an app sees it under another path, for example `/data/downloads`, add a Remote Path
+Mapping in the app (Settings → Download Clients → Remote Path Mappings): Host is the putio-sync
+host in its download client (e.g. `putio-sync`), Remote Path `/downloads/`, Local Path
+`/data/downloads/`.
+
+Test in Settings → Radarr / Sonarr, and every setup, checks this: the app applies its
+mappings and lists the folder's parent. It shows "Folder visible", or which path the app could
+not see with its mappings.
+
+### The blackhole
+
 - The torrent watcher keeps working. A Torrent Blackhole client pointed at a watched folder can
   stay as a fallback at a lower priority. Blackhole items don't report progress or failures.
 
@@ -892,6 +1013,58 @@ button in Settings to check the URL and key.
 The password and API keys come from the config file or the env variables above, which win.
 They are never logged or sent back by the API. The UI shows only whether each one is set. A
 settings save from the UI keeps the ones in the file and never writes env-only values.
+
+## Release check
+
+Some releases are fakes: a "movie" that is only an `.exe`, or a password-protected `.7z` that
+asks you to visit a site for the key. putio-sync reads a release's file list before it
+reaches Put.io and rejects it when no file is a wanted type of at least `min_size_mb`
+(50 MB by default). It is on by default; configure it under `[precheck]` (see
+`config.example.toml`) or in Settings → Release check.
+
+### What is checked, and where
+
+| Source | How the file list is read | A fake |
+|---|---|---|
+| Radarr/Sonarr `.torrent` or URL | From the .torrent itself | Fails with the reason in the app's queue, and is blocklisted with `[[arr.servers]]`. No Put.io transfer is made |
+| Radarr/Sonarr magnet | The .torrent is looked up in the `caches` by info hash | As above |
+| Magnet not in a cache | Put.io fetches it; its files are checked on Put.io before any download | Deleted from Put.io and failed "(checked on Put.io)" |
+| Watch-folder `.torrent` / `.magnet` | As above | Not uploaded; renamed `<file>.rejected` |
+
+The wanted types are those of the folder rule ([Folder Rules](#folder-rules)) with an allow
+list on the release's Put.io folder: the category's folder for Radarr/Sonarr, the upload
+folder for a watch folder. Without one, video. `allow_archives` counts archives as wanted.
+Each category and watch folder can turn the check off or change the size and archive
+settings (`[precheck.categories.<name>]`, `[precheck.watch."<path>"]`); the Settings card
+lists what applies to each.
+
+A magnet whose file list no cache has yet is held, not sent: a cache often has it a minute
+or two later. The first ask is cut short (`first_lookup_secs`, 3 s) so Radarr/Sonarr get
+their answer fast, then the caches are asked again every `hold_retry_secs` (30 s) for up to
+`hold_magnet_secs` (300 s). Found, it is checked like any other release; still missing, it
+goes to Put.io unchecked and is checked there. A held magnet shows as queued in the *arr and
+under "Waiting for a file list" on the Queue page, and a watch-folder `.magnet` stays in its
+folder until then. Holding delays only magnets the caches miss, asks the same caches and
+contacts nothing new. `hold_magnet_secs = 0` turns it off. Stats shows how holds ended.
+
+`dry_run = true` checks, logs and counts, but rejects and deletes nothing: a good way to
+try it first. Rejections show in History → Rejected and on the Stats page either way.
+
+### Privacy
+
+Only the 40-character info hash goes to a cache, never the release name, trackers or a
+passkey. Set `magnet_lookup = false` to send nothing: magnets then go to Put.io and are
+checked there. Logs, metrics and reports never hold a link, magnet or passkey; a tracker is
+stored as its host name only.
+
+### Flagging
+
+A fake the check missed can be flagged from the Put.io, Queue or History pages, with a note.
+For a Radarr/Sonarr item, the flag can also fail it, delete its files from Put.io and
+blocklist it. A wrong rejection can be marked "Not fake" in History → Rejected. Any flag can
+be undone, but a blocklist already sent stays. Stats sums up the reports and downloads them
+as CSV or JSON, with file types, sizes and tracker hosts, to share without giving anything
+away. Checks and reports older than 400 days are deleted.
 
 ## Advanced Features
 
@@ -908,7 +1081,7 @@ no rule sets comes from `[download]`.
 | `allow`, `block` | Extra extensions on top of the preset |
 | `skip` | Download nothing in this folder |
 | `delete_blocked` | Delete the files this rule blocks from Put.io, with one call per sync |
-| `delete_after_download`, `skip_existing` | Override the `[download]` values for this folder |
+| `delete_after_download`, `on_existing` | Override the `[download]` values for this folder (an old rule's `skip_existing` is still read) |
 
 The type filter starts at the root with `blocked_extensions`. A rule's preset
 replaces the filter it inherits; its `allow` and `block` extensions apply after that.
@@ -1124,7 +1297,7 @@ putio-sync daemon --watch-only --watch ~/Downloads/torrents --delete-torrents
 
 > **Daemon flag support:** `--download-interval` sets how often Put.io is synced (default
 > 300 s), and `--watch-interval` sets how often watch folders are scanned and the queue is
-> worked. `--filter`, `--skip-existing`, `--delete-after`, `--delete-empty-folders`,
+> worked. `--on-existing` and `--skip-existing` apply. `--filter`, `--delete-after`, `--delete-empty-folders`,
 > `--watch-only`, `--download-only`, `--archive-dir` and `--delete-torrents` are currently
 > ignored in daemon mode, with a warning at startup; use `config.toml` instead
 > (`watch.archive_directory`, `watch.delete_after_upload`, `download.delete_after_download`). The effective settings
@@ -1173,14 +1346,12 @@ applies live and what needs a restart.
 At startup, `daemon` and `server` (its API and its `--download` thread) give the download
 manager every `[download]` setting it has: `target_directory`, `workers`,
 `buffer_size_mb`, `bandwidth_limit_bytes_per_sec`, `max_retries`,
-`retry_initial_delay_secs`, `skip_existing`, `delete_after_download` and
-`blocked_extensions`. The other `[download]` keys (`resume_enabled`, `chunk_size_mb`,
+`retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download` and
+`blocked_extensions`. The other `[download]` keys (`chunk_size_mb`,
 `progress_style`, sorting, glob patterns, `delete_empty_folders`) are read by the
 one-off `download` command only. Before this, `daemon` ignored the bandwidth limit and
 retry settings and always skipped files that already existed; it now follows
-`skip_existing`, which defaults to `true` (the old behaviour). An explicit
-`skip_existing = false` now really re-downloads and overwrites existing files, so remove
-that line or set it to `true` unless you want that.
+`on_existing` (see [When a file already exists](#when-a-file-already-exists)).
 
 #### Stalled transfers
 
@@ -1272,7 +1443,7 @@ token = "YOUR_OAUTH_TOKEN"
 [download]
 workers = 4
 target_directory = "~/Downloads/putio"
-skip_existing = true
+on_existing = "resume"
 delete_after_download = true
 progress_style = "none"  # Better for daemon mode
 whitelist_patterns = "*.mkv,*.mp4,*.avi,*.mp3,*.flac"
