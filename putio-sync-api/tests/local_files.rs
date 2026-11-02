@@ -153,6 +153,36 @@ async fn listing_shows_active_download() {
 }
 
 #[tokio::test]
+async fn database_files_cannot_be_deleted_or_renamed() {
+    // The test app's database lives in the download folder, as it can on a NAS
+    let app = test_app().await;
+    let root = downloads(&app);
+    // The journal only exists mid-transaction; a stray one is still the database's
+    std::fs::write(root.join(".putiosync.db-journal"), b"").unwrap();
+
+    let body = body_json(app.get("/local/files/downloads").await).await;
+    for name in [
+        ".putiosync.db",
+        ".putiosync.db-wal",
+        ".putiosync.db-journal",
+    ] {
+        assert_eq!(entry(&body, name)["in_use"], true, "{name}");
+        let response = delete(&app, &format!("path={name}")).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT, "delete {name}");
+        let response = app
+            .post_json(
+                "/local/files/downloads/rename",
+                json!({"path": name, "name": "moved"}),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::CONFLICT, "rename {name}");
+        assert!(root.join(name).exists(), "{name}");
+    }
+    // Files beside it are not affected
+    assert_eq!(entry(&body, "config.toml")["in_use"], false);
+}
+
+#[tokio::test]
 async fn paths_outside_the_root_refused() {
     let app = test_app().await;
     let root = downloads(&app);
