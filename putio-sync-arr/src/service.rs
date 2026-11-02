@@ -45,6 +45,10 @@ const ADD_BUDGET: Duration = Duration::from_secs(14);
 /// Blocklist calls tried before giving up
 const MAX_BLOCKLIST_ATTEMPTS: i64 = 5;
 
+/// How long a failed item may be missing from the *arr's queue before the blocklist stops
+/// looking; the *arr only lists an item after its next poll, about a minute after a grab
+const NOT_FOUND_WINDOW: Duration = Duration::from_secs(600);
+
 /// `putio_status` of a magnet held before Put.io (043)
 pub const HELD: &str = "HELD";
 
@@ -166,6 +170,10 @@ pub struct ArrService {
     discovery: Mutex<()>,
     /// What each saved application has for putio-sync, by [`url_key`] (feature 018, R4)
     clients: std::sync::RwLock<HashMap<String, ClientInfo>>,
+    /// When each pending item was first missing from the *arr's queue; a restart starts
+    /// the window again
+    not_found_since: Mutex<HashMap<String, Instant>>,
+    not_found_window: Duration,
 }
 
 /// The cache key for a server URL
@@ -197,6 +205,8 @@ impl ArrService {
             blocklist_lock: Mutex::new(()),
             discovery: Mutex::new(()),
             clients: std::sync::RwLock::new(HashMap::new()),
+            not_found_since: Mutex::new(HashMap::new()),
+            not_found_window: NOT_FOUND_WINDOW,
         }
     }
 
@@ -285,6 +295,12 @@ impl ArrService {
     /// Check releases before they reach Put.io (042), with `[precheck]` and the 009 rules
     pub fn with_precheck(mut self, config: PrecheckConfig, rules: RuleSet) -> Self {
         self.precheck = Some(Prechecker::new(config, rules));
+        self
+    }
+
+    /// How long the blocklist keeps looking for an item missing from the *arr's queue
+    pub fn with_not_found_window(mut self, window: Duration) -> Self {
+        self.not_found_window = window;
         self
     }
 
@@ -1484,9 +1500,19 @@ impl ArrService {
                     .remove_and_blocklist(queue_id)
                     .await
                     .map(|_| BlocklistOutcome::Ok),
-                Ok(None) => Ok(BlocklistOutcome::NotFound),
+                Ok(None) => {
+                    // Not listed yet: look again on a later pass until the window passes
+                    let mut since = self.not_found_since.lock().await;
+                    let first = *since.entry(item.hash.clone()).or_insert_with(Instant::now);
+                    if first.elapsed() < self.not_found_window {
+                        debug!(hash = %item.hash, "arr item not in the queue yet");
+                        continue;
+                    }
+                    Ok(BlocklistOutcome::NotFound)
+                }
                 Err(e) => Err(e),
             };
+            self.not_found_since.lock().await.remove(&item.hash);
             let (state, attempts) = match result {
                 Ok(outcome) => {
                     metrics::blocklist(outcome);
