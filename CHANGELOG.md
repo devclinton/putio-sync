@@ -97,6 +97,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- A fake release rejected right after Radarr or Sonarr grabbed it is now
+  blocklisted. Before, putio-sync asked before the *arr had listed the item in
+  its queue, gave up, and left it stuck as "downloading" with no new search.
+  It now looks again for up to 10 minutes.
 - `resume_enabled = false` and `--no-resume` now start partial downloads
   over; before, they did nothing. `--skip-existing` now works in daemon mode
   (feature 040).

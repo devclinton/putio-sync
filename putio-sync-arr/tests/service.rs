@@ -1,6 +1,7 @@
 //! The download client's items against mocked Put.io and *arr APIs (feature 011)
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use mockito::{Matcher, Mock, ServerGuard};
 use putio_sync_arr::{AddOutcome, AddSource, ArrError, ArrService, ItemId};
@@ -891,6 +892,79 @@ async fn fake_torrents_never_reach_putio() {
         .await
         .unwrap()
         .is_none());
+}
+
+#[tokio::test]
+async fn blocklist_waits_for_the_item_to_reach_the_queue() {
+    let mut h = Harness::new().await;
+    let mut arr = mockito::Server::new_async().await;
+    // The *arr has not polled yet, so its queue doesn't list the item
+    let empty = arr
+        .mock("GET", "/api/v3/queue/details")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body("[]")
+        .expect(1)
+        .create_async()
+        .await;
+    let service = h.service(vec![sonarr(arr.url())]);
+    h.added(&service).await;
+    h.transfers(&[]).await;
+
+    service.refresh().await;
+    empty.assert_async().await;
+    let item = h.db.arr().get_by_hash(HASH).await.unwrap().unwrap();
+    assert_eq!(item.blocklist, BlocklistState::Pending);
+    assert_eq!(item.blocklist_attempts, 0);
+    empty.remove_async().await;
+
+    let queue = arr
+        .mock("GET", "/api/v3/queue/details")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"[{{"id":9,"downloadId":"{HASH}"}}]"#))
+        .expect(1)
+        .create_async()
+        .await;
+    let delete = arr
+        .mock(
+            "DELETE",
+            "/api/v3/queue/9?removeFromClient=true&blocklist=true",
+        )
+        .with_status(200)
+        .expect(1)
+        .create_async()
+        .await;
+    service.refresh().await;
+    let item = h.db.arr().get_by_hash(HASH).await.unwrap().unwrap();
+    assert_eq!(item.blocklist, BlocklistState::Done);
+    queue.assert_async().await;
+    delete.assert_async().await;
+}
+
+#[tokio::test]
+async fn blocklist_stops_looking_once_the_window_passes() {
+    let mut h = Harness::new().await;
+    let mut arr = mockito::Server::new_async().await;
+    let empty = arr
+        .mock("GET", "/api/v3/queue/details")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body("[]")
+        .expect(1)
+        .create_async()
+        .await;
+    let service = h
+        .service(vec![sonarr(arr.url())])
+        .with_not_found_window(Duration::ZERO);
+    h.added(&service).await;
+    h.transfers(&[]).await;
+
+    service.refresh().await;
+    service.refresh().await;
+    let item = h.db.arr().get_by_hash(HASH).await.unwrap().unwrap();
+    assert_eq!(item.blocklist, BlocklistState::Done);
+    empty.assert_async().await;
 }
 
 #[tokio::test]
