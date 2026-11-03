@@ -4,11 +4,13 @@
 // transfers the daemon saw stop making progress, Copy magnet, and Re-add (cancel, then
 // add the same magnet again) for stalled ones. Feature 008: tick rows (or Select all) to
 // retry or remove several at once, and clear completed, failed or all finished transfers
-// (a dry run for the count, a confirm, then one clean on Put.io).
+// (a dry run for the count, a confirm, then one clean on Put.io). Feature 045: filter by
+// name (globs with AND, OR and NOT) and sort by a heading; Select all takes what is shown.
 
 import { del, get, post } from "../api.js";
 import { confirm, empty, h, poll, toast } from "../app.js";
-import { bytes, duration, percent, speed } from "../format.js";
+import { bytes, duration, percent, speed, utc } from "../format.js";
+import { listControls } from "../listctl.js";
 import { selection } from "../select.js";
 
 const REFRESH_MS = 5000;
@@ -22,6 +24,15 @@ let els = null;
 let shown = null;
 let sel = null;
 let current = [];
+let ctl = null;
+
+const COLUMNS = {
+  name: { label: "Name", value: (t) => t.name },
+  status: { label: "Status", value: (t) => String(t.status || "").toLowerCase() },
+  progress: { label: "Progress", value: (t) => Number(t.percent_done) || 0 },
+  size: { label: "Size", value: (t) => t.size },
+  added: { label: "Added", value: (t) => (t.created_at ? Date.parse(utc(t.created_at)) : null) },
+};
 
 // Clear buttons: status group sent to the API, button text, what the toast calls them
 const CLEARS = [
@@ -30,8 +41,10 @@ const CLEARS = [
   { status: "finished", label: "Clear all finished", what: "finished" },
 ];
 
-export function mount(el) {
+export function mount(el, { query } = {}) {
   shown = null;
+  // A filter or sort change redraws the last list at once
+  ctl = listControls({ query, columns: COLUMNS, onChange: () => ((shown = null), els && render(current)) });
   els = {
     url: h("input", { type: "text", class: "input grow", name: "url", placeholder: "Magnet link or torrent URL", "aria-label": "Magnet link or torrent URL", autocomplete: "off" }),
     file: h("input", { type: "file", class: "input", accept: ".torrent,application/x-bittorrent", "aria-label": "Torrent file" }),
@@ -52,6 +65,7 @@ export function mount(el) {
       "div",
       { class: "stack" },
       h("form", { class: "card add-form", onsubmit: onAdd }, h("h2", { text: "Add a transfer" }), h("div", { class: "toolbar" }, els.url, els.file, els.add)),
+      h("div", { class: "toolbar" }, ctl.filter, ctl.menu),
       els.list,
     ),
   );
@@ -63,6 +77,7 @@ export function unmount() {
   timer = null;
   els = null;
   sel = null;
+  ctl = null;
   seq += 1;
 }
 
@@ -286,15 +301,19 @@ function render(list) {
   if (shown === text) return;
   shown = text;
   current = list;
-  // The selection survives a refresh for transfers still listed
-  sel.reset(list.map((t) => t.id));
-  if (list.length === 0) {
-    els.list.replaceChildren(h("h2", { text: "Transfers" }), empty("No transfers on Put.io", "Transfers you add on Put.io show up here."));
+  const rows = ctl.apply(list);
+  // The selection survives a refresh for transfers still listed and shown
+  sel.reset(rows.map((t) => t.id));
+  if (rows.length === 0) {
+    els.list.replaceChildren(
+      h("h2", { text: "Transfers" }),
+      list.length ? empty("Nothing matches the filter", "Try fewer terms, or * around a word.") : empty("No transfers on Put.io", "Transfers you add on Put.io show up here."),
+    );
     sel.update();
     return;
   }
   els.list.replaceChildren(
-    h("h2", { text: `Transfers (${list.length})` }),
+    h("h2", { text: `Transfers (${ctl.filtering ? `${rows.length} of ${list.length}` : list.length})` }),
     sel.bar,
     h(
       "table",
@@ -302,9 +321,9 @@ function render(list) {
       h(
         "thead",
         {},
-        h("tr", {}, h("th", { class: "select-cell" }, h("span", { class: "visually-hidden", text: "Select" })), h("th", { text: "Name" }), h("th", { text: "Status" }), h("th", { text: "Progress" }), h("th", { class: "right", text: "Size" }), h("th", { class: "right", text: "Speed" }), h("th", { class: "right", text: "Actions" })),
+        h("tr", {}, h("th", { class: "select-cell" }, h("span", { class: "visually-hidden", text: "Select" })), ctl.th("name"), ctl.th("status"), ctl.th("progress"), ctl.th("size", { class: "right" }), h("th", { class: "right", text: "Speed" }), h("th", { class: "right", text: "Actions" })),
       ),
-      h("tbody", {}, list.map(row)),
+      h("tbody", {}, rows.map(row)),
     ),
   );
   sel.update();

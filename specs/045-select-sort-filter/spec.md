@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-03
 
-**Status**: Draft
+**Status**: Built (all three stories); checked in a browser against a mock API, not yet on the NAS
 
 **Input**: User description: "The local files view, putio view, and transfers view should all
 have select all, sorting, and filtering. Filtering should support glob with and or (ie

@@ -4,12 +4,14 @@
 // run first, then a confirm with the count). Feature 008: tick rows (or Select all) to
 // download or delete several at once; queued files can't be ticked. Feature 009: the
 // folder's rule card, and "blocked" / "skipped" badges on files its rule won't download.
-// Feature 042: flag a file as fake, and undo it.
+// Feature 042: flag a file as fake, and undo it. Feature 045: the filter takes globs with
+// AND, OR and NOT, and the Name, Size and Date headings sort (folders stay first).
 
 import { del, get, post } from "../api.js";
 import { confirm, empty, h, toast } from "../app.js";
 import { flagControl, loadFlags } from "../flags.js";
 import { bytes, dateTime, utc } from "../format.js";
+import { listControls } from "../listctl.js";
 import { ruleCard } from "../rules.js";
 import { selection } from "../select.js";
 
@@ -26,8 +28,15 @@ let seq = 0;
 let els = null;
 let sel = null;
 let rule = null;
+let ctl = null;
 
-export function mount(el, { path = [] } = {}) {
+const COLUMNS = {
+  name: { label: "Name", value: (f) => f.name },
+  size: { label: "Size", value: (f) => f.size },
+  date: { label: "Date", value: (f) => (f.created_at ? Date.parse(utc(f.created_at)) : null) },
+};
+
+export function mount(el, { path = [], query } = {}) {
   folder = Number.parseInt(path[0], 10) || 0;
   const at = crumbs.findIndex((c) => c.id === folder);
   if (folder === 0) crumbs = [ROOT];
@@ -35,9 +44,9 @@ export function mount(el, { path = [] } = {}) {
   else crumbs = [ROOT, { id: null, name: "…" }, { id: folder, name: String(folder) }]; // a direct link, until walkUp names it
 
   files = [];
+  ctl = listControls({ query, columns: COLUMNS, onChange: renderList });
   els = {
     crumbs: h("nav", { class: "crumbs", "aria-label": "Folder" }),
-    filter: h("input", { type: "search", class: "input", placeholder: "Filter by name", "aria-label": "Filter by name", oninput: renderList }),
     clean: h("button", { type: "button", class: "btn", title: "Find and delete empty folders in the whole Put.io account", onclick: (ev) => onCleanEmpty(ev.currentTarget) }, "Remove empty folders"),
     details: h("section", { class: "card", hidden: true }),
     list: h("section", { class: "card wide" }, h("p", { class: "muted", text: "Loading…" })),
@@ -52,7 +61,7 @@ export function mount(el, { path = [] } = {}) {
   renderCrumbs();
   if (crumbs[1] && crumbs[1].id == null) walkUp(folder);
   el.append(
-    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Put.io" }), els.crumbs), h("div", { class: "toolbar" }, els.filter, els.clean)),
+    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Put.io" }), els.crumbs), h("div", { class: "toolbar" }, ctl.filter, ctl.menu, els.clean)),
     h("div", { class: "stack" }, rule.el, els.details, els.list),
   );
   load();
@@ -62,6 +71,7 @@ export function unmount() {
   els = null;
   sel = null;
   rule = null;
+  ctl = null;
   seq += 1;
 }
 
@@ -303,25 +313,27 @@ async function onDetails(f) {
 
 const isFolder = (f) => f.file_type === "FOLDER";
 
+/** A folder's address; it keeps the sort and drops the filter */
+const folderHref = (id) => `#/putio/${id}${ctl && ctl.carry() ? `?${ctl.carry()}` : ""}`;
+
 function renderCrumbs() {
   const last = crumbs.length - 1;
   els.crumbs.replaceChildren(
     ...crumbs.flatMap((c, i) => [
       i ? h("span", { class: "muted", text: " / " }) : [],
-      i === last || c.id == null ? h("span", { "aria-current": i === last ? "page" : null, text: c.name }) : h("a", { href: `#/putio/${c.id}`, text: c.name }),
+      i === last || c.id == null ? h("span", { "aria-current": i === last ? "page" : null, text: c.name }) : h("a", { href: folderHref(c.id), text: c.name }),
     ]),
   );
 }
 
 function renderList() {
   if (!els) return;
-  const q = els.filter.value.trim().toLowerCase();
-  const shown = q ? files.filter((f) => f.name.toLowerCase().includes(q)) : files;
-  const title = q ? `${shown.length} of ${files.length} items` : `${files.length} ${files.length === 1 ? "item" : "items"}`;
+  const shown = ctl.apply(files, { folder: isFolder });
+  const title = ctl.filtering ? `${shown.length} of ${files.length} items` : `${files.length} ${files.length === 1 ? "item" : "items"}`;
   // Only rows shown, and not needed by the queue, can stay selected
   sel.reset(shown.filter((f) => !queued.has(f.id)).map((f) => f.id));
   if (shown.length === 0) {
-    els.list.replaceChildren(h("h2", { text: title }), files.length ? empty("Nothing matches the filter", "Try a shorter name.") : empty("This folder is empty"));
+    els.list.replaceChildren(h("h2", { text: title }), files.length ? empty("Nothing matches the filter", "Try fewer terms, or * around a word.") : empty("This folder is empty"));
     sel.update();
     return;
   }
@@ -331,7 +343,7 @@ function renderList() {
     h(
       "table",
       { class: "table" },
-      h("thead", {}, h("tr", {}, h("th", { class: "select-cell" }, h("span", { class: "visually-hidden", text: "Select" })), ["Name", "Type", "Size", "Date"].map((t) => h("th", { class: t === "Size" ? "right" : null, text: t })), h("th", { class: "right", text: "Actions" }))),
+      h("thead", {}, h("tr", {}, h("th", { class: "select-cell" }, h("span", { class: "visually-hidden", text: "Select" })), ctl.th("name"), h("th", { text: "Type" }), ctl.th("size", { class: "right" }), ctl.th("date"), h("th", { class: "right", text: "Actions" }))),
       h("tbody", {}, shown.map(fileRow)),
     ),
   );
@@ -340,7 +352,7 @@ function renderList() {
 
 function fileRow(f) {
   const name = isFolder(f)
-    ? h("a", { href: `#/putio/${f.id}`, onclick: () => crumbs.push({ id: f.id, name: f.name }), text: `${f.name}/` })
+    ? h("a", { href: folderHref(f.id), onclick: () => crumbs.push({ id: f.id, name: f.name }), text: `${f.name}/` })
     : h("button", { type: "button", class: "link", onclick: () => onDetails(f), text: f.name });
   const keep = queued.has(f.id);
   const verdict = !isFolder(f) && rule && rule.badge(f.name);

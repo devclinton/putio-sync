@@ -471,6 +471,13 @@ form > .error-text { margin: 12px 0 0; }
 .select-all input:disabled, .select-cell input:disabled { cursor: not-allowed; }
 .table th.select-cell, .table td.select-cell { width: 1%; padding-right: 0; }
 .table tr.selected td, .table tbody tr.selected:hover td { background: var(--accent-soft); }
+/* Sortable headings (feature 045) */
+
+.sort-head { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.sort-head:hover, .sort-head.on { color: var(--text); }
+.table th.right .sort-head { text-align: right; }
+.sort-menu { width: auto; }
+
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* Banner, toasts, dialog */

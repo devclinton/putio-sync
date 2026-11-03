@@ -1,12 +1,16 @@
 // Local files page (feature 044): browse the download folder and each watch folder on
 // the NAS, with partial downloads and rejected watch files marked. Delete (confirmed,
 // with a folder's size), rename in place, and "Re-check" a rejected watch file so the
-// watcher looks at it again. The server keeps every path inside its root.
-// Route: #/files/<root>?path=<folder>
+// watcher looks at it again. The server keeps every path inside its root. Feature 045:
+// filter (globs with AND, OR and NOT), sort by a heading, and tick rows (or Select all of
+// what the filter shows) to delete several at once.
+// Route: #/files/<root>?path=<folder>&q=<filter>&sort=<key>-<asc|desc>
 
 import { del, get, post } from "../api.js";
 import { confirm, empty, h, navigate, poll, toast } from "../app.js";
 import { bytes, dateTime } from "../format.js";
+import { listControls } from "../listctl.js";
+import { selection } from "../select.js";
 
 const REFRESH_MS = 10000;
 
@@ -18,12 +22,29 @@ let entries = [];
 let editing = null; // the path being renamed; refreshes wait until it is done
 let refresh = null;
 let seq = 0;
+let ctl = null;
+let sel = null;
+let shown = null; // the root and truncated flag of the last listing, to redraw it
+
+const COLUMNS = {
+  name: { label: "Name", value: (e) => e.name },
+  size: { label: "Size", value: (e) => (e.kind === "dir" ? null : e.size) },
+  modified: { label: "Modified", value: (e) => (e.modified ? Date.parse(e.modified) : null) },
+};
+
+const isDir = (e) => e.kind === "dir";
+
+/** Only entries with their own Delete button can be ticked */
+const canAct = (e) => e.valid_name && !e.in_use;
 
 export function mount(el, { path: route = [], query } = {}) {
   root = route[0] || null;
   path = (query && query.get("path")) || "";
   entries = [];
   editing = null;
+  shown = null;
+  ctl = listControls({ query, columns: COLUMNS, onChange: () => shown && !editing && renderList(...shown) });
+  sel = selection({ actions: [h("button", { type: "button", class: "btn btn-small", onclick: onDeleteSelected }, "Delete")] });
   els = {
     roots: h("div", { class: "toolbar", role: "group", "aria-label": "Folder" }),
     crumbs: h("nav", { class: "crumbs", "aria-label": "Path" }),
@@ -31,7 +52,7 @@ export function mount(el, { path: route = [], query } = {}) {
   };
   el.append(
     h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Local files" }), els.crumbs), els.roots),
-    h("div", { class: "stack" }, els.list),
+    h("div", { class: "stack" }, h("div", { class: "toolbar" }, ctl.filter, ctl.menu), els.list),
   );
   refresh = poll(load, REFRESH_MS);
 }
@@ -39,10 +60,19 @@ export function mount(el, { path: route = [], query } = {}) {
 export function unmount() {
   els = null;
   refresh = null;
+  ctl = null;
+  sel = null;
   seq += 1;
 }
 
-const href = (key, p) => `#/files/${encodeURIComponent(key)}${p ? `?${new URLSearchParams({ path: p })}` : ""}`;
+/** A folder's address; it keeps the sort and drops the filter */
+function href(key, p) {
+  const params = new URLSearchParams(p ? { path: p } : {});
+  const sort = ctl && new URLSearchParams(ctl.carry()).get("sort");
+  if (sort) params.set("sort", sort);
+  const qs = params.toString();
+  return `#/files/${encodeURIComponent(key)}${qs ? `?${qs}` : ""}`;
+}
 
 const reason = (e) => (e.details ? `${e.error}: ${e.details}` : e.error);
 
@@ -64,6 +94,7 @@ async function load() {
   renderRoots(current);
   if (!current.exists) {
     entries = [];
+    shown = null;
     els.list.replaceChildren(empty(`${current.path} is not there`, "Check the folder in Settings, or that the share is mounted."));
     return;
   }
@@ -82,6 +113,7 @@ async function load() {
   }
   if (mine !== seq || !els || editing) return;
   entries = listing.entries || [];
+  shown = [current, listing.truncated];
   renderList(current, listing.truncated);
 }
 
@@ -159,6 +191,42 @@ function onRename(e) {
   input.setSelectionRange(0, e.name.lastIndexOf(".") > 0 ? e.name.lastIndexOf(".") : e.name.length);
 }
 
+const SHOWN_NAMES = 5;
+
+/** Up to five names, then "and N more". */
+function some(names) {
+  const more = names.length > SHOWN_NAMES ? `, and ${names.length - SHOWN_NAMES} more` : "";
+  return names.slice(0, SHOWN_NAMES).join(", ") + more;
+}
+
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+/** One confirm with the count, then a delete per selected entry; one toast sums them. */
+async function onDeleteSelected() {
+  const picked = entries.filter((e) => sel.has(e.path));
+  const n = picked.length;
+  const folders = picked.some(isDir) ? " Folders go with everything in them." : "";
+  const ok = await confirm({ title: "Delete from the NAS", text: `Delete ${plural(n, "item", "items")} (${some(picked.map((e) => e.name))}) from the NAS?${folders} This cannot be undone.`, verb: "Delete" });
+  if (!ok || !sel) return;
+  const page = sel;
+  page.busy(true);
+  const failed = [];
+  let deleted = 0;
+  for (const e of picked) {
+    try {
+      await del(`/local/files/${encodeURIComponent(root)}?${new URLSearchParams({ path: e.path })}`);
+      deleted += 1;
+    } catch (err) {
+      if (quiet(err)) break;
+      failed.push(`${e.name} (${reason(err)})`);
+    }
+  }
+  toast(`Deleted ${plural(deleted, "item", "items")}`, failed.length ? "error" : "ok", failed.length ? `Couldn't delete ${some(failed)}` : null);
+  page.busy(false);
+  page.clear();
+  reload();
+}
+
 // ---- Rendering --------------------------------------------------------------
 
 function renderRoots(current) {
@@ -179,20 +247,26 @@ function renderRoots(current) {
 
 function renderList(current, truncated) {
   const n = entries.length;
-  const title = `${n} ${n === 1 ? "item" : "items"}${truncated ? " (the first only; this folder has more)" : ""}`;
-  if (n === 0) {
-    els.list.replaceChildren(h("h2", { text: "Empty" }), empty("Nothing in this folder"));
+  const rows = ctl.apply(entries, { folder: isDir });
+  const count = ctl.filtering ? `${rows.length} of ${n} items` : `${n} ${n === 1 ? "item" : "items"}`;
+  const title = `${count}${truncated ? " (the first only; this folder has more)" : ""}`;
+  sel.reset(rows.filter(canAct).map((e) => e.path));
+  if (rows.length === 0) {
+    els.list.replaceChildren(h("h2", { text: n ? title : "Empty" }), n ? empty("Nothing matches the filter", "Try fewer terms, or * around a word.") : empty("Nothing in this folder"));
+    sel.update();
     return;
   }
   els.list.replaceChildren(
     h("h2", { text: title }),
+    sel.bar,
     h(
       "table",
       { class: "table" },
-      h("thead", {}, h("tr", {}, ["Name", "Kind", "Size", "Modified"].map((t) => h("th", { class: t === "Size" ? "right" : null, text: t })), h("th", { class: "right", text: "Actions" }))),
-      h("tbody", {}, entries.map((e) => row(current, e))),
+      h("thead", {}, h("tr", {}, h("th", { class: "select-cell" }, h("span", { class: "visually-hidden", text: "Select" })), ctl.th("name"), h("th", { text: "Kind" }), ctl.th("size", { class: "right" }), ctl.th("modified"), h("th", { class: "right", text: "Actions" }))),
+      h("tbody", {}, rows.map((e) => row(current, e))),
     ),
   );
+  sel.update();
 }
 
 function badges(e) {
@@ -218,6 +292,7 @@ function row(current, e) {
   return h(
     "tr",
     { dataset: { path: e.path } },
+    sel.box(e.path, { label: `Select ${e.name}`, disabled: !canAct(e), title: e.in_use ? "A download is writing here; cancel it in the Queue to delete" : null }),
     h("td", { class: "name-cell name", "data-label": "Name" }, name, e.partial ? h("small", { class: "muted", text: ` → ${e.partial}` }) : null),
     h("td", { "data-label": "Kind" }, badges(e)),
     h("td", { class: "num right nowrap", "data-label": "Size", text: e.kind === "dir" ? "—" : bytes(e.size) }),

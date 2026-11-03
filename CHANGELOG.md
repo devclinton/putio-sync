@@ -14,6 +14,14 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- The Put.io, Transfers and Local files pages can be filtered and sorted. The
+  filter takes wildcards and AND, OR and NOT: `-*photoshop* *exe*` shows names
+  containing "exe" but not "photoshop", `*.mkv OR *.mp4 -sample` shows mkv or
+  mp4 files that aren't samples, and a plain word matches anywhere in the name.
+  Click a column heading (or use the Sort menu at phone width) to sort; folders
+  stay first. The filter and sort stay in the page address, so a reload keeps
+  them. Select all now takes only the rows the filter shows, and Local files
+  gets row checkboxes with a bulk Delete (feature 045).
 - An Active page listing every transfer on its way to the NAS, once each, in
   its Put.io or NAS stage, with counts by state that filter the list. The
   Status page's Active transfers card summarises it, and the
