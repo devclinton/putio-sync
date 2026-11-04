@@ -64,12 +64,18 @@ async fn an_entry_not_seen_is_new_until_marked() {
     assert_eq!(new, [(first.clone(), true)]);
 
     let res = app
-        .post_json("/whats-new/seen", json!({ "ids": [first, "0000000000000000"] }))
+        .post_json(
+            "/whats-new/seen",
+            json!({ "ids": [first, "0000000000000000"] }),
+        )
         .await;
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
     assert_eq!(whats_new(&app).await["new_count"], 0);
     let seen = app.db().whats_new().seen_ids().await.unwrap();
-    assert!(!seen.contains("0000000000000000"), "unknown ids are ignored");
+    assert!(
+        !seen.contains("0000000000000000"),
+        "unknown ids are ignored"
+    );
 }
 
 #[tokio::test]
@@ -104,8 +110,6 @@ async fn without_a_database_nothing_is_new() {
     let body = whats_new(&app).await;
     assert_eq!(body["new_count"], 0);
     assert!(entries(&body).iter().all(|(_, new)| !new));
-    let res = app
-        .post_json("/whats-new/seen", json!({ "ids": [] }))
-        .await;
+    let res = app.post_json("/whats-new/seen", json!({ "ids": [] })).await;
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
 }

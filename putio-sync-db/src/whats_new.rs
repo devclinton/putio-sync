@@ -22,7 +22,10 @@ impl<'a> WhatsNewRepository<'a> {
         let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM whats_new_seen")
             .fetch_all(self.pool)
             .await
-            .map_err(tracked(DbOp::Other, "Failed to read seen changelog entries"))?;
+            .map_err(tracked(
+                DbOp::Other,
+                "Failed to read seen changelog entries",
+            ))?;
         Ok(ids.into_iter().collect())
     }
 

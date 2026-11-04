@@ -187,7 +187,9 @@ Intro with a [link](https://example.com) and
             .map(|e| e.text)
             .collect();
         assert_eq!(all.len(), 4);
-        assert!(all.iter().all(|t| !t.contains("ignored") && !t.contains("compare")));
+        assert!(all
+            .iter()
+            .all(|t| !t.contains("ignored") && !t.contains("compare")));
     }
 
     #[test]
@@ -219,6 +221,8 @@ Intro with a [link](https://example.com) and
             .flat_map(|k| &k.entries)
             .collect();
         assert!(!entries.is_empty());
-        assert!(entries.iter().all(|e| !e.text.is_empty() && e.id.len() == 16));
+        assert!(entries
+            .iter()
+            .all(|e| !e.text.is_empty() && e.id.len() == 16));
     }
 }

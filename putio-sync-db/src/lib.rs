@@ -55,7 +55,6 @@ pub use held::{Held, HeldRepository, HoldStats, NewHeld};
 pub use history::HistoryRepository;
 pub use pipeline::{FinishedRepository, FlagsRepository, HoldsRepository};
 pub use queue::{QueueRepository, QueueStats};
-pub use whats_new::WhatsNewRepository;
 pub use releases::{
     CheckState, FlagUndo, HeldSettle, NewCheck, NewReport, PendingCheck, ReleaseStats,
     ReleasesRepository, ReportKind, ReportRow,
@@ -63,6 +62,7 @@ pub use releases::{
 pub use sources::SourcesRepository;
 pub use stats::{ExtensionStats, StatsRepository};
 pub use torrents::ProcessedTorrentsRepository;
+pub use whats_new::WhatsNewRepository;
 
 use crate::error::tracked;
 use putio_sync_telemetry::DbOp;
