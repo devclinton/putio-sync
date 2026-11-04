@@ -2319,6 +2319,7 @@ dependencies = [
  "putio-sync-core",
  "putio-sync-db",
  "putio-sync-download",
+ "putio-sync-hooks",
  "putio-sync-tailscale",
  "putio-sync-telemetry",
  "reqwest 0.12.28",

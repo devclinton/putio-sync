@@ -155,6 +155,7 @@ impl AppState {
             config.tailscale.socket_path(),
             putio_sync_tailscale::Cli::Auto,
         ));
+        let hooks = Arc::new(HooksService::new(config.hooks.clone()));
         let doctor = Arc::new(
             Doctor::new(
                 config.clone(),
@@ -164,10 +165,10 @@ impl AppState {
             )
             .with_config_path(config_path.clone())
             .with_tailscale(tailscale.clone())
+            .with_hooks(hooks.clone())
             .with_metrics(),
         );
         let arr = build_arr(&config, &client, database.as_ref(), &download_manager);
-        let hooks = Arc::new(HooksService::new(config.hooks.clone()));
         AppState {
             arr,
             tailscale,

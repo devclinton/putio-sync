@@ -250,6 +250,7 @@ pub async fn execute_daemon(
                 cleanup.clone(),
             )
             .with_stalls(daemon.stall_tracker())
+            .with_hooks(hooks.clone())
             .with_config_path(Some(config_file_path.clone()))
             .with_metrics(),
         )),

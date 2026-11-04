@@ -1475,6 +1475,7 @@ daemon also runs it 2 minutes after it starts and then every `interval_minutes`.
 | | Disk space | Under 10% free, or less than the queue needs (warning); under 2% (problem) |
 | | Database | SQLite's integrity check fails (problem) |
 | | Config file | Unknown keys, or settings that are probably a mistake |
+| | Event hooks | An enabled command hook's program is missing or not executable (problem); a hook's last run failed in the last 24 hours (warning; needs the daemon) |
 | Connection | Put.io reachability | Put.io can't be reached (problem), errors or is slow (warning) |
 | | Rate limit | Under 10% of requests left, or Put.io is limiting now |
 | | Clock | This machine's clock is over 60 s off Put.io's (warning), 300 s (problem) |
