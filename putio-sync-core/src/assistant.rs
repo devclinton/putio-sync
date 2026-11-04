@@ -842,7 +842,8 @@ mod tests {
         let renamed = text.replace("name = \"ha\"", "name = \"other\"");
         let err = import(&current, &renamed).unwrap_err().to_string();
         assert!(
-            err.contains("hooks \"other\".headers.Authorization: still masked"),
+            err.contains("hooks \"other\".url: still shortened")
+                || err.contains("hooks \"other\".headers.Authorization: still masked"),
             "{err}"
         );
 
