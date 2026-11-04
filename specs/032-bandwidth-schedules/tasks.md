@@ -56,8 +56,8 @@ Tests come first in each task where behaviour changes (Constitution III).
 
 ## Phase 8: Polish
 
-- [ ] T021 [P] README (schedule section with the daemon-local-time note and Docker `TZ`, HTTP API table, metrics table, doctor checks), `config.example.toml`, `example-config.toml`
-- [ ] T022 [P] `CHANGELOG.md` Unreleased: Added (schedules, quick actions, Status card, gauges, doctor check), Changed (the limit is now the total, applied to running downloads), Fixed (`/local/workers` per-worker share)
+- [X] T021 [P] README (schedule section with the daemon-local-time note and Docker `TZ`, HTTP API table, metrics table, doctor checks), `config.example.toml`, `example-config.toml`
+- [X] T022 [P] `CHANGELOG.md` Unreleased: Added (schedules, quick actions, Status card, gauges, doctor check), Changed (the limit is now the total, applied to running downloads), Fixed (`/local/workers` per-worker share)
 - [ ] T023 Remove 032 from `ROADMAP.md`; merge `origin/main`; `TMPDIR=<scratch> make ci`; push
 
 ## Dependencies

@@ -105,12 +105,6 @@ and movies show up within seconds. Then Jellyfin and Emby. Includes signing
 in to Plex, choosing the library, and mapping paths when the media server sees
 the folder under a different path.
 
-### 032 Bandwidth schedules
-
-Download speed limits by time of day and day of week (for example unlimited
-from 01:00 to 07:00, 5 MB/s otherwise), plus a one-click "pause" or "slow" for
-an hour. The current limit shows on the Status page.
-
 ### 034 Download verification
 
 Check each finished download against Put.io's CRC32 (or size where there is

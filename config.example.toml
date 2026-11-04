@@ -200,6 +200,28 @@ blocked_extensions = ["exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs",
 # Set to null or omit for unlimited bandwidth
 # Default: null (unlimited)
 # bandwidth_limit_bytes_per_sec = 5242880
+# This is the total for all downloads, and the limit outside the schedule below.
+
+# "Slow 1 h" on the Status page drops to this (or the schedule's limit, if lower)
+# Default: 1048576 (1 MB/s)
+# slow_limit_bytes_per_sec = 1048576
+
+# Bandwidth schedule: limits by time of day and day of week, in the daemon's local
+# time (in Docker set TZ, otherwise UTC). The first entry containing the time wins.
+# days: daily, weekdays, weekends, mon, mon-fri, fri-mon, sat,sun
+# start 00:00-23:59, end 00:01-24:00; an end before the start runs past midnight
+# limit: "unlimited", "paused" or bytes per second
+# [[download.bandwidth_schedule]]
+# days = "daily"
+# start = "01:00"
+# end = "07:00"
+# limit = "unlimited"
+#
+# [[download.bandwidth_schedule]]
+# days = "mon-fri"
+# start = "18:00"
+# end = "23:00"
+# limit = "paused"
 
 # Maximum number of retry attempts for failed downloads
 # When a download fails, it will be retried with exponential backoff
