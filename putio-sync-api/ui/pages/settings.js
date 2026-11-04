@@ -770,7 +770,7 @@ function hooksExtra(data) {
     );
     const target =
       row.kind === "url"
-        ? [field("URL", text(row, "url", { type: "url", placeholder: "https://ha.local:8123/api/webhook/…" }), "Gets a POST with the event as JSON; shown cut down in logs")]
+        ? [field("URL", text(row, "url", { type: "url", placeholder: "https://ha.local:8123/api/webhook/…" }), (row.url || "").endsWith("…") ? "Shown cut down so its secrets stay hidden; leave it to keep the saved URL" : "Gets a POST with the event as JSON; shown cut down in logs")]
         : [
             field("Program", text(row, "program", { placeholder: "/config/hooks/on-download.py" }), "Absolute path; gets the event as JSON on stdin and runs as the daemon's user"),
             field("Arguments", h("textarea", { class: "input", rows: 2, spellcheck: "false", oninput: (ev) => (row.args = ev.currentTarget.value) }, row.args), "One per line"),

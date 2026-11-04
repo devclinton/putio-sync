@@ -142,6 +142,12 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
             Some(json!({ "target": { "file_id": 1 }, "kind": "fake" })),
         ),
         (Method::DELETE, "/releases/flags/1", None),
+        get("/hooks"),
+        post("/hooks/test"),
+        get("/events/schema"),
+        get("/settings/hooks"),
+        (Method::PUT, "/settings/hooks", Some(json!({}))),
+        post("/settings/hooks/preview"),
         // Unknown paths fall through to the protected fallback
         get("/robots.txt"),
     ]
@@ -538,4 +544,73 @@ async fn no_arr_secret_in_responses_or_logs() {
     let all = texts.join("\n");
     assert!(all.contains(r#""outcome":"created""#), "{all}");
     assert!(all.contains(r#""reason":"unauthorized""#), "{all}");
+}
+
+/// Hook URLs, headers and env values never come back from the API, the doctor, the
+/// metrics or a log line, even when a webhook fails (feature 027)
+#[tokio::test]
+async fn no_hook_secret_in_responses_or_logs() {
+    const HOOK_PATH: &str = "SECRETPATH0123";
+    const HOOK_TOKEN: &str = "HOOKTOKEN0123";
+    const HOOK_HEADER: &str = "HOOKHEADER0123";
+    const HOOK_ENV: &str = "HOOKENV0123";
+    let logs = captured_logs();
+    let mut hook = mockito::Server::new_async().await;
+    hook.mock("POST", mockito::Matcher::Any)
+        .with_status(400)
+        .with_body(format!("bad {HOOK_TOKEN}"))
+        .create_async()
+        .await;
+    let url = format!("{}/api/webhook/{HOOK_PATH}?token={HOOK_TOKEN}", hook.url());
+    let app = common::test_app_with(|config| {
+        config.hooks = vec![
+            putio_sync_core::hooks::HookConfig {
+                name: "web".to_string(),
+                events: vec!["*".to_string()],
+                url: Some(url.clone()),
+                headers: [("Authorization".to_string(), format!("Bearer {HOOK_HEADER}"))]
+                    .into(),
+                timeout_secs: 5,
+                ..Default::default()
+            },
+            putio_sync_core::hooks::HookConfig {
+                name: "cmd".to_string(),
+                events: vec!["*".to_string()],
+                command: Some(vec![
+                    "/bin/sh".to_string(),
+                    "-c".to_string(),
+                    "echo \"$SECRET\"; exit 1".to_string(),
+                ]),
+                env: [("SECRET".to_string(), HOOK_ENV.to_string())].into(),
+                timeout_secs: 5,
+                ..Default::default()
+            },
+        ];
+    })
+    .await;
+    app.state.hooks.start();
+
+    let mut texts = Vec::new();
+    for name in ["web", "cmd"] {
+        texts.push(body_text(app.post_json("/hooks/test", json!({ "name": name })).await).await);
+    }
+    texts.push(body_text(app.post_json("/doctor/run", json!({})).await).await);
+    for path in ["/hooks", "/settings/hooks", "/settings/export", "/doctor", "/metrics"] {
+        texts.push(body_text(app.get(path).await).await);
+    }
+    // The settings page sends back what it was given, masks and all
+    let settings: Value = serde_json::from_str(&texts[texts.len() - 4]).unwrap();
+    texts.push(body_text(app.post_json("/settings/hooks/preview", settings).await).await);
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let logs = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
+    for text in texts.iter().chain([&logs]) {
+        for secret in [HOOK_PATH, HOOK_TOKEN, HOOK_HEADER, HOOK_ENV] {
+            assert!(!text.contains(secret), "{secret} in {text}");
+        }
+    }
+    // The runs happened and failed, so the failure paths were swept too
+    let all = texts.join("\n");
+    assert!(all.contains("HTTP 400") || all.contains("400"), "{all}");
+    assert!(logs.contains("web"), "{logs}");
 }

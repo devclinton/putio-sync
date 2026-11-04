@@ -57,7 +57,7 @@ Tests come first in each task where behaviour changes (Constitution III).
 ## Phase 8: User Story 6 - Doctor and monitoring (P3)
 
 - [X] T021 [US6] Doctor `Hooks` check: `CheckId::Hooks` ("hooks", Area::Local, title "Event hooks") in `putio-sync-doctor/src/report.rs` (ALL count 21), `putio-sync-doctor/src/checks/hooks.rs` (no hooks → pass "none set up"; missing or non-executable program → Problem naming the hook; a hook whose last run failed in the last 24 h → Warning with the error and time), `Doctor::with_hooks(Arc<HooksService>)`, dispatch in `checks/mod.rs`; wire in `putio-sync-cli/src/commands/daemon.rs` and `putio-sync-api/src/lib.rs`; unit tests; README doctor table row
-- [ ] T022 [US6] Secrets sweep: extend `putio-sync-api/tests/secrets_sweep.rs` with a URL hook carrying `?token=` and an `Authorization` header and an env value; assert none appears in `/hooks`, `/settings/hooks`, `/settings/export`, `/doctor` or `/metrics`
+- [X] T022 [US6] Secrets sweep: extend `putio-sync-api/tests/secrets_sweep.rs` with a URL hook carrying `?token=` and an `Authorization` header and an env value; assert none appears in `/hooks`, `/settings/hooks`, `/settings/export`, `/doctor` or `/metrics`
 
 ## Phase 9: Polish
 

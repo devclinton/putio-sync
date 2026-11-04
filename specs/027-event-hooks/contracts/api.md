@@ -52,9 +52,9 @@ The JSON Schema document, `Content-Type: application/schema+json`.
 ## Settings group `hooks`
 
 - `GET /settings/hooks` → `{ "hooks": [HookConfig…] }`, with every header and env value
-  replaced by `"********"`.
+  replaced by `"********"` and each URL cut down as in logs (`https://h.lan/api/…`).
 - `PUT /settings/hooks` with the same shape. A `"********"` value keeps the stored value
-  for that hook name and key. Validated with `Config::validate`; a 400 names the hook and
+  for that hook name and key; the cut-down form of the stored URL keeps the stored URL. Validated with `Config::validate`; a 400 names the hook and
   field. Applies live: the running service is reconfigured.
 - `POST /settings/hooks/preview` → the usual preview (changes, risks), with values masked.
 - `GET /settings/export` masks hook header and env values; `POST /settings/import`

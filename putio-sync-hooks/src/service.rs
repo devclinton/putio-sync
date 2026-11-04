@@ -301,12 +301,58 @@ async fn dispatch(inner: Arc<Inner>, mut rx: broadcast::Receiver<Arc<Event>>) {
     }
 }
 
+/// Shortest value [`scrub`] masks, so short words in a header or env value are left alone.
+const MIN_SECRET: usize = 6;
+
+/// The values of `hook` that may be secrets: header and env values (and each word of
+/// them, for `Bearer <token>`), and the URL's password, path segments past the first and
+/// query values.
+fn secrets(hook: &HookConfig) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for value in hook.headers.values().chain(hook.env.values()) {
+        out.push(value.clone());
+        out.extend(value.split_whitespace().map(str::to_string));
+    }
+    if let Some(url) = hook.url.as_deref().and_then(|u| reqwest::Url::parse(u).ok()) {
+        out.extend(url.password().map(str::to_string));
+        out.extend(url.path_segments().into_iter().flatten().skip(1).map(str::to_string));
+        out.extend(url.query_pairs().map(|(_, value)| value.into_owned()));
+    }
+    out.retain(|value| value.len() >= MIN_SECRET);
+    // Longest first, so a whole value is masked before a word inside it
+    out.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    out.dedup();
+    out
+}
+
+/// Mask the hook's own secrets in what it printed or answered, which can echo them
+/// (a webhook quoting its URL, a script printing its env).
+fn scrub(hook: &HookConfig, run: &mut HookRun) {
+    let secrets = secrets(hook);
+    if secrets.is_empty() {
+        return;
+    }
+    let mask = |text: &mut String| {
+        for secret in &secrets {
+            if text.contains(secret.as_str()) {
+                *text = text.replace(secret.as_str(), "***");
+            }
+        }
+    };
+    mask(&mut run.stdout);
+    mask(&mut run.stderr);
+    if let Some(error) = run.error.as_mut() {
+        mask(error);
+    }
+}
+
 /// Run one hook for one event, then log and count the run.
 async fn execute(inner: &Inner, hook: &HookConfig, event: &Event, delays: &[Duration]) -> HookRun {
-    let run = match hook.kind() {
+    let mut run = match hook.kind() {
         HookKind::Command => command::run(hook, event).await,
         HookKind::Url => webhook::run(&inner.client, hook, event, delays).await,
     };
+    scrub(hook, &mut run);
     metrics::record_run(
         &hook.name,
         &run.event_type,
@@ -345,4 +391,38 @@ async fn execute(inner: &Inner, hook: &HookConfig, event: &Event, delays: &[Dura
         ),
     }
     run
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{HookRun, RunResult};
+
+    #[test]
+    fn scrub_masks_the_hooks_own_secrets() {
+        let hook = HookConfig {
+            name: "h".to_string(),
+            url: Some("https://u:pass1234@h.lan/api/webhook/abcdef123?token=tok987654&x=1".into()),
+            headers: [("Authorization".to_string(), "Bearer hdr123456".to_string())].into(),
+            env: [("SHORT".to_string(), "abc".to_string())].into(),
+            ..Default::default()
+        };
+        let mut run = HookRun {
+            event_type: "hook.test".to_string(),
+            event_id: String::new(),
+            started_at: chrono::Utc::now(),
+            duration_ms: 0,
+            result: RunResult::Failure,
+            attempts: 1,
+            exit_code: None,
+            http_status: Some(400),
+            error: Some("bad tok987654".to_string()),
+            stdout: "got Bearer hdr123456 on /api/webhook/abcdef123 as pass1234".to_string(),
+            stderr: "abc stays".to_string(),
+        };
+        scrub(&hook, &mut run);
+        assert_eq!(run.stdout, "got *** on /api/***/*** as ***");
+        assert_eq!(run.error.as_deref(), Some("bad ***"));
+        assert_eq!(run.stderr, "abc stays");
+    }
 }

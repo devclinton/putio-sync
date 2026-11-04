@@ -52,8 +52,10 @@
 ## R5 Masking secrets in settings
 
 - **Decision**: the `hooks` settings view replaces every header and env value with
-  `********`. A save that sends `********` for a header or env key keeps the value the
-  current config has for the same hook name and key; any other value replaces it. The
+  `********` and shows each URL cut down by `redact::url`. A save that sends `********`
+  for a header or env key keeps the value the current config has for the same hook name
+  and key, and a save that sends the cut-down form of the stored URL keeps that URL; any
+  other value replaces it. The
   export masks the same way, and the import refuses a mask it cannot resolve.
 - **Rationale**: the UI can edit hooks without ever seeing the secret; matches how the
   arr API keys are kept out of views.

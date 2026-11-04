@@ -172,6 +172,12 @@ impl HookConfig {
                 if !ok {
                     return bad(format!("{}.url: must be an http or https URL", hook));
                 }
+                if url.ends_with('…') {
+                    return bad(format!(
+                        "{}.url: still shortened; type the full URL again",
+                        hook
+                    ));
+                }
             }
         }
         if self.events.is_empty() {
@@ -277,12 +283,17 @@ pub fn validate(hooks: &[HookConfig]) -> CoreResult<()> {
     Ok(())
 }
 
-/// The list with every header and env value replaced by [`MASK`]
+/// The list with every header and env value replaced by [`MASK`], and each URL that
+/// could hold a secret (a query, user info or a deeper path) cut down by
+/// [`crate::redact::url`]
 pub fn mask(hooks: &[HookConfig]) -> Vec<HookConfig> {
     hooks
         .iter()
         .map(|h| {
             let mut h = h.clone();
+            if let Some(url) = h.url.as_mut() {
+                *url = crate::redact::url(url);
+            }
             h.headers.values_mut().for_each(|v| *v = MASK.to_string());
             h.env.values_mut().for_each(|v| *v = MASK.to_string());
             h
@@ -291,11 +302,24 @@ pub fn mask(hooks: &[HookConfig]) -> Vec<HookConfig> {
 }
 
 /// Put the stored value back wherever `new` sends [`MASK`] for a hook name and key that
-/// `current` has. A mask with nothing to resolve is refused.
+/// `current` has, and the stored URL where `new` sends its shortened form. A mask with
+/// nothing to resolve is refused.
 pub fn unmask(new: &[HookConfig], current: &[HookConfig]) -> CoreResult<Vec<HookConfig>> {
     let mut out = new.to_vec();
     for hook in &mut out {
         let old = current.iter().find(|c| c.name == hook.name);
+        let stored_url = old.and_then(|o| o.url.as_deref());
+        if let (Some(url), Some(stored)) = (hook.url.as_mut(), stored_url) {
+            if *url != stored && *url == crate::redact::url(stored) {
+                *url = stored.to_string();
+            }
+        }
+        if hook.url.as_deref().is_some_and(|u| u.ends_with('…')) {
+            return Err(CoreError::ConfigError(format!(
+                "hooks \"{}\".url: still shortened; type the full URL again",
+                hook.name
+            )));
+        }
         for (field, values, stored) in [
             ("headers", &mut hook.headers, old.map(|o| &o.headers)),
             ("env", &mut hook.env, old.map(|o| &o.env)),
@@ -533,5 +557,20 @@ mod tests {
         let mut renamed = masked;
         renamed[1].name = "other".to_string();
         assert!(unmask(&renamed, &current).is_err());
+
+        // A URL with a secret path or query is shortened and comes back whole.
+        let mut secret = url_hook();
+        secret.url = Some("https://ha.local:8123/api/webhook/abc?token=t".to_string());
+        let current = vec![secret];
+        let masked = mask(&current);
+        assert_eq!(masked[0].url.as_deref(), Some("https://ha.local:8123/api/…"));
+        assert_eq!(unmask(&masked, &current).unwrap(), current);
+        let mut edited = masked.clone();
+        edited[0].url = Some("https://ha.local:8123/new".to_string());
+        assert_eq!(unmask(&edited, &current).unwrap()[0].url.as_deref(), edited[0].url.as_deref());
+        let mut renamed = masked;
+        renamed[0].name = "other".to_string();
+        let e = unmask(&renamed, &current).unwrap_err().to_string();
+        assert!(e.contains("url: still shortened"), "{}", e);
     }
 }
