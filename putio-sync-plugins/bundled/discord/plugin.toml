@@ -1,0 +1,35 @@
+name = "discord"
+version = "1.0.0"
+description = "Messages to a Discord channel through a webhook. Repeats of one kind are grouped into a summary."
+events = ["*"]
+
+[permissions.http]
+host_from_config = ["webhook_url"]
+
+[[config]]
+key = "webhook_url"
+type = "url"
+label = "Webhook URL"
+help = "Channel settings › Integrations › Webhooks › Copy Webhook URL"
+required = true
+secret = true
+
+[[config]]
+key = "username"
+type = "string"
+label = "Name shown"
+default = "putio-sync"
+
+[[config]]
+key = "notify"
+type = "string_list"
+label = "Events"
+help = "Event types to send"
+default = ["download.finished", "download.failed", "transfer.failed", "sync.completed", "storage.low"]
+
+[[config]]
+key = "group_minutes"
+type = "integer"
+label = "Group repeats for (minutes)"
+help = "Later events of the same kind within this time are sent as one summary; 0 sends each"
+default = 5

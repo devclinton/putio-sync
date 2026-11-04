@@ -11,8 +11,42 @@ use crate::manifest::Manifest;
 /// Largest entry script read, in bytes
 pub const MAX_SCRIPT_BYTES: u64 = 1024 * 1024;
 
-/// Bundled plugins: folder name, `plugin.toml`, entry script
-const BUNDLED: &[(&str, &str, &str)] = &[];
+/// Bundled plugins: folder name, `plugin.toml`, entry script. The notifiers share
+/// `bundled/notifier.lua`, put in front of each script.
+const BUNDLED: &[(&str, &str, &str)] = &[
+    (
+        "discord",
+        include_str!("../bundled/discord/plugin.toml"),
+        concat!(
+            include_str!("../bundled/notifier.lua"),
+            include_str!("../bundled/discord/main.lua")
+        ),
+    ),
+    (
+        "ntfy",
+        include_str!("../bundled/ntfy/plugin.toml"),
+        concat!(
+            include_str!("../bundled/notifier.lua"),
+            include_str!("../bundled/ntfy/main.lua")
+        ),
+    ),
+    (
+        "pushover",
+        include_str!("../bundled/pushover/plugin.toml"),
+        concat!(
+            include_str!("../bundled/notifier.lua"),
+            include_str!("../bundled/pushover/main.lua")
+        ),
+    ),
+    (
+        "telegram",
+        include_str!("../bundled/telegram/plugin.toml"),
+        concat!(
+            include_str!("../bundled/notifier.lua"),
+            include_str!("../bundled/telegram/main.lua")
+        ),
+    ),
+];
 
 /// Where a plugin came from
 #[derive(Debug, Clone, PartialEq, Eq)]

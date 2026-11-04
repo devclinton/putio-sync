@@ -160,11 +160,13 @@ async fn test_events_reach_only_the_plugin_tested() {
     assert!(!plugins.wants(EventType::DownloadFinished));
     let run = plugins.test("recorder").await.unwrap();
     assert_eq!(run.result, RunResult::Success);
-    assert_eq!(
-        plugins.status()[0].state,
-        PluginState::Disabled,
-        "testing does not enable"
-    );
+    let state = plugins
+        .status()
+        .into_iter()
+        .find(|p| p.name == "recorder")
+        .unwrap()
+        .state;
+    assert_eq!(state, PluginState::Disabled, "testing does not enable");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -265,12 +267,20 @@ async fn check_approves_needed_hosts_and_refuses_bad_values() {
         checked[0].approved_hosts,
         vec!["api.example.com", "ntfy.example.org"]
     );
+    let state = || {
+        plugins
+            .status()
+            .into_iter()
+            .find(|p| p.name == "caller")
+            .unwrap()
+            .state
+    };
     plugins.configure(vec![s.clone()]);
-    assert_eq!(plugins.status()[0].state, PluginState::NeedsApproval);
+    assert_eq!(state(), PluginState::NeedsApproval);
     plugins.configure(checked);
-    assert_eq!(plugins.status()[0].state, PluginState::Enabled);
+    assert_eq!(state(), PluginState::Enabled);
     plugins.configure(vec![enabled("caller")]);
-    assert_eq!(plugins.status()[0].state, PluginState::MissingConfig);
+    assert_eq!(state(), PluginState::MissingConfig);
 
     s.config.insert("server".into(), 5.into());
     assert!(plugins

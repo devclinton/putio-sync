@@ -37,9 +37,9 @@ Tests come first in each task where behaviour changes (Constitution III).
 
 ## Phase 5: User Story 1 - Phone notification when a download lands (P1)
 
-- [ ] T013 [US1] `putio-sync-plugins/bundled/ntfy/{plugin.toml,main.lua}`: server (url, default `https://ntfy.sh`), topic (required), token (secret), notify (string_list of event types, default the five), group_minutes (default 5), priority; messages per event type; sync.completed only on failure; grouping per research R7
-- [ ] T014 [P] [US1] `bundled/discord` (webhook_url secret url, username), `bundled/telegram` (api_url default `https://api.telegram.org`, bot_token secret, chat_id), `bundled/pushover` (api_url default `https://api.pushover.net`, app_token and user_key secrets, form body), same messages and grouping
-- [ ] T015 [US1] Tests in `putio-sync-plugins/tests/bundled.rs`: each bundled manifest validates and loads; ntfy against mockito: one event sends one message with the token header; ten events then a tick past the window send one more summary naming the count (clock set through the service's test clock); a secret never shows in runs; discord/telegram/pushover send the right body to mockito
+- [X] T013 [US1] `putio-sync-plugins/bundled/ntfy/{plugin.toml,main.lua}`: server (url, default `https://ntfy.sh`), topic (required), token (secret), notify (string_list of event types, default the five), group_minutes (default 5), priority; messages per event type; sync.completed only on failure; grouping per research R7
+- [X] T014 [P] [US1] `bundled/discord` (webhook_url secret url, username), `bundled/telegram` (api_url default `https://api.telegram.org`, bot_token secret, chat_id), `bundled/pushover` (api_url default `https://api.pushover.net`, app_token and user_key secrets, form body), same messages and grouping
+- [X] T015 [US1] Tests in `putio-sync-plugins/tests/bundled.rs`: each bundled manifest validates and loads; ntfy against mockito: one event sends one message with the token header; ten events then a tick past the window send one more summary naming the count (clock set through the service's test clock); a secret never shows in runs; discord/telegram/pushover send the right body to mockito
 
 ## Phase 6: User Story 4 - Manage plugins from Settings (P2)
 

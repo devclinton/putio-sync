@@ -1,0 +1,50 @@
+name = "ntfy"
+version = "1.0.0"
+description = "Push notifications through ntfy (ntfy.sh or your own server). Repeats of one kind are grouped into a summary."
+events = ["*"]
+
+[permissions.http]
+host_from_config = ["server"]
+
+[[config]]
+key = "server"
+type = "url"
+label = "Server"
+help = "Your ntfy server, or ntfy.sh"
+default = "https://ntfy.sh"
+required = true
+
+[[config]]
+key = "topic"
+type = "string"
+label = "Topic"
+help = "The topic your phone subscribes to; pick a hard-to-guess name on ntfy.sh"
+required = true
+
+[[config]]
+key = "token"
+type = "string"
+label = "Access token"
+help = "For a protected topic (tk_…); leave empty otherwise"
+secret = true
+
+[[config]]
+key = "priority"
+type = "integer"
+label = "Priority"
+help = "1 (min) to 5 (max)"
+default = 3
+
+[[config]]
+key = "notify"
+type = "string_list"
+label = "Events"
+help = "Event types to send"
+default = ["download.finished", "download.failed", "transfer.failed", "sync.completed", "storage.low"]
+
+[[config]]
+key = "group_minutes"
+type = "integer"
+label = "Group repeats for (minutes)"
+help = "Later events of the same kind within this time are sent as one summary; 0 sends each"
+default = 5

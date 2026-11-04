@@ -269,12 +269,18 @@ impl PluginsService {
             loop {
                 every.tick().await;
                 let Some(inner) = weak.upgrade() else { break };
-                let state = inner.state.lock().unwrap();
-                for slot in state.slots.values().filter(|s| s.has_tick()) {
-                    slot.push(Job::Tick);
-                }
+                PluginsService { inner }.tick();
             }
         });
+    }
+
+    /// Queue `on_tick` for each running plugin that has one (the ticker calls this
+    /// every [`TICK`])
+    pub fn tick(&self) {
+        let state = self.inner.state.lock().unwrap();
+        for slot in state.slots.values().filter(|s| s.has_tick()) {
+            slot.push(Job::Tick);
+        }
     }
 
     /// Use new settings now; running plugins rebuild their state
