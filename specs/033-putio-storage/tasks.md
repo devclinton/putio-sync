@@ -13,14 +13,14 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Create crate `putio-sync-storage` (`Cargo.toml` with client, core, db, telemetry, tokio, serde, chrono, tracing, uuid, thiserror; dev: mockito, tempfile, serde_json), add it to workspace `members` in `Cargo.toml`, and add its manifest COPY, stub `src/lib.rs` and source COPY lines to `Dockerfile`
-- [ ] T002 [P] Raise the UI bundle cap to 384 KB (393,216 bytes) in `putio-sync-api/tests/ui_assets.rs`
+- [X] T001 Create crate `putio-sync-storage` (`Cargo.toml` with client, core, db, telemetry, tokio, serde, chrono, tracing, uuid, thiserror; dev: mockito, tempfile, serde_json), add it to workspace `members` in `Cargo.toml`, and add its manifest COPY, stub `src/lib.rs` and source COPY lines to `Dockerfile`
+- [X] T002 [P] Raise the UI bundle cap to 384 KB (393,216 bytes) in `putio-sync-api/tests/ui_assets.rs`
 
 ## Phase 2: Foundational (blocks all stories)
 
-- [ ] T003 [P] `StorageConfig` (`warn_free_percent` 10, `target_free_percent` 20, `auto_free` false, `run_at` "02:30") with `validate()` (1 ≤ warn < target ≤ 90, `run_at` HH:MM) and `run_time()`, `Config.storage` (`#[serde(default)]`) validated in `Config::validate`, with tests (defaults when missing, partial section, bad levels, bad time) in `putio-sync-core/src/config.rs`; document `[storage]` in `config.example.toml`
-- [ ] T004 [P] Tables `storage_runs` and `storage_run_files` (+ index) in `putio-sync-db/src/schema.rs`, created in `putio-sync-db/src/lib.rs` (and in the migrate test's table list)
-- [ ] T005 `StorageRepository` in `putio-sync-db/src/storage.rs` (`record_run(trigger, files, free_after) -> id` in one transaction with its file rows, `recent_runs(limit)` with files, newest first), `db.storage()`; `DownloadRepository::completed()` (file_id, size, local_path for completed rows) in `downloads.rs`; `QueueRepository::active_file_ids()` (pending, downloading, paused) in `queue.rs`; unit tests for each
+- [X] T003 [P] `StorageConfig` (`warn_free_percent` 10, `target_free_percent` 20, `auto_free` false, `run_at` "02:30") with `validate()` (1 ≤ warn < target ≤ 90, `run_at` HH:MM) and `run_time()`, `Config.storage` (`#[serde(default)]`) validated in `Config::validate`, with tests (defaults when missing, partial section, bad levels, bad time) in `putio-sync-core/src/config.rs`; document `[storage]` in `config.example.toml`
+- [X] T004 [P] Tables `storage_runs` and `storage_run_files` (+ index) in `putio-sync-db/src/schema.rs`, created in `putio-sync-db/src/lib.rs` (and in the migrate test's table list)
+- [X] T005 `StorageRepository` in `putio-sync-db/src/storage.rs` (`record_run(trigger, files, free_after) -> id` in one transaction with its file rows, `recent_runs(limit)` with files, newest first), `db.storage()`; `DownloadRepository::completed()` (file_id, size, local_path for completed rows) in `downloads.rs`; the existing `QueueRepository::claimed()` (pending, downloading, paused) gives the queued ids; unit tests for each
 - [ ] T006 [P] Telemetry in `putio-sync-telemetry/src/storage.rs` + registration in `lib.rs`: gauges `putio_storage_size_bytes`, `putio_storage_used_bytes`; counters `storage_free_runs_total{trigger,result}`, `storage_freed_files_total`, `storage_freed_bytes_total`; global helpers; a test that the names appear in the exposition
 - [ ] T007 [P] `WalkedFile.is_shared` (serde-skipped) filled from the listing in `putio-sync-client/src/walk.rs`
 - [ ] T008 Planner unit tests first in `putio-sync-storage/src/plan.rs`: only files with a completed record of the same size and a present local file of that size; queued, shared (self or ancestor), and under-unfinished-transfer files excluded; folders excluded; oldest first by `created_at` then id, missing dates last; stops once the total reaches the needed bytes; empty when free ≥ target; shortfall when not enough; 1,000-file cap

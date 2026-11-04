@@ -266,6 +266,37 @@ min_age_hours = 24
 nested = true
 
 # ============================================================================
+# Put.io Storage (feature 033)
+# ============================================================================
+# The Put.io page shows the account's storage and what fills it, and warns (as
+# do the Status page and the doctor) when free space is below warn_free_percent.
+# "Free up space" there, or `putio-sync files free-space` (add --dry-run to only
+# preview), deletes the oldest files that are already downloaded, until
+# target_free_percent is free. A file qualifies only when its download finished,
+# its local copy still exists with the Put.io size, and it is not queued, shared
+# or in the folder of an unfinished transfer. You see the list before anything is
+# deleted, and every run is listed afterwards (and in History).
+[storage]
+# Warn when less than this percent of the account is free. 1 to 89.
+# Default: 10
+warn_free_percent = 10
+
+# A free-up run deletes files until this percent is free. Above
+# warn_free_percent, at most 90.
+# Default: 20
+target_free_percent = 20
+
+# Free up space once a day without asking, when free space is below
+# warn_free_percent. Only the `daemon` command runs it.
+# Default: false
+auto_free = false
+
+# Local time of the daily check, 24-hour "HH:MM" (before the empty-folder
+# cleanup, which then removes folders the run left empty).
+# Default: "02:30"
+run_at = "02:30"
+
+# ============================================================================
 # Notification Configuration
 # ============================================================================
 [notifications]

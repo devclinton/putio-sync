@@ -175,6 +175,9 @@ pub struct Config {
     /// Release pre-check (feature 042)
     #[serde(default)]
     pub precheck: PrecheckConfig,
+    /// Put.io storage levels and the automatic free-up run (feature 033)
+    #[serde(default)]
+    pub storage: StorageConfig,
 }
 
 /// `[doctor]`: how often the daemon runs the doctor's checks (feature 010). The CLI and
@@ -1357,6 +1360,7 @@ impl Config {
         self.arr.validate()?;
         self.transfers.validate()?;
         self.precheck.validate(&self.watch.paths)?;
+        self.storage.validate()?;
 
         Ok(())
     }
@@ -1602,6 +1606,7 @@ impl ConfigBuilder {
             doctor: DoctorConfig::default(),
             putio: PutioConfig::default(),
             precheck: PrecheckConfig::default(),
+            storage: StorageConfig::default(),
         }
     }
 }
@@ -1683,12 +1688,78 @@ impl CleanupConfig {
     }
 }
 
+/// Largest `target_free_percent` accepted
+pub const MAX_STORAGE_TARGET_PERCENT: u8 = 90;
+
+/// `[storage]`: Put.io storage levels (feature 033), as percent of the account size free.
+/// Below `warn_free_percent` the UI and the doctor warn; a free-up run deletes old files
+/// that are already downloaded until `target_free_percent` is free. The daemon runs one
+/// daily at `run_at` (local time) when `auto_free` is on and free space is below the
+/// warning level; manual runs ignore `auto_free`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct StorageConfig {
+    /// Warn when less than this percent of the account is free
+    pub warn_free_percent: u8,
+    /// A free-up run stops once this percent is free
+    pub target_free_percent: u8,
+    /// Free up space once a day in the daemon when below the warning level
+    pub auto_free: bool,
+    /// Daily run time, 24h `HH:MM` local time
+    pub run_at: String,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            warn_free_percent: 10,
+            target_free_percent: 20,
+            auto_free: false,
+            run_at: "02:30".to_string(),
+        }
+    }
+}
+
+impl StorageConfig {
+    /// `run_at` as a time of day; an error names the bad value
+    pub fn run_time(&self) -> CoreResult<chrono::NaiveTime> {
+        parse_time("storage", &self.run_at)
+    }
+
+    /// Check `run_at` and that 1 <= warn < target <= 90
+    pub fn validate(&self) -> CoreResult<()> {
+        self.run_time()?;
+        if self.warn_free_percent == 0 {
+            return Err(CoreError::ConfigError(
+                "storage warn_free_percent must be at least 1".to_string(),
+            ));
+        }
+        if self.target_free_percent <= self.warn_free_percent {
+            return Err(CoreError::ConfigError(
+                "storage target_free_percent must be above warn_free_percent".to_string(),
+            ));
+        }
+        if self.target_free_percent > MAX_STORAGE_TARGET_PERCENT {
+            return Err(CoreError::ConfigError(format!(
+                "storage target_free_percent must not exceed {}",
+                MAX_STORAGE_TARGET_PERCENT
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Parse a 24h `HH:MM` time, two digits each
 fn parse_run_at(value: &str) -> CoreResult<chrono::NaiveTime> {
+    parse_time("cleanup", value)
+}
+
+/// Parse a 24h `HH:MM` time for `[section] run_at`, two digits each
+fn parse_time(section: &str, value: &str) -> CoreResult<chrono::NaiveTime> {
     let bad = || {
         CoreError::ConfigError(format!(
-            "invalid cleanup run_at '{}': expected 24h HH:MM, e.g. 03:00",
-            value
+            "invalid {} run_at '{}': expected 24h HH:MM, e.g. 03:00",
+            section, value
         ))
     };
     let (h, m) = value.split_once(':').ok_or_else(bad)?;
@@ -2352,6 +2423,7 @@ mod tests {
             doctor: DoctorConfig::default(),
             putio: PutioConfig::default(),
             precheck: PrecheckConfig::default(),
+            storage: StorageConfig::default(),
         }
     }
 
@@ -3289,6 +3361,44 @@ mod save_keeping_file_credentials_tests {
             fs::read_to_string(&path).unwrap(),
             "[api]\nauth_token = \"secret-value\n"
         );
+    }
+
+    #[test]
+    fn storage_defaults_when_section_missing() {
+        let config: Config = toml::from_str("[api]\nport = 9000\n").unwrap();
+        assert_eq!(config.storage, StorageConfig::default());
+        assert_eq!(config.storage.warn_free_percent, 10);
+        assert_eq!(config.storage.target_free_percent, 20);
+        assert!(!config.storage.auto_free);
+        assert_eq!(config.storage.run_at, "02:30");
+
+        let partial: Config = toml::from_str("[storage]\nauto_free = true\n").unwrap();
+        assert!(partial.storage.auto_free);
+        assert_eq!(partial.storage.target_free_percent, 20);
+    }
+
+    #[test]
+    fn storage_levels_and_time_are_validated() {
+        let ok = |warn, target| StorageConfig {
+            warn_free_percent: warn,
+            target_free_percent: target,
+            ..Default::default()
+        };
+        assert!(ok(10, 20).validate().is_ok());
+        assert!(ok(1, 90).validate().is_ok());
+        assert!(ok(0, 20).validate().is_err());
+        assert!(ok(20, 20).validate().is_err());
+        assert!(ok(30, 20).validate().is_err());
+        assert!(ok(10, 91).validate().is_err());
+        let bad_time = StorageConfig {
+            run_at: "2:30".to_string(),
+            ..Default::default()
+        };
+        let err = bad_time.validate().unwrap_err().to_string();
+        assert!(err.contains("storage run_at"), "{err}");
+        let mut config = Config::default();
+        config.storage.target_free_percent = 5;
+        assert!(config.validate().is_err());
     }
 
     #[test]

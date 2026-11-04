@@ -2375,6 +2375,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "putio-sync-storage"
+version = "0.1.1"
+dependencies = [
+ "mockito",
+ "putio-sync-client",
+ "putio-sync-core",
+ "putio-sync-db",
+ "putio-sync-telemetry",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "putio-sync-telemetry"
 version = "0.1.1"
 dependencies = [

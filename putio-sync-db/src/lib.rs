@@ -44,6 +44,7 @@ pub mod releases;
 pub mod schema;
 pub mod sources;
 pub mod stats;
+pub mod storage;
 pub mod torrents;
 pub mod whats_new;
 
@@ -61,6 +62,7 @@ pub use releases::{
 };
 pub use sources::SourcesRepository;
 pub use stats::{ExtensionStats, StatsRepository};
+pub use storage::{NewRunFile, StorageRepository, StorageRun, StorageRunFile};
 pub use torrents::ProcessedTorrentsRepository;
 pub use whats_new::WhatsNewRepository;
 
@@ -231,6 +233,11 @@ impl Database {
         WhatsNewRepository::new(&self.pool)
     }
 
+    /// Get the Put.io storage runs repository (feature 033)
+    pub fn storage(&self) -> StorageRepository<'_> {
+        StorageRepository::new(&self.pool)
+    }
+
     /// Get the Recently finished repository (feature 039)
     pub fn finished(&self) -> FinishedRepository<'_> {
         FinishedRepository::new(&self.pool)
@@ -389,6 +396,15 @@ impl Database {
             (
                 schema::CREATE_WHATS_NEW_SEEN_TABLE,
                 "Failed to create whats_new_seen table",
+            ),
+            // Put.io storage (feature 033)
+            (
+                schema::CREATE_STORAGE_RUNS_TABLE,
+                "Failed to create storage_runs table",
+            ),
+            (
+                schema::CREATE_STORAGE_RUN_FILES_TABLE,
+                "Failed to create storage_run_files table",
             ),
         ] {
             sqlx::query(sql)
@@ -613,6 +629,8 @@ mod tests {
             "held_magnets",
             "hold_ends",
             "whats_new_seen",
+            "storage_run_files",
+            "storage_runs",
         ];
 
         let db = Database::new(&db_path).await.unwrap();

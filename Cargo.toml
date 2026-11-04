@@ -12,6 +12,7 @@ members = [
     "putio-sync-doctor",
     "putio-sync-arr",
     "putio-sync-precheck",
+    "putio-sync-storage",
 ]
 resolver = "2"
 
