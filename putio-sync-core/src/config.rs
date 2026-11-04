@@ -3469,8 +3469,10 @@ mod save_keeping_file_credentials_tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         fs::write(&path, "broken = = 1\n").unwrap();
-        let mut memory = Config::default();
-        memory.auth = Some(AuthConfig::with_token("t".to_string()));
+        let memory = Config {
+            auth: Some(AuthConfig::with_token("t".to_string())),
+            ..Config::default()
+        };
         memory.save_setup(&path, false).unwrap();
         assert_eq!(written(&path).auth.unwrap().token.as_deref(), Some("t"));
         assert_eq!(

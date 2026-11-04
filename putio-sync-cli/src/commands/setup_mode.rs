@@ -247,10 +247,12 @@ mod tests {
     }
 
     fn complete(dir: &Path) -> Config {
-        let mut config = Config::default();
-        config.auth = Some(putio_sync_core::config::AuthConfig::with_token(
-            "tok".to_string(),
-        ));
+        let mut config = Config {
+            auth: Some(putio_sync_core::config::AuthConfig::with_token(
+                "tok".to_string(),
+            )),
+            ..Config::default()
+        };
         config.download.target_directory = dir.to_path_buf();
         config
     }
