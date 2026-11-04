@@ -776,3 +776,25 @@ button.brow:hover { background: var(--surface-2); }
 .doctor-body summary { cursor: pointer; color: var(--muted); }
 .doctor-body ul { margin: 6px 0; padding-left: 20px; max-height: 320px; overflow: auto; }
 .doctor-body .toolbar { margin-top: 6px; }
+
+/* First-run setup wizard (feature 013) */
+.setup { max-width: 640px; margin: 6vh auto 0; padding: 32px; }
+.setup h2 { margin: 0 0 8px; }
+.setup h3.sub { margin: 20px 0 8px; font-size: var(--fs-sm); color: var(--muted); }
+.setup p { margin: 0 0 12px; }
+.setup-steps { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 24px; padding: 0; list-style: none; font-size: var(--fs-sm); color: var(--muted); }
+.setup-steps li.now { color: var(--text); font-weight: 600; }
+.setup-steps li.done::before { content: "✓ "; color: var(--ok); }
+.setup-form { display: grid; gap: 14px; margin-bottom: 12px; }
+.setup-form .btn { justify-self: start; }
+.setup-nav { display: flex; justify-content: space-between; gap: 8px; margin-top: 12px; }
+.setup-nav > span { display: flex; gap: 8px; }
+.setup-code { padding: 12px 16px; border-radius: var(--r-md); background: var(--surface-2); font-family: var(--mono); font-size: 1.25rem; overflow-wrap: anywhere; user-select: all; }
+.setup-rules { display: grid; gap: 10px; }
+.setup-rule { grid-template-columns: minmax(0, 1fr) minmax(0, 14em); align-items: center; }
+.setup-rule small { grid-column: 1 / -1; }
+.setup-review { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 16px; }
+.setup-review dt { color: var(--muted); }
+.setup-review dd { margin: 0; overflow-wrap: anywhere; }
+.setup-samples { margin: 0 0 12px; padding-left: 18px; font-size: var(--fs-sm); }
+.setup-samples small { margin-left: 8px; color: var(--muted); }

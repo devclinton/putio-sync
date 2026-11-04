@@ -577,9 +577,7 @@ impl PutioApiClient {
         trace!("Error response body: {}", body);
 
         let error_msg = match status {
-            StatusCode::UNAUTHORIZED => {
-                "Authentication failed. Invalid or expired token.".to_string()
-            }
+            StatusCode::UNAUTHORIZED => crate::error::UNAUTHORIZED_MESSAGE.to_string(),
             StatusCode::FORBIDDEN => "Access forbidden. Check your permissions.".to_string(),
             StatusCode::NOT_FOUND => crate::error::NOT_FOUND_MESSAGE.to_string(),
             StatusCode::TOO_MANY_REQUESTS => {

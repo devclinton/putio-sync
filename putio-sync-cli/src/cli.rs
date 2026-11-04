@@ -709,6 +709,61 @@ pub enum Commands {
         )]
         yes: bool,
     },
+
+    /// First-run setup in the terminal (feature 013)
+    #[command(
+        about = "Set up putio-sync: Put.io, download folder, what to download",
+        long_about = "Ask for what the web setup wizard asks for, run a dry run, and write \
+                      the config file once. The Put.io token comes from \
+                      PUTIO_SYNC_PUTIO_TOKEN, the Put.io device link, or standard input; \
+                      never a flag. Without a terminal, or with --yes, every suggestion is \
+                      taken.\n\nExit code: 0 written, 1 error, 2 cancelled."
+    )]
+    Setup {
+        /// Download folder
+        #[arg(long = "download-dir", value_name = "PATH", help = "Download folder")]
+        download_dir: Option<PathBuf>,
+
+        /// Preset for the whole account
+        #[arg(
+            long = "preset",
+            value_name = "NAME",
+            help = "What to download, e.g. video"
+        )]
+        preset: Option<String>,
+
+        /// Folder watched for .torrent and .magnet files
+        #[arg(
+            long = "watch-dir",
+            value_name = "PATH",
+            help = "Watch folder for .torrent and .magnet files"
+        )]
+        watch_dir: Option<PathBuf>,
+
+        /// Turn Prometheus metrics on
+        #[arg(
+            long = "metrics",
+            conflicts_with = "no_metrics",
+            help = "Turn Prometheus metrics on"
+        )]
+        metrics: bool,
+
+        /// Turn Prometheus metrics off
+        #[arg(long = "no-metrics", help = "Turn Prometheus metrics off")]
+        no_metrics: bool,
+
+        /// Skip the dry run
+        #[arg(long = "no-dry-run", help = "Skip the dry run")]
+        no_dry_run: bool,
+
+        /// Take every suggestion without asking
+        #[arg(
+            short = 'y',
+            long = "yes",
+            help = "Take every suggestion and write without asking"
+        )]
+        yes: bool,
+    },
 }
 
 /// File management subcommands

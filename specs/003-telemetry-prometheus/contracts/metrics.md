@@ -50,6 +50,7 @@ buckets (s): 1, 5, 15, 60, 300, 900, 1800, 3600, 7200. Sync buckets (s): 1, 5, 1
 | `putio_sync_downloaded_bytes_total` | counter | — | Bytes written to disk; `rate()` gives throughput |
 | `putio_sync_download_duration_seconds` | H | — | Time per completed download |
 | `putio_sync_transfers_stalled` | gauge | — | Put.io transfers stalled at the last check (feature 007) |
+| `putio_sync_setup_required` | gauge | — | 1 while the daemon waits in setup mode (feature 013) |
 | `putio_sync_pipeline_items` | gauge | `stage`, `state` | Active transfers by stage (`putio`, `nas`) and state, set every 10 s (feature 039, `daemon` only) |
 | `putio_sync_pipeline_actions_total` | counter | `action` | Pause, hold and resume actions on active transfers (feature 039) |
 | `putio_sync_nas_downloads_paused` | gauge | — | 1 while the Pause NAS downloads switch is on (feature 039) |

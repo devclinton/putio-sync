@@ -33,6 +33,7 @@ pub mod handlers;
 pub mod middleware;
 pub mod models;
 pub mod routes;
+pub mod setup;
 pub mod ui;
 
 use axum::Router;
@@ -49,6 +50,8 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
+
+pub use setup::{setup_router, SetupState};
 
 /// Extract DownloadConfig from Config (the shared `From<&[download]>` conversion)
 pub fn extract_download_config(config: &Config) -> DownloadConfig {

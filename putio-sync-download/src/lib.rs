@@ -4,6 +4,7 @@
 //! worker pools, and progress tracking for Put.io file synchronization.
 
 pub mod blocklist;
+pub mod dry_run;
 pub mod error;
 pub mod files;
 pub mod manager;
@@ -17,6 +18,7 @@ pub mod worker;
 
 // Re-export commonly used types
 pub use blocklist::{blocked_extension, default_blocked_extensions, is_blocked};
+pub use dry_run::{dry_run, DryRunItem, DryRunReport, Tally, DRY_RUN_LIMIT, DRY_RUN_SAMPLES};
 pub use error::{DownloadError, DownloadResult};
 pub use files::{
     check_resume, cleanup_partial, create_temp_path, get_original_path, is_partial_download,

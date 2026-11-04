@@ -136,6 +136,9 @@ pub fn default_blocked_extensions() -> Vec<String> {
 pub struct Config {
     /// Authentication configuration
     pub auth: Option<AuthConfig>,
+    /// Put.io app settings (`[putio]`, feature 013)
+    #[serde(default, skip_serializing_if = "PutioConfig::is_empty")]
+    pub putio: PutioConfig,
     /// Sync configuration
     #[serde(default)]
     pub sync: SyncConfig,
@@ -612,6 +615,22 @@ pub enum AuthMethod {
     AppPassword,
 }
 
+/// `[putio]`: the Put.io app putio-sync identifies as
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+pub struct PutioConfig {
+    /// Public app ID for the device link (put.io/link). Overrides
+    /// `PUTIO_SYNC_APP_ID` and the built-in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+}
+
+impl PutioConfig {
+    /// Nothing set (the section is left out when saving)
+    pub fn is_empty(&self) -> bool {
+        self.app_id.is_none()
+    }
+}
+
 /// Authentication configuration
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AuthConfig {
@@ -776,6 +795,10 @@ pub struct DownloadConfig {
     /// A missing key uses the default list; `[]` disables the guard.
     #[serde(default = "default_blocked_extensions")]
     pub blocked_extensions: Vec<String>,
+    /// Account-wide preset (feature 013): the root filter instead of `blocked_extensions`.
+    /// Folder rules still override it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
     /// Per-folder rules (`[[download.rules]]`); folders below a rule inherit it
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rules: Vec<FolderRule>,
@@ -936,6 +959,7 @@ impl Default for DownloadConfig {
             retry_initial_delay_secs: 1,         // Start with 1 second delay
             delete_empty_folders: true,          // Delete empty folders by default
             blocked_extensions: default_blocked_extensions(),
+            preset: None,
             rules: Vec::new(),
             presets: BTreeMap::new(),
         }
@@ -1325,6 +1349,10 @@ impl Config {
         }
 
         crate::rules::validate(&self.download.rules, &self.download.presets)?;
+        crate::rules::validate_root_preset(
+            self.download.preset.as_deref(),
+            &self.download.presets,
+        )?;
         self.cleanup.validate()?;
         self.arr.validate()?;
         self.transfers.validate()?;
@@ -1572,6 +1600,7 @@ impl ConfigBuilder {
             transfers: TransfersConfig::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
+            putio: PutioConfig::default(),
             precheck: PrecheckConfig::default(),
         }
     }
@@ -1880,6 +1909,67 @@ impl Config {
 
         edit_table(document.as_table_mut(), &before, &after);
         let permissions = fs::metadata(&path).ok().map(|m| m.permissions());
+        write_atomically(&path, &document.to_string(), permissions)
+    }
+}
+
+impl Config {
+    /// Save the result of first-run setup (feature 013) in one write. Like
+    /// [`Config::save_keeping_file_credentials`] it edits only the keys that changed, so
+    /// comments and unknown keys stay; unlike it, `[auth]` and `[arr]` are written from
+    /// memory, and `api.auth_token` too when `with_api_token` (setup created one).
+    ///
+    /// A file that does not parse (setup was started because of it) is kept next to the
+    /// new one as `<name>.bak` and replaced. A new file is 0600; an existing one keeps
+    /// its mode.
+    pub fn save_setup<P: AsRef<Path>>(&self, path: P, with_api_token: bool) -> CoreResult<()> {
+        let path = path.as_ref();
+        let table = |config: &Config| -> CoreResult<toml::Table> {
+            let mut table = toml::Table::try_from(config).map_err(|e| {
+                CoreError::ConfigError(format!("Failed to serialize config: {}", e))
+            })?;
+            if !with_api_token {
+                if let Some(toml::Value::Table(api)) = table.get_mut("api") {
+                    api.remove("auth_token");
+                }
+            }
+            Ok(table)
+        };
+        let after = table(self)?;
+        let fresh = |path: &Path, permissions| {
+            let contents = toml::to_string_pretty(&after).map_err(|e| {
+                CoreError::ConfigError(format!("Failed to serialize config: {}", e))
+            })?;
+            write_atomically(path, &contents, permissions)
+        };
+        if !path.exists() {
+            return fresh(path, None);
+        }
+
+        let unreadable = || {
+            CoreError::ConfigError(format!(
+                "Failed to read {}; settings not saved",
+                path.display()
+            ))
+        };
+        let path = fs::canonicalize(path).map_err(|_| unreadable())?;
+        let contents = fs::read_to_string(&path).map_err(|_| unreadable())?;
+        let permissions = fs::metadata(&path).ok().map(|m| m.permissions());
+        let parsed = contents
+            .parse::<toml_edit::DocumentMut>()
+            .ok()
+            .zip(toml::from_str::<Config>(&contents).ok());
+        let Some((mut document, mut on_disk)) = parsed else {
+            let mut backup = path.clone().into_os_string();
+            backup.push(".bak");
+            fs::copy(&path, &backup).map_err(|e| {
+                CoreError::ConfigError(format!("Failed to keep the old config: {}", e))
+            })?;
+            return fresh(&path, permissions);
+        };
+        on_disk.expand_paths().map_err(|_| unreadable())?;
+        let before = table(&on_disk)?;
+        edit_table(document.as_table_mut(), &before, &after);
         write_atomically(&path, &document.to_string(), permissions)
     }
 }
@@ -2240,6 +2330,7 @@ mod tests {
                 retry_initial_delay_secs: 1,
                 delete_empty_folders: true,
                 blocked_extensions: default_blocked_extensions(),
+                preset: None,
                 rules: Vec::new(),
                 presets: BTreeMap::new(),
             },
@@ -2259,6 +2350,7 @@ mod tests {
             transfers: TransfersConfig::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
+            putio: PutioConfig::default(),
             precheck: PrecheckConfig::default(),
         }
     }
@@ -3339,6 +3431,91 @@ mod save_keeping_file_credentials_tests {
             .presets
             .insert("Bad".to_string(), Preset::default());
         assert!(config.validate().is_err());
+    }
+
+    /// Setup's save writes the credentials and keeps comments (feature 013)
+    #[test]
+    fn save_setup_writes_credentials_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "# my comment\n[cleanup]\nenabled = true # on\n[api]\nauth_token = \"keep\"\n",
+        )
+        .unwrap();
+        let mut memory = loaded(&fs::read_to_string(&path).unwrap());
+        memory.auth = Some(AuthConfig::with_token("putio-tok".to_string()));
+        memory.download.preset = Some("video".to_string());
+        memory.api.auth_token = Some("env-override".to_string());
+        memory.save_setup(&path, false).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("# my comment") && text.contains("# on"),
+            "{text}"
+        );
+        assert!(text.contains("auth_token = \"keep\""), "{text}");
+        assert!(!text.contains("env-override"), "{text}");
+        let saved = written(&path);
+        assert_eq!(saved.auth.unwrap().token.as_deref(), Some("putio-tok"));
+        assert_eq!(saved.download.preset.as_deref(), Some("video"));
+
+        memory.api.auth_token = Some("new-api".to_string());
+        memory.save_setup(&path, true).unwrap();
+        assert_eq!(written(&path).api.auth_token.as_deref(), Some("new-api"));
+    }
+
+    #[test]
+    fn save_setup_replaces_an_invalid_file_and_keeps_a_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "broken = = 1\n").unwrap();
+        let memory = Config {
+            auth: Some(AuthConfig::with_token("t".to_string())),
+            ..Config::default()
+        };
+        memory.save_setup(&path, false).unwrap();
+        assert_eq!(written(&path).auth.unwrap().token.as_deref(), Some("t"));
+        assert_eq!(
+            fs::read_to_string(dir.path().join("config.toml.bak")).unwrap(),
+            "broken = = 1\n"
+        );
+
+        let new = dir.path().join("new.toml");
+        memory.save_setup(&new, false).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&new).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    /// `[putio] app_id` and `[download] preset` (feature 013)
+    #[test]
+    fn putio_app_id_and_root_preset() {
+        let mut config = Config::default();
+        config.putio.app_id = Some("1234".to_string());
+        config.download.preset = Some("video".to_string());
+        let text = toml::to_string_pretty(&config).unwrap();
+        assert!(text.contains("[putio]\napp_id = \"1234\""), "{text}");
+        let config: Config = toml::from_str(&text).unwrap();
+        assert_eq!(config.putio.app_id.as_deref(), Some("1234"));
+        assert_eq!(config.download.preset.as_deref(), Some("video"));
+        config.validate().unwrap();
+
+        let empty: Config = toml::from_str("").unwrap();
+        assert_eq!(empty.putio, PutioConfig::default());
+        assert_eq!(empty.download.preset, None);
+        let text = toml::to_string_pretty(&empty).unwrap();
+        assert!(!text.contains("[putio]"), "{text}");
+        assert!(!text.contains("preset"), "{text}");
+
+        let mut bad = Config::default();
+        bad.download.preset = Some("nope".to_string());
+        let err = bad.validate().unwrap_err().to_string();
+        assert!(err.contains("[download] preset"), "{err}");
     }
 
     /// A file without `[cleanup]` gains the section on save; comments elsewhere stay

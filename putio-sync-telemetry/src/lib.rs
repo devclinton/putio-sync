@@ -27,6 +27,7 @@ pub mod pipeline;
 pub mod precheck;
 pub mod process;
 pub mod server;
+pub mod setup;
 pub mod sync;
 pub mod transfers;
 pub mod watch;
@@ -84,6 +85,7 @@ pub struct Telemetry {
     // Label-less vec: absent until the first successful run
     pub(crate) empty_folder_last_success: GaugeVec,
     pub(crate) transfers_stalled: IntGauge,
+    pub(crate) setup_required: IntGauge,
     // Feature 039
     pub(crate) pipeline_items: IntGaugeVec,
     pub(crate) pipeline_actions: IntCounterVec,
@@ -229,6 +231,11 @@ impl Telemetry {
             transfers_stalled: IntGauge::with_opts(opts(
                 "transfers_stalled",
                 "Put.io transfers with no progress for the stall threshold, at the last check.",
+            ))
+            .unwrap(),
+            setup_required: IntGauge::with_opts(opts(
+                "setup_required",
+                "1 while the daemon waits in setup mode for its first-run setup.",
             ))
             .unwrap(),
             pipeline_items: IntGaugeVec::new(
@@ -559,6 +566,7 @@ impl Telemetry {
             Box::new(self.empty_folder_delete_failures.clone()),
             Box::new(self.empty_folder_last_success.clone()),
             Box::new(self.transfers_stalled.clone()),
+            Box::new(self.setup_required.clone()),
             Box::new(self.pipeline_items.clone()),
             Box::new(self.pipeline_actions.clone()),
             Box::new(self.nas_downloads_paused.clone()),

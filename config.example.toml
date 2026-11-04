@@ -29,6 +29,16 @@ token = "YOUR_OAUTH_TOKEN_HERE"
 # password = "YOUR_APP_PASSWORD_HERE"
 
 # ============================================================================
+# Put.io app (feature 013)
+# ============================================================================
+# The setup wizard and `putio-sync setup` link to Put.io with the device link
+# (enter a code at https://put.io/link) when an app ID is known. Builds carry
+# one; set your own Put.io app's ID here or in PUTIO_SYNC_APP_ID (which wins).
+# Without one, setup asks you to paste a token instead.
+# [putio]
+# app_id = "1234"
+
+# ============================================================================
 # Sync Configuration
 # ============================================================================
 [sync]
@@ -135,6 +145,11 @@ reverse_sort = false
 # Omit to use the default list; set [] to disable the guard.
 blocked_extensions = ["exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs",
                       "js", "jar", "ps1", "lnk", "apk", "dmg", "pkg"]
+
+# What to download for the whole account: a preset name (video, audio, ebooks,
+# no-binaries, everything, or your own below). Folder rules can still set their
+# own. Unset downloads everything except blocked_extensions. Setup sets this.
+# preset = "video"
 
 # ----------------------------------------------------------------------------
 # Folder rules (feature 009)
