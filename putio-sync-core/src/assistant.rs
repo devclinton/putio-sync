@@ -8,6 +8,8 @@
 use crate::config::{settings_table, Config};
 use crate::config_lint::{self, ConfigWarning};
 use crate::error::{CoreError, CoreResult};
+use crate::pattern;
+use crate::rules::RuleSet;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -170,6 +172,69 @@ pub fn risks_in(config: &Config, host: &Host) -> Vec<Risk> {
             &["logging.level", "logging.file_enabled"],
             format!("The log file is on at level {level}, so it grows quickly."),
         );
+    }
+
+    let mut patterns: Vec<(&'static str, String, &str)> = Vec::new();
+    for (key, what, text) in [
+        (
+            "download.whitelist_patterns",
+            "Only download",
+            &download.whitelist_patterns,
+        ),
+        (
+            "download.blacklist_patterns",
+            "Never download",
+            &download.blacklist_patterns,
+        ),
+    ] {
+        if let Some(text) = text {
+            patterns.push((key, what.to_string(), text));
+        }
+    }
+    for rule in &download.rules {
+        for (what, text) in [
+            ("Only download", &rule.include),
+            ("Never download", &rule.exclude),
+        ] {
+            if let Some(text) = text {
+                patterns.push((
+                    "download.rules",
+                    format!("Folder rule {}: {what}", rule.path),
+                    text,
+                ));
+            }
+        }
+    }
+    for (key, what, text) in patterns {
+        for warning in pattern::check(text).unwrap_or_default() {
+            add(
+                "pattern_warning",
+                Level::Warning,
+                &[key],
+                format!("{what} `{}`: {warning}.", text.trim()),
+            );
+        }
+    }
+
+    let rules = RuleSet::from_config(download);
+    for rule in download
+        .rules
+        .iter()
+        .filter(|r| r.delete_blocked == Some(true))
+    {
+        let include = rules.resolve(&rule.path).include.value;
+        if !include.is_empty() {
+            add(
+                "delete_unmatched",
+                Level::Warning,
+                &["download.rules"],
+                format!(
+                    "Files under {} that don't match `{}` are deleted from Put.io at each sync.",
+                    rule.path,
+                    include.as_str()
+                ),
+            );
+        }
     }
 
     found.sort_by(|a, b| (a.level, a.id).cmp(&(b.level, b.id)));
@@ -368,6 +433,7 @@ fn line_of(text: &str, offset: usize) -> usize {
 mod tests {
     use super::*;
     use crate::config::{ArrKind, ArrServer, AuthConfig};
+    use crate::rules::FolderRule;
 
     /// A host with no container and `temp` as its only temporary folder
     fn host(temp: &Path) -> Host {
@@ -380,6 +446,51 @@ mod tests {
 
     fn ids(config: &Config, host: &Host) -> Vec<&'static str> {
         risks_in(config, host).into_iter().map(|r| r.id).collect()
+    }
+
+    #[test]
+    fn pattern_warnings_name_the_setting() {
+        let mut config = Config::default();
+        config.download.target_directory = PathBuf::from("/srv/dl");
+        config.download.whitelist_patterns = Some("*.mkv OR".into());
+        config.download.rules = vec![FolderRule {
+            path: "Movies".into(),
+            exclude: Some("*[Ss]ample*".into()),
+            ..FolderRule::default()
+        }];
+        let found = risks_in(&config, &host(Path::new("/scratch")));
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found.iter().all(|r| r.id == "pattern_warning"));
+        assert_eq!(found[0].keys, ["download.whitelist_patterns"]);
+        assert!(found[0].message.contains("Only download"));
+        assert_eq!(found[1].keys, ["download.rules"]);
+        assert!(found[1]
+            .message
+            .contains("Folder rule Movies: Never download"));
+        assert!(found[1].message.contains("brackets are literal"));
+    }
+
+    #[test]
+    fn delete_blocked_with_an_only_download_pattern() {
+        let mut config = Config::default();
+        config.download.target_directory = PathBuf::from("/srv/dl");
+        config.download.rules = vec![FolderRule {
+            path: "Movies".into(),
+            delete_blocked: Some(true),
+            ..FolderRule::default()
+        }];
+        let h = host(Path::new("/scratch"));
+        assert!(ids(&config, &h).is_empty(), "no pattern");
+        config.download.whitelist_patterns = Some("*.mkv".into());
+        let found = risks_in(&config, &h);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, "delete_unmatched");
+        assert_eq!(
+            found[0].message,
+            "Files under Movies that don't match `*.mkv` are deleted from Put.io at each sync."
+        );
+        config.download.rules[0].include = Some(String::new());
+        assert!(ids(&config, &h).is_empty(), "the rule clears it");
     }
 
     #[test]

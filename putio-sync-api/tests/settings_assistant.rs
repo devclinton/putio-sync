@@ -417,3 +417,23 @@ async fn invalid_or_oversized_import_is_400() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(response["error"].as_str().unwrap().contains("1 MB"));
 }
+
+#[tokio::test]
+async fn import_with_a_bad_pattern_is_refused() {
+    let app = test_app().await;
+    let before_file = config_text(&app);
+    let text = "[download]\nwhitelist_patterns = \"*.{mkv\"\n";
+    let (status, response) = post(
+        &app,
+        "/settings/import",
+        json!({"toml": text, "apply": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    let error = response["error"].as_str().unwrap();
+    assert!(
+        error.contains("whitelist_patterns (Only download): unbalanced { }"),
+        "{error}"
+    );
+    assert_eq!(config_text(&app), before_file);
+}

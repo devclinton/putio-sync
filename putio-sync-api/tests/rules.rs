@@ -555,3 +555,178 @@ async fn on_existing_is_set_inherited_and_cleared() {
         json!({ "value": "resume", "from": null })
     );
 }
+
+#[tokio::test]
+async fn patterns_are_saved_inherited_and_previewed() {
+    let (app, _mocks) = tree_app(None).await;
+    let (status, body) = call(
+        &app,
+        Method::PUT,
+        "/rules/folder/100",
+        Some(json!({ "exclude": " Extras/* ", "delete_blocked": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(file_text(&app).contains("exclude = \"Extras/*\""));
+
+    let movies = get(&app, "/rules/folder/100").await;
+    assert_eq!(movies["rule"]["exclude"], "Extras/*");
+    assert_eq!(movies["rule"]["include"], Value::Null);
+    let extras = get(&app, "/rules/folder/110").await;
+    assert_eq!(
+        extras["effective"]["exclude"],
+        json!({ "value": "Extras/*", "from": "Movies" })
+    );
+    assert_eq!(
+        extras["effective"]["include"],
+        json!({ "value": "", "from": null })
+    );
+
+    // the saved rule: notes.txt in the nested folder is refused by the pattern
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        "/rules/preview",
+        Some(json!({ "folder_id": 100 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["download"], 1);
+    assert_eq!(body["blocked"], 2);
+    let notes = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "notes.txt")
+        .unwrap();
+    assert_eq!(notes["decision"], "blocked");
+    assert_eq!(notes["reason"], "matches never-download pattern `Extras/*`");
+    assert_eq!(notes["rule"], "Movies");
+    assert_eq!(notes["would_delete"], true);
+    assert_eq!(
+        body["downloads"],
+        json!([{ "file_id": 101, "name": "film.mkv", "path": "Movies" }])
+    );
+
+    // a candidate with AND / OR / NOT
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        "/rules/preview",
+        Some(json!({ "folder_id": 100, "rule": { "include": "*.mkv OR *.txt -notes" } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["download"], 1);
+    let notes = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "notes.txt")
+        .unwrap();
+    assert_eq!(
+        notes["reason"],
+        "doesn't match only-download pattern `*.mkv OR *.txt -notes`"
+    );
+
+    // "" clears the inherited pattern and keeps the rule
+    let (status, body) = call(
+        &app,
+        Method::PUT,
+        "/rules/folder/110",
+        Some(json!({ "exclude": "" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let extras = get(&app, "/rules/folder/110").await;
+    assert_eq!(extras["rule"]["exclude"], "");
+    assert_eq!(
+        extras["effective"]["exclude"],
+        json!({ "value": "", "from": "Movies/Extras" })
+    );
+}
+
+#[tokio::test]
+async fn a_bad_pattern_is_refused() {
+    let (app, _mocks) = tree_app(None).await;
+    let before = file_text(&app);
+    for body in [
+        json!({ "exclude": "\"abc" }),
+        json!({ "include": "*.{mkv" }),
+    ] {
+        let (status, err) = call(&app, Method::PUT, "/rules/folder/100", Some(body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{err}");
+        let text = err.to_string();
+        assert!(
+            text.contains("Never download: unclosed quote")
+                || text.contains("Only download: unbalanced { }"),
+            "{text}"
+        );
+    }
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        "/rules/preview",
+        Some(json!({ "folder_id": 100, "rule": { "exclude": "OR" } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(file_text(&app), before);
+}
+
+#[tokio::test]
+async fn preview_takes_account_wide_patterns_at_the_root() {
+    let (mut app, _mocks) = tree_app(None).await;
+    let _root = app
+        .mock_files_list(
+            0,
+            json!({ "status": "OK", "parent": entry(0, "Your Files", "FOLDER", -1), "files": [entry(100, "Movies", "FOLDER", 0)] }),
+        )
+        .await;
+    let before = file_text(&app);
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        "/rules/preview",
+        Some(json!({ "folder_id": 0, "global": { "include": "*.mkv", "exclude": "" } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["files"], 3);
+    assert_eq!(body["download"], 1);
+    let notes = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "notes.txt")
+        .unwrap();
+    assert_eq!(
+        notes["reason"],
+        "doesn't match only-download pattern `*.mkv`"
+    );
+    assert_eq!(notes["rule"], Value::Null);
+
+    let (status, err) = call(
+        &app,
+        Method::POST,
+        "/rules/preview",
+        Some(json!({ "folder_id": 0, "global": { "exclude": "\"x" } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        err.to_string()
+            .contains("blacklist_patterns (Never download): unclosed quote"),
+        "{err}"
+    );
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        "/rules/preview",
+        Some(json!({ "folder_id": 0, "rule": { "exclude": "x" } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(file_text(&app), before);
+    assert_eq!(get(&app, "/rules").await["global"]["include"], "");
+}

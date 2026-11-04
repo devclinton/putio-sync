@@ -518,6 +518,7 @@ impl SetupChoices {
             config.arr = arr.clone();
         }
         crate::rules::validate(&config.download.rules, &config.download.presets)?;
+        crate::rules::validate_root_patterns(&config.download)?;
         crate::rules::validate_root_preset(
             config.download.preset.as_deref(),
             &config.download.presets,

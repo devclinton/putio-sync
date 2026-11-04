@@ -318,6 +318,17 @@ pub struct PreviewItem {
     pub would_delete: bool,
 }
 
+/// One file a preview would download
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewDownload {
+    /// Put.io file id
+    pub file_id: i64,
+    /// File name
+    pub name: String,
+    /// Folder path relative to the Put.io root
+    pub path: String,
+}
+
 /// What rules would do under a folder (`preview_rules`); nothing is changed
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RulePreview {
@@ -335,10 +346,15 @@ pub struct RulePreview {
     pub items: Vec<PreviewItem>,
     /// More blocked or skipped files than `items` holds
     pub truncated: bool,
+    /// Files that would be downloaded, the first `PREVIEW_DOWNLOADS` (feature 020)
+    pub downloads: Vec<PreviewDownload>,
 }
 
 /// How many files a preview lists
 pub const PREVIEW_ITEMS: usize = 200;
+
+/// How many downloads a preview lists
+pub const PREVIEW_DOWNLOADS: usize = 50;
 
 /// Worker statistics for bandwidth tracking
 #[derive(Debug, Clone)]
@@ -1779,6 +1795,13 @@ impl DownloadManager {
             let would_delete = match &decision {
                 Decision::Download => {
                     preview.download += 1;
+                    if preview.downloads.len() < PREVIEW_DOWNLOADS {
+                        preview.downloads.push(PreviewDownload {
+                            file_id: file.id,
+                            name: file.name,
+                            path,
+                        });
+                    }
                     continue;
                 }
                 Decision::Skipped { .. } => {

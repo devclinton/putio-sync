@@ -454,3 +454,55 @@ async fn on_existing_per_folder() {
     };
     assert_eq!(download_extras(vec![old], false, true).await.1, [7u8; 100]);
 }
+
+/// Feature 020: the account-wide Only / Never download patterns refuse files in the sync,
+/// recorded as blocked with the pattern as the reason; a folder rule's own pattern wins
+#[tokio::test]
+async fn account_wide_patterns_refuse_files() {
+    let mut server = mockito::Server::new_async().await;
+    mock_tree(&mut server).await;
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(
+        Database::new(dir.path().join(".putiosync.db"))
+            .await
+            .unwrap(),
+    );
+    let client = Arc::new(PutioApiClient::with_base_url(
+        "test-putio-token".to_string(),
+        server.url(),
+    ));
+    let settings = DownloadSettings {
+        target_directory: dir.path().to_path_buf(),
+        whitelist_patterns: Some("*.mkv,*.flac,*.txt".to_string()),
+        blacklist_patterns: Some("Extras/*".to_string()),
+        rules: vec![FolderRule {
+            include: Some(String::new()),
+            ..rule("Music")
+        }],
+        ..DownloadSettings::default()
+    };
+    let mut config = DownloadConfig::from(&settings);
+    config.max_retries = 0;
+    let decision = config.effective("Movies").decide("info.nfo");
+    assert!(matches!(decision, Decision::Blocked { .. }));
+    assert_eq!(
+        decision.reason(),
+        "doesn't match only-download pattern `*.mkv,*.flac,*.txt`"
+    );
+    let manager = DownloadManager::new(client, db.clone(), config);
+
+    manager.enqueue_tree(0).await.unwrap();
+    // film.mkv, song.flac, cover.jpg (Music clears Only download), x.mkv; notes.txt is
+    // under Extras and setup.exe / tool.exe stay type-blocked
+    assert_eq!(queued(&db).await, vec![11, 31, 32, 41]);
+    let decisions = db.rule_decisions().recent(10).await.unwrap();
+    let notes = decisions.iter().find(|d| d.file_id == 21).unwrap();
+    assert_eq!(notes.decision, "blocked");
+    assert_eq!(notes.rule, None);
+    assert_eq!(notes.reason, "matches never-download pattern `Extras/*`");
+    let nfo = decisions.iter().find(|d| d.file_id == 12).unwrap();
+    assert_eq!(
+        nfo.reason,
+        "doesn't match only-download pattern `*.mkv,*.flac,*.txt`"
+    );
+}

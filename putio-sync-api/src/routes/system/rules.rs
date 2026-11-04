@@ -7,7 +7,7 @@
 //! - POST   /rules/delete            - Remove a rule by path (`{path}`)
 //! - PUT    /rules/presets/{name}    - Create a user preset or override a built-in
 //! - DELETE /rules/presets/{name}    - Delete a user preset or reset a built-in
-//! - POST   /rules/preview           - What a rule would do under a folder; changes nothing
+//! - POST   /rules/preview           - What a rule or the account-wide patterns would do; changes nothing
 //! - GET    /rules/decisions         - Recent blocked, skipped and deleted files
 //! - POST   /rules/decisions/clear   - Forget the recorded decisions
 //!
@@ -56,6 +56,10 @@ pub struct RuleBody {
     pub preset: Option<String>,
     pub allow: Vec<String>,
     pub block: Vec<String>,
+    /// Only download (feature 020): `None` inherits, `""` clears the inherited pattern
+    pub include: Option<String>,
+    /// Never download (feature 020): `None` inherits, `""` clears the inherited pattern
+    pub exclude: Option<String>,
     pub skip: Option<bool>,
     pub delete_blocked: Option<bool>,
     pub delete_after_download: Option<bool>,
@@ -72,6 +76,8 @@ impl RuleBody {
             preset: rule.preset.clone(),
             allow: rule.allow.clone(),
             block: rule.block.clone(),
+            include: rule.include.clone(),
+            exclude: rule.exclude.clone(),
             skip: rule.skip,
             delete_blocked: rule.delete_blocked,
             delete_after_download: rule.delete_after_download,
@@ -80,14 +86,21 @@ impl RuleBody {
         }
     }
 
-    /// The rule for `path`, extensions normalised and deduplicated; an empty preset name
-    /// means none
+    /// The rule for `path`, extensions normalised and deduplicated, patterns trimmed and
+    /// checked; an empty preset name means none
     fn into_rule(self, path: &str) -> Result<FolderRule, ApiError> {
+        let pattern = |text: Option<String>, what: &str| {
+            let text = text.map(|t| t.trim().to_string());
+            rules::check_pattern(text.as_deref(), what).map_err(invalid)?;
+            Ok::<_, ApiError>(text)
+        };
         Ok(FolderRule {
             path: path.to_string(),
             preset: self.preset.filter(|p| !p.trim().is_empty()),
             allow: extensions(&self.allow)?,
             block: extensions(&self.block)?,
+            include: pattern(self.include, "Only download")?,
+            exclude: pattern(self.exclude, "Never download")?,
             skip: self.skip,
             delete_blocked: self.delete_blocked,
             delete_after_download: self.delete_after_download,
@@ -130,6 +143,10 @@ pub struct FilterView {
 pub struct EffectiveView {
     pub filter: FilterView,
     pub preset: SourcedView<Option<String>>,
+    /// Only download; `""` when no pattern is in force
+    pub include: SourcedView<String>,
+    /// Never download; `""` when no pattern is in force
+    pub exclude: SourcedView<String>,
     pub skip: SourcedView<bool>,
     pub delete_blocked: SourcedView<bool>,
     pub delete_after_download: SourcedView<bool>,
@@ -151,6 +168,14 @@ impl From<Effective> for EffectiveView {
                 from: e.filter.from,
             },
             preset: part(e.preset),
+            include: SourcedView {
+                value: e.include.value.as_str().to_string(),
+                from: e.include.from,
+            },
+            exclude: SourcedView {
+                value: e.exclude.value.as_str().to_string(),
+                from: e.exclude.from,
+            },
             skip: part(e.skip),
             delete_blocked: part(e.delete_blocked),
             delete_after_download: part(e.delete_after_download),
@@ -176,6 +201,10 @@ pub struct PresetView {
 #[derive(Debug, Serialize)]
 pub struct GlobalView {
     pub blocked_extensions: Vec<String>,
+    /// `[download] whitelist_patterns` (Only download), `""` when unset
+    pub include: String,
+    /// `[download] blacklist_patterns` (Never download), `""` when unset
+    pub exclude: String,
     pub delete_after_download: bool,
     pub on_existing: ExistingFile,
 }
@@ -246,6 +275,16 @@ fn rules_view(config: &Config) -> RulesResponse {
         presets: presets_view(config),
         global: GlobalView {
             blocked_extensions: config.download.blocked_extensions.clone(),
+            include: config
+                .download
+                .whitelist_patterns
+                .clone()
+                .unwrap_or_default(),
+            exclude: config
+                .download
+                .blacklist_patterns
+                .clone()
+                .unwrap_or_default(),
             delete_after_download: config.download.delete_after_download,
             on_existing: config.download.on_existing(),
         },
@@ -506,6 +545,24 @@ pub struct PreviewRequest {
     pub folder_id: i64,
     /// Replaces the folder's own rule; omitted = the saved rules
     pub rule: Option<RuleBody>,
+    /// Replaces the account-wide Only / Never download patterns (feature 020)
+    pub global: Option<GlobalPatterns>,
+}
+
+/// Candidate `[download] whitelist_patterns` / `blacklist_patterns`; null or `""` = unset
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct GlobalPatterns {
+    pub include: Option<String>,
+    pub exclude: Option<String>,
+}
+
+/// One file a preview would download
+#[derive(Debug, Serialize)]
+pub struct PreviewDownloadView {
+    pub file_id: i64,
+    pub name: String,
+    pub path: String,
 }
 
 /// One blocked or skipped file in a preview
@@ -549,6 +606,8 @@ pub struct PreviewResponse {
     pub would_delete: usize,
     pub items: Vec<PreviewItemView>,
     pub truncated: bool,
+    /// The first files that would be downloaded
+    pub downloads: Vec<PreviewDownloadView>,
 }
 
 /// Dry run: list the folder's tree and decide each file with the candidate rule.
@@ -562,6 +621,7 @@ async fn preview(
     let request = body(request)?;
     let path = folder_path(&state, request.folder_id).await?;
     let mut config = state.config.read().await.clone();
+    let changed = request.rule.is_some() || request.global.is_some();
     if let Some(rule) = request.rule {
         if request.folder_id == 0 {
             return Err(root_refused());
@@ -569,6 +629,14 @@ async fn preview(
         let rule = rule.into_rule(&path)?;
         let cleared = rule.is_empty();
         set_rule(&mut config, &path, (!cleared).then_some(rule));
+    }
+    if let Some(global) = request.global {
+        let set =
+            |text: Option<String>| text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+        config.download.whitelist_patterns = set(global.include);
+        config.download.blacklist_patterns = set(global.exclude);
+    }
+    if changed {
         config.validate().map_err(invalid)?;
     }
     let download_config = crate::extract_download_config(&config);
@@ -591,6 +659,15 @@ async fn preview(
         would_delete: preview.would_delete,
         items: preview.items.into_iter().map(Into::into).collect(),
         truncated: preview.truncated,
+        downloads: preview
+            .downloads
+            .into_iter()
+            .map(|d| PreviewDownloadView {
+                file_id: d.file_id,
+                name: d.name,
+                path: d.path,
+            })
+            .collect(),
     }))
 }
 

@@ -18,6 +18,7 @@ import {
   exportSettings,
   get,
   importSettings,
+  post,
   previewArrSetup,
   previewSettings,
   put,
@@ -32,7 +33,7 @@ import { networkBeforeSave, networkExtra } from "../network.js";
 import { tailscaleBeforeSave, tailscaleExtra } from "../tailscale.js";
 import { confirm, h, toast } from "../app.js";
 import { relative } from "../format.js";
-import { settingsCards } from "../rules.js";
+import { previewView, settingsCards } from "../rules.js";
 
 // Field kinds: b checkbox, n number, n? number or empty, s text, s? text or empty,
 // l one entry per line, or an array of <select> values.
@@ -51,8 +52,8 @@ const GROUPS = [
       ["retry_initial_delay_secs", "First retry delay (s)", "Doubles on each retry", "n", 0],
       ["sort_order", "Sort order", "Order new files are queued in", ["ByDate", "ByName", "ByExtension", "BySize"]],
       ["progress_style", "Progress style", "Console progress bars", ["PerFile", "Overall", "Individual", "Rotating", "None"]],
-      ["whitelist_patterns", "Only download", "Glob patterns, e.g. *.mkv; empty for all", "s?"],
-      ["blacklist_patterns", "Never download", "Glob patterns, e.g. *.exe", "s?"],
+      ["whitelist_patterns", "Only download", "Patterns, e.g. *.mkv OR *.mp4; empty for all", "s?"],
+      ["blacklist_patterns", "Never download", "e.g. *sample* OR *.exe", "s?"],
       ["blocked_extensions", "Blocked extensions", "One per line, without the dot", "l"],
       ["reverse_sort", "Reverse sort", "Queue in the opposite order", "b"],
       ["on_existing", "When a file already exists", null, [
@@ -64,6 +65,7 @@ const GROUPS = [
       ["delete_after_download", "Delete from Put.io", "Remove each file from Put.io once downloaded", "b"],
       ["delete_empty_folders", "Delete empty folders", "Remove Put.io folders left empty", "b"],
     ],
+    extra: downloadExtra,
   },
   {
     key: "watcher",
@@ -535,6 +537,36 @@ const TRISTATE = [
 ];
 
 /** The override editors and the effective table; `read()` gives `{categories, watch}` */
+/** Preview of the typed Only and Never download patterns over the whole account (020) */
+function downloadExtra() {
+  const out = h("div", { class: "rule-preview", "aria-live": "polite" });
+  const value = (name) => document.getElementById(`set-download-${name}`).value;
+  const run = async (ev) => {
+    const button = ev.currentTarget;
+    button.disabled = true;
+    out.replaceChildren(h("p", { class: "muted", text: "Checking…" }));
+    try {
+      const p = await post("/rules/preview", { folder_id: 0, global: { include: value("whitelist_patterns"), exclude: value("blacklist_patterns") } });
+      out.replaceChildren(h("div", {}, previewView(p)));
+    } catch (e) {
+      out.replaceChildren(e.status === 401 || e.status === 429 ? "" : h("p", { class: "error-text", text: reason(e) }));
+    }
+    if (button.isConnected) button.disabled = false;
+  };
+  return {
+    nodes: [
+      h(
+        "div",
+        { class: "toolbar spaced" },
+        h("button", { type: "button", class: "btn btn-small", onclick: run }, "Preview patterns"),
+        h("small", { class: "muted", text: "Lists your whole Put.io account; this can take a while." }),
+      ),
+      out,
+    ],
+    read: () => ({}),
+  };
+}
+
 function precheckExtra(data) {
   const categories = overrides("categories", "Per category", "The *arr category, e.g. sonarr", data.categories);
   const watch = overrides("watch", "Per watch folder", "A watched folder, as listed above", data.watch);

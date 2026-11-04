@@ -1,7 +1,9 @@
 // Feature 045: the filter language and sort helper in ui/query.js
-// (contracts/filter-grammar.md). Run with `node --test`; tests/ui_js.rs runs it in cargo test.
+// (contracts/filter-grammar.md), and feature 020's shared cases, which the Rust matcher
+// runs too. Run with `node --test`; tests/ui_js.rs runs it in cargo test.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { filterMatcher, formatSort, parseFilter, parseSort, sortRows } from "../../ui/query.js";
 
@@ -91,6 +93,16 @@ test("negation applies per term inside an OR group", () => {
   // -mkv OR -movie: shown unless the name has both
   assert.deepEqual(shown("-mkv OR -movie", NAMES).includes("movie.mkv"), false);
   assert.deepEqual(shown("-mkv OR -movie", NAMES).includes("setup.exe"), true);
+});
+
+test("the shared filter cases (feature 020)", () => {
+  const cases = JSON.parse(readFileSync(new URL("../../../putio-sync-core/tests/data/filter-cases.json", import.meta.url), "utf8"));
+  assert.ok(cases.length >= 40);
+  for (const c of cases) {
+    const m = filterMatcher(c.filter);
+    const got = c.paths ? c.paths.filter((p) => m(p.split("/").pop(), p)) : c.names.filter((n) => m(n));
+    assert.deepEqual(got, c.shown, JSON.stringify(c.filter));
+  }
 });
 
 test("parseFilter returns AND groups of OR terms", () => {

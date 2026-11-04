@@ -3,6 +3,9 @@
 What the operator types in the filter box on the Put.io, Transfers and Local files pages, and
 what `ui/query.js` exports to the pages.
 
+> Feature 020 extended this language (`,` as OR, `{a,b}`, `/` path terms) and shares it with
+> saved patterns in Rust: see `specs/020-glob-filters/contracts/pattern-grammar.md`.
+
 ## Grammar
 
 ```text

@@ -260,4 +260,29 @@ mod tests {
             f.summary
         );
     }
+
+    #[tokio::test]
+    async fn config_warns_about_deleting_what_a_pattern_skips() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = ctx("http://127.0.0.1:9", dir.path(), None);
+        c.config.download.target_directory = dir.path().join("dl");
+        c.config.download.rules = vec![putio_sync_core::rules::FolderRule {
+            path: "Movies".into(),
+            include: Some("*.mkv".into()),
+            delete_blocked: Some(true),
+            ..Default::default()
+        }];
+        let f = config(&c).await;
+        assert_eq!(f.status, Status::Warning);
+        assert_eq!(f.items[0].key, "delete_unmatched");
+        assert!(
+            f.items[0]
+                .detail
+                .as_deref()
+                .unwrap_or("")
+                .contains("`*.mkv`"),
+            "{:?}",
+            f.items[0]
+        );
+    }
 }

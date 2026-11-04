@@ -16,7 +16,7 @@ export function listControls({ query, columns, onChange, label = "Filter by name
   let match = filterMatcher(text);
   const values = Object.fromEntries(keys.map((k) => [k, columns[k].value]));
 
-  const filter = h("input", { type: "search", class: "input", placeholder: "Filter: *.mkv -sample", title: "Spaces: all must match. OR or |: either. -word or NOT: leave out. * and ? are wildcards.", "aria-label": label, value: text, oninput: () => ((text = filter.value), (match = filterMatcher(text)), changed()) });
+  const filter = h("input", { type: "search", class: "input", placeholder: "Filter: *.mkv -sample", title: "Spaces: all must match. OR, | or a comma: either. -word or NOT: leave out. * and ? are wildcards.", "aria-label": label, value: text, oninput: () => ((text = filter.value), (match = filterMatcher(text)), changed()) });
   const menu = h(
     "select",
     { class: "input sort-menu", "aria-label": "Sort", onchange: () => ((sort = parseSort(menu.value, keys)), changed()) },

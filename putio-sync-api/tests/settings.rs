@@ -604,3 +604,27 @@ async fn precheck_hold_keys_save_and_validate() {
         "{text}"
     );
 }
+
+#[tokio::test]
+async fn a_bad_download_pattern_is_400() {
+    // feature 020: Only / Never download are checked strictly and named in the error
+    let app = test_app().await;
+    let path = "/settings/download";
+    let before = std::fs::read_to_string(config_path(&app)).unwrap();
+    let mut body = get_ok(&app, path).await;
+    body["blacklist_patterns"] = json!("\"sample");
+    let (status, response) = put(&app, path, body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    let error = response["error"].as_str().unwrap();
+    assert!(
+        error.contains("blacklist_patterns (Never download): unclosed quote"),
+        "{error}"
+    );
+    assert_eq!(std::fs::read_to_string(config_path(&app)).unwrap(), before);
+
+    message(&app, path, "whitelist_patterns", json!("*.mkv,*.mp4")).await;
+    assert_eq!(
+        saved(&app).download.whitelist_patterns.as_deref(),
+        Some("*.mkv,*.mp4")
+    );
+}

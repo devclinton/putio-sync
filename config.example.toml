@@ -127,19 +127,17 @@ sort_order = "by-date"
 # Default: false
 reverse_sort = false
 
-# Whitelist file patterns (glob patterns)
-# Only download files matching these patterns
-# Example: "*.mkv,*.mp4,*.avi" - only download video files
-# Set to null or omit to allow all files
-# Default: null
-# whitelist_patterns = "*.mkv,*.mp4"
+# Only download files matching this pattern ("Only download" in Settings).
+# Patterns: * any run, ? one character, {a,b} either; OR, | or a comma between
+# terms means either, a space or AND means both, - or NOT leaves out. A term
+# without * or ? matches anywhere in the name; a term with / matches the path from
+# the Put.io root (e.g. "Sample/*"). Case never matters; brackets are literal.
+# Folder rules override it with include. Omit to allow all files.
+# whitelist_patterns = "*.mkv,*.mp4"           # same as "*.{mkv,mp4}" or "*.mkv OR *.mp4"
 
-# Blacklist file patterns (glob patterns)
-# Skip files matching these patterns
-# Example: "*.exe,*.msi" - skip executable files
-# Set to null or omit to allow all files
-# Default: null
-# blacklist_patterns = "*.exe,*.bat,*.msi"
+# Never download files matching this pattern ("Never download" in Settings).
+# Folder rules override it with exclude. Omit to block nothing by name.
+# blacklist_patterns = "*sample* OR *.exe"
 
 # File extensions (without dot, case-insensitive) that are never downloaded.
 # Omit to use the default list; set [] to disable the guard.
@@ -163,6 +161,8 @@ blocked_extensions = ["exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs",
 #
 #   preset                 video, audio, ebooks, no-binaries, everything, or your own
 #   allow / block          extra extensions on top of the preset
+#   include / exclude      Only / Never download patterns, as above; "" clears
+#                          an inherited one. Checked before the type filter.
 #   skip                   download nothing in this folder
 #   delete_blocked         delete files the rule blocks from Put.io (one call per sync)
 #   delete_after_download  / on_existing: override the settings above
@@ -174,6 +174,8 @@ blocked_extensions = ["exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs",
 # path = "Shows"
 # preset = "video"
 # allow = ["srt"]
+#
+# exclude = "*sample* OR Sample/*"
 #
 # [[download.rules]]
 # path = "Shows/Old"

@@ -43,6 +43,9 @@ pub mod notification;
 /// Path handling utilities
 pub mod path_utils;
 
+/// Saved file patterns with AND, OR and NOT (feature 020)
+pub mod pattern;
+
 /// Per-folder file rules: presets, inheritance and decisions
 pub mod rules;
 

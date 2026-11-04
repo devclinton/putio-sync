@@ -1,28 +1,38 @@
-// List filter and sort (feature 045), shared by the Put.io, Transfers and Local files pages.
-// No DOM, so tests/ui/query.test.mjs runs it under Node. The filter language is in
-// specs/045-select-sort-filter/contracts/filter-grammar.md: spaces AND, OR or | between
+// List filter and sort (feature 045), shared by the Put.io, Transfers and Local files pages,
+// and the language of saved patterns (feature 020, mirrored by putio_sync_core::pattern).
+// No DOM, so tests/ui/query.test.mjs runs it under Node, with the shared cases in
+// putio-sync-core/tests/data/filter-cases.json. The language is in
+// specs/020-glob-filters/contracts/pattern-grammar.md: spaces AND, OR, | or , between
 // terms (tighter than AND), - or NOT negates, * and ? are globs that match the whole name,
-// a plain term matches anywhere, quotes keep spaces; case never matters.
+// {a,b} is either, a plain term matches anywhere, a term with / is tested against the
+// path, quotes keep spaces; case never matters.
 
-/** Words and operators: `{ text, quoted, neg }`, with `|` split out even inside a word */
+/** Words and operators: `{ text, quoted, neg }`, with `|` and `,` split out even inside a word (but not inside `{…}`) */
 function tokens(text) {
   const out = [];
-  const re = /(-?)"([^"]*)"?|\|+|[^\s|"]+/g;
+  const re = /(-?)"([^"]*)"?|[|,]+|(?:\{[^}\s"|]*\}?|[^\s|",{])+/g;
   for (const m of text.matchAll(re)) out.push(m[2] != null ? { text: m[2], quoted: true, neg: !!m[1] } : { text: m[0], quoted: false });
   return out;
 }
 
 const word = (t, w) => !t.quoted && t.text.toUpperCase() === w;
-const isOr = (t) => word(t, "OR") || (!t.quoted && t.text[0] === "|");
+const isOr = (t) => word(t, "OR") || (!t.quoted && (t.text[0] === "|" || t.text[0] === ","));
 
-/** A case-insensitive matcher for one pattern: anchored when it has * or ? */
+/** A case-insensitive matcher for one pattern: anchored when it has * or ?; `{a,b}` is a group */
 function pattern(text) {
   const glob = /[*?]/.test(text);
-  const body = [...text].map((c) => (c === "*" && glob ? ".*" : c === "?" && glob ? "." : c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("");
-  return new RegExp(glob ? `^${body}$` : body, "is");
+  const part = (s) => [...s].map((c) => (c === "*" && glob ? ".*" : c === "?" && glob ? "." : c.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&"))).join("");
+  const body = text
+    .split(/(\{[^{}]*\})/)
+    .map((s, i) => (i % 2 ? `(?:${s.slice(1, -1).split(",").map(part).join("|")})` : part(s)))
+    .join("");
+  return new RegExp(glob ? `^${body}$` : body, "isu");
 }
 
-/** "a b|-c" → [[a], [b, -c]]: AND-ed groups of OR-ed `{ re, not }` terms */
+/** The path and each tail of it after a `/` */
+const tails = (path) => [path, ...[...path.matchAll(/\//g)].map((m) => path.slice(m.index + 1))];
+
+/** "a b|-c" → [[a], [b, -c]]: AND-ed groups of OR-ed `{ re, not, path }` terms */
 export function parseFilter(text) {
   const groups = [];
   let group = null;
@@ -49,7 +59,7 @@ export function parseFilter(text) {
       p = p.slice(1);
     }
     if (!p) continue;
-    const term = { re: pattern(p), not: neg };
+    const term = { re: pattern(p), not: neg, path: p.includes("/") };
     if (joining && group) group.push(term);
     else groups.push((group = [term]));
     joining = false;
@@ -57,10 +67,18 @@ export function parseFilter(text) {
   return groups;
 }
 
-/** `(name) => bool` for `text`; an empty filter matches every name */
+/**
+ * `(name, path = name) => bool` for `text`; an empty filter matches every name. `path` is
+ * `Folder/Sub/name`; terms with `/` test it and its tails (a non-string, such as the index
+ * `Array.filter` passes, counts as no path).
+ */
 export function filterMatcher(text) {
   const groups = parseFilter(text);
-  return (name) => groups.every((g) => g.some((t) => t.re.test(String(name ?? "")) !== t.not));
+  return (name, path) => {
+    const n = String(name ?? "");
+    const p = typeof path === "string" ? path : n;
+    return groups.every((g) => g.some((t) => (t.path ? tails(p).some((s) => t.re.test(s)) : t.re.test(n)) !== t.not));
+  };
 }
 
 /** "size-desc" → { key: "size", desc: true }; null unless `key` is one of `keys` */

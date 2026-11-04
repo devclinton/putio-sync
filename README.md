@@ -1280,19 +1280,25 @@ no rule sets comes from `[download]`.
 |---|---|
 | `preset` | Which types download: `video`, `audio`, `ebooks`, `no-binaries`, `everything`, or a preset of your own |
 | `allow`, `block` | Extra extensions on top of the preset |
+| `include` | Only download files matching this pattern ("Only download"); `""` clears an inherited one |
+| `exclude` | Never download files matching this pattern ("Never download"); `""` clears an inherited one |
 | `skip` | Download nothing in this folder |
-| `delete_blocked` | Delete the files this rule blocks from Put.io, with one call per sync |
+| `delete_blocked` | Delete the files this rule blocks from Put.io, with one call per sync (with `include`, every file that doesn't match it) |
 | `delete_after_download`, `on_existing` | Override the `[download]` values for this folder (an old rule's `skip_existing` is still read) |
 
 The type filter starts at the root with `blocked_extensions`. A rule's preset
 replaces the filter it inherits; its `allow` and `block` extensions apply after that.
-A blocked extension wins over an allow list.
+A blocked extension wins over an allow list. The patterns are checked first: a file
+matching `exclude`, or not matching `include`, is blocked whatever its type. Patterns
+only ever block; they never let through a type the filter blocks. At the root they come
+from `whitelist_patterns` and `blacklist_patterns` (see [Filtering](#filtering)).
 
 ```toml
 [[download.rules]]
 path = "Shows"
 preset = "video"
 allow = ["srt"]
+exclude = "*sample* OR Sample/*"
 
 [[download.rules]]
 path = "Books"
@@ -1305,7 +1311,8 @@ only = ["cbz", "cbr"]
 
 On the web UI's Put.io page, each folder has a card showing its effective rule and
 where each part comes from. **Set rule** opens an editor with a **Preview** button
-that lists what each file below the folder would get; when a save would delete files
+that lists what each file below the folder would get, and a sample of the files that
+download; when a save would delete files
 from Put.io, it asks first. File rows show a `blocked` or `skipped` badge. Settings
 lists every rule, lets you edit presets, and shows the recently blocked files with
 the rule that decided each one (also logged). Saves keep the rest of `config.toml` as
@@ -1455,17 +1462,40 @@ putio-sync download --all
 
 ### Filtering
 
-Use glob patterns to filter files:
+`[download] whitelist_patterns` (**Only download** in Settings) and `blacklist_patterns`
+(**Never download**) apply wherever folder rules do. Before
+this release they were saved but not applied; a value you set earlier now takes effect.
+Folder rules can override them with `include` and `exclude`.
 
-```bash
-# Whitelist: only download video files
-putio-sync download --all --filter "*.mkv,*.mp4,*.avi"
-
-# Config file approach
+```toml
 [download]
-whitelist_patterns = "*.mkv,*.mp4"
-blacklist_patterns = "*.exe,*.bat"
+whitelist_patterns = "*.mkv,*.mp4"          # or "*.{mkv,mp4}", or "*.mkv OR *.mp4"
+blacklist_patterns = "*sample* OR *.exe"
 ```
+
+The patterns use the same language as the filter boxes of the web UI:
+
+| Pattern | Matches |
+|---|---|
+| `*.mkv` | names ending in `.mkv`; `*` is any run of characters, `?` one character |
+| `sample` | names containing `sample` (a term without `*` or `?` matches anywhere) |
+| `*.mkv OR *.mp4`, `*.mkv \| *.mp4`, `*.mkv,*.mp4` | either |
+| `*.{mkv,mp4}` | either; commas inside braces don't split |
+| `*.mkv *1080p*`, `*.mkv AND *1080p*` | both |
+| `*.mkv -*sample*`, `*.mkv NOT *sample*` | the first but not the second |
+| `Sample/*` | a term with `/` is matched against the path from the Put.io root, e.g. `Movies/Film/Sample/a.mkv` |
+| `"My Show*"` | quotes keep spaces |
+
+OR binds tighter than AND, so `*.mkv OR *.mp4 -sample` means (mkv or mp4) and not
+sample. Case never matters. Brackets are literal: `*[Ss]ample*` matches `[Ss]ample`,
+not `Sample` (use `*sample*`). A pattern with an unclosed quote or brace is refused
+when saved and when the config loads; a stray `OR` or brackets give a warning in
+Settings and in the doctor's Config check. A blocked file is logged with the pattern
+that blocked it, recorded under Recently blocked and counted in the `blocked` metric.
+**Preview patterns** in Settings › Download shows what the typed patterns would do
+across the whole account.
+
+The CLI's `--filter` option of `list` and `delete` still takes a single glob.
 
 #### Executable guard
 
