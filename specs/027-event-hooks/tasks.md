@@ -62,7 +62,7 @@ Tests come first in each task where behaviour changes (Constitution III).
 ## Phase 9: Polish
 
 - [X] T023 [P] Docs: README "Event hooks" section (config, events summary pointing at `EVENTS.md`, security: daemon user, clean environment, masking, retries, timeouts, queue), API, metrics, Settings and doctor tables; `config.example.toml` and `example-config.toml` commented `[[hooks]]` examples; `examples/hooks/on-download.py`; `CHANGELOG.md` Unreleased › Added
-- [ ] T024 Remove 027 from `ROADMAP.md` (and the 027 mention in the pipeline notes stays only as a reference to hooks); merge `origin/main`; `TMPDIR=<scratch> make ci`; push
+- [X] T024 Remove 027 from `ROADMAP.md` (and the 027 mention in the pipeline notes stays only as a reference to hooks); merge `origin/main`; `TMPDIR=<scratch> make ci`; push
 
 ## Dependencies
 
