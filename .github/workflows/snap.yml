@@ -146,8 +146,8 @@ jobs:
 
       - name: Test the daemon service
         run: |
-          # Running the CLI with sudo writes the starter config; a placeholder
-          # Put.io token lets the daemon start without logging in
+          # Running the CLI with sudo writes the starter config; it gets a
+          # placeholder Put.io token instead of logging in
           sudo putio-sync --version
           config=/var/snap/putio-sync/common/config.toml
           sudo test -f "$config"
@@ -163,10 +163,17 @@ jobs:
             fi
             sleep 1
           done
-          curl -fsS http://127.0.0.1:15432/health > /dev/null
-          # The web UI token from `snap set` is in force
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:15432/settings/download)" = 401
-          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer ci-api-token' http://127.0.0.1:15432/settings/download)" = 200
+          # Put.io rejects the placeholder token, so the daemon waits in setup
+          # mode (feature 013): the wizard is served and the rest answers 503
+          curl -fsS http://127.0.0.1:15432/health | grep -q '"status":"setup"'
+          curl -fsS http://127.0.0.1:15432/auth/status | grep -q '"setup_required":true'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:15432/)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer ci-api-token' http://127.0.0.1:15432/settings/download)" = 503
+          # The web UI token from `snap set` is in force: it unlocks the wizard
+          curl -fsS http://127.0.0.1:15432/auth/status | grep -q '"token_configured":true'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:15432/setup/unlock)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Authorization: Bearer wrong' http://127.0.0.1:15432/setup/unlock)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Authorization: Bearer ci-api-token' http://127.0.0.1:15432/setup/unlock)" = 204
 
       - name: Daemon logs
         if: always()
