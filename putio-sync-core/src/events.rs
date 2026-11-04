@@ -44,11 +44,13 @@ pub enum EventType {
     StorageLow,
     /// Sent by the "send test event" button only
     HookTest,
+    /// Sent by a plugin's "send test event" button only
+    PluginTest,
 }
 
 impl EventType {
     /// Every type, in documentation order.
-    pub const ALL: [EventType; 8] = [
+    pub const ALL: [EventType; 9] = [
         EventType::DownloadFinished,
         EventType::DownloadFailed,
         EventType::TransferAdded,
@@ -57,6 +59,7 @@ impl EventType {
         EventType::SyncCompleted,
         EventType::StorageLow,
         EventType::HookTest,
+        EventType::PluginTest,
     ];
 
     /// The wire name, such as `download.finished`.
@@ -70,7 +73,13 @@ impl EventType {
             EventType::SyncCompleted => "sync.completed",
             EventType::StorageLow => "storage.low",
             EventType::HookTest => "hook.test",
+            EventType::PluginTest => "plugin.test",
         }
+    }
+
+    /// Whether only a test button sends it, so `*` leaves it out.
+    pub fn is_test(&self) -> bool {
+        matches!(self, EventType::HookTest | EventType::PluginTest)
     }
 }
 
@@ -205,6 +214,9 @@ pub enum Payload {
     /// `hook.test`
     #[serde(rename = "hook.test")]
     HookTest(HookTest),
+    /// `plugin.test`
+    #[serde(rename = "plugin.test")]
+    PluginTest(PluginTest),
 }
 
 impl Payload {
@@ -219,6 +231,7 @@ impl Payload {
             Payload::SyncCompleted(_) => EventType::SyncCompleted,
             Payload::StorageLow(_) => EventType::StorageLow,
             Payload::HookTest(_) => EventType::HookTest,
+            Payload::PluginTest(_) => EventType::PluginTest,
         }
     }
 
@@ -364,6 +377,15 @@ pub struct HookTest {
     pub message: String,
 }
 
+/// `plugin.test`
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PluginTest {
+    /// The plugin's name
+    pub plugin: String,
+    /// A fixed message
+    pub message: String,
+}
+
 fn bus() -> &'static broadcast::Sender<Arc<Event>> {
     static BUS: OnceLock<broadcast::Sender<Arc<Event>>> = OnceLock::new();
     BUS.get_or_init(|| broadcast::channel(BUS_CAPACITY).0)
@@ -447,6 +469,10 @@ pub fn samples() -> Vec<Payload> {
         }),
         Payload::HookTest(HookTest {
             hook: "home-assistant".to_string(),
+            message: "Test event from putio-sync".to_string(),
+        }),
+        Payload::PluginTest(PluginTest {
+            plugin: "ntfy".to_string(),
             message: "Test event from putio-sync".to_string(),
         }),
     ]

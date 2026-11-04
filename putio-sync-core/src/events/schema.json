@@ -18,7 +18,8 @@
         "transfer.failed",
         "sync.completed",
         "storage.low",
-        "hook.test"
+        "hook.test",
+        "plugin.test"
       ]
     },
     "occurred_at": { "type": "string", "format": "date-time", "description": "UTC, RFC 3339 with milliseconds." },
@@ -41,7 +42,8 @@
     { "properties": { "type": { "const": "transfer.failed" }, "data": { "$ref": "#/$defs/transfer" } } },
     { "properties": { "type": { "const": "sync.completed" }, "data": { "$ref": "#/$defs/sync_completed" } } },
     { "properties": { "type": { "const": "storage.low" }, "data": { "$ref": "#/$defs/storage_low" } } },
-    { "properties": { "type": { "const": "hook.test" }, "data": { "$ref": "#/$defs/hook_test" } } }
+    { "properties": { "type": { "const": "hook.test" }, "data": { "$ref": "#/$defs/hook_test" } } },
+    { "properties": { "type": { "const": "plugin.test" }, "data": { "$ref": "#/$defs/plugin_test" } } }
   ],
   "$defs": {
     "download_finished": {
@@ -116,6 +118,14 @@
       "required": ["hook", "message"],
       "properties": {
         "hook": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+    "plugin_test": {
+      "type": "object",
+      "required": ["plugin", "message"],
+      "properties": {
+        "plugin": { "type": "string" },
         "message": { "type": "string" }
       }
     }

@@ -7,13 +7,13 @@ Tests come first in each task where behaviour changes (Constitution III).
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the `putio-sync-plugins` crate (`Cargo.toml` with core, telemetry, `mlua = { version = "0.11", features = ["lua54", "vendored", "serialize"] }`, tokio, reqwest, serde, serde_json, toml, tracing, chrono; mockito and tempfile for tests; `src/lib.rs`), add it to the workspace `Cargo.toml` and both crate lists in `Dockerfile`
+- [X] T001 Create the `putio-sync-plugins` crate (`Cargo.toml` with core, telemetry, `mlua = { version = "0.11", features = ["lua54", "vendored", "serialize"] }`, tokio, reqwest, serde, serde_json, toml, tracing, chrono; mockito and tempfile for tests; `src/lib.rs`), add it to the workspace `Cargo.toml` and both crate lists in `Dockerfile`
 
 ## Phase 2: Foundational
 
-- [ ] T002 [P] `putio-sync-core/src/events.rs`, `events/schema.json`, `EVENTS.md`, `putio-sync-telemetry/src/hooks.rs` `EVENT_TYPES`, `putio-sync-api/ui/hooks.js` stays as is: add `plugin.test` (`PluginTest { plugin, message }`); `HookConfig::matches` and hook validation treat it like `hook.test`; schema and EVENTS.md tests pass
-- [ ] T003 [P] `putio-sync-telemetry/src/plugins.rs` + `lib.rs`: `putio_sync_plugin_runs_total{plugin,event,result}`, `putio_sync_plugin_run_duration_seconds{plugin}` (buckets 0.01–60 s), `putio_sync_plugin_events_dropped_total{plugin}`; global recorders `record_configured`, `record_run`, `record_dropped`; add to `tests/contract.rs`
-- [ ] T004 `putio-sync-core/src/plugins.rs` + `config.rs`: `PluginSettings` per data-model (`enabled` default false, `timeout_secs` 10 in 1..=60, `memory_mb` 32 in 4..=256, `config: BTreeMap<String, serde_json::Value>`, `secrets: BTreeMap<String, String>`, `approved_hosts`), `validate` (name rule, duplicates, ≤ 32, host syntax, ranges, values are scalars or string lists), `MASK` reuse, `mask`, `unmask(new, current)`; `Config.plugins_dir: Option<PathBuf>`, `Config.plugins: Vec<PluginSettings>` (skip when empty), `Config::plugins_dir_for(config_path)`; unit tests per rule and for mask/unmask
+- [X] T002 [P] `putio-sync-core/src/events.rs`, `events/schema.json`, `EVENTS.md`, `putio-sync-telemetry/src/hooks.rs` `EVENT_TYPES`, `putio-sync-api/ui/hooks.js` stays as is: add `plugin.test` (`PluginTest { plugin, message }`); `HookConfig::matches` and hook validation treat it like `hook.test`; schema and EVENTS.md tests pass
+- [X] T003 [P] `putio-sync-telemetry/src/plugins.rs` + `lib.rs`: `putio_sync_plugin_runs_total{plugin,event,result}`, `putio_sync_plugin_run_duration_seconds{plugin}` (buckets 0.01–60 s), `putio_sync_plugin_events_dropped_total{plugin}`; global recorders `record_configured`, `record_run`, `record_dropped`; add to `tests/contract.rs`
+- [X] T004 `putio-sync-core/src/plugins.rs` + `config.rs`: `PluginSettings` per data-model (`enabled` default false, `timeout_secs` 10 in 1..=60, `memory_mb` 32 in 4..=256, `config: BTreeMap<String, serde_json::Value>`, `secrets: BTreeMap<String, String>`, `approved_hosts`), `validate` (name rule, duplicates, ≤ 32, host syntax, ranges, values are scalars or string lists), `MASK` reuse, `mask`, `unmask(new, current)`; `Config.plugins_dir: Option<PathBuf>`, `Config.plugins: Vec<PluginSettings>` (skip when empty), `Config::plugins_dir_for(config_path)`; unit tests per rule and for mask/unmask
 
 **Checkpoint**: settings, events and metrics tested on their own.
 

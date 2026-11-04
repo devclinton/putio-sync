@@ -14,6 +14,16 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Lua plugins: small sandboxed Lua scripts in a plugins folder (default
+  `plugins` next to the config file), each with a `plugin.toml` manifest that
+  names its events, permissions and config fields. Plugins run on the same
+  events as hooks, under a time and memory limit per call, without `os`, `io`
+  or `require`; a failing or slow plugin never holds up a sync. They may only
+  call the hosts they declare and you approve, and keep a small key-value
+  store. Secrets are masked and never logged. `[[plugins]]` entries turn them
+  on and hold their settings. New event type `plugin.test` and metrics
+  `putio_sync_plugin_runs_total`, `putio_sync_plugin_run_duration_seconds` and
+  `putio_sync_plugin_events_dropped_total` (feature 028).
 - Event hooks: `[[hooks]]` entries run a command or call a webhook when a
   download finishes or fails, a Put.io transfer is added, finishes or fails, a
   sync run ends, or Put.io storage runs low. The event goes as JSON (stdin for
