@@ -203,6 +203,16 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
         )],
     ),
     (
+        "plugins",
+        &[
+            ("plugins_dir", "Folder of Lua plugins; empty for plugins next to the config"),
+            (
+                "plugins",
+                "Lua plugins: which run, their settings and the hosts they may contact",
+            ),
+        ],
+    ),
+    (
         "network",
         &[
             (
@@ -376,6 +386,7 @@ struct ImportBody {
 fn group_of(section: &str) -> &str {
     match section {
         "watch" => "watcher",
+        "plugins_dir" => "plugins",
         other => other,
     }
 }
@@ -405,7 +416,11 @@ async fn import_settings(
     let _ = current.expand_paths();
     let mut changes = assistant::diff(&current, &imported.config).map_err(invalid)?;
     for change in &mut changes {
-        let (section, field) = change.key.split_once('.').unwrap_or((&change.key, ""));
+        // A top-level key (`hooks`, `plugins`, `plugins_dir`) is its own field
+        let (section, field) = change
+            .key
+            .split_once('.')
+            .unwrap_or((&change.key, &change.key));
         let field = field.split('.').next().unwrap_or_default();
         change.live = live
             .get(group_of(section))
@@ -437,6 +452,17 @@ async fn import_settings(
         state.cleanup.configure(&candidate);
         state.storage.configure(&candidate);
         state.hooks.configure(candidate.hooks.clone());
+        state.plugins.configure(candidate.plugins.clone());
+        let plugins_dir = putio_sync_core::plugins::dir_for(
+            candidate.plugins_dir.as_deref(),
+            state
+                .config_path
+                .as_deref()
+                .map(std::path::PathBuf::as_path),
+        );
+        if plugins_dir != state.plugins.dir() {
+            state.plugins.set_dir(plugins_dir);
+        }
         let download = crate::extract_download_config(&candidate);
         *config = candidate;
         drop(config);

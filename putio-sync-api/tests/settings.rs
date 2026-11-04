@@ -753,3 +753,146 @@ async fn a_bad_hook_is_400_naming_hook_and_field() {
     assert!(saved(&app).hooks.is_empty());
     assert!(app.state.hooks.status().is_empty());
 }
+
+// ---- Lua plugins (feature 028) --------------------------------------------------------
+
+fn ntfy(token: &str) -> Value {
+    json!({
+        "name": "ntfy",
+        "enabled": true,
+        "config": { "server": "https://ntfy.example.org", "topic": "nas" },
+        "secrets": { "token": token }
+    })
+}
+
+fn ntfy_status(app: &TestApp) -> putio_sync_plugins::PluginStatus {
+    app.state
+        .plugins
+        .status()
+        .into_iter()
+        .find(|p| p.name == "ntfy")
+        .unwrap()
+}
+
+#[tokio::test]
+async fn plugins_save_masks_secrets_approves_hosts_and_applies_now() {
+    let app = test_app().await;
+    assert_eq!(
+        get_ok(&app, "/settings/plugins").await,
+        json!({ "plugins_dir": null, "plugins": [] })
+    );
+
+    let body = json!({ "plugins_dir": null, "plugins": [ntfy("plugin-secret-1")] });
+    let (status, body) = put(&app, "/settings/plugins", body).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("Applies now: plugins"),
+        "{body}"
+    );
+    // Enabling records the hosts it needs, and the running service has it at once
+    let stored = saved(&app);
+    assert_eq!(stored.plugins[0].approved_hosts, vec!["ntfy.example.org"]);
+    assert_eq!(stored.plugins[0].secrets["token"], "plugin-secret-1");
+    let status = ntfy_status(&app);
+    assert_eq!(status.state, putio_sync_plugins::PluginState::Enabled);
+    assert_eq!(status.approved_hosts, vec!["ntfy.example.org"]);
+
+    let view = get_ok(&app, "/settings/plugins").await;
+    assert_eq!(view["plugins"][0]["secrets"]["token"], "********");
+    assert!(!view.to_string().contains("plugin-secret-1"));
+
+    // Sending the mask back keeps the stored value
+    let mut plugin = view["plugins"][0].clone();
+    plugin["config"]["topic"] = json!("other");
+    let body = json!({ "plugins_dir": null, "plugins": [plugin] });
+    let (status, _) = put(&app, "/settings/plugins", body).await;
+    assert_eq!(status, StatusCode::OK);
+    let stored = saved(&app);
+    assert_eq!(stored.plugins[0].config["topic"], "other");
+    assert_eq!(stored.plugins[0].secrets["token"], "plugin-secret-1");
+
+    // A changed secret alone is a change
+    let mut plugin = view["plugins"][0].clone();
+    plugin["config"]["topic"] = json!("other");
+    plugin["secrets"]["token"] = json!("plugin-secret-2");
+    let body = json!({ "plugins_dir": null, "plugins": [plugin] });
+    let (_, body) = put(&app, "/settings/plugins", body).await;
+    assert!(
+        body["message"].as_str().unwrap().contains("plugins"),
+        "{body}"
+    );
+    assert_eq!(saved(&app).plugins[0].secrets["token"], "plugin-secret-2");
+}
+
+#[tokio::test]
+async fn a_bad_plugin_value_is_400_naming_plugin_and_field() {
+    let app = test_app().await;
+    let mut plugin = ntfy("x");
+    plugin["config"]["server"] = json!(5);
+    let body = json!({ "plugins_dir": null, "plugins": [plugin] });
+    let (status, body) = put(&app, "/settings/plugins", body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("plugins \"ntfy\".config.server"),
+        "{body}"
+    );
+
+    let mut plugin = ntfy("********");
+    plugin["enabled"] = json!(false);
+    let body = json!({ "plugins_dir": null, "plugins": [plugin] });
+    let (status, body) = put(&app, "/settings/plugins", body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"].as_str().unwrap().contains("still masked"),
+        "{body}"
+    );
+    assert!(saved(&app).plugins.is_empty());
+    assert_eq!(
+        ntfy_status(&app).state,
+        putio_sync_plugins::PluginState::Disabled
+    );
+}
+
+#[tokio::test]
+async fn a_new_plugins_folder_is_read_at_once() {
+    let app = test_app().await;
+    let dir = tempfile::tempdir().unwrap();
+    let mine = dir.path().join("mine");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::write(
+        mine.join("plugin.toml"),
+        "name = \"mine\"\nversion = \"1\"\nevents = [\"*\"]\n[[config]]\nkey = \"n\"\ntype = \"integer\"\n",
+    )
+    .unwrap();
+    std::fs::write(mine.join("main.lua"), "return {on_event = function() end}").unwrap();
+
+    // Values are checked against the folder being saved, not the current one
+    let body = json!({
+        "plugins_dir": dir.path(),
+        "plugins": [{ "name": "mine", "enabled": true, "config": { "n": "x" } }]
+    });
+    let (status, body) = put(&app, "/settings/plugins", body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    let body = json!({
+        "plugins_dir": dir.path(),
+        "plugins": [{ "name": "mine", "enabled": true, "config": { "n": 3 } }]
+    });
+    let (status, body) = put(&app, "/settings/plugins", body).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(app.state.plugins.dir().as_deref(), Some(dir.path()));
+    let mine = app
+        .state
+        .plugins
+        .status()
+        .into_iter()
+        .find(|p| p.name == "mine")
+        .unwrap();
+    assert_eq!(mine.state, putio_sync_plugins::PluginState::Enabled);
+}

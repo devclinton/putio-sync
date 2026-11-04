@@ -40,6 +40,6 @@ No secret value appears.
 ## GET /settings/plugins, PUT /settings/plugins, POST /settings/plugins/preview
 
 Body: `{"plugins_dir": null | "...", "plugins": [PluginSettings]}` with `secrets` values
-masked in GET. PUT validates against the manifests (422 naming plugin and field), sets
+masked in GET. PUT validates against the manifests in the folder being saved (400 naming plugin and field, like the other groups), sets
 `approved_hosts` of enabled plugins to their needed hosts, writes the config and applies it
 now. A changed `plugins_dir` reloads from the new folder.

@@ -418,12 +418,29 @@ impl PluginsService {
     /// hosts of each enabled plugin set to the hosts it needs. Plugins not found are
     /// kept as they are.
     pub fn check(&self, settings: &[PluginSettings]) -> Result<Vec<PluginSettings>, String> {
+        let dir = self.dir();
+        self.check_at(dir.as_deref(), settings)
+    }
+
+    /// [`check`](Self::check) against the plugins in `dir`, which a save may be about
+    /// to switch to
+    pub fn check_at(
+        &self,
+        dir: Option<&Path>,
+        settings: &[PluginSettings],
+    ) -> Result<Vec<PluginSettings>, String> {
         let state = self.inner.state.lock().unwrap();
+        let other;
+        let found = if state.dir.as_deref() == dir {
+            &state.found
+        } else {
+            other = discover(dir);
+            &other
+        };
         let mut out = Vec::with_capacity(settings.len());
         for s in settings {
             let mut s = s.clone();
-            if let Some(m) = state
-                .found
+            if let Some(m) = found
                 .iter()
                 .find(|f| f.name == s.name)
                 .and_then(|f| f.loadable())

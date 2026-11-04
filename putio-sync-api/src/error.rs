@@ -29,6 +29,8 @@ pub enum ApiError {
     Conflict(String),
     /// A dependency the route needs is missing (503)
     ServiceUnavailable(String),
+    /// The request is well formed but cannot be acted on now (422)
+    Unprocessable(String),
     /// Too many failed authentication attempts (429 with `Retry-After`)
     TooManyRequests {
         /// Seconds until the client may try again
@@ -60,6 +62,7 @@ impl fmt::Display for ApiError {
             ApiError::InternalError(msg) => write!(f, "Internal error: {}", msg),
             ApiError::Conflict(msg) => write!(f, "Conflict: {}", msg),
             ApiError::ServiceUnavailable(msg) => write!(f, "Service unavailable: {}", msg),
+            ApiError::Unprocessable(msg) => write!(f, "Unprocessable: {}", msg),
             ApiError::TooManyRequests {
                 retry_after_seconds,
             } => write!(f, "Too many requests: retry after {}s", retry_after_seconds),
@@ -109,6 +112,7 @@ impl IntoResponse for ApiError {
             ApiError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             ApiError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg.clone()),
+            ApiError::Unprocessable(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg.clone()),
             ApiError::TooManyRequests { .. } => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "Too many failed authentication attempts".to_string(),

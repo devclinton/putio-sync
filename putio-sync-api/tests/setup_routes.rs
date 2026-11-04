@@ -140,6 +140,8 @@ async fn other_paths_answer_503() {
         "/hooks",
         "/settings/hooks",
         "/events/schema",
+        // And Lua plugins (feature 028)
+        "/plugins",
     ] {
         let (status, _) = s.call(Method::GET, path, Some(&code), None).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
