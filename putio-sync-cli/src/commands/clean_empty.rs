@@ -119,7 +119,7 @@ fn confirm(count: usize) -> Result<bool> {
     Ok(answer == "y" || answer == "yes")
 }
 
-fn build_client(config: &Config) -> Result<PutioApiClient> {
+pub(crate) fn build_client(config: &Config) -> Result<PutioApiClient> {
     let auth = config
         .auth
         .clone()
@@ -141,7 +141,7 @@ fn build_client(config: &Config) -> Result<PutioApiClient> {
     })
 }
 
-fn load_config(config_path: Option<PathBuf>) -> Result<Config> {
+pub(crate) fn load_config(config_path: Option<PathBuf>) -> Result<Config> {
     let path = config_path.unwrap_or_else(|| {
         Config::default_path().expect("Failed to determine default config path")
     });

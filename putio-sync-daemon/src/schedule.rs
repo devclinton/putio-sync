@@ -1,4 +1,4 @@
-//! The daily empty-folder cleanup
+//! The daily empty-folder cleanup, and the Put.io storage loop (feature 033)
 //!
 //! A loop checks the local clock every [`TICK`] and runs the cleanup when the configured
 //! time of day falls between the previous check and now. Missed runs (the daemon was down)
@@ -7,12 +7,15 @@
 
 use chrono::{Local, NaiveDate, NaiveDateTime, NaiveTime};
 use putio_sync_core::cleanup::{CleanupError, CleanupTrigger, EmptyFolderCleanup};
+use putio_sync_storage::{StorageError, StorageService};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// How often the loop looks at the clock
 pub const TICK: Duration = Duration::from_secs(30);
+/// How often the storage gauges are read from Put.io
+pub const STORAGE_REFRESH: Duration = Duration::from_secs(15 * 60);
 
 /// The date whose run is due when the clock moved from `prev` to `now`: `run_at` on that
 /// date lies in `(prev, now]` and that date has not run yet (`last_run`). Times are local
@@ -65,6 +68,50 @@ async fn run_once(cleanup: &EmptyFolderCleanup) {
         }
         // Already logged and counted by the service
         Err(_) => {}
+    }
+}
+
+/// Refresh the Put.io storage gauges every [`STORAGE_REFRESH`], and run the automatic
+/// free-up at `[storage] run_at` while `auto_free` is on; never returns
+pub async fn run_storage(storage: Arc<StorageService>) {
+    let mut ticker = tokio::time::interval(TICK);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut prev = Local::now().naive_local();
+    let mut last_run = None;
+    let mut refreshed: Option<tokio::time::Instant> = None;
+    loop {
+        ticker.tick().await;
+        if refreshed.is_none_or(|at| at.elapsed() >= STORAGE_REFRESH) {
+            refreshed = Some(tokio::time::Instant::now());
+            if let Err(e) = storage.refresh().await {
+                debug!("Could not read Put.io storage: {}", e);
+            }
+        }
+        let now = Local::now().naive_local();
+        let config = storage.config();
+        if config.auto_free {
+            match config.run_time() {
+                Ok(run_at) => {
+                    if let Some(date) = due_date(prev, now, run_at, last_run) {
+                        last_run = Some(date);
+                        auto_free_once(&storage).await;
+                    }
+                }
+                Err(e) => warn!("Automatic Put.io free-up skipped: {}", e),
+            }
+        }
+        prev = now;
+    }
+}
+
+async fn auto_free_once(storage: &StorageService) {
+    info!("Automatic Put.io free-up check starting");
+    match storage.auto_run().await {
+        Ok(_) => {}
+        Err(StorageError::AlreadyRunning) => {
+            info!("Automatic Put.io free-up skipped: a manual run is in progress")
+        }
+        Err(e) => warn!("Automatic Put.io free-up failed: {}", e),
     }
 }
 

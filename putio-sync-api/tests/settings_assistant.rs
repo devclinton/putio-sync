@@ -15,6 +15,7 @@ const GROUPS: &[&str] = &[
     "logging",
     "notifications",
     "cleanup",
+    "storage",
     "precheck",
 ];
 

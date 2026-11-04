@@ -2115,6 +2115,7 @@ dependencies = [
  "putio-sync-download",
  "putio-sync-file-manager",
  "putio-sync-precheck",
+ "putio-sync-storage",
  "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",
@@ -2184,6 +2185,7 @@ dependencies = [
  "putio-sync-doctor",
  "putio-sync-download",
  "putio-sync-file-manager",
+ "putio-sync-storage",
  "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",
@@ -2259,6 +2261,7 @@ dependencies = [
  "putio-sync-download",
  "putio-sync-file-manager",
  "putio-sync-precheck",
+ "putio-sync-storage",
  "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",
@@ -2372,6 +2375,24 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "putio-sync-storage"
+version = "0.1.1"
+dependencies = [
+ "mockito",
+ "putio-sync-client",
+ "putio-sync-core",
+ "putio-sync-db",
+ "putio-sync-telemetry",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

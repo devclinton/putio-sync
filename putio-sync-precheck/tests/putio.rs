@@ -31,6 +31,7 @@ fn walked(path: &str, size: i64, is_folder: bool) -> WalkedFile {
         path: path.to_string(),
         is_folder,
         created_at: None,
+        is_shared: false,
     }
 }
 

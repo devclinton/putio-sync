@@ -28,6 +28,7 @@ pub mod precheck;
 pub mod process;
 pub mod server;
 pub mod setup;
+pub mod storage;
 pub mod sync;
 pub mod transfers;
 pub mod watch;
@@ -112,6 +113,12 @@ pub struct Telemetry {
     pub(crate) precheck_held: IntCounterVec,
     pub(crate) precheck_held_now: IntGauge,
     pub(crate) precheck_held_seconds: HistogramVec,
+    // Feature 033
+    pub(crate) putio_storage_size: Gauge,
+    pub(crate) putio_storage_used: Gauge,
+    pub(crate) storage_free_runs: IntCounterVec,
+    pub(crate) storage_freed_files: IntCounter,
+    pub(crate) storage_freed_bytes: IntCounter,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -497,6 +504,35 @@ impl Telemetry {
             )
             .unwrap(),
 
+            putio_storage_size: Gauge::with_opts(opts(
+                "putio_storage_size_bytes",
+                "Put.io account storage size.",
+            ))
+            .unwrap(),
+            putio_storage_used: Gauge::with_opts(opts(
+                "putio_storage_used_bytes",
+                "Put.io account storage in use.",
+            ))
+            .unwrap(),
+            storage_free_runs: IntCounterVec::new(
+                opts(
+                    "storage_free_runs_total",
+                    "Finished Put.io free-up runs (previews not counted).",
+                ),
+                &["trigger", "result"],
+            )
+            .unwrap(),
+            storage_freed_files: IntCounter::with_opts(opts(
+                "storage_freed_files_total",
+                "Files deleted from Put.io to free space.",
+            ))
+            .unwrap(),
+            storage_freed_bytes: IntCounter::with_opts(opts(
+                "storage_freed_bytes_total",
+                "Bytes deleted from Put.io to free space.",
+            ))
+            .unwrap(),
+
             db_errors: IntCounterVec::new(
                 opts("db_errors_total", "Database errors."),
                 &["operation"],
@@ -588,6 +624,11 @@ impl Telemetry {
             Box::new(self.precheck_held_now.clone()),
             Box::new(self.precheck_held_seconds.clone()),
             Box::new(self.release_flags.clone()),
+            Box::new(self.putio_storage_size.clone()),
+            Box::new(self.putio_storage_used.clone()),
+            Box::new(self.storage_free_runs.clone()),
+            Box::new(self.storage_freed_files.clone()),
+            Box::new(self.storage_freed_bytes.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
             Box::new(self.disk_total.clone()),
@@ -631,6 +672,8 @@ impl Telemetry {
         for t in CleanupTrigger::ALL {
             for r in SyncResult::ALL {
                 self.empty_folder_runs
+                    .with_label_values(&[t.as_str(), r.as_str()]);
+                self.storage_free_runs
                     .with_label_values(&[t.as_str(), r.as_str()]);
             }
         }

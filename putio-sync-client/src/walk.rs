@@ -25,6 +25,10 @@ pub struct WalkedFile {
     pub extension: Option<String>,
     /// Put.io `created_at` (`YYYY-MM-DDTHH:MM:SS`, UTC)
     pub created_at: Option<String>,
+    /// Shared with another Put.io user (feature 033 never deletes these or what is
+    /// under them)
+    #[serde(skip)]
+    pub is_shared: bool,
 }
 
 /// A folder that could not be listed
@@ -63,6 +67,7 @@ fn walked(entry: FileEntry, parent_id: i64, parent_path: &str) -> WalkedFile {
         parent_id,
         is_folder: entry.is_folder,
         created_at: entry.created_at,
+        is_shared: entry.is_shared,
         name: entry.name,
     }
 }

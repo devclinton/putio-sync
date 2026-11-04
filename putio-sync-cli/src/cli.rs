@@ -947,6 +947,34 @@ pub enum FilesCommands {
         )]
         yes: bool,
     },
+
+    /// Free Put.io space by deleting the oldest files already downloaded
+    #[command(
+        name = "free-space",
+        about = "Free Put.io space by deleting the oldest files already downloaded",
+        long_about = "Delete the oldest Put.io files that are already downloaded, until \
+                      [storage] target_free_percent of the account is free. Only files with \
+                      a completed download whose local copy exists with the same size are \
+                      deleted; queued and shared files and unfinished transfers are kept. \
+                      Shows the list and asks before deleting."
+    )]
+    FreeSpace {
+        /// Dry run (show what would be deleted)
+        #[arg(
+            long = "dry-run",
+            help = "Show what would be deleted without deleting anything"
+        )]
+        dry_run: bool,
+
+        /// Skip confirmation prompt
+        #[arg(
+            short = 'y',
+            long = "yes",
+            help = "Skip confirmation prompt",
+            conflicts_with = "dry_run"
+        )]
+        yes: bool,
+    },
 }
 
 /// Queue management subcommands
@@ -1232,6 +1260,22 @@ mod tests {
         assert!(
             Cli::try_parse_from(["putio-sync", "files", "clean-empty", "--dry-run", "--yes"])
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn test_files_free_space_flags() {
+        let cli = Cli::try_parse_from(["putio-sync", "files", "free-space", "--dry-run"]).unwrap();
+        match cli.command {
+            Commands::Files(FilesCommands::FreeSpace { dry_run, yes }) => {
+                assert!(dry_run);
+                assert!(!yes);
+            }
+            _ => panic!("Expected files free-space"),
+        }
+        assert!(Cli::try_parse_from(["putio-sync", "files", "free-space", "-y"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["putio-sync", "files", "free-space", "--dry-run", "-y"]).is_err()
         );
     }
 

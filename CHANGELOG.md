@@ -14,6 +14,19 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Put.io storage management. The Put.io page opens with a storage card: used,
+  free and total space, the biggest top-level items, and the latest free-up
+  runs with the files each one deleted. Below a warning level of free space
+  (10% by default) the card, the Status page and the doctor warn. **Free up
+  space** previews the oldest files that are already downloaded, with a local
+  copy of the same size, and are not queued, shared or part of an unfinished
+  transfer, until a target (20% free by default) is reached; only after you
+  confirm are exactly those files deleted, each checked again first. Deleted
+  files show in History. An opt-in daily run (`[storage] auto_free`, off by
+  default) does the same at `run_at` when free space is below the warning
+  level. Also `putio-sync files free-space [--dry-run] [-y]`, a Storage card
+  in Settings, storage gauges and free-up counters in `/metrics`, and new API
+  routes under `/putio/storage` (feature 033).
 - A What's new panel in the web UI. After an upgrade, the first page opened
   lists the changelog entries the new build added; closing it marks them seen
   for every browser. The whole changelog, built into the binary, is on a

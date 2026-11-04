@@ -203,6 +203,9 @@ async fn main() {
             cli::FilesCommands::CleanEmpty { dry_run, yes } => {
                 commands::execute_clean_empty(dry_run, yes, args.config).await
             }
+            cli::FilesCommands::FreeSpace { dry_run, yes } => {
+                commands::execute_free_space(dry_run, yes, args.config).await
+            }
         },
         Commands::List {
             path,

@@ -8,8 +8,9 @@ use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
 /// Storage use that gives a warning / a problem, in percent
-const STORAGE_WARNING: f64 = 90.0;
-const STORAGE_PROBLEM: f64 = 98.0;
+/// Free space, in percent of the account, under which storage is a problem; the warning
+/// level is `[storage] warn_free_percent` (feature 033)
+const STORAGE_PROBLEM_FREE: f64 = 2.0;
 /// Smaller files are not worth reporting as duplicates
 const DUPLICATE_MIN_SIZE: i64 = 1024 * 1024;
 
@@ -56,21 +57,30 @@ pub(crate) async fn storage(ctx: &Ctx) -> Finding {
         return Finding::skipped("Put.io did not report the account size.");
     }
     let pct = disk.used as f64 * 100.0 / disk.size as f64;
+    let free_pct = 100.0 - pct;
+    let warn = ctx.config.storage.warn_free_percent;
     let summary = format!(
         "Using {} of {} ({:.0}%).",
         bytes(disk.used.max(0) as u64),
         bytes(disk.size as u64),
         pct
     );
-    let status = if pct >= STORAGE_PROBLEM {
+    let status = if free_pct < STORAGE_PROBLEM_FREE {
         Status::Problem
-    } else if pct >= STORAGE_WARNING {
+    } else if free_pct < warn as f64 {
         Status::Warning
     } else {
         Status::Ok
     };
+    let summary = if status == Status::Ok {
+        summary
+    } else {
+        format!("{summary} Less than {warn}% is free.")
+    };
     Finding::new(status, summary).suggest(
-        "Delete files you no longer need from Put.io; new transfers fail when the account is full.",
+        "Use Free up space on the Put.io page to delete the oldest files that are already \
+         downloaded, or delete files you no longer need; new transfers fail when the account \
+         is full.",
     )
 }
 
@@ -378,6 +388,10 @@ mod tests {
     }
 
     async fn storage_at(used: i64) -> Status {
+        storage_with(used, 10).await.status
+    }
+
+    async fn storage_with(used: i64, warn_free_percent: u8) -> Finding {
         let mut server = Server::new_async().await;
         server
             .mock("GET", "/account/info")
@@ -385,7 +399,9 @@ mod tests {
             .create_async()
             .await;
         let dir = tempfile::tempdir().unwrap();
-        storage(&ctx(&server.url(), dir.path(), None)).await.status
+        let mut ctx = ctx(&server.url(), dir.path(), None);
+        ctx.config.storage.warn_free_percent = warn_free_percent;
+        storage(&ctx).await
     }
 
     #[tokio::test]
@@ -393,6 +409,21 @@ mod tests {
         assert_eq!(storage_at(100_000_000_000).await, Status::Ok);
         assert_eq!(storage_at(930_000_000_000).await, Status::Warning);
         assert_eq!(storage_at(985_000_000_000).await, Status::Problem);
+    }
+
+    #[tokio::test]
+    async fn storage_uses_the_configured_warning_level() {
+        // 40% free: fine at 10%, a warning at 50%
+        assert_eq!(storage_with(600_000_000_000, 10).await.status, Status::Ok);
+        let f = storage_with(600_000_000_000, 50).await;
+        assert_eq!(f.status, Status::Warning);
+        assert!(f.summary.contains("Less than 50% is free"));
+        assert!(f.suggestion.unwrap().contains("Free up space"));
+        // Under 2% free is a problem whatever the level
+        assert_eq!(
+            storage_with(985_000_000_000, 1).await.status,
+            Status::Problem
+        );
     }
 
     #[tokio::test]

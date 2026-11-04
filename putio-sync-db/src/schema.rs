@@ -288,6 +288,33 @@ CREATE TABLE IF NOT EXISTS whats_new_seen (
 )
 "#;
 
+/// SQL to create the storage_runs table (feature 033): each free-up run that deleted
+/// files. `trigger` is `manual` or `schedule`.
+pub const CREATE_STORAGE_RUNS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS storage_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    finished_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    trigger TEXT NOT NULL,
+    files INTEGER NOT NULL,
+    bytes INTEGER NOT NULL,
+    failed INTEGER NOT NULL DEFAULT 0,
+    free_after INTEGER
+)
+"#;
+
+/// SQL to create the storage_run_files table (feature 033): the files a run deleted
+pub const CREATE_STORAGE_RUN_FILES_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS storage_run_files (
+    run_id INTEGER NOT NULL REFERENCES storage_runs(id),
+    file_id INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    created_at TEXT,
+    local_path TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_storage_run_files_run ON storage_run_files(run_id)
+"#;
+
 /// SQL to create performance indexes
 /// These indexes optimize common query patterns
 pub const CREATE_INDEXES: &str = r#"

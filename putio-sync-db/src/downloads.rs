@@ -201,6 +201,17 @@ impl<'a> DownloadRepository<'a> {
         .map_err(tracked(DbOp::History, "Failed to list failing downloads"))
     }
 
+    /// `(file_id, file_size, local_path)` of every completed download, the storage
+    /// planner's record of what is safely on disk (feature 033)
+    pub async fn completed(&self) -> DbResult<Vec<(i64, i64, String)>> {
+        sqlx::query_as::<_, (i64, i64, String)>(
+            "SELECT file_id, file_size, local_path FROM downloads WHERE status = 'completed' ORDER BY id",
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::History, "Failed to list completed downloads"))
+    }
+
     /// Delete a download record
     pub async fn delete(&self, id: i64) -> DbResult<()> {
         debug!("Deleting download {}", id);
@@ -230,6 +241,22 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let db = Database::new(&db_path).await.unwrap();
         (temp_dir, db)
+    }
+
+    #[tokio::test]
+    async fn completed_lists_only_completed_rows() {
+        let (_temp_dir, db) = setup_test_db().await;
+        let repo = DownloadRepository::new(db.pool());
+        repo.insert(1, "a.mkv", 10, "/d/a.mkv", DownloadStatus::Completed)
+            .await
+            .unwrap();
+        repo.insert(2, "b.mkv", 20, "/d/b.mkv", DownloadStatus::Failed)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.completed().await.unwrap(),
+            vec![(1, 10, "/d/a.mkv".to_string())]
+        );
     }
 
     #[tokio::test]

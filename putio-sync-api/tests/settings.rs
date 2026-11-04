@@ -200,6 +200,31 @@ async fn logging_settings_round_trip() {
 }
 
 #[tokio::test]
+async fn storage_settings_round_trip() {
+    let app = test_app().await;
+    let path = "/settings/storage";
+    let body = get_ok(&app, path).await;
+    assert_eq!(
+        body,
+        json!({"warn_free_percent": 10, "target_free_percent": 20, "auto_free": false, "run_at": "02:30"})
+    );
+
+    put_changed(&app, path, body.clone(), "target_free_percent", json!(30)).await;
+    assert_eq!(saved(&app).storage.target_free_percent, 30);
+    // The service sees the save at once
+    assert_eq!(app.state.storage.config().target_free_percent, 30);
+
+    let body = get_ok(&app, path).await;
+    put_invalid(&app, path, body.clone(), "warn_free_percent", json!(0)).await;
+    put_invalid(&app, path, body.clone(), "warn_free_percent", json!(30)).await;
+    put_invalid(&app, path, body.clone(), "target_free_percent", json!(95)).await;
+    put_invalid(&app, path, body, "run_at", json!("25:00")).await;
+
+    let message = message(&app, path, "auto_free", json!(true)).await;
+    assert!(message.contains("only under `daemon`"), "{message}");
+}
+
+#[tokio::test]
 async fn notification_settings_round_trip() {
     let app = test_app().await;
     let path = "/settings/notifications";

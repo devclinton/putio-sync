@@ -1,4 +1,4 @@
-// Settings page: appearance (this browser only, via theme.js), then the download, watcher, Put.io cleanup, logging and notification groups
+// Settings page: appearance (this browser only, via theme.js), then the download, watcher, Put.io cleanup, Put.io storage (033), logging and notification groups
 // as forms built from each GET body. Save PUTs the whole group and shows the API's
 // message verbatim; a 400 shows its error under the form. Tokens are shown only as set /
 // not set. The Radarr / Sonarr card has the download client form, auto-setup, and the
@@ -83,6 +83,16 @@ const GROUPS = [
       ["min_age_hours", "Minimum age (hours)", "Keep empty folders newer than this; 0 to 8760", "n", 0, 8760],
       ["enabled", "Daily run", "Remove empty Put.io folders once a day (daemon only)", "b"],
       ["nested", "Nested empty folders", "Also remove folders whose sub-folders are all empty", "b"],
+    ],
+  },
+  {
+    key: "storage",
+    title: "Put.io storage",
+    fields: [
+      ["warn_free_percent", "Warn below (% free)", "Warn on the Put.io and Status pages and in the doctor; 1 to 89", "n", 1, 89],
+      ["target_free_percent", "Free up to (% free)", "Free up space deletes old downloaded files until this is free; up to 90", "n", 2, 90],
+      ["run_at", "Daily run at", "24-hour local time, HH:MM", "s"],
+      ["auto_free", "Automatic free-up", "Once a day, free up space when below the warning level (daemon only)", "b"],
     ],
   },
   {

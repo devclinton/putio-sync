@@ -119,6 +119,15 @@ async fn other_paths_answer_503() {
     // What's new (feature 017) waits for setup too
     let (status, _) = s.call(Method::GET, "/whats-new", Some(&code), None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    // So does Put.io storage (feature 033)
+    for path in ["/putio/storage", "/putio/storage/runs"] {
+        let (status, _) = s.call(Method::GET, path, Some(&code), None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+    }
+    let (status, _) = s
+        .call(Method::POST, "/putio/storage/plan", Some(&code), None)
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]

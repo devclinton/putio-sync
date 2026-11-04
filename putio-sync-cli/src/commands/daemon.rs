@@ -8,6 +8,7 @@ use putio_sync_core::config::{AuthMethod, Config, ExistingFile};
 use putio_sync_daemon::{DaemonConfig, PutioDaemon};
 use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadConfig;
+use putio_sync_storage::StorageService;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use tracing::{info, warn};
@@ -189,6 +190,16 @@ pub async fn execute_daemon(
         config.cleanup.run_at,
         config.cleanup.min_age_hours
     );
+    info!(
+        "  Put.io storage: warn below {}% free, free up to {}%, automatic free-up {}",
+        config.storage.warn_free_percent,
+        config.storage.target_free_percent,
+        if config.storage.auto_free {
+            format!("daily at {}", config.storage.run_at)
+        } else {
+            "off".to_string()
+        }
+    );
 
     // Create and start daemon
     let mut daemon = PutioDaemon::new(daemon_config);
@@ -209,6 +220,18 @@ pub async fn execute_daemon(
         .map(|client| Arc::new(EmptyFolderCleanup::from_config(client, &config)));
     if let Some(cleanup) = &cleanup {
         daemon = daemon.with_cleanup(cleanup.clone());
+    }
+
+    // One storage service for the daemon's loop and the API, so free-ups never overlap
+    let storage = daemon.get_client().map(|client| {
+        Arc::new(StorageService::from_config(
+            client,
+            daemon.get_database(),
+            &config,
+        ))
+    });
+    if let Some(storage) = &storage {
+        daemon = daemon.with_storage(storage.clone());
     }
 
     // One doctor for the scheduled runs and the API, so the Doctor page shows both
@@ -250,6 +273,10 @@ pub async fn execute_daemon(
             };
             let state = match &doctor {
                 Some(doctor) => state.with_doctor(doctor.clone()),
+                None => state,
+            };
+            let state = match &storage {
+                Some(storage) => state.with_storage(storage.clone()),
                 None => state,
             };
             crate::api_listener::start(&config, state).await?;
