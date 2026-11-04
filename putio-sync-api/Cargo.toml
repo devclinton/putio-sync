@@ -21,6 +21,7 @@ putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 putio-sync-arr = { path = "../putio-sync-arr" }
 putio-sync-precheck = { path = "../putio-sync-precheck" }
 putio-sync-storage = { path = "../putio-sync-storage" }
+putio-sync-tailscale = { path = "../putio-sync-tailscale" }
 
 # Web framework
 axum = "0.7"

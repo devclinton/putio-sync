@@ -9,17 +9,17 @@ is the only way to exercise this feature.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create crate `putio-sync-tailscale` (Cargo.toml with tokio `net`,`process`,`time`,`io-util`; serde; serde_json; tracing; dev: tempfile) and add it to the workspace members in `Cargo.toml` and to the `Dockerfile` COPY/stub lines
-- [ ] T002 Add `TailscaleConfig` (`tailnet_only` bool default false, `identity_sign_in` bool default false, `allowed_users` list of logins default empty, `socket` optional path) to `putio-sync-core/src/config.rs`, with validation ("each non-empty, no whitespace"; socket non-empty), `resolve_tailscale()` applying `PUTIO_SYNC_TAILSCALE_SOCKET`, default socket `/var/run/tailscale/tailscaled.sock`, and unit tests; document `[tailscale]` in `config.example.toml`
+- [X] T001 Create crate `putio-sync-tailscale` (Cargo.toml with tokio `net`,`process`,`time`,`io-util`; serde; serde_json; tracing; dev: tempfile) and add it to the workspace members in `Cargo.toml` and to the `Dockerfile` COPY/stub lines
+- [X] T002 Add `TailscaleConfig` (`tailnet_only` bool default false, `identity_sign_in` bool default false, `allowed_users` list of logins default empty, `socket` optional path) to `putio-sync-core/src/config.rs`, with validation ("each non-empty, no whitespace"; socket non-empty), `resolve_tailscale()` applying `PUTIO_SYNC_TAILSCALE_SOCKET`, default socket `/var/run/tailscale/tailscaled.sock`, and unit tests; document `[tailscale]` in `config.example.toml`
 
 ## Phase 2: Foundational
 
-- [ ] T003 [P] Model and parsing in `putio-sync-tailscale/src/model.rs`: `State` (`not_found`, `unreachable`, `stopped`, `needs_login`, `starting`, `running`), `Status`, `ServeEntry`, `Identity`, `Via`; parse LocalAPI/CLI status JSON (BackendState, TUN, Self.DNSName without trailing dot, TailscaleIPs, CertDomains, CurrentTailnet, User map → owner login, Version), serve config JSON (Web handlers' Proxy targets for a port, AllowFunnel), whois JSON (UserProfile.LoginName/DisplayName, Node.Name, Node.Tags); unit tests on recorded JSON
-- [ ] T004 [P] Unix-socket HTTP/1.0 GET client in `putio-sync-tailscale/src/localapi.rs` (`cfg(unix)`, `Host: local-tailscaled.sock`, `Sec-Tailscale: localapi`, 1 MiB cap, chunked tolerated, status code returned)
-- [ ] T005 [P] CLI fallback in `putio-sync-tailscale/src/cli.rs`: run `tailscale status --json`, `tailscale serve status --json`, `tailscale whois --json <ip>` with a 3 s timeout; binary from an explicit path or `PATH` or the macOS app path
-- [ ] T006 `TailscaleService` in `putio-sync-tailscale/src/lib.rs`: socket then CLI, 3 s timeout per call, status cache 10 s, whois cache 60 s per IP (pruned, cleared on `configure`), `status()`, `whois(ip)`, `identity_for(peer: Option<SocketAddr>, login_header, name_header)` implementing research R3, `is_tailnet_ip`, `tailnet_bind(&Status, port)`, `serve_urls`; tests with a fake LocalAPI on a temp `UnixListener` (running, needs login, hang → unreachable within the timeout, junk, whois 404, tagged node) and a fake CLI script, in `putio-sync-tailscale/src/tests.rs`
-- [ ] T007 [P] Telemetry counter `putio_sync_tailscale_identity_total{via,result}` in `putio-sync-telemetry/src/tailscale.rs` (+ registration in `lib.rs`, test)
-- [ ] T008 Add `tailscale: Arc<TailscaleService>` to `AppState` in `putio-sync-api/src/lib.rs`, built from the config
+- [X] T003 [P] Model and parsing in `putio-sync-tailscale/src/model.rs`: `State` (`not_found`, `unreachable`, `stopped`, `needs_login`, `starting`, `running`), `Status`, `ServeEntry`, `Identity`, `Via`; parse LocalAPI/CLI status JSON (BackendState, TUN, Self.DNSName without trailing dot, TailscaleIPs, CertDomains, CurrentTailnet, User map → owner login, Version), serve config JSON (Web handlers' Proxy targets for a port, AllowFunnel), whois JSON (UserProfile.LoginName/DisplayName, Node.Name, Node.Tags); unit tests on recorded JSON
+- [X] T004 [P] Unix-socket HTTP/1.0 GET client in `putio-sync-tailscale/src/localapi.rs` (`cfg(unix)`, `Host: local-tailscaled.sock`, `Sec-Tailscale: localapi`, 1 MiB cap, chunked tolerated, status code returned)
+- [X] T005 [P] CLI fallback in `putio-sync-tailscale/src/cli.rs`: run `tailscale status --json`, `tailscale serve status --json`, `tailscale whois --json <ip>` with a 3 s timeout; binary from an explicit path or `PATH` or the macOS app path
+- [X] T006 `TailscaleService` in `putio-sync-tailscale/src/lib.rs`: socket then CLI, 3 s timeout per call, status cache 10 s, whois cache 60 s per IP (pruned, cleared on `configure`), `status()`, `whois(ip)`, `identity_for(peer: Option<SocketAddr>, login_header, name_header)` implementing research R3, `is_tailnet_ip`, `tailnet_bind(&Status, port)`, `serve_urls`; tests with a fake LocalAPI on a temp `UnixListener` (running, needs login, hang → unreachable within the timeout, junk, whois 404, tagged node) and a fake CLI script, in `putio-sync-tailscale/src/tests.rs`
+- [X] T007 [P] Telemetry counter `putio_sync_tailscale_identity_total{via,result}` in `putio-sync-telemetry/src/tailscale.rs` (+ registration in `lib.rs`, test)
+- [X] T008 Add `tailscale: Arc<TailscaleService>` to `AppState` in `putio-sync-api/src/lib.rs`, built from the config
 
 ## Phase 3: User Story 1 - See whether Tailscale is here and its addresses (P1)
 
@@ -27,10 +27,10 @@ is the only way to exercise this feature.
 
 **Independent Test**: fake daemon reports a running node with a serve entry → `GET /tailscale` and the card show running, the name, the addresses and the HTTPS URL.
 
-- [ ] T009 [US1] `GET /tailscale` in `putio-sync-api/src/routes/system/tailscale.rs` per contracts/tailscale-api.md (urls, hints for not found / needs login / userspace / HTTPS without serve / HTTPS off, tailnet_bind or its error, settings, identity of this request); route in the protected router in `putio-sync-api/src/lib.rs`
-- [ ] T010 [US1] Integration tests in `putio-sync-api/tests/tailscale.rs`: details from a fake socket; not found; needs login; token required; setup mode answers 503
-- [ ] T011 [US1] Settings group `tailscale` (GET/PUT/preview) in `putio-sync-api/src/routes/system/settings.rs` and its help in `assistant.rs`; live fields `identity_sign_in`, `allowed_users`, `socket` (service reconfigured on save), `tailnet_only` needs a restart; tests in `putio-sync-api/tests/settings.rs` and the group list in `tests/settings_assistant.rs`
-- [ ] T012 [US1] UI: `putio-sync-api/ui/tailscale.js` (group definition with a details panel from `GET /tailscale`), wired into `putio-sync-api/ui/pages/settings.js`; asset listed in `putio-sync-api/src/ui.rs`; styles in `app.css`
+- [X] T009 [US1] `GET /tailscale` in `putio-sync-api/src/routes/system/tailscale.rs` per contracts/tailscale-api.md (urls, hints for not found / needs login / userspace / HTTPS without serve / HTTPS off, tailnet_bind or its error, settings, identity of this request); route in the protected router in `putio-sync-api/src/lib.rs`
+- [X] T010 [US1] Integration tests in `putio-sync-api/tests/tailscale.rs`: details from a fake socket; not found; needs login; token required; setup mode answers 503
+- [X] T011 [US1] Settings group `tailscale` (GET/PUT/preview) in `putio-sync-api/src/routes/system/settings.rs` and its help in `assistant.rs`; live fields `identity_sign_in`, `allowed_users`, `socket` (service reconfigured on save), `tailnet_only` needs a restart; tests in `putio-sync-api/tests/settings.rs` and the group list in `tests/settings_assistant.rs`
+- [X] T012 [US1] UI: `putio-sync-api/ui/tailscale.js` (group definition with a details panel from `GET /tailscale`), wired into `putio-sync-api/ui/pages/settings.js`; asset listed in `putio-sync-api/src/ui.rs`; styles in `app.css`
 
 ## Phase 4: User Story 2 - Sign in with Tailscale identity (P1)
 
@@ -38,12 +38,12 @@ is the only way to exercise this feature.
 
 **Independent Test**: loopback + `Tailscale-User-Login: alice@example.com` reaches `/status` without a token; mallory, LAN source, or no `ConnectInfo` get 401.
 
-- [ ] T013 [US2] Identity path in `putio-sync-api/src/middleware/auth.rs` per research R4; attach `Identity` as an extension; count `allowed`/`refused`; log refusals at info
-- [ ] T014 [US2] `/auth/status` reports `tailscale` identity and `tailscale_sign_in` in `putio-sync-api/src/routes/system/auth.rs`
-- [ ] T015 [US2] Integration tests in `putio-sync-api/tests/tailscale.rs`: serve header allowed; not allowed; header from LAN; no ConnectInfo; whois via fake socket allowed; tagged; daemon down → 401; sign-in off ignores identity; empty allow-list; token still works; `/auth/status` identity
-- [ ] T016 [US2] UI shell: `putio-sync-api/ui/api.js` keeps the identity from `/auth/status`; `app.js` routes identified users past the sign-in page and shows "login (Tailscale)" in the header (`index.html`); a 401 clears it; `pages/login.js` goes straight in when identified
-- [ ] T017 [US2] UI: turning identity sign-in on with an empty allow-list fills it with the node owner's login (`ui/tailscale.js`)
-- [ ] T018 [US2] Doctor check `tailscale` (Connectivity) in `putio-sync-doctor/src/checks/net.rs` and `report.rs`: ok when no feature on or all well; warning for empty allow-list with identity on, or a feature on and daemon not running/reachable; unit tests
+- [X] T013 [US2] Identity path in `putio-sync-api/src/middleware/auth.rs` per research R4; attach `Identity` as an extension; count `allowed`/`refused`; log refusals at info
+- [X] T014 [US2] `/auth/status` reports `tailscale` identity and `tailscale_sign_in` in `putio-sync-api/src/routes/system/auth.rs`
+- [X] T015 [US2] Integration tests in `putio-sync-api/tests/tailscale.rs`: serve header allowed; not allowed; header from LAN; no ConnectInfo; whois via fake socket allowed; tagged; daemon down → 401; sign-in off ignores identity; empty allow-list; token still works; `/auth/status` identity
+- [X] T016 [US2] UI shell: `putio-sync-api/ui/api.js` keeps the identity from `/auth/status`; `app.js` routes identified users past the sign-in page and shows "login (Tailscale)" in the header (`index.html`); a 401 clears it; `pages/login.js` goes straight in when identified
+- [X] T017 [US2] UI: turning identity sign-in on with an empty allow-list fills it with the node owner's login (`ui/tailscale.js`)
+- [X] T018 [US2] Doctor check `tailscale` (Connectivity) in `putio-sync-doctor/src/checks/net.rs` and `report.rs`: ok when no feature on or all well; warning for empty allow-list with identity on, or a feature on and daemon not running/reachable; unit tests
 
 ## Phase 5: User Story 3 - Listen on the tailnet address only (P2)
 
@@ -52,8 +52,8 @@ is the only way to exercise this feature.
 **Independent Test**: fake status with `100.101.102.103` → resolved bind is `100.101.102.103:<port>`; without an address the listener waits and never binds `[api] bind`.
 
 - [ ] T019 [US3] Listener in `putio-sync-cli/src/api_listener.rs`: when `tailnet_only`, resolve with `tailnet_bind`; if not ready, retry every 5 s for 5 minutes in the background with a log each minute, then an error log; never fall back; unit test of the resolution and the no-fallback path
-- [ ] T020 [US3] PUT `/settings/tailscale` refuses `tailnet_only` turning on without a tailnet bind (400 with the reason); save message says a restart is needed; tests
-- [ ] T021 [US3] UI confirm before saving `tailnet_only` on, naming the addresses the UI moves to (`ui/tailscale.js` + a `beforeSave` hook in `pages/settings.js`)
+- [X] T020 [US3] PUT `/settings/tailscale` refuses `tailnet_only` turning on without a tailnet bind (400 with the reason); save message says a restart is needed; tests
+- [X] T021 [US3] UI confirm before saving `tailnet_only` on, naming the addresses the UI moves to (`ui/tailscale.js` + a `beforeSave` hook in `pages/settings.js`)
 - [ ] T022 [US3] Radarr/Sonarr candidate hosts put the tailnet address first when `tailnet_only` is on (`putio-sync-api/src/routes/arr.rs`, `lib.rs` refresh); test
 
 ## Phase 6: User Story 4 - Tailscale details for other clients (P3)

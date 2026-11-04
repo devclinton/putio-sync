@@ -128,6 +128,11 @@ async fn other_paths_answer_503() {
         .call(Method::POST, "/putio/storage/plan", Some(&code), None)
         .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    // And Tailscale (feature 036)
+    for path in ["/tailscale", "/settings/tailscale"] {
+        let (status, _) = s.call(Method::GET, path, Some(&code), None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+    }
 }
 
 #[tokio::test]

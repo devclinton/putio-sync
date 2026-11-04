@@ -11,6 +11,8 @@
 //! - PUT  /settings/storage - Update the Put.io storage levels and automatic free-up
 //! - GET  /settings/precheck - Get the release check settings and what they come to
 //! - PUT  /settings/precheck - Update the release check settings
+//! - GET  /settings/tailscale - Get the Tailscale settings (feature 036)
+//! - PUT  /settings/tailscale - Update the Tailscale settings
 //! - POST /settings/{group}/preview - What a PUT of that body would do, without saving
 //!   (feature 015; the assistant, export and import routes are in `assistant.rs`)
 
@@ -31,7 +33,7 @@ use crate::Engine;
 use putio_sync_core::assistant::Change;
 use putio_sync_core::config::{
     CleanupConfig, Config, NotificationBackend, PrecheckConfig, PrecheckOverride, ProgressStyle,
-    SortOrder, StorageConfig,
+    SortOrder, StorageConfig, TailscaleConfig,
 };
 use putio_sync_core::error::CoreError;
 use putio_sync_core::logging::ConsoleFormat;
@@ -172,6 +174,11 @@ pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
             "storage",
             json(serde_json::to_value(storage_view(&defaults))),
             live_storage(state),
+        ),
+        group(
+            "tailscale",
+            json(serde_json::to_value(tailscale_view(&defaults))),
+            live_tailscale(state),
         ),
         group(
             "logging",
@@ -387,6 +394,23 @@ pub struct StorageSettings {
     pub run_at: String,
 }
 
+/// Tailscale sign-in and listening (`[tailscale]`, feature 036)
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TailscaleSettings {
+    pub tailnet_only: bool,
+    pub identity_sign_in: bool,
+    pub allowed_users: Vec<String>,
+    /// tailscaled's socket; `null` for the default
+    pub socket: Option<String>,
+}
+
+impl Default for TailscaleSettings {
+    fn default() -> Self {
+        tailscale_view(&Config::default())
+    }
+}
+
 /// The release check settings (`[precheck]`, feature 042). A PUT body leaves out
 /// `effective`; a missing field means its default.
 #[derive(Debug, Serialize, Deserialize)]
@@ -490,6 +514,8 @@ pub fn router() -> Router<AppState> {
         .route("/storage", put(update_storage_settings))
         .route("/precheck", get(get_precheck_settings))
         .route("/precheck", put(update_precheck_settings))
+        .route("/tailscale", get(get_tailscale_settings))
+        .route("/tailscale", put(update_tailscale_settings))
         .route("/download/preview", post(preview_download))
         .route("/watcher/preview", post(preview_watcher))
         .route("/logging/preview", post(preview_logging))
@@ -497,6 +523,7 @@ pub fn router() -> Router<AppState> {
         .route("/cleanup/preview", post(preview_cleanup))
         .route("/storage/preview", post(preview_storage))
         .route("/precheck/preview", post(preview_precheck))
+        .route("/tailscale/preview", post(preview_tailscale))
         .merge(assistant::router())
 }
 
@@ -562,6 +589,19 @@ async fn preview_storage(
     let settings = body(settings)?;
     let live = live_storage(&state);
     Ok(preview(&state, storage_view, live, |c| apply_storage(settings, c)).await)
+}
+
+/// POST /settings/tailscale/preview
+async fn preview_tailscale(
+    State(state): State<AppState>,
+    settings: Result<Json<TailscaleSettings>, JsonRejection>,
+) -> Result<Json<Preview>, ApiError> {
+    let settings = body(settings)?;
+    let live = live_tailscale(&state);
+    Ok(preview(&state, tailscale_view, live, |c| {
+        apply_tailscale(settings, c)
+    })
+    .await)
 }
 
 /// POST /settings/precheck/preview
@@ -669,6 +709,15 @@ fn storage_view(config: &Config) -> StorageSettings {
         target_free_percent: config.storage.target_free_percent,
         auto_free: config.storage.auto_free,
         run_at: config.storage.run_at.clone(),
+    }
+}
+
+fn tailscale_view(config: &Config) -> TailscaleSettings {
+    TailscaleSettings {
+        tailnet_only: config.tailscale.tailnet_only,
+        identity_sign_in: config.tailscale.identity_sign_in,
+        allowed_users: config.tailscale.allowed_users.clone(),
+        socket: config.tailscale.socket.clone(),
     }
 }
 
@@ -1127,6 +1176,101 @@ pub(crate) fn live_storage(state: &AppState) -> (&'static [&'static str], &'stat
         Engine::Server => &["warn_free_percent", "target_free_percent"],
     };
     (live, "Applies now")
+}
+
+/// Get the Tailscale settings
+///
+/// GET /settings/tailscale
+async fn get_tailscale_settings(
+    State(state): State<AppState>,
+) -> Result<Json<TailscaleSettings>, ApiError> {
+    Ok(Json(tailscale_view(&*state.config.read().await)))
+}
+
+/// Update the Tailscale settings
+///
+/// PUT /settings/tailscale
+///
+/// Turning `tailnet_only` on is refused unless Tailscale gives a tailnet address now,
+/// so a save can't leave the daemon with nothing to listen on after a restart.
+async fn update_tailscale_settings(
+    State(state): State<AppState>,
+    settings: Result<Json<TailscaleSettings>, JsonRejection>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let settings = body(settings)?;
+    let (was_on, port) = {
+        let config = state.config.read().await;
+        (
+            config.tailscale.tailnet_only,
+            super::tailscale::api_bind(&config).port(),
+        )
+    };
+    if settings.tailnet_only && !was_on {
+        let candidate = TailscaleConfig {
+            socket: settings.socket.clone(),
+            ..TailscaleConfig::default()
+        };
+        let status = state
+            .tailscale
+            .sibling(candidate.socket_path())
+            .refresh()
+            .await;
+        if let Err(reason) = putio_sync_tailscale::tailnet_bind(&status, port) {
+            return Err(ApiError::BadRequest(format!(
+                "Can't listen on the tailnet only: {reason}."
+            )));
+        }
+    }
+    let changed = update(&state, tailscale_view, |config| {
+        apply_tailscale(settings, config)
+    })
+    .await?;
+
+    // Sign-in reads the settings on every request; the service follows the socket
+    let socket = state.config.read().await.tailscale.socket_path();
+    if state.tailscale.socket() != socket {
+        state.tailscale.configure(socket);
+    }
+
+    let mut notes = Vec::new();
+    if changed.iter().any(|c| c == "tailnet_only") {
+        notes.push(match state.engine {
+            Engine::Daemon => "Restart putio-sync to change the address it listens on.".to_string(),
+            Engine::Server => {
+                "Listening on the tailnet only applies under `daemon`; `server` uses its --bind."
+                    .to_string()
+            }
+        });
+    }
+    let (live, when) = live_tailscale(&state);
+
+    Ok(Json(SuccessResponse {
+        message: saved_message("Tailscale", &changed, live, when, &notes),
+    }))
+}
+
+/// Apply a Tailscale body to `config` (shared by PUT and preview)
+fn apply_tailscale(settings: TailscaleSettings, config: &mut Config) -> Result<(), ApiError> {
+    config.tailscale = TailscaleConfig {
+        tailnet_only: settings.tailnet_only,
+        identity_sign_in: settings.identity_sign_in,
+        allowed_users: settings
+            .allowed_users
+            .iter()
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty())
+            .collect(),
+        socket: settings.socket.filter(|s| !s.trim().is_empty()),
+    };
+    Ok(())
+}
+
+/// Tailscale fields applied without a restart, and when
+pub(crate) fn live_tailscale(_state: &AppState) -> (&'static [&'static str], &'static str) {
+    (
+        &["identity_sign_in", "allowed_users", "socket"],
+        "Applies now",
+    )
 }
 
 /// Get the release check settings and what they come to per folder

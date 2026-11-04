@@ -428,7 +428,11 @@ mod tests {
 
     #[test]
     fn parses_other_states_and_flags() {
-        let s = parse_status(br#"{"BackendState":"NeedsLogin","Version":"1.2"}"#, Via::Cli).unwrap();
+        let s = parse_status(
+            br#"{"BackendState":"NeedsLogin","Version":"1.2"}"#,
+            Via::Cli,
+        )
+        .unwrap();
         assert_eq!(s.state, State::NeedsLogin);
         assert!(s.addresses.is_empty());
         let s = parse_status(br#"{"BackendState":"Stopped"}"#, Via::Cli).unwrap();
@@ -487,7 +491,11 @@ mod tests {
         let addrs: Vec<String> = entries.iter().map(ServeEntry::address).collect();
         assert_eq!(
             addrs,
-            vec!["http://nas.ts.net", "https://nas.ts.net", "https://nas.ts.net:8443/sync"]
+            vec![
+                "http://nas.ts.net",
+                "https://nas.ts.net",
+                "https://nas.ts.net:8443/sync"
+            ]
         );
         assert!(entries[2].funnel);
         // A LAN target is not this machine's loopback
@@ -510,10 +518,21 @@ mod tests {
 
     #[test]
     fn tailnet_ranges() {
-        for ip in ["100.64.0.1", "100.127.255.254", "fd7a:115c:a1e0::1", "::ffff:100.101.102.103"] {
+        for ip in [
+            "100.64.0.1",
+            "100.127.255.254",
+            "fd7a:115c:a1e0::1",
+            "::ffff:100.101.102.103",
+        ] {
             assert!(is_tailnet_ip(ip.parse().unwrap()), "{ip}");
         }
-        for ip in ["100.63.0.1", "100.128.0.1", "192.168.1.5", "127.0.0.1", "fd7a:115c:a1e1::1"] {
+        for ip in [
+            "100.63.0.1",
+            "100.128.0.1",
+            "192.168.1.5",
+            "127.0.0.1",
+            "fd7a:115c:a1e1::1",
+        ] {
             assert!(!is_tailnet_ip(ip.parse().unwrap()), "{ip}");
         }
     }

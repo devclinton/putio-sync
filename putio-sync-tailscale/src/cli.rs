@@ -47,7 +47,11 @@ pub async fn run(bin: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>
         Ok(out.stdout)
     } else {
         let err = String::from_utf8_lossy(&out.stderr);
-        let line = err.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+        let line = err
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .trim();
         Err(if line.is_empty() {
             format!("tailscale {} failed", args.join(" "))
         } else {

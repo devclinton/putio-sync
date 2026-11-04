@@ -32,8 +32,11 @@ mod tests {
         t.tailscale_identity("serve", true);
         t.tailscale_identity("whois", false);
         let text = t.encode();
-        assert!(text.contains("putio_sync_tailscale_identity_total{result=\"allowed\",via=\"serve\"} 1"));
-        assert!(text.contains("putio_sync_tailscale_identity_total{result=\"refused\",via=\"whois\"} 1"));
-        assert!(text.contains("putio_sync_tailscale_identity_total{result=\"refused\",via=\"serve\"} 0"));
+        assert!(text
+            .contains("putio_sync_tailscale_identity_total{result=\"allowed\",via=\"serve\"} 1"));
+        assert!(text
+            .contains("putio_sync_tailscale_identity_total{result=\"refused\",via=\"whois\"} 1"));
+        assert!(text
+            .contains("putio_sync_tailscale_identity_total{result=\"refused\",via=\"serve\"} 0"));
     }
 }

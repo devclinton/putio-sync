@@ -4081,7 +4081,10 @@ mod precheck_tests {
         assert!(config.tailscale.allows(" alice@example.com "));
         assert!(!config.tailscale.allows("mallory@example.com"));
         assert!(!config.tailscale.allows(""));
-        assert_eq!(config.tailscale.socket_path(), PathBuf::from("/tmp/ts.sock"));
+        assert_eq!(
+            config.tailscale.socket_path(),
+            PathBuf::from("/tmp/ts.sock")
+        );
         assert_eq!(
             TailscaleConfig::default().socket_path(),
             PathBuf::from(DEFAULT_TAILSCALE_SOCKET)

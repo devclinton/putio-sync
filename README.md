@@ -1303,6 +1303,7 @@ daemon also runs it 2 minutes after it starts and then every `interval_minutes`.
 | Connection | Put.io reachability | Put.io can't be reached (problem), errors or is slow (warning) |
 | | Rate limit | Under 10% of requests left, or Put.io is limiting now |
 | | Clock | This machine's clock is over 60 s off Put.io's (warning), 300 s (problem) |
+| | Tailscale | Tailscale sign-in or tailnet-only listening is on and Tailscale isn't running, has no tailnet address, or no user is allowed (warning) |
 
 Fixes, on the check's line in the UI or with `putio-sync doctor --fix <id>`:
 

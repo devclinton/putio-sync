@@ -2,7 +2,7 @@
 // Pages export { mount(el, params), unmount() } and import helpers from here,
 // api.js and format.js; they never import each other.
 
-import { getToken, logout, onAuthExpired } from "./api.js";
+import { authStatus, getIdentity, getToken, logout, onAuthExpired } from "./api.js";
 import * as status from "./pages/status.js";
 import * as active from "./pages/active.js";
 import * as queue from "./pages/queue.js";
@@ -119,7 +119,7 @@ function route() {
     return;
   }
   const { name, path, query } = parse(window.location.hash);
-  if (name !== "login" && !getToken()) {
+  if (name !== "login" && !getToken() && !getIdentity()) {
     showLogin({});
     return;
   }
@@ -155,7 +155,9 @@ function mount(name, params) {
     else a.removeAttribute("aria-current");
   }
   document.title = `${TITLES[name]} · putio-sync`;
-  document.getElementById("signout").hidden = name === "login" || name === "setup";
+  // Signed in by Tailscale only: there is nothing to sign out of here
+  document.getElementById("signout").hidden = name === "login" || name === "setup" || (!getToken() && Boolean(getIdentity()));
+  showWho();
 
   view.replaceChildren();
   enter();
@@ -172,6 +174,15 @@ function enter() {
 }
 
 /** Show the sign-in page; `params` may carry `reason` and `retryAfter`. */
+/** "login (Tailscale)" in the top bar when Tailscale sign-in let this browser in */
+function showWho() {
+  const who = document.getElementById("who");
+  const id = getIdentity();
+  who.hidden = !id || Boolean(getToken());
+  who.textContent = id ? `${id.login} (Tailscale)` : "";
+  who.title = id ? `Signed in by Tailscale as ${id.name}` : "";
+}
+
 function showLogin(params) {
   loginParams = params;
   if (window.location.hash === "#/login") route();
@@ -315,7 +326,9 @@ export function confirm({ title, text, verb }) {
 
 // ---- Boot -------------------------------------------------------------------
 
-onAuthExpired((err) => {
+onAuthExpired(async (err) => {
+  // A Tailscale identity that was let in may have been taken off the allow-list
+  if (!getToken() && getIdentity()) await authStatus().catch(() => {});
   if (err.status === 429) {
     showLogin({ reason: "Too many attempts.", retryAfter: err.retryAfter });
   } else {
@@ -332,8 +345,7 @@ window.addEventListener("hashchange", route);
 
 // A daemon without a usable config serves the setup wizard instead
 try {
-  const res = await fetch("/auth/status", { headers: { Accept: "application/json" } });
-  setupMode = res.ok && (await res.json()).setup_required === true;
+  setupMode = (await authStatus()).setup_required === true;
 } catch {
   // unreachable: route as usual and let the pages report it
 }
@@ -342,7 +354,7 @@ if (setupMode) {
   route();
 } else if (!window.location.hash || window.location.hash === "#" || window.location.hash === "#/") {
   const last = remembered();
-  window.location.replace(last && getToken() ? last : "#/status");
+  window.location.replace(last && (getToken() || getIdentity()) ? last : "#/status");
 } else {
   route();
 }

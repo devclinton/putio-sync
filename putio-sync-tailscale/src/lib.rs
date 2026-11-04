@@ -98,6 +98,13 @@ impl TailscaleService {
         inner.whois.clear();
     }
 
+    /// A new service on another socket, with this one's CLI and timeout (and an empty
+    /// cache)
+    pub fn sibling(&self, socket: impl Into<PathBuf>) -> TailscaleService {
+        let cli = self.lock().cli.clone();
+        TailscaleService::new(socket, cli).with_timeout(self.timeout)
+    }
+
     /// The socket in use
     pub fn socket(&self) -> PathBuf {
         self.lock().socket.clone()

@@ -38,6 +38,8 @@ pub(crate) struct Ctx {
     pub db: Option<Arc<Database>>,
     pub cleanup: Arc<EmptyFolderCleanup>,
     pub stalls: Option<Arc<StallTracker>>,
+    /// The shared Tailscale service; the check builds one from the config without it
+    pub tailscale: Option<Arc<putio_sync_tailscale::TailscaleService>>,
     pub started: Instant,
     probe: OnceCell<(AccountProbe, DateTime<Utc>)>,
     transfers: OnceCell<Result<Vec<Transfer>, String>>,
@@ -60,6 +62,7 @@ impl Ctx {
             db,
             cleanup,
             stalls,
+            tailscale: None,
             started: Instant::now(),
             probe: OnceCell::new(),
             transfers: OnceCell::new(),
@@ -140,6 +143,7 @@ async fn detect(ctx: &Ctx, id: CheckId) -> Finding {
         Reachability => net::reachability(ctx).await,
         RateLimit => net::rate_limit(ctx).await,
         ClockSkew => net::clock_skew(ctx).await,
+        Tailscale => net::tailscale(ctx).await,
     }
 }
 

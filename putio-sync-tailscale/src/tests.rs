@@ -59,14 +59,18 @@ fn fake(routes: Vec<(&'static str, Option<(u16, &'static str)>)>) -> Fake {
                 let found = routes.iter().find(|(p, _)| path.starts_with(p));
                 match found {
                     Some((_, Some((code, body)))) => {
-                        let resp = format!("HTTP/1.0 {code} X\r\nContent-Type: application/json\r\n\r\n{body}");
+                        let resp = format!(
+                            "HTTP/1.0 {code} X\r\nContent-Type: application/json\r\n\r\n{body}"
+                        );
                         let _ = conn.write_all(resp.as_bytes()).await;
                     }
                     Some((_, None)) => {
                         tokio::time::sleep(Duration::from_secs(30)).await;
                     }
                     None => {
-                        let _ = conn.write_all(b"HTTP/1.0 404 Not Found\r\n\r\nnot found").await;
+                        let _ = conn
+                            .write_all(b"HTTP/1.0 404 Not Found\r\n\r\nnot found")
+                            .await;
                     }
                 }
             });
@@ -152,7 +156,11 @@ async fn hang_junk_and_missing() {
 
 #[tokio::test]
 async fn userspace_has_no_bind() {
-    let json: &'static str = Box::leak(STATUS.replace("\"TUN\": true", "\"TUN\": false").into_boxed_str());
+    let json: &'static str = Box::leak(
+        STATUS
+            .replace("\"TUN\": true", "\"TUN\": false")
+            .into_boxed_str(),
+    );
     let f = fake(vec![("/localapi/v0/status", Some((200, json)))]);
     let s = service(&f.socket).status().await;
     assert!(s.userspace);
@@ -168,7 +176,10 @@ async fn identities() {
     let ts = service(&f.socket);
 
     // serve's headers on loopback
-    match ts.identity_for(loopback(), Some("bob@example.com"), Some("Bob")).await {
+    match ts
+        .identity_for(loopback(), Some("bob@example.com"), Some("Bob"))
+        .await
+    {
         Lookup::Found(id) => {
             assert_eq!(id.login, "bob@example.com");
             assert_eq!(id.name, "Bob");
@@ -179,14 +190,24 @@ async fn identities() {
     // Loopback without headers, headers from the LAN, no peer at all: nothing
     assert_eq!(ts.identity_for(loopback(), None, None).await, Lookup::None);
     assert_eq!(
-        ts.identity_for(Some("192.168.1.9:1".parse().unwrap()), Some("bob@example.com"), None)
-            .await,
+        ts.identity_for(
+            Some("192.168.1.9:1".parse().unwrap()),
+            Some("bob@example.com"),
+            None
+        )
+        .await,
         Lookup::None
     );
-    assert_eq!(ts.identity_for(None, Some("bob@example.com"), None).await, Lookup::None);
+    assert_eq!(
+        ts.identity_for(None, Some("bob@example.com"), None).await,
+        Lookup::None
+    );
 
     // whois for a tailnet peer, cached
-    match ts.identity_for(tailnet_peer(), Some("mallory@evil"), None).await {
+    match ts
+        .identity_for(tailnet_peer(), Some("mallory@evil"), None)
+        .await
+    {
         Lookup::Found(id) => {
             assert_eq!(id.login, "alice@example.com");
             assert_eq!(id.device, "laptop");
@@ -200,11 +221,16 @@ async fn identities() {
 
     // Tagged and unknown peers are refused
     assert!(matches!(
-        ts.identity_for(Some("100.90.1.3:1".parse().unwrap()), None, None).await,
-        Lookup::Refused { via: IdentityVia::Whois, .. }
+        ts.identity_for(Some("100.90.1.3:1".parse().unwrap()), None, None)
+            .await,
+        Lookup::Refused {
+            via: IdentityVia::Whois,
+            ..
+        }
     ));
     assert!(matches!(
-        ts.identity_for(Some("100.90.1.4:1".parse().unwrap()), None, None).await,
+        ts.identity_for(Some("100.90.1.4:1".parse().unwrap()), None, None)
+            .await,
         Lookup::Refused { .. }
     ));
 
@@ -245,13 +271,20 @@ async fn cli_fallback() {
         ts.identity_for(tailnet_peer(), None, None).await,
         Lookup::Found(_)
     ));
-    match ts.identity_for(Some("100.90.1.9:1".parse().unwrap()), None, None).await {
+    match ts
+        .identity_for(Some("100.90.1.9:1".parse().unwrap()), None, None)
+        .await
+    {
         Lookup::Refused { reason, .. } => assert!(reason.contains("no match"), "{reason}"),
         other => panic!("{other:?}"),
     }
 
     // A failing CLI is unreachable, with its message
-    std::fs::write(&bin, "#!/bin/sh\necho 'failed to connect to local tailscaled' >&2\nexit 1\n").unwrap();
+    std::fs::write(
+        &bin,
+        "#!/bin/sh\necho 'failed to connect to local tailscaled' >&2\nexit 1\n",
+    )
+    .unwrap();
     let ts = TailscaleService::new(dir.path().join("none.sock"), Cli::Path(bin));
     let s = ts.status().await;
     assert_eq!(s.state, State::Unreachable);

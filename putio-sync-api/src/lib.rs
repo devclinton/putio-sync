@@ -47,6 +47,7 @@ use putio_sync_doctor::Doctor;
 use putio_sync_download::{DownloadConfig, DownloadManager};
 use putio_sync_file_manager::TorrentWatcher;
 use putio_sync_storage::StorageService;
+use putio_sync_tailscale::TailscaleService;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -105,6 +106,8 @@ pub struct AppState {
     /// even when `[arr]` is off, so turning it on from Settings needs no restart
     /// (feature 018); the RPC checks `enabled` per request.
     pub arr: Option<routes::arr::ArrRpc>,
+    /// Tailscale on this machine (feature 036); the doctor shares it
+    pub tailscale: Arc<TailscaleService>,
 }
 
 /// The engine behind the API (FR-018: a save says what applies now)
@@ -138,6 +141,10 @@ impl AppState {
             database.clone(),
             &config,
         ));
+        let tailscale = Arc::new(TailscaleService::new(
+            config.tailscale.socket_path(),
+            putio_sync_tailscale::Cli::Auto,
+        ));
         let doctor = Arc::new(
             Doctor::new(
                 config.clone(),
@@ -146,11 +153,13 @@ impl AppState {
                 cleanup.clone(),
             )
             .with_config_path(config_path.clone())
+            .with_tailscale(tailscale.clone())
             .with_metrics(),
         );
         let arr = build_arr(&config, &client, database.as_ref(), &download_manager);
         AppState {
             arr,
+            tailscale,
             cleanup,
             storage,
             doctor,
@@ -174,6 +183,12 @@ impl AppState {
     /// Read stall verdicts from `tracker`, the one the daemon's stall check task feeds
     pub fn with_stall_tracker(mut self, tracker: Arc<StallTracker>) -> AppState {
         self.stall_tracker = tracker;
+        self
+    }
+
+    /// Ask this Tailscale service instead (tests use a fake daemon)
+    pub fn with_tailscale(mut self, tailscale: Arc<TailscaleService>) -> AppState {
+        self.tailscale = tailscale;
         self
     }
 
@@ -301,6 +316,7 @@ pub fn router(state: AppState) -> Router {
         .route("/active", axum::routing::get(routes::active::get_active))
         .nest("/releases", routes::releases::router())
         .nest("/whats-new", routes::system::whats_new::router())
+        .nest("/tailscale", routes::system::tailscale::router())
         .route(
             "/status",
             axum::routing::get(routes::system::status::get_status),

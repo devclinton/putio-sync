@@ -108,7 +108,9 @@ mod tests {
 
     #[test]
     fn parses_plain_and_chunked_answers() {
-        let r = parse_response(b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{\"a\":1}").unwrap();
+        let r =
+            parse_response(b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{\"a\":1}")
+                .unwrap();
         assert_eq!(r.code, 200);
         assert_eq!(r.body, b"{\"a\":1}");
 
@@ -123,6 +125,8 @@ mod tests {
 
         assert!(parse_response(b"junk").is_err());
         assert!(parse_response(b"SSH-2.0\r\n\r\n").is_err());
-        assert!(parse_response(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n").is_err());
+        assert!(
+            parse_response(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n").is_err()
+        );
     }
 }

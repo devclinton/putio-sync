@@ -19,9 +19,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   MagicDNS name, the tailnet addresses, the HTTPS address from
   `tailscale serve`, and hints when something is missing. Opt-in sign-in
   with Tailscale identity (`[tailscale] identity_sign_in`, off by default):
-  users on the allow-list (`allowed_users`, filled with this node's owner when
-  turned on) open the UI without the API token, through `tailscale serve` or
-  straight over the tailnet; everybody else still needs the token, and tagged
+  users on the allow-list (`allowed_users`; the card has a button to add this
+  machine's owner) open the UI without the API token, through
+  `tailscale serve` or straight over the tailnet, and the top bar shows who
+  they are; everybody else still needs the token, and tagged
   devices and Funnel never get in this way. Opt-in `tailnet_only` makes the
   daemon listen on the tailnet IPv4 address instead of `[api] bind`, waiting
   for Tailscale when it starts later, and never falling back to the LAN. Works

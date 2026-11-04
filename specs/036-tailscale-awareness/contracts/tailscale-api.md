@@ -33,14 +33,16 @@
 ## GET /auth/status (public)
 
 Adds `"tailscale": {"login", "name", "via"}` when identity sign-in lets this request in,
-else `null`; and `"tailscale_sign_in": bool` (whether identity sign-in is on).
+and `"tailscale_sign_in": true` when identity sign-in is on. Both are left out otherwise,
+so the response is unchanged while the feature is off.
 
 ## Settings group `tailscale`
 
 - `GET /settings/tailscale` → `{"tailnet_only": false, "identity_sign_in": false,
   "allowed_users": [], "socket": null}`
-- `PUT /settings/tailscale` same body. 400 on invalid login or empty socket, and when
+- `PUT /settings/tailscale` same body. 400 on an invalid login, and when
   `tailnet_only` turns on without a tailnet address (`error` gives the reason).
+  Blank logins are dropped and a blank `socket` means the default.
 - `POST /settings/tailscale/preview` same body; standard preview.
 
 ## Protected routes
