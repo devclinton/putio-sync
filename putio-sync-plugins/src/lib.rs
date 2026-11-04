@@ -13,4 +13,11 @@ pub mod discover;
 pub mod host;
 pub mod manifest;
 pub mod sandbox;
+pub mod service;
 pub mod store;
+pub mod worker;
+
+pub use service::{
+    PluginState, PluginStatus, PluginsOptions, PluginsService, TestError, TEST_MESSAGE,
+};
+pub use worker::{PluginRun, RunResult};
