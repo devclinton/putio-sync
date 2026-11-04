@@ -124,12 +124,6 @@ Download speed limits by time of day and day of week (for example unlimited
 from 01:00 to 07:00, 5 MB/s otherwise), plus a one-click "pause" or "slow" for
 an hour. The current limit shows on the Status page.
 
-### 033 Put.io storage management
-
-Show Put.io storage use and what fills it. Warn when free space is low, and
-optionally delete the oldest files that are already downloaded and verified
-until a target amount is free, with a preview and a list of what was deleted.
-
 ### 034 Download verification
 
 Check each finished download against Put.io's CRC32 (or size where there is

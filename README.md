@@ -12,6 +12,7 @@ What changed in each build is in [CHANGELOG.md](CHANGELOG.md); planned work is i
 - **Smart Progress Logging**: Size-based progress intervals with single-threshold logging (every 50% for 500MB+, 33% for 1GB+, 20% for 5GB+, 10% for 10GB+, 7% for 15GB+, 5% for 20GB+, 1% for 50GB+)
 - **Empty Directory Cleanup**: Enhanced detection and tracking with 5-scan threshold for automatic deletion of empty folders
 - **Put.io Empty-Folder Cleanup**: Remove empty folders from your Put.io account once a day or on demand, from the CLI, API or web UI ([details](#putio-empty-folder-cleanup))
+- **Put.io Storage**: see what fills your Put.io account, get warned when free space runs low, and free space by deleting the oldest files already downloaded, with a preview first ([details](#putio-storage))
 - **Smart Filtering**: Whitelist/blacklist patterns with glob support
 - **Executable Guard**: Executables and installers on Put.io (`.exe`, `.msi`, `.bat`, ...) are never downloaded; configurable with `blocked_extensions`
 - **Folder Rules**: Per-folder type presets (video, audio, ebooks, no binaries, or your own), skip a folder, or delete blocked files from Put.io; child folders inherit
@@ -356,6 +357,24 @@ Options:
 It prints each folder (id, path, age) and a summary line, and asks before deleting unless
 `--yes`. It talks to Put.io directly, so the daemon need not be running. The exit code is
 non-zero when the run fails or any delete fails.
+
+### `files free-space`
+
+Free Put.io space by deleting the oldest files already downloaded, until
+`[storage] target_free_percent` is free. See [Put.io Storage](#putio-storage) for which
+files are safe to delete.
+
+```bash
+putio-sync files free-space [OPTIONS]
+
+Options:
+  --dry-run                 List the files that would be deleted; delete nothing
+  -y, --yes                 Skip the confirmation prompt
+```
+
+It prints each file (size, id, date added, Put.io path and local copy) and the totals,
+then asks before deleting unless `--yes`. It needs the download database in the download
+folder. The exit code is non-zero when any delete fails.
 
 ### `doctor`
 
@@ -1187,6 +1206,43 @@ lists every rule, lets you edit presets, and shows the recently blocked files wi
 the rule that decided each one (also logged). Saves keep the rest of `config.toml` as
 it is. Under `daemon` they apply from the next sync; under `server` they reach only the
 API's own downloads.
+
+### Put.io Storage
+
+The Put.io page opens with a **Storage** card: used, free and total with a bar, and the
+ten biggest top-level files and folders with their share. When less than
+`warn_free_percent` is free, the card, the Status page and the doctor warn (below 2% the
+doctor reports a problem). Prometheus gets `putio_sync_putio_storage_size_bytes` and
+`putio_sync_putio_storage_used_bytes`, refreshed every 15 minutes under `daemon`.
+
+**Free up space** lists the files it would delete, oldest added first, until
+`target_free_percent` is free, with the total and what free space would come to. Nothing
+is deleted until you confirm, and only the files in that preview are deleted. A file is
+only ever a candidate when all of these hold:
+
+- it has a completed download here of the same size, and the local copy still exists at
+  that size
+- it is not queued, downloading or paused
+- it, and no folder above it, is shared
+- it is not part of an unfinished transfer (its file, or the folder it saves to)
+
+Each file is checked again just before it is deleted; one that changed is skipped with
+the reason. Folders are never deleted. A preview lists at most 1,000 files and is valid
+for 30 minutes. Every run that deleted something is listed under **Recent runs** with its
+files, and each file shows in History as deleted.
+
+```toml
+[storage]
+warn_free_percent = 10     # warn below this percent free (1-89)
+target_free_percent = 20   # free up until this percent is free (above warn, up to 90)
+auto_free = false          # daemon: free up once a day when below the warning level
+run_at = "02:30"           # time of day for the automatic run, 24-hour local time
+```
+
+The same settings are in the web UI under Settings → Put.io storage, and the CLI has
+[`files free-space`](#files-free-space). The API is `GET /putio/storage`,
+`POST /putio/storage/plan`, `POST /putio/storage/free` (`{plan_id, file_ids}`) and
+`GET /putio/storage/runs`.
 
 ### Put.io Empty-Folder Cleanup
 
