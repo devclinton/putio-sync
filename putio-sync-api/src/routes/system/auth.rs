@@ -1,7 +1,7 @@
 //! Sign-in routes for the web UI (feature 004, FR-006, FR-007)
 //!
 //! Both are public (no token needed):
-//! - GET  /auth/status - Whether an API token is configured
+//! - GET  /auth/status - Whether an API token is configured (and `setup_required: false`)
 //! - POST /auth/login  - Check a token: 204 on match, 401 otherwise, 429 when rate limited
 //!
 //! The UI keeps the token itself and sends it as `Authorization: Bearer` afterwards, so
@@ -26,6 +26,8 @@ pub use crate::AppState;
 #[derive(Debug, Serialize)]
 pub struct AuthStatusResponse {
     pub token_configured: bool,
+    /// Always false here; setup mode answers true (feature 013)
+    pub setup_required: bool,
 }
 
 /// Body of `POST /auth/login`. Deliberately not `Debug`, so it can't end up in a log.
@@ -39,7 +41,10 @@ pub struct LoginRequest {
 /// GET /auth/status
 pub async fn auth_status(State(state): State<AppState>) -> Json<AuthStatusResponse> {
     let token_configured = state.config.read().await.api.auth_token.is_some();
-    Json(AuthStatusResponse { token_configured })
+    Json(AuthStatusResponse {
+        token_configured,
+        setup_required: false,
+    })
 }
 
 /// Check a token for the sign-in page

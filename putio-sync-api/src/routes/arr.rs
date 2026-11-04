@@ -205,7 +205,7 @@ async fn listen_port(state: &AppState) -> u16 {
 }
 
 /// The host the browser used to reach putio-sync, without its port
-fn browser_host(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn browser_host(headers: &HeaderMap) -> Option<String> {
     headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
@@ -239,7 +239,7 @@ async fn save_arr(
 }
 
 /// A new download-client password: 64 random hex characters (R11)
-fn generate_password() -> String {
+pub(crate) fn generate_password() -> String {
     format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -783,23 +783,26 @@ pub enum SetupTarget {
 /// `POST /arr/setup` and `/arr/setup/preview` body (data-model "SetupRequest")
 #[derive(Deserialize)]
 pub struct SetupRequest {
-    target: SetupTarget,
+    pub(crate) target: SetupTarget,
     #[serde(default)]
-    api_key: String,
+    pub(crate) api_key: String,
     #[serde(default)]
-    category: Option<String>,
+    pub(crate) category: Option<String>,
     /// Overrides the host the *arr uses for putio-sync (FR-022)
     #[serde(default)]
-    host: Option<String>,
+    pub(crate) host: Option<String>,
     /// US5
     #[serde(default)]
-    disable_blackhole: bool,
+    pub(crate) disable_blackhole: bool,
     #[serde(default)]
-    remember: bool,
+    pub(crate) remember: bool,
 }
 
 /// The *arr's URL and key for a request
-fn target_of(req: &SetupRequest, settings: &ArrSettings) -> Result<(String, String), ApiError> {
+pub(crate) fn target_of(
+    req: &SetupRequest,
+    settings: &ArrSettings,
+) -> Result<(String, String), ApiError> {
     match &req.target {
         SetupTarget::Application { application } => {
             let server = settings.servers.get(*application).ok_or_else(|| {

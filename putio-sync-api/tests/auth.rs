@@ -179,7 +179,7 @@ async fn auth_status_public() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         body_json(response).await,
-        json!({ "token_configured": true })
+        json!({ "token_configured": true, "setup_required": false })
     );
 
     let app = test_app_without_token().await;
@@ -187,7 +187,7 @@ async fn auth_status_public() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         body_json(response).await,
-        json!({ "token_configured": false })
+        json!({ "token_configured": false, "setup_required": false })
     );
 }
 

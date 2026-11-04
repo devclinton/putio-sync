@@ -38,6 +38,7 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_empty_folder_delete_failures_total",
     "putio_sync_empty_folder_last_success_timestamp_seconds",
     "putio_sync_transfers_stalled",
+    "putio_sync_setup_required",
     "putio_sync_pipeline_items",
     "putio_sync_pipeline_actions_total",
     "putio_sync_nas_downloads_paused",
@@ -428,6 +429,17 @@ fn empty_folder_cleanup_metrics() {
         t.sample("putio_sync_empty_folder_delete_failures_total", &[]),
         Some(1.0)
     );
+}
+
+/// Feature 013: the setup-mode gauge starts at 0
+#[test]
+fn setup_required_is_zero_until_set() {
+    let t = Telemetry::new();
+    assert_eq!(t.sample("putio_sync_setup_required", &[]), Some(0.0));
+    t.set_setup_required(true);
+    assert_eq!(t.sample("putio_sync_setup_required", &[]), Some(1.0));
+    t.set_setup_required(false);
+    assert_eq!(t.sample("putio_sync_setup_required", &[]), Some(0.0));
 }
 
 /// Feature 007: the stalled-transfer gauge starts at 0 and holds the last count
