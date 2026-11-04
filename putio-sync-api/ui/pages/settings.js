@@ -28,6 +28,7 @@ import {
   testArrApplication,
   testArrForm,
 } from "../api.js";
+import { networkBeforeSave, networkExtra } from "../network.js";
 import { tailscaleBeforeSave, tailscaleExtra } from "../tailscale.js";
 import { confirm, h, toast } from "../app.js";
 import { relative } from "../format.js";
@@ -107,6 +108,16 @@ const GROUPS = [
     ],
     extra: tailscaleExtra,
     beforeSave: tailscaleBeforeSave,
+  },
+  {
+    key: "network",
+    title: "Network",
+    fields: [
+      ["api_bind", "API addresses", "One per line: ip:port, [ipv6]:port, interface:port or tailnet:port (after a restart)", "l"],
+      ["metrics_bind", "Metrics addresses", "One per line, same forms; must not share an address with the API (after a restart)", "l"],
+    ],
+    extra: networkExtra,
+    beforeSave: networkBeforeSave,
   },
   {
     key: "logging",
