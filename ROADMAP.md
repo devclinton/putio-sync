@@ -29,19 +29,6 @@ with a username and password, and sign-in through OAuth providers: Google,
 GitHub, and Discord if its OAuth stays free. Limit who may sign in by account
 or email, and keep the API token for scripts and Radarr/Sonarr.
 
-### 020 Glob filters with AND and OR
-
-Simple glob patterns (`*.mkv`, `Sample/*`, `*[Ss]ample*`) wherever files are
-chosen: folder rules, skip and delete settings, and the Put.io page. Patterns
-combine with AND and OR (for example `*.mkv AND NOT *sample*`), with a preview
-of which files match before saving.
-
-045 built this language for the Put.io, Transfers and Local files lists
-(`putio-sync-api/ui/query.js`, grammar in
-`specs/045-select-sort-filter/contracts/filter-grammar.md`). What is left is
-using it in folder rules and settings, which need a Rust matcher with the
-same grammar.
-
 ### 021 Keep folders out of empty-folder cleanup
 
 A way to tell the empty-folder cleanup and the doctor to leave a folder

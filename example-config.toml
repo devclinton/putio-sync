@@ -33,7 +33,7 @@ reverse_sort = false
 
 # File filtering patterns (glob syntax)
 whitelist_patterns = "*.{mkv,mp4,avi,mov}"  # Only download video files
-# blacklist_patterns = "*.{exe,zip}"        # Exclude executables and archives
+# blacklist_patterns = "*sample* OR *.{exe,zip}"  # Never download samples, executables, archives
 
 # Bandwidth limit in bytes per second (optional)
 # bandwidth_limit_bytes_per_sec = 10485760  # 10 MB/s limit

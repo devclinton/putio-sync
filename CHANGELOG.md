@@ -14,6 +14,18 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Only download and Never download patterns in folder rules (`include` and
+  `exclude`), with AND, OR and NOT: `*.mkv OR *.mp4 -sample`, `*.{mkv,mp4}`,
+  `*.mkv,*.mp4`, and `Sample/*` matched against the path from the Put.io root.
+  The language is the one of the web UI's filter boxes, which now also take a
+  comma as OR, `{a,b}` and paths. The Put.io page's rule card shows both and
+  where they come from, the editor sets or clears them, file badges follow
+  them, and Preview lists the files that would download. Settings › Download
+  has **Preview patterns** for the account-wide values. A pattern with an
+  unclosed quote or brace is refused when saved and when the config loads;
+  Settings and the doctor's Config check warn about a stray OR, literal
+  brackets, and a delete-blocked rule with an Only download pattern (feature
+  020).
 - Listen addresses and interfaces. `[api] bind` and `[metrics] bind` take one
   address or a list, each `ip:port`, `[ipv6]:port`, an interface name such as
   `eth0:15432` (every address the interface has, followed as it changes) or
@@ -200,6 +212,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- `[download] whitelist_patterns` and `blacklist_patterns` (Only download and
+  Never download in Settings) were saved but never applied.
 - A fake release rejected right after Radarr or Sonarr grabbed it is now
   blocklisted. Before, putio-sync asked before the *arr had listed the item in
   its queue, gave up, and left it stuck as "downloading" with no new search.
@@ -226,6 +240,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- Only download and Never download now apply: files that don't match
+  `whitelist_patterns`, or match `blacklist_patterns`, are blocked like a
+  blocked type, logged with the pattern, listed under Recently blocked and
+  deleted from Put.io under a rule with `delete_blocked`. Check a value you set
+  before with **Preview patterns** in Settings › Download.
 - `skip_existing` is replaced by `on_existing` and still read (`true` is
   resume, `false` overwrite). A file of the same size but a different
   checksum is no longer treated as downloaded (feature 040).
