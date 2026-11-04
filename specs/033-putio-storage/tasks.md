@@ -33,8 +33,8 @@
 **Independent test**: mock 80 GB used of 100 GB in three root folders; `GET /putio/storage` and the card show them largest first.
 
 - [X] T010 [US1] `StorageService` in `putio-sync-storage/src/lib.rs`: `from_config(client, db, &Config)`, `configure(&Config)`, `config()`, `summary()` (account info + root listing, top 10, `low`, sets the gauges); `StorageError` (AlreadyRunning, NoDatabase, PlanExpired, Client, Db); unit test with mockito
-- [ ] T011 [US1] `AppState.storage` built in `AppState::new` and configured where cleanup is (`settings.rs` saves, `assistant.rs` import) in `putio-sync-api/src/lib.rs`; route `GET /putio/storage` in `putio-sync-api/src/routes/putio/storage.rs` (register in `routes/putio/mod.rs`, nest behind auth)
-- [ ] T012 [P] [US1] API tests in `putio-sync-api/tests/storage.rs`: summary numbers and order, 401 without a token; setup mode 503 for `/putio/storage` in `putio-sync-api/tests/setup_routes.rs`
+- [X] T011 [US1] `AppState.storage` built in `AppState::new` and configured where cleanup is (`settings.rs` saves, `assistant.rs` import) in `putio-sync-api/src/lib.rs`; route `GET /putio/storage` in `putio-sync-api/src/routes/putio/storage.rs` (register in `routes/putio/mod.rs`, nest behind auth)
+- [X] T012 [P] [US1] API tests in `putio-sync-api/tests/storage.rs`: summary numbers and order, 401 without a token; setup mode 503 for `/putio/storage` in `putio-sync-api/tests/setup_routes.rs`
 - [ ] T013 [US1] UI module `putio-sync-api/ui/storage.js` (`storageCard()`: bar, numbers, top items linking to `#/putio/<id>`, error state), embed it in `putio-sync-api/src/ui.rs`, mount it at the top of `putio-sync-api/ui/pages/putio.js`; bar styles in `putio-sync-api/ui/app.css`
 
 ## Phase 4: User Story 2 - Be warned when free space is low (P1)
@@ -55,7 +55,7 @@
 
 - [X] T017 [US3] Service tests in `putio-sync-storage/src/lib.rs` (mockito + temp db + temp files): `plan()` picks verified files; `free()` deletes only plan ids, skips a file gone from Put.io / size changed / local copy removed / newly queued / under a now-unfinished transfer, records failures of a failed delete batch, refuses unknown and expired plans and a second concurrent run, records nothing when nothing was deleted
 - [X] T018 [US3] Implement `plan()` (walk 4 at a time, 120 s, transfers, db reads, planner, store latest plan 30 min) and `free(trigger, plan_id, ids)` (re-checks, batches of 100, free_after from account info, logging and metrics) in `putio-sync-storage/src/lib.rs`
-- [ ] T019 [US3] Routes `POST /putio/storage/plan` and `POST /putio/storage/free` with error mapping (409 running/expired, 503 no database, 400 bad body) in `putio-sync-api/src/routes/putio/storage.rs`; API tests in `putio-sync-api/tests/storage.rs` (plan lists only verified files; free deletes exactly them per mock; stale plan 409; empty ids 400)
+- [X] T019 [US3] Routes `POST /putio/storage/plan` and `POST /putio/storage/free` with error mapping (409 running/expired, 503 no database, 400 bad body) in `putio-sync-api/src/routes/putio/storage.rs`; API tests in `putio-sync-api/tests/storage.rs` (plan lists only verified files; free deletes exactly them per mock; stale plan 409; empty ids 400)
 - [ ] T020 [US3] UI: "Free up space" runs the plan, shows the list (path, size, added, local path), totals and shortfall in the confirm dialog, confirm posts the plan and shows deleted/skipped/failed, then refreshes the card, in `ui/storage.js`
 - [ ] T021 [US3] CLI `files free-space [--dry-run] [-y]` in `putio-sync-cli/src/commands/free_space.rs`, registered in `commands/mod.rs`, `cli.rs` and the command dispatch
 
@@ -66,7 +66,7 @@
 **Independent test**: a run deleting two files shows in recent runs with both files; History shows both as deleted.
 
 - [X] T022 [US4] `free()` records the run (`storage().record_run`) and History `deleted` rows; `runs(limit)` on the service; tests in `putio-sync-storage/src/lib.rs`
-- [ ] T023 [US4] Route `GET /putio/storage/runs` (`[]` without a database) and API test (run listed with files; History has deleted rows) in `putio-sync-api/tests/storage.rs`
+- [X] T023 [US4] Route `GET /putio/storage/runs` (`[]` without a database) and API test (run listed with files; History has deleted rows) in `putio-sync-api/tests/storage.rs`
 - [ ] T024 [US4] UI recent runs list with expandable files in `ui/storage.js`
 
 ## Phase 7: User Story 5 - Free space automatically (P3)

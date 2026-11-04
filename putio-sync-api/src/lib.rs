@@ -46,6 +46,7 @@ use putio_sync_db::Database;
 use putio_sync_doctor::Doctor;
 use putio_sync_download::{DownloadConfig, DownloadManager};
 use putio_sync_file_manager::TorrentWatcher;
+use putio_sync_storage::StorageService;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -92,6 +93,9 @@ pub struct AppState {
     pub logging_reload: bool,
     /// Empty-folder cleanup; under `daemon`, the same service runs the daily cleanup
     pub cleanup: Arc<EmptyFolderCleanup>,
+    /// Put.io storage (feature 033); under `daemon`, the same service refreshes the
+    /// gauges and runs the opt-in daily free-up
+    pub storage: Arc<StorageService>,
     /// Stalled-transfer verdicts (feature 007). Empty unless the daemon's tracker is
     /// swapped in with [`AppState::with_stall_tracker`].
     pub stall_tracker: Arc<StallTracker>,
@@ -129,6 +133,11 @@ impl AppState {
     ) -> AppState {
         let logging_reload = config_path.as_ref().is_some_and(|path| path.exists());
         let cleanup = Arc::new(EmptyFolderCleanup::from_config(client.clone(), &config));
+        let storage = Arc::new(StorageService::from_config(
+            client.clone(),
+            database.clone(),
+            &config,
+        ));
         let doctor = Arc::new(
             Doctor::new(
                 config.clone(),
@@ -143,6 +152,7 @@ impl AppState {
         AppState {
             arr,
             cleanup,
+            storage,
             doctor,
             engine: Engine::Server,
             logging_reload,
@@ -177,6 +187,13 @@ impl AppState {
     /// never overlap
     pub fn with_cleanup(mut self, cleanup: Arc<EmptyFolderCleanup>) -> AppState {
         self.cleanup = cleanup;
+        self
+    }
+
+    /// Share `storage` with the daemon's storage loop, so a manual free-up and the
+    /// daily one never overlap
+    pub fn with_storage(mut self, storage: Arc<StorageService>) -> AppState {
+        self.storage = storage;
         self
     }
 
@@ -265,6 +282,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/putio/files", create_putio_files_router())
         .nest("/putio/transfers", create_putio_transfers_router())
         .nest("/putio/cleanup", routes::putio::cleanup::router())
+        .nest("/putio/storage", routes::putio::storage::router())
         .nest("/local/files", create_local_files_router())
         .nest("/local/queue", create_local_queue_router())
         .route(

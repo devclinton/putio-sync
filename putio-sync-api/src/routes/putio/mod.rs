@@ -4,4 +4,5 @@
 
 pub mod cleanup;
 pub mod files;
+pub mod storage;
 pub mod transfers;

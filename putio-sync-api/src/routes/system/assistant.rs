@@ -371,6 +371,7 @@ async fn import_settings(
         }
         state.doctor.configure(&candidate);
         state.cleanup.configure(&candidate);
+        state.storage.configure(&candidate);
         let download = crate::extract_download_config(&candidate);
         *config = candidate;
         drop(config);
