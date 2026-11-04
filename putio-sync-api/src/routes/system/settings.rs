@@ -13,6 +13,8 @@
 //! - PUT  /settings/precheck - Update the release check settings
 //! - GET  /settings/tailscale - Get the Tailscale settings (feature 036)
 //! - PUT  /settings/tailscale - Update the Tailscale settings
+//! - GET  /settings/hooks - Get the event hooks, header and env values masked (feature 027)
+//! - PUT  /settings/hooks - Replace the event hooks; a masked value keeps the stored one
 //! - GET/PUT /settings/network - The listen addresses (feature 037, in `network.rs`)
 //! - POST /settings/{group}/preview - What a PUT of that body would do, without saving
 //!   (feature 015; the assistant, export and import routes are in `assistant.rs`)
@@ -142,7 +144,7 @@ pub(crate) struct GroupInfo {
     pub when: &'static str,
 }
 
-/// The nine groups. Defaults are the default config's, with the current download
+/// The ten groups. Defaults are the default config's, with the current download
 /// folder kept: resetting it is almost never what a user means.
 pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
     let mut defaults = Config::default();
@@ -180,6 +182,11 @@ pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
             "tailscale",
             json(serde_json::to_value(tailscale_view(&defaults))),
             live_tailscale(state),
+        ),
+        group(
+            "hooks",
+            json(serde_json::to_value(hooks_view(&defaults))),
+            live_hooks(),
         ),
         group(
             "network",
@@ -409,6 +416,14 @@ pub struct StorageSettings {
     pub run_at: String,
 }
 
+/// Event hooks (`[[hooks]]`, feature 027). The view masks every header and env value
+/// with `"********"`; a PUT sending it keeps the stored value.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct HooksSettings {
+    #[serde(default)]
+    pub hooks: Vec<putio_sync_core::hooks::HookConfig>,
+}
+
 /// Tailscale sign-in and listening (`[tailscale]`, feature 036)
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -531,6 +546,8 @@ pub fn router() -> Router<AppState> {
         .route("/precheck", put(update_precheck_settings))
         .route("/tailscale", get(get_tailscale_settings))
         .route("/tailscale", put(update_tailscale_settings))
+        .route("/hooks", get(get_hooks_settings))
+        .route("/hooks", put(update_hooks_settings))
         .route("/download/preview", post(preview_download))
         .route("/watcher/preview", post(preview_watcher))
         .route("/logging/preview", post(preview_logging))
@@ -539,6 +556,7 @@ pub fn router() -> Router<AppState> {
         .route("/storage/preview", post(preview_storage))
         .route("/precheck/preview", post(preview_precheck))
         .route("/tailscale/preview", post(preview_tailscale))
+        .route("/hooks/preview", post(preview_hooks))
         .merge(super::network::settings_router())
         .merge(assistant::router())
 }
@@ -605,6 +623,18 @@ async fn preview_storage(
     let settings = body(settings)?;
     let live = live_storage(&state);
     Ok(preview(&state, storage_view, live, |c| apply_storage(settings, c)).await)
+}
+
+/// POST /settings/hooks/preview
+async fn preview_hooks(
+    State(state): State<AppState>,
+    settings: Result<Json<HooksSettings>, JsonRejection>,
+) -> Result<Json<Preview>, ApiError> {
+    let settings = body(settings)?;
+    Ok(preview(&state, hooks_view, live_hooks(), |c| {
+        apply_hooks(settings, c)
+    })
+    .await)
 }
 
 /// POST /settings/tailscale/preview
@@ -1140,6 +1170,55 @@ pub(crate) fn live_cleanup(state: &AppState) -> (&'static [&'static str], &'stat
         Engine::Server => &["min_age_hours", "nested"],
     };
     (live, "Applies from the next run")
+}
+
+/// Get the event hooks
+///
+/// GET /settings/hooks
+async fn get_hooks_settings(State(state): State<AppState>) -> Json<HooksSettings> {
+    Json(hooks_view(&*state.config.read().await))
+}
+
+/// Replace the event hooks
+///
+/// PUT /settings/hooks. Applies now: the running service takes the new list, keeping
+/// each remaining hook's queue and runs.
+async fn update_hooks_settings(
+    State(state): State<AppState>,
+    settings: Result<Json<HooksSettings>, JsonRejection>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let settings = body(settings)?;
+    let before = state.config.read().await.hooks.clone();
+    let mut changed = update(&state, hooks_view, |config| apply_hooks(settings, config)).await?;
+    let hooks = state.config.read().await.hooks.clone();
+    // The view masks values, so a changed header or env value alone shows no change there
+    if changed.is_empty() && hooks != before {
+        changed.push("hooks".to_string());
+    }
+    state.hooks.configure(hooks);
+    let (live, when) = live_hooks();
+    Ok(Json(SuccessResponse {
+        message: saved_message("Hooks", &changed, live, when, &[]),
+    }))
+}
+
+/// Apply a hooks body to `config` (shared by PUT and preview): masked values come back
+/// from the stored hook of the same name
+fn apply_hooks(settings: HooksSettings, config: &mut Config) -> Result<(), ApiError> {
+    config.hooks =
+        putio_sync_core::hooks::unmask(&settings.hooks, &config.hooks).map_err(invalid)?;
+    Ok(())
+}
+
+/// Hooks apply without a restart under both engines
+pub(crate) fn live_hooks() -> (&'static [&'static str], &'static str) {
+    (&["hooks"], "Applies now")
+}
+
+fn hooks_view(config: &Config) -> HooksSettings {
+    HooksSettings {
+        hooks: putio_sync_core::hooks::mask(&config.hooks),
+    }
 }
 
 /// Get the Put.io storage settings

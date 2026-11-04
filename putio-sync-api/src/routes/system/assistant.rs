@@ -196,6 +196,13 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "hooks",
+        &[(
+            "hooks",
+            "Commands and webhooks run on download, transfer, sync and storage events",
+        )],
+    ),
+    (
         "network",
         &[
             (
@@ -429,6 +436,7 @@ async fn import_settings(
         state.doctor.configure(&candidate);
         state.cleanup.configure(&candidate);
         state.storage.configure(&candidate);
+        state.hooks.configure(candidate.hooks.clone());
         let download = crate::extract_download_config(&candidate);
         *config = candidate;
         drop(config);

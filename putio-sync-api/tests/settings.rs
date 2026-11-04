@@ -665,3 +665,91 @@ async fn a_bad_download_pattern_is_400() {
         Some("*.mkv,*.mp4")
     );
 }
+
+// ---- Event hooks (feature 027) --------------------------------------------------------
+
+fn url_hook() -> Value {
+    json!({
+        "name": "ha",
+        "events": ["download.finished"],
+        "url": "https://ha.lan/api/webhook/abc",
+        "headers": { "Authorization": "Bearer hook-secret" },
+        "timeout_secs": 10
+    })
+}
+
+#[tokio::test]
+async fn hooks_save_masks_values_and_applies_now() {
+    let app = test_app().await;
+    assert_eq!(
+        get_ok(&app, "/settings/hooks").await,
+        json!({ "hooks": [] })
+    );
+
+    let (status, body) = put(&app, "/settings/hooks", json!({ "hooks": [url_hook()] })).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("Applies now: hooks"),
+        "{body}"
+    );
+    // The running service has it at once
+    assert_eq!(app.state.hooks.status()[0].name, "ha");
+
+    let view = get_ok(&app, "/settings/hooks").await;
+    assert_eq!(view["hooks"][0]["headers"]["Authorization"], "********");
+    assert!(!view.to_string().contains("hook-secret"));
+    assert_eq!(
+        saved(&app).hooks[0].headers["Authorization"],
+        "Bearer hook-secret"
+    );
+
+    // Sending the mask back keeps the stored value; a changed value alone is a change
+    let mut hook = view["hooks"][0].clone();
+    hook["timeout_secs"] = json!(20);
+    let (status, _) = put(&app, "/settings/hooks", json!({ "hooks": [hook] })).await;
+    assert_eq!(status, StatusCode::OK);
+    let stored = saved(&app);
+    assert_eq!(stored.hooks[0].timeout_secs, 20);
+    assert_eq!(
+        stored.hooks[0].headers["Authorization"],
+        "Bearer hook-secret"
+    );
+
+    let mut hook = view["hooks"][0].clone();
+    hook["timeout_secs"] = json!(20);
+    hook["headers"]["Authorization"] = json!("Bearer new");
+    let (_, body) = put(&app, "/settings/hooks", json!({ "hooks": [hook] })).await;
+    assert!(
+        body["message"].as_str().unwrap().contains("hooks"),
+        "{body}"
+    );
+    assert_eq!(saved(&app).hooks[0].headers["Authorization"], "Bearer new");
+}
+
+#[tokio::test]
+async fn a_bad_hook_is_400_naming_hook_and_field() {
+    let app = test_app().await;
+    let mut hook = url_hook();
+    hook["events"] = json!(["download.done"]);
+    let (status, body) = put(&app, "/settings/hooks", json!({ "hooks": [hook] })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body["error"],
+        "hooks \"ha\".events: unknown event \"download.done\""
+    );
+
+    // A mask with no stored value to stand for
+    let mut hook = url_hook();
+    hook["headers"]["Authorization"] = json!("********");
+    let (status, body) = put(&app, "/settings/hooks", json!({ "hooks": [hook] })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"].as_str().unwrap().contains("still masked"),
+        "{body}"
+    );
+    assert!(saved(&app).hooks.is_empty());
+    assert!(app.state.hooks.status().is_empty());
+}
