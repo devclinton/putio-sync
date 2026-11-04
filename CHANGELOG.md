@@ -14,6 +14,19 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Event hooks: `[[hooks]]` entries run a command or call a webhook when a
+  download finishes or fails, a Put.io transfer is added, finishes or fails, a
+  sync run ends, or Put.io storage runs low. The event goes as JSON (stdin for
+  a command, the POST body for a webhook) in a versioned schema documented in
+  `EVENTS.md` and served at `GET /events/schema`. Per hook: event filters,
+  headers or env, and a timeout. Hooks never hold up a sync; webhooks are
+  retried on errors, and output is logged. Settings › Event hooks edits them
+  with **Send test event** (`GET /hooks`, `POST /hooks/test`). Header and env
+  values are masked and webhook URLs cut down everywhere they are shown or
+  logged. New metrics `putio_sync_events_total`,
+  `putio_sync_hook_runs_total`, `putio_sync_hook_run_duration_seconds` and
+  `putio_sync_hook_events_dropped_total`, and a doctor check, Event hooks
+  (feature 027).
 - Bandwidth schedules: `[[download.bandwidth_schedule]]` entries set the
   download limit by time of day and day of week (`days`, `start`, `end`,
   `limit` as bytes per second, `"unlimited"` or `"paused"`), in the daemon's

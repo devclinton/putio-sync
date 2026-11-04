@@ -64,6 +64,10 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_precheck_held_total",
     "putio_sync_precheck_held",
     "putio_sync_precheck_held_seconds",
+    "putio_sync_events_total",
+    "putio_sync_hook_runs_total",
+    "putio_sync_hook_run_duration_seconds",
+    "putio_sync_hook_events_dropped_total",
     "putio_sync_db_errors_total",
     "putio_sync_disk_free_bytes",
     "putio_sync_disk_total_bytes",
@@ -193,6 +197,10 @@ fn record_everything(t: &Telemetry) {
     t.precheck_hold_ended(HoldResult::FoundPassed, Duration::from_secs(90));
     t.set_precheck_held(1);
     t.set_transfers_stalled(2);
+    t.event_emitted("download.finished");
+    t.hook_configured("test-hook");
+    t.hook_run("test-hook", "hook.test", "timeout", Duration::from_secs(30));
+    t.hook_dropped("test-hook", 1);
     t.db_error(DbOp::Queue);
     t.set_queue_counts(&[(QueueState::Pending, 2)]);
     let dir = tempfile::tempdir().unwrap();
@@ -238,8 +246,12 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v.extend(strs(FallbackResult::ALL, FallbackResult::as_str));
             v.extend(strs(HoldResult::ALL, HoldResult::as_str));
             v.extend(putio_sync_telemetry::tailscale::RESULTS);
+            v.extend(putio_sync_telemetry::hooks::RESULTS);
             v
         }
+        "type" | "event" => putio_sync_telemetry::hooks::EVENT_TYPES.to_vec(),
+        // Hook names from the config
+        "hook" => vec!["test-hook"],
         "via" => putio_sync_telemetry::tailscale::VIAS.to_vec(),
         "kind" => {
             let mut v = strs(SyncKind::ALL, SyncKind::as_str);

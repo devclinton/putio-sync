@@ -1,5 +1,6 @@
 //! The checks: shared data for one run, and dispatch by [`CheckId`]
 
+pub(crate) mod hooks;
 pub(crate) mod local;
 pub(crate) mod net;
 pub(crate) mod putio;
@@ -40,6 +41,8 @@ pub(crate) struct Ctx {
     pub stalls: Option<Arc<StallTracker>>,
     /// The shared Tailscale service; the check builds one from the config without it
     pub tailscale: Option<Arc<putio_sync_tailscale::TailscaleService>>,
+    /// The running hooks, for their last runs; the check reads the config alone without it
+    pub hooks: Option<Arc<putio_sync_hooks::HooksService>>,
     pub started: Instant,
     probe: OnceCell<(AccountProbe, DateTime<Utc>)>,
     transfers: OnceCell<Result<Vec<Transfer>, String>>,
@@ -63,6 +66,7 @@ impl Ctx {
             cleanup,
             stalls,
             tailscale: None,
+            hooks: None,
             started: Instant::now(),
             probe: OnceCell::new(),
             transfers: OnceCell::new(),
@@ -146,6 +150,7 @@ async fn detect(ctx: &Ctx, id: CheckId) -> Finding {
         ClockSkew => net::clock_skew(ctx).await,
         Tailscale => net::tailscale(ctx).await,
         Listen => net::listen(ctx).await,
+        Hooks => hooks::hooks(ctx).await,
     }
 }
 

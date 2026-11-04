@@ -134,6 +134,7 @@ ids!(
         ClockSkew => "clock_skew",
         Tailscale => "tailscale",
         Listen => "listen",
+        Hooks => "hooks",
     }
 );
 
@@ -144,7 +145,7 @@ impl CheckId {
             Auth | Storage | Transfers | EmptyFolders | Duplicates | OrphanedTorrents
             | StuckWatchFiles => Area::Putio,
             DeadQueueRows | FailingDownloads | OrphanPartials | Bandwidth => Area::Sync,
-            DownloadDir | DiskSpace | Database | Config => Area::Local,
+            DownloadDir | DiskSpace | Database | Config | Hooks => Area::Local,
             Reachability | RateLimit | ClockSkew | Tailscale | Listen => Area::Connectivity,
         }
     }
@@ -172,6 +173,7 @@ impl CheckId {
             ClockSkew => "Clock",
             Tailscale => "Tailscale",
             Listen => "Listening addresses",
+            Hooks => "Event hooks",
         }
     }
 
@@ -558,7 +560,7 @@ mod tests {
                 format!("\"{}\"", fix.as_str())
             );
         }
-        assert_eq!(CheckId::ALL.len(), 20);
+        assert_eq!(CheckId::ALL.len(), 21);
         assert!("nope".parse::<FixId>().is_err());
     }
 

@@ -48,6 +48,8 @@ pub struct Doctor {
     metrics: bool,
     /// Tailscale (feature 036); built from the config per run when not shared
     tailscale: Option<Arc<putio_sync_tailscale::TailscaleService>>,
+    /// The hooks service (feature 027), for each hook's last run
+    hooks: Option<Arc<putio_sync_hooks::HooksService>>,
 }
 
 impl Doctor {
@@ -69,6 +71,7 @@ impl Doctor {
             runs: AtomicU64::new(0),
             metrics: false,
             tailscale: None,
+            hooks: None,
         }
     }
 
@@ -78,6 +81,12 @@ impl Doctor {
         tailscale: Arc<putio_sync_tailscale::TailscaleService>,
     ) -> Self {
         self.tailscale = Some(tailscale);
+        self
+    }
+
+    /// Report the last runs of these hooks (feature 027)
+    pub fn with_hooks(mut self, hooks: Arc<putio_sync_hooks::HooksService>) -> Self {
+        self.hooks = Some(hooks);
         self
     }
 
@@ -128,6 +137,7 @@ impl Doctor {
             self.stalls.clone(),
         );
         ctx.tailscale = self.tailscale.clone();
+        ctx.hooks = self.hooks.clone();
         ctx
     }
 

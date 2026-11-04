@@ -48,6 +48,8 @@ glob = "0.3"
 base64 = "0.22"
 futures-util = "0.3"
 sha2 = "0.10"
+# Event ids (feature 027)
+uuid = { version = "1.6", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 # Lists config keys serde ignores, for the doctor's config check (feature 010)
 serde_ignored = "0.1"

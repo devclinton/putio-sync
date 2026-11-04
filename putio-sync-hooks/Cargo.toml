@@ -1,0 +1,37 @@
+[package]
+name = "putio-sync-hooks"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Event hooks for putio-sync - run a command or call a webhook for each event on the internal event bus"
+
+[dependencies]
+# Internal dependencies
+putio-sync-core = { path = "../putio-sync-core" }
+putio-sync-telemetry = { path = "../putio-sync-telemetry" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# HTTP client for URL hooks
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Run timestamps
+chrono = { version = "0.4", features = ["serde"] }
+
+# Killing a command's whole process group on timeout
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+mockito = "1.2"
+tempfile = "3.8"

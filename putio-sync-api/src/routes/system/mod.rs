@@ -1,13 +1,14 @@
 //! System routes
 //!
 //! Routes for the bandwidth limit, settings (with the configuration assistant), folder rules, statistics, history, the status summary, sign-in, the
-//! doctor, What's new, Tailscale and the listen addresses
+//! doctor, event hooks, What's new, Tailscale and the listen addresses
 
 pub mod assistant;
 pub mod auth;
 pub mod bandwidth;
 pub mod doctor;
 pub mod history;
+pub mod hooks;
 pub mod network;
 pub mod rules;
 pub mod settings;

@@ -648,6 +648,10 @@ dialog p { margin: 0 0 24px; color: var(--muted); word-break: break-word; }
 .legend span { margin: 0 4px; }
 .blist + .blist { margin-top: 18px; }
 .card h3.sub { margin: 18px 0 6px; font-size: var(--fs-sm); font-weight: 600; color: var(--muted); }
+.hook-card { min-width: 0; margin: 0; padding: 14px 16px 16px; border: 1px solid var(--ring); border-radius: var(--r-md); }
+.hook-card > legend { padding: 0 6px; font-weight: 600; overflow-wrap: anywhere; }
+.hook-events { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); gap: 8px 20px; margin: 14px 0 0; padding: 0; border: 0; min-width: 0; }
+.hook-events legend { margin-bottom: 8px; padding: 0; font-weight: 550; }
 .blist h3 { margin-bottom: 6px; font-size: var(--fs-sm); font-weight: 600; color: var(--muted); }
 .brow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; width: 100%; margin: 0 -8px; padding: 7px 8px; border: 0; border-radius: 10px; background: none; color: inherit; font: inherit; text-align: left; box-sizing: content-box; }
 button.brow { cursor: pointer; }

@@ -8,6 +8,7 @@ use putio_sync_core::config::{AuthMethod, Config, ExistingFile};
 use putio_sync_daemon::{DaemonConfig, PutioDaemon};
 use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadConfig;
+use putio_sync_hooks::HooksService;
 use putio_sync_storage::StorageService;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -234,6 +235,11 @@ pub async fn execute_daemon(
         daemon = daemon.with_storage(storage.clone());
     }
 
+    // One hooks service for the event bus and the API, so a test event and a settings
+    // save reach the hooks that run (feature 027)
+    let hooks = Arc::new(HooksService::new(config.hooks.clone()));
+    hooks.start();
+
     // One doctor for the scheduled runs and the API, so the Doctor page shows both
     let doctor = match (daemon.get_client(), &cleanup) {
         (Some(client), Some(cleanup)) => Some(Arc::new(
@@ -244,6 +250,7 @@ pub async fn execute_daemon(
                 cleanup.clone(),
             )
             .with_stalls(daemon.stall_tracker())
+            .with_hooks(hooks.clone())
             .with_config_path(Some(config_file_path.clone()))
             .with_metrics(),
         )),
@@ -279,6 +286,7 @@ pub async fn execute_daemon(
                 Some(storage) => state.with_storage(storage.clone()),
                 None => state,
             };
+            let state = state.with_hooks(hooks.clone());
             crate::api_listener::start(&config, state).await?;
         }
         _ => warn!("API listener not started: no local download manager (api.enabled is set)"),

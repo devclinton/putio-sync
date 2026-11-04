@@ -47,6 +47,7 @@ use putio_sync_db::Database;
 use putio_sync_doctor::Doctor;
 use putio_sync_download::{DownloadConfig, DownloadManager};
 use putio_sync_file_manager::TorrentWatcher;
+use putio_sync_hooks::HooksService;
 use putio_sync_storage::StorageService;
 use putio_sync_tailscale::TailscaleService;
 use std::path::PathBuf;
@@ -109,6 +110,9 @@ pub struct AppState {
     pub arr: Option<routes::arr::ArrRpc>,
     /// Tailscale on this machine (feature 036); the doctor shares it
     pub tailscale: Arc<TailscaleService>,
+    /// Event hooks (feature 027); unstarted unless the caller's started service is
+    /// swapped in with [`AppState::with_hooks`]
+    pub hooks: Arc<HooksService>,
     /// The addresses the API listens on now (feature 037); empty until a listener set
     /// is attached with [`AppState::with_listening`]
     pub listening: listen::Bound,
@@ -151,6 +155,7 @@ impl AppState {
             config.tailscale.socket_path(),
             putio_sync_tailscale::Cli::Auto,
         ));
+        let hooks = Arc::new(HooksService::new(config.hooks.clone()));
         let doctor = Arc::new(
             Doctor::new(
                 config.clone(),
@@ -160,12 +165,14 @@ impl AppState {
             )
             .with_config_path(config_path.clone())
             .with_tailscale(tailscale.clone())
+            .with_hooks(hooks.clone())
             .with_metrics(),
         );
         let arr = build_arr(&config, &client, database.as_ref(), &download_manager);
         AppState {
             arr,
             tailscale,
+            hooks,
             listening: listen::Bound::default(),
             listen_flags: None,
             cleanup,
@@ -247,6 +254,13 @@ impl AppState {
     /// Share `doctor` with the daemon's schedule, so the page shows its latest run
     pub fn with_doctor(mut self, doctor: Arc<Doctor>) -> AppState {
         self.doctor = doctor;
+        self
+    }
+
+    /// Use the caller's started hooks service, so a test event and a settings save
+    /// reach the hooks that run
+    pub fn with_hooks(mut self, hooks: Arc<HooksService>) -> AppState {
+        self.hooks = hooks;
         self
     }
 }
@@ -344,6 +358,8 @@ pub fn router(state: AppState) -> Router {
         .nest("/stats", create_stats_router())
         .nest("/history", create_history_router())
         .nest("/doctor", routes::system::doctor::router())
+        .nest("/hooks", routes::system::hooks::router())
+        .nest("/events", routes::system::hooks::events_router())
         .nest("/bandwidth", routes::system::bandwidth::router())
         .nest("/arr", routes::arr::router())
         .route("/active", axum::routing::get(routes::active::get_active))

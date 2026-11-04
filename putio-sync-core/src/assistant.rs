@@ -242,8 +242,95 @@ pub fn risks_in(config: &Config, host: &Host) -> Vec<Risk> {
         }
     }
 
+    // Event hooks (feature 027)
+    for hook in &config.hooks {
+        if let Some(url) = hook.url.as_deref().filter(|u| plain_http_off_lan(u)) {
+            add(
+                "hook_plain_http",
+                Level::Warning,
+                &["hooks"],
+                format!(
+                    "Hook {} posts events over plain http to {}, so they can be read on the way.",
+                    hook.name,
+                    crate::redact::url(url)
+                ),
+            );
+        }
+        if !hook.enabled {
+            add(
+                "hook_disabled",
+                Level::Warning,
+                &["hooks"],
+                format!("Hook {} is turned off, so it gets no events.", hook.name),
+            );
+        }
+        let program = hook.command.as_ref().and_then(|c| c.first()).map(Path::new);
+        if let Some(dir) = program
+            .and_then(Path::parent)
+            .filter(|d| others_can_write(d))
+        {
+            add(
+                "hook_shared_dir",
+                Level::Warning,
+                &["hooks"],
+                format!(
+                    "Hook {}'s program is in {}, which any user can write to, so anyone could change what the daemon runs.",
+                    hook.name,
+                    dir.display()
+                ),
+            );
+        }
+    }
+    if config.notifications.enabled {
+        add(
+            "notifications_unused",
+            Level::Warning,
+            &["notifications.enabled"],
+            "Notifications are on, but [notifications] sends nothing yet; use an event hook to be told about downloads.".to_string(),
+        );
+    }
+
     found.sort_by(|a, b| (a.level, a.id).cmp(&(b.level, b.id)));
     found
+}
+
+/// `url` is plain http to a host that is not loopback, a private address, `.local` or a
+/// single label
+fn plain_http_off_lan(url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    if url.scheme() != "http" {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let lan = match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        Ok(std::net::IpAddr::V6(ip)) => {
+            let first = ip.segments()[0];
+            ip.is_loopback() || first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80
+        }
+        Err(_) => {
+            let name = host.trim_end_matches('.').to_ascii_lowercase();
+            !name.contains('.') || name.ends_with(".local")
+        }
+    };
+    !lan
+}
+
+/// Users other than the owner and group may write to `dir` (Unix mode `o+w`)
+#[cfg(unix)]
+fn others_can_write(dir: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(dir).is_ok_and(|m| m.permissions().mode() & 0o002 != 0)
+}
+
+#[cfg(not(unix))]
+fn others_can_write(_dir: &Path) -> bool {
+    false
 }
 
 /// More workers than this get a warning
@@ -302,8 +389,8 @@ pub struct Change {
 /// `[arr]` are not compared. `live` is false; the caller knows what applies live.
 pub fn diff(before: &Config, after: &Config) -> CoreResult<Vec<Change>> {
     let (before, after) = (
-        flatten(&settings_table(before)?),
-        flatten(&settings_table(after)?),
+        flatten(&settings_table(&masked(before))?),
+        flatten(&settings_table(&masked(after))?),
     );
     let keys: std::collections::BTreeSet<&String> = before.keys().chain(after.keys()).collect();
     let json = |v: Option<&toml::Value>| v.and_then(|v| serde_json::to_value(v).ok());
@@ -343,11 +430,24 @@ fn flatten(table: &toml::Table) -> BTreeMap<String, toml::Value> {
 
 const EXPORT_HEADER: &str = "# putio-sync settings export\n\
 # Credentials ([auth], api.auth_token) and the Radarr/Sonarr section ([arr]) are left out.\n\
+# Hook header and env values read \"********\"; an import keeps the stored ones.\n\
 # Import it from Settings > Backup and restore.\n\n";
 
-/// The settings as TOML, without `[auth]`, `api.auth_token` and `[arr]`
+/// `config` with every hook header and env value replaced by
+/// [`MASK`](crate::hooks::MASK) (feature 027)
+fn masked(config: &Config) -> std::borrow::Cow<'_, Config> {
+    if config.hooks.is_empty() {
+        return std::borrow::Cow::Borrowed(config);
+    }
+    let mut config = config.clone();
+    config.hooks = crate::hooks::mask(&config.hooks);
+    std::borrow::Cow::Owned(config)
+}
+
+/// The settings as TOML, without `[auth]`, `api.auth_token` and `[arr]`, and with hook
+/// header and env values masked
 pub fn export_toml(config: &Config) -> CoreResult<String> {
-    let body = toml::to_string_pretty(&settings_table(config)?)
+    let body = toml::to_string_pretty(&settings_table(&masked(config))?)
         .map_err(|e| CoreError::ConfigError(format!("Failed to serialize config: {e}")))?;
     Ok(format!("{EXPORT_HEADER}{body}"))
 }
@@ -405,6 +505,9 @@ pub fn import(current: &Config, text: &str) -> CoreResult<Import> {
     config.auth = current.auth.clone();
     config.arr = current.arr.clone();
     config.api.auth_token = current.api.auth_token.clone();
+    // An exported file's masked hook values are the stored ones; a mask for a hook or
+    // key this config lacks is refused
+    config.hooks = crate::hooks::unmask(&config.hooks, &current.hooks)?;
     config.expand_paths()?;
     Ok(Import {
         config,
@@ -631,6 +734,24 @@ mod tests {
             api_key: Some("arr-secret-key".to_string()),
             category: None,
         });
+        config.hooks.push(crate::hooks::HookConfig {
+            name: "ha".to_string(),
+            events: vec!["*".to_string()],
+            url: Some("https://ha.lan/api/webhook".to_string()),
+            headers: [(
+                "Authorization".to_string(),
+                "hook-secret-header".to_string(),
+            )]
+            .into(),
+            ..Default::default()
+        });
+        config.hooks.push(crate::hooks::HookConfig {
+            name: "script".to_string(),
+            events: vec!["*".to_string()],
+            command: Some(vec!["/bin/true".to_string()]),
+            env: [("API_KEY".to_string(), "hook-secret-env".to_string())].into(),
+            ..Default::default()
+        });
         config
     }
 
@@ -640,6 +761,8 @@ mod tests {
             "api-secret-token",
             "arr-secret-password",
             "arr-secret-key",
+            "hook-secret-header",
+            "hook-secret-env",
         ] {
             assert!(!text.contains(secret), "{secret} leaked");
         }
@@ -654,6 +777,86 @@ mod tests {
         assert!(table.get("arr").is_none());
         assert!(table["api"].get("auth_token").is_none());
         assert!(table.contains_key("download"));
+    }
+
+    #[test]
+    fn hook_risks() {
+        let temp = tempfile::tempdir().unwrap();
+        let shared = temp.path().join("shared");
+        std::fs::create_dir(&shared).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o777)).unwrap();
+        }
+        let hook = |name: &str| crate::hooks::HookConfig {
+            name: name.to_string(),
+            events: vec!["*".to_string()],
+            ..Default::default()
+        };
+        let mut config = Config::default();
+        config.download.target_directory = temp.path().join("dl");
+        for (name, url) in [
+            ("lan", "http://192.168.1.5/hook"),
+            ("local", "http://ha.local:8123/api"),
+            ("label", "http://homeassistant:8123/api"),
+            ("tls", "https://example.com/hook"),
+        ] {
+            config.hooks.push(crate::hooks::HookConfig {
+                url: Some(url.to_string()),
+                ..hook(name)
+            });
+        }
+        assert!(ids(&config, &host(temp.path())).is_empty());
+
+        config.hooks.push(crate::hooks::HookConfig {
+            url: Some("http://example.com/hook?token=t".to_string()),
+            enabled: false,
+            ..hook("far")
+        });
+        config.hooks.push(crate::hooks::HookConfig {
+            command: Some(vec![shared.join("run.sh").display().to_string()]),
+            ..hook("shared")
+        });
+        config.notifications.enabled = true;
+        let risks = risks_in(&config, &host(temp.path()));
+        let ids: Vec<_> = risks.iter().map(|r| r.id).collect();
+        let mut expected = vec!["hook_disabled", "hook_plain_http", "notifications_unused"];
+        if cfg!(unix) {
+            expected.insert(2, "hook_shared_dir");
+        }
+        assert_eq!(ids, expected);
+        let plain = risks.iter().find(|r| r.id == "hook_plain_http").unwrap();
+        assert!(plain.message.contains("far") && !plain.message.contains("token"));
+    }
+
+    #[test]
+    fn hook_values_are_masked_and_an_import_keeps_the_stored_ones() {
+        let current = with_secrets();
+        let text = export_toml(&current).unwrap();
+        assert!(text.contains(crate::hooks::MASK));
+        let imported = import(&current, &text).unwrap();
+        assert_eq!(imported.config.hooks, current.hooks);
+
+        // A mask for a hook this config lacks can't be resolved
+        let renamed = text.replace("name = \"ha\"", "name = \"other\"");
+        let err = import(&current, &renamed).unwrap_err().to_string();
+        assert!(
+            err.contains("hooks \"other\".url: still shortened")
+                || err.contains("hooks \"other\".headers.Authorization: still masked"),
+            "{err}"
+        );
+
+        // A diff never shows the values
+        let mut changed = current.clone();
+        changed.hooks[0]
+            .headers
+            .insert("Authorization".into(), "new-secret".into());
+        changed.hooks[0].timeout_secs = 5;
+        let changes = serde_json::to_string(&diff(&current, &changed).unwrap()).unwrap();
+        assert!(changes.contains("hooks"));
+        assert_no_secrets(&changes);
+        assert!(!changes.contains("new-secret"));
     }
 
     #[test]

@@ -2124,6 +2124,7 @@ dependencies = [
  "putio-sync-doctor",
  "putio-sync-download",
  "putio-sync-file-manager",
+ "putio-sync-hooks",
  "putio-sync-precheck",
  "putio-sync-storage",
  "putio-sync-tailscale",
@@ -2197,6 +2198,7 @@ dependencies = [
  "putio-sync-doctor",
  "putio-sync-download",
  "putio-sync-file-manager",
+ "putio-sync-hooks",
  "putio-sync-storage",
  "putio-sync-tailscale",
  "putio-sync-telemetry",
@@ -2259,6 +2261,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -2316,6 +2319,7 @@ dependencies = [
  "putio-sync-core",
  "putio-sync-db",
  "putio-sync-download",
+ "putio-sync-hooks",
  "putio-sync-tailscale",
  "putio-sync-telemetry",
  "reqwest 0.12.28",
@@ -2373,6 +2377,23 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "putio-sync-hooks"
+version = "0.1.1"
+dependencies = [
+ "chrono",
+ "libc",
+ "mockito",
+ "putio-sync-core",
+ "putio-sync-telemetry",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

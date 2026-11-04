@@ -186,6 +186,9 @@ pub struct Config {
     /// Tailscale: tailnet-only listening and identity sign-in (feature 036)
     #[serde(default)]
     pub tailscale: TailscaleConfig,
+    /// Event hooks: commands and webhooks run for events (feature 027)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<crate::hooks::HookConfig>,
 }
 
 /// `[doctor]`: how often the daemon runs the doctor's checks (feature 010). The CLI and
@@ -1410,6 +1413,7 @@ impl Config {
         self.precheck.validate(&self.watch.paths)?;
         self.storage.validate()?;
         self.tailscale.validate()?;
+        crate::hooks::validate(&self.hooks)?;
         self.validate_binds()?;
 
         Ok(())
@@ -1658,6 +1662,7 @@ impl ConfigBuilder {
             precheck: PrecheckConfig::default(),
             storage: StorageConfig::default(),
             tailscale: TailscaleConfig::default(),
+            hooks: Vec::new(),
         }
     }
 }
@@ -2624,6 +2629,7 @@ mod tests {
             precheck: PrecheckConfig::default(),
             storage: StorageConfig::default(),
             tailscale: TailscaleConfig::default(),
+            hooks: Vec::new(),
         }
     }
 

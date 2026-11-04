@@ -321,6 +321,29 @@ auto_free = false
 run_at = "02:30"
 
 # ============================================================================
+# Event hooks (feature 027)
+# ============================================================================
+# Run a command or call a webhook on events; each gets the event as JSON (stdin
+# or the POST body). Types and fields: EVENTS.md. Up to 32 hooks.
+# Commands run as the daemon's user with a clean environment.
+# [[hooks]]
+# name = "on-download"                  # letters, digits, - and _
+# events = ["download.finished"]        # or "*" for every type
+# command = ["/config/hooks/on-download.py"]   # absolute path, then arguments
+# env = { LIBRARY = "/data/media" }     # commands only
+# timeout_secs = 30                     # 1 to 600. Default: 30
+#
+# Webhooks are retried after 5 s and 30 s on errors, timeouts, 429 and 5xx.
+# The URL is never logged in full; prefer a header for a token.
+# [[hooks]]
+# name = "home-assistant"
+# events = ["download.finished", "download.failed", "storage.low"]
+# url = "https://ha.local:8123/api/webhook/putio"
+# headers = { Authorization = "Bearer abc" }   # webhooks only
+# timeout_secs = 10
+# enabled = false                       # keep it without running it
+
+# ============================================================================
 # Tailscale (feature 036)
 # ============================================================================
 # putio-sync reads Tailscale's state through tailscaled's local socket (or the

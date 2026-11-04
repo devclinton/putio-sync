@@ -13,6 +13,7 @@ pub mod progress;
 pub mod rate_limiter;
 pub mod stream;
 pub mod sync_status;
+pub mod transfer_events;
 pub mod utils;
 pub mod worker;
 
