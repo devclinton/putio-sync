@@ -295,6 +295,62 @@ pub(crate) async fn orphan_partials(ctx: &Ctx) -> Finding {
         .items(items)
 }
 
+/// The download limit in force, where it comes from, and the daemon's local time
+/// (feature 032). A stored pause is a Warning: nothing downloads until it ends.
+pub(crate) async fn bandwidth(ctx: &Ctx) -> Finding {
+    use putio_sync_core::bandwidth::{Limit, Override, OverrideMode, Policy, Source};
+
+    let policy = Policy::from_config(&ctx.config.download);
+    let stored = match &ctx.db {
+        Some(db) => db
+            .flags()
+            .get_text(putio_sync_db::pipeline::BANDWIDTH_OVERRIDE)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|text| serde_json::from_str::<Override>(&text).ok()),
+        None => None,
+    };
+    let status = policy.status(chrono::Local::now().fixed_offset(), stored.as_ref());
+    let clock = format!(
+        "Daemon time {} (UTC{}).",
+        status.local_time.get(11..16).unwrap_or(&status.local_time),
+        status.utc_offset
+    );
+    let next = status
+        .next_change
+        .as_ref()
+        .map(|c| {
+            format!(
+                " It changes to {} at {}.",
+                c.limit.describe(),
+                c.at.replace('T', " ")
+            )
+        })
+        .unwrap_or_default();
+    let state = match status.limit {
+        Limit::Paused => "paused".to_string(),
+        Limit::Unlimited => "unlimited".to_string(),
+        limit => format!("limited to {}", limit.describe()),
+    };
+    let cause = match (status.source, status.override_) {
+        (Source::Pause | Source::Slow, Some(o)) => format!(
+            "a {} until {}",
+            status.source.describe(status.entry),
+            o.until.with_timezone(&chrono::Local).format("%H:%M")
+        ),
+        (source, _) => format!("the {}", source.describe(status.entry)),
+    };
+    let summary = format!("Downloads are {state} by {cause}.{next} {clock}");
+    match status.override_ {
+        Some(o) if o.mode == OverrideMode::Pause && status.source == Source::Pause => {
+            Finding::new(Status::Warning, summary)
+                .suggest("Choose Resume schedule on the Status page to download again now.")
+        }
+        _ => Finding::ok(summary),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_support::*;
@@ -390,61 +446,5 @@ mod tests {
         let keys: Vec<&str> = f.items.iter().map(|i| i.key.as_str()).collect();
         assert_eq!(keys, vec!["Movies/.orphan.mkv.downloading"]);
         assert_eq!(f.status, Status::Warning);
-    }
-}
-
-/// The download limit in force, where it comes from, and the daemon's local time
-/// (feature 032). A stored pause is a Warning: nothing downloads until it ends.
-pub(crate) async fn bandwidth(ctx: &Ctx) -> Finding {
-    use putio_sync_core::bandwidth::{Limit, Override, OverrideMode, Policy, Source};
-
-    let policy = Policy::from_config(&ctx.config.download);
-    let stored = match &ctx.db {
-        Some(db) => db
-            .flags()
-            .get_text(putio_sync_db::pipeline::BANDWIDTH_OVERRIDE)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|text| serde_json::from_str::<Override>(&text).ok()),
-        None => None,
-    };
-    let status = policy.status(chrono::Local::now().fixed_offset(), stored.as_ref());
-    let clock = format!(
-        "Daemon time {} (UTC{}).",
-        status.local_time.get(11..16).unwrap_or(&status.local_time),
-        status.utc_offset
-    );
-    let next = status
-        .next_change
-        .as_ref()
-        .map(|c| {
-            format!(
-                " It changes to {} at {}.",
-                c.limit.describe(),
-                c.at.replace('T', " ")
-            )
-        })
-        .unwrap_or_default();
-    let state = match status.limit {
-        Limit::Paused => "paused".to_string(),
-        Limit::Unlimited => "unlimited".to_string(),
-        limit => format!("limited to {}", limit.describe()),
-    };
-    let cause = match (status.source, status.override_) {
-        (Source::Pause | Source::Slow, Some(o)) => format!(
-            "a {} until {}",
-            status.source.describe(status.entry),
-            o.until.with_timezone(&chrono::Local).format("%H:%M")
-        ),
-        (source, _) => format!("the {}", source.describe(status.entry)),
-    };
-    let summary = format!("Downloads are {state} by {cause}.{next} {clock}");
-    match status.override_ {
-        Some(o) if o.mode == OverrideMode::Pause && status.source == Source::Pause => {
-            Finding::new(Status::Warning, summary)
-                .suggest("Choose Resume schedule on the Status page to download again now.")
-        }
-        _ => Finding::ok(summary),
     }
 }
