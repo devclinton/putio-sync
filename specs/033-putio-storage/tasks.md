@@ -57,7 +57,7 @@
 - [X] T018 [US3] Implement `plan()` (walk 4 at a time, 120 s, transfers, db reads, planner, store latest plan 30 min) and `free(trigger, plan_id, ids)` (re-checks, batches of 100, free_after from account info, logging and metrics) in `putio-sync-storage/src/lib.rs`
 - [X] T019 [US3] Routes `POST /putio/storage/plan` and `POST /putio/storage/free` with error mapping (409 running/expired, 503 no database, 400 bad body) in `putio-sync-api/src/routes/putio/storage.rs`; API tests in `putio-sync-api/tests/storage.rs` (plan lists only verified files; free deletes exactly them per mock; stale plan 409; empty ids 400)
 - [ ] T020 [US3] UI: "Free up space" runs the plan, shows the list (path, size, added, local path), totals and shortfall in the confirm dialog, confirm posts the plan and shows deleted/skipped/failed, then refreshes the card, in `ui/storage.js`
-- [ ] T021 [US3] CLI `files free-space [--dry-run] [-y]` in `putio-sync-cli/src/commands/free_space.rs`, registered in `commands/mod.rs`, `cli.rs` and the command dispatch
+- [X] T021 [US3] CLI `files free-space [--dry-run] [-y]` in `putio-sync-cli/src/commands/free_space.rs`, registered in `commands/mod.rs`, `cli.rs` and the command dispatch
 
 ## Phase 6: User Story 4 - See what was deleted (P2)
 
