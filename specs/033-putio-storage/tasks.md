@@ -85,7 +85,7 @@
 - [X] T029 [P] README: a "Put.io storage" section (card, levels, free up space rules, auto run, CLI) in `README.md`
 - [X] T030 [P] `CHANGELOG.md` entry under Unreleased → Added; remove 033 from `ROADMAP.md`
 - [X] T031 Check the UI in a browser against a mocked backend (quickstart) and the bundle size test
-- [ ] T032 Merge `origin/main`, run `TMPDIR=<scratchpad> make ci`, fix anything it finds, push
+- [X] T032 Merge `origin/main`, run `TMPDIR=<scratchpad> make ci`, fix anything it finds, push
 
 ## Dependencies
 
