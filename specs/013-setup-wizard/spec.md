@@ -370,8 +370,8 @@ the dry-run summary is printed.
 - **FR-024**: The step MUST list the 009 presets (built-in and user-defined) by label with a
   short description, defaulting to "No binaries".
 - **FR-025**: The chosen preset MUST apply to the whole account: files not covered by a folder
-  rule are filtered by it. Choosing "No binaries" MUST behave exactly as an install without the
-  wizard does today.
+  rule with its own preset are filtered by it, in place of `blocked_extensions`. A config with no
+  account-wide preset MUST behave exactly as today (`blocked_extensions` at the root).
 - **FR-026**: The step MUST list the top-level folders of the Put.io account and let the user set
   a preset or "Skip" for each; each choice MUST be saved as a 009 folder rule. Existing rules
   MUST be kept and shown.
