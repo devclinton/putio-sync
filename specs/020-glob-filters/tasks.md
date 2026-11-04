@@ -8,14 +8,14 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the shared case table `putio-sync-core/tests/data/filter-cases.json` (contract format `{ filter, names | paths, shown }`): every example of 045's grammar table and `putio-sync-api/tests/ui/query.test.mjs`, plus comma, braces, paths, quotes with `|` and `,`, `[YTS]` literal, case, `?` with a non-ASCII letter; at least 40 cases
+- [X] T001 Create the shared case table `putio-sync-core/tests/data/filter-cases.json` (contract format `{ filter, names | paths, shown }`): every example of 045's grammar table and `putio-sync-api/tests/ui/query.test.mjs`, plus comma, braces, paths, quotes with `|` and `,`, `[YTS]` literal, case, `?` with a non-ASCII letter; at least 40 cases
 
 ## Phase 2: Foundational (blocks every story)
 
-- [ ] T002 Create `putio-sync-core/src/pattern.rs`: tokenizer mirroring `query.js` (quoted with optional `-`, `|`/`,` runs as OR, bare with `{…}` groups), lenient `Pattern::parse(text)` mirroring `parseFilter`, brace expansion (no nesting; "more than 64 alternatives" caps), case-insensitive backtracking glob over `char`s, plain terms wrapped `*…*`, `/` terms tested against the path and its tails after each `/`; `Pattern::{as_str, is_empty, matches(name, path)}`, `PartialEq`/`Serialize` by text; unit tests; register `pub mod pattern` in `putio-sync-core/src/lib.rs`
-- [ ] T003 Add `pattern::check(text) -> Result<Vec<String>, String>` in `putio-sync-core/src/pattern.rs`: errors "unclosed quote", "unbalanced { }", "nested { } are not supported", "more than 64 alternatives", "only operators, no pattern", "longer than 1000 characters"; warnings for leading / trailing / repeated OR, a dangling NOT or `-`, and `[Ss]` / `[0-9]` look-alikes; unit tests
-- [ ] T004 [P] Add `putio-sync-core/tests/filter_cases.rs` running every case of the shared table against `Pattern` (name cases: path = name; path cases: name = last segment)
-- [ ] T005 [P] Extend `putio-sync-api/ui/query.js`: `,` as OR, `{a,b}` alternatives (non-capturing group), `u` flag, `/` terms tested against `path` and its tails; `filterMatcher(text)` returns `(name, path = name) => bool`; update its header comment; run the shared table from `putio-sync-api/tests/ui/query.test.mjs`; update `specs/045-select-sort-filter/contracts/filter-grammar.md` to point at the 020 contract
+- [X] T002 Create `putio-sync-core/src/pattern.rs`: tokenizer mirroring `query.js` (quoted with optional `-`, `|`/`,` runs as OR, bare with `{…}` groups), lenient `Pattern::parse(text)` mirroring `parseFilter`, brace expansion (no nesting; "more than 64 alternatives" caps), case-insensitive backtracking glob over `char`s, plain terms wrapped `*…*`, `/` terms tested against the path and its tails after each `/`; `Pattern::{as_str, is_empty, matches(name, path)}`, `PartialEq`/`Serialize` by text; unit tests; register `pub mod pattern` in `putio-sync-core/src/lib.rs`
+- [X] T003 Add `pattern::check(text) -> Result<Vec<String>, String>` in `putio-sync-core/src/pattern.rs`: errors "unclosed quote", "unbalanced { }", "nested { } are not supported", "more than 64 alternatives", "only operators, no pattern", "longer than 1000 characters"; warnings for leading / trailing / repeated OR, a dangling NOT or `-`, and `[Ss]` / `[0-9]` look-alikes; unit tests
+- [X] T004 [P] Add `putio-sync-core/tests/filter_cases.rs` running every case of the shared table against `Pattern` (name cases: path = name; path cases: name = last segment)
+- [X] T005 [P] Extend `putio-sync-api/ui/query.js`: `,` as OR, `{a,b}` alternatives (non-capturing group), `u` flag, `/` terms tested against `path` and its tails; `filterMatcher(text)` returns `(name, path = name) => bool`; update its header comment; run the shared table from `putio-sync-api/tests/ui/query.test.mjs`; update `specs/045-select-sort-filter/contracts/filter-grammar.md` to point at the 020 contract
 
 **Checkpoint**: both matchers pass the same table.
 
