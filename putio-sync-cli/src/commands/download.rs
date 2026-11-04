@@ -77,11 +77,17 @@ pub async fn execute_download(
         buffer_size_mb = (size_bytes / 1024 / 1024) as usize;
     }
 
+    // The schedule applies unless a limit is given here, which holds for the whole run
     let mut bandwidth_limit_bytes_per_sec = old_config.bandwidth_limit_bytes_per_sec;
+    let mut bandwidth_schedule = old_config.bandwidth_schedule.clone();
     if let Some(bl) = bandwidth_limit {
         let limit_bytes_per_sec =
             parse_size(&bl).map_err(|e| anyhow!("Invalid bandwidth limit '{}': {}", bl, e))?;
+        if limit_bytes_per_sec == 0 {
+            return Err(anyhow!("Invalid bandwidth limit '{}': must be above 0", bl));
+        }
         bandwidth_limit_bytes_per_sec = Some(limit_bytes_per_sec as u64);
+        bandwidth_schedule.clear();
     }
 
     // Folder rules still override it per folder
@@ -104,6 +110,8 @@ pub async fn execute_download(
         resume_enabled,
         buffer_size_mb,
         bandwidth_limit_bytes_per_sec,
+        bandwidth_schedule,
+        slow_limit_bytes_per_sec: old_config.slow_limit_bytes_per_sec,
         max_retries: old_config.max_retries,
         retry_initial_delay_secs: old_config.retry_initial_delay_secs,
         workers: workers_count,

@@ -8,6 +8,15 @@ use putio_sync_core::config::DownloadConfig as DownloadSettings;
 use putio_sync_core::rules::{FolderRule, RuleSet};
 use putio_sync_download::DownloadConfig;
 
+fn schedule_entry() -> putio_sync_core::bandwidth::ScheduleEntry {
+    putio_sync_core::bandwidth::ScheduleEntry {
+        days: "daily".to_string(),
+        start: "01:00".to_string(),
+        end: "07:00".to_string(),
+        limit: putio_sync_core::bandwidth::Limit::Unlimited,
+    }
+}
+
 /// Settings with every manager field away from both crates' defaults
 fn non_default_settings() -> DownloadSettings {
     DownloadSettings {
@@ -18,6 +27,8 @@ fn non_default_settings() -> DownloadSettings {
         resume_enabled: false,
         delete_after_download: true,
         bandwidth_limit_bytes_per_sec: Some(1_048_576),
+        bandwidth_schedule: vec![schedule_entry()],
+        slow_limit_bytes_per_sec: 300_000,
         max_retries: 9,
         retry_initial_delay_secs: 11,
         blocked_extensions: vec!["exe".to_string(), "iso".to_string()],
@@ -42,6 +53,8 @@ fn every_manager_field_comes_from_settings() {
             resume_enabled: false,
             buffer_size_mb: 48,
             bandwidth_limit_bytes_per_sec: Some(1_048_576),
+            bandwidth_schedule: vec![schedule_entry()],
+            slow_limit_bytes_per_sec: 300_000,
             max_retries: 9,
             retry_initial_delay_secs: 11,
             workers: 7,

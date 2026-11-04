@@ -222,6 +222,14 @@ pub struct StreamDownloadResult {
 /// # Returns
 ///
 /// A `StreamDownloadResult` containing download statistics
+/// No bytes for this long ends a download as stalled. Only the network read counts:
+/// time spent held back by the bandwidth limit or a pause is not a stall.
+const STALL_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(1)
+} else {
+    Duration::from_secs(60)
+};
+
 #[allow(clippy::too_many_arguments)]
 pub async fn stream_download(
     client: &PutioApiClient,
@@ -230,7 +238,7 @@ pub async fn stream_download(
     filename: &str,
     expected_size: Option<u64>,
     buffer_size_mb: usize,
-    bandwidth_limit_bytes_per_sec: Option<u64>,
+    limiter: Option<&RateLimiter>,
     resume_from_byte: Option<u64>,
     stop: Option<&StopSignal>,
 ) -> DownloadResult<StreamDownloadResult> {
@@ -241,7 +249,7 @@ pub async fn stream_download(
         filename,
         expected_size,
         buffer_size_mb,
-        bandwidth_limit_bytes_per_sec,
+        limiter,
         resume_from_byte,
         stop,
     )
@@ -277,7 +285,7 @@ pub async fn stream_to_temp(
     filename: &str,
     expected_size: Option<u64>,
     buffer_size_mb: usize,
-    bandwidth_limit_bytes_per_sec: Option<u64>,
+    limiter: Option<&RateLimiter>,
     resume_from_byte: Option<u64>,
     stop: Option<&StopSignal>,
 ) -> DownloadResult<StreamDownloadResult> {
@@ -455,9 +463,6 @@ pub async fn stream_to_temp(
 
     let mut bytes_downloaded = 0u64;
 
-    // Create rate limiter if bandwidth limit is set
-    let mut rate_limiter = bandwidth_limit_bytes_per_sec.map(RateLimiter::new);
-
     // Create progress logger based on file size
     let mut progress_logger =
         expected_size.map(|size| ProgressLogger::new(size, filename.to_string()));
@@ -519,7 +524,7 @@ pub async fn stream_to_temp(
 
     // Stream the response body with stall detection
     let mut stream = response.bytes_stream();
-    let stall_timeout = Duration::from_secs(60); // 60 seconds timeout for stalled downloads
+    let stall_timeout = STALL_TIMEOUT;
 
     use futures_util::StreamExt;
 
@@ -531,8 +536,8 @@ pub async fn stream_to_temp(
             }
             match unless_stopped(stop, tokio::time::timeout(stall_timeout, stream.next())).await? {
                 Ok(Some(Ok(chunk))) => {
-                    // Apply rate limiting if enabled
-                    if let Some(ref mut limiter) = rate_limiter {
+                    // The shared limit; time held back here is outside the stall timeout
+                    if let Some(limiter) = limiter {
                         unless_stopped(stop, limiter.consume(chunk.len())).await?;
                     }
 
@@ -773,7 +778,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rate_limiter() {
-        let mut limiter = RateLimiter::new(1024); // 1KB/sec
+        let limiter = RateLimiter::new(1024); // 1KB/sec
 
         let start = Instant::now();
 
@@ -813,7 +818,7 @@ mod tests {
             "test.txt",
             Some(2048),
             1,
-            Some(1024),
+            Some(&RateLimiter::new(1024)),
             None,
             None,
         )
@@ -830,6 +835,56 @@ mod tests {
         assert!(elapsed >= Duration::from_millis(1500));
         assert!(elapsed < Duration::from_secs(4));
 
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn time_held_by_a_pause_is_not_a_stall() {
+        use putio_sync_core::bandwidth::{Override, OverrideMode};
+
+        let temp_dir = TempDir::new().unwrap();
+        let target_path = temp_dir.path().join("paused.txt");
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/paused.txt")
+            .with_status(200)
+            .with_body("x".repeat(64))
+            .create_async()
+            .await;
+        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url());
+        let url = format!("{}/paused.txt", server.url());
+
+        // Paused for longer than the (test) stall timeout of 1 s
+        let limiter = RateLimiter::unlimited();
+        let now = chrono::Utc::now();
+        limiter.set_override(Some(
+            Override::for_minutes(OverrideMode::Pause, 60, now).unwrap(),
+        ));
+        let resume = tokio::spawn({
+            let limiter = limiter.clone();
+            async move {
+                tokio::time::sleep(Duration::from_millis(2500)).await;
+                limiter.set_override(None);
+            }
+        });
+        let start = Instant::now();
+        let result = stream_download(
+            &client,
+            &url,
+            &target_path,
+            "paused.txt",
+            Some(64),
+            1,
+            Some(&limiter),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        resume.await.unwrap();
+
+        assert!(result.success);
+        assert!(start.elapsed() >= Duration::from_secs(2));
         mock.assert_async().await;
     }
 }

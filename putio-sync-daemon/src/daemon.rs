@@ -1045,6 +1045,8 @@ mod tests {
             resume_enabled: false,
             buffer_size_mb: 48,
             bandwidth_limit_bytes_per_sec: Some(1_048_576),
+            bandwidth_schedule: Vec::new(),
+            slow_limit_bytes_per_sec: 300_000,
             max_retries: 9,
             retry_initial_delay_secs: 11,
             workers: 3,
