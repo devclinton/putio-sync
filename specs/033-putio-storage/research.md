@@ -28,6 +28,8 @@
   SEEDING, as in empty-folder cleanup); it is not pending, downloading or paused in the
   queue; and some `downloads` row with `status = 'completed'`, the same `file_id` and
   `file_size` equal to the Put.io size has a `local_path` whose file exists with that size.
+  "Unfinished transfer" covers its save folder and its own file id, but never the root:
+  a transfer saving to the root would otherwise block every file in the account.
 - **Rationale**: matches the spec's definition; the size check catches a re-uploaded or
   changed file with the same id and a local file that was replaced or truncated.
 

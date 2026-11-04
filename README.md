@@ -666,6 +666,11 @@ H = histogram.
 | `putio_sync_empty_folders_deleted_total` | counter | — | Empty folders removed from Put.io, nested ones included |
 | `putio_sync_empty_folder_delete_failures_total` | counter | — | Empty-folder deletes that failed |
 | `putio_sync_empty_folder_last_success_timestamp_seconds` | gauge | — | Unix time of the last successful cleanup run; absent until the first |
+| `putio_sync_putio_storage_size_bytes` | gauge | — | Put.io account storage size |
+| `putio_sync_putio_storage_used_bytes` | gauge | — | Put.io account storage in use |
+| `putio_sync_storage_free_runs_total` | counter | `trigger`, `result` | Finished Put.io free-up runs; previews not counted |
+| `putio_sync_storage_freed_files_total` | counter | — | Files deleted from Put.io to free space |
+| `putio_sync_storage_freed_bytes_total` | counter | — | Bytes deleted from Put.io to free space |
 | `putio_sync_db_errors_total` | counter | `operation` | Database errors |
 | `putio_sync_disk_free_bytes` | gauge | — | Free space for the download folder; absent if unreadable |
 | `putio_sync_disk_total_bytes` | gauge | — | Size of the download folder's filesystem; absent if unreadable |
