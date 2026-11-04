@@ -17,6 +17,7 @@ putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-doctor = { path = "../putio-sync-doctor" }
 putio-sync-file-manager = { path = "../putio-sync-file-manager" }
 putio-sync-precheck = { path = "../putio-sync-precheck" }
+putio-sync-storage = { path = "../putio-sync-storage" }
 
 # Async runtime
 tokio = { workspace = true }

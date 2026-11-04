@@ -43,9 +43,9 @@
 
 **Independent test**: 95 GB used of 100 GB with warn 10%: card and Status warn, doctor check is a warning; 50 GB: nothing.
 
-- [ ] T014 [US2] Doctor storage check uses `[storage] warn_free_percent` (warning) and 2% free (problem), suggestion names Free up space; unit tests in `putio-sync-doctor/src/checks/putio.rs` (and wherever the doctor holds its config)
+- [X] T014 [US2] Doctor storage check uses `[storage] warn_free_percent` (warning) and 2% free (problem), suggestion names Free up space; unit tests in `putio-sync-doctor/src/checks/putio.rs` (and wherever the doctor holds its config)
 - [ ] T015 [US2] Card warning with free amount and level and a "Free up space" button in `ui/storage.js`; `storageNotice()` on the Status page in `ui/pages/status.js` linking to `#/putio`
-- [ ] T016 [US2] Daemon storage loop `run_storage(service)` in `putio-sync-daemon/src/schedule.rs` (gauges every 15 minutes), started in `putio-sync-daemon/src/daemon.rs` via `with_storage`, wired in `putio-sync-cli/src/commands/daemon.rs` sharing the API's service
+- [X] T016 [US2] Daemon storage loop `run_storage(service)` in `putio-sync-daemon/src/schedule.rs` (gauges every 15 minutes), started in `putio-sync-daemon/src/daemon.rs` via `with_storage`, wired in `putio-sync-cli/src/commands/daemon.rs` sharing the API's service
 
 ## Phase 5: User Story 3 - Free space by deleting old downloaded files (P2)
 
@@ -76,7 +76,7 @@
 **Independent test**: auto on and below the level → a `schedule` run is recorded; above → nothing; off → nothing.
 
 - [X] T025 [US5] `auto_run()` on the service (skips when off, when size unknown, or free ≥ warn level; else plan + free all, trigger `schedule`); tests in `putio-sync-storage/src/lib.rs`
-- [ ] T026 [US5] Daemon loop calls `auto_run()` at `run_at` using `due_date`, in `putio-sync-daemon/src/schedule.rs`; startup log line in `daemon.rs`
+- [X] T026 [US5] Daemon loop calls `auto_run()` at `run_at` using `due_date`, in `putio-sync-daemon/src/schedule.rs`; startup log line in `daemon.rs`
 - [ ] T027 [US5] Settings group `storage`: `StorageSettings` view/apply, GET/PUT/preview routes, `groups()` entry and `live_storage()` in `putio-sync-api/src/routes/system/settings.rs`; help strings in `putio-sync-api/src/routes/system/assistant.rs`; settings API test (save, invalid levels 400) in `putio-sync-api/tests/settings.rs`
 - [ ] T028 [US5] Settings page `storage` group in `putio-sync-api/ui/pages/settings.js`
 

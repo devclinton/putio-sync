@@ -17,6 +17,7 @@ use putio_sync_download::{DownloadConfig, DownloadManager, DownloadResult};
 use putio_sync_file_manager::watcher::WatcherConfig;
 use putio_sync_file_manager::TorrentWatcher;
 use putio_sync_precheck::Prechecker;
+use putio_sync_storage::StorageService;
 use putio_sync_telemetry::{PipelineStage, PipelineState};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -143,6 +144,8 @@ pub struct PutioDaemon {
     file_watcher: Option<Arc<TorrentWatcher>>,
     /// Empty-folder cleanup run daily (shared with the API)
     cleanup: Option<Arc<EmptyFolderCleanup>>,
+    /// Put.io storage gauges and the opt-in daily free-up (shared with the API)
+    storage: Option<Arc<StorageService>>,
     /// Stalled-transfer verdicts, fed by the stall check task and read by the API
     stall_tracker: Arc<StallTracker>,
     /// Scheduled health checks (shared with the API)
@@ -160,6 +163,7 @@ impl PutioDaemon {
             download_mode: None,
             file_watcher: None,
             cleanup: None,
+            storage: None,
             doctor: None,
         }
     }
@@ -168,6 +172,13 @@ impl PutioDaemon {
     /// should be given to the API so manual and daily runs never overlap.
     pub fn with_cleanup(mut self, cleanup: Arc<EmptyFolderCleanup>) -> Self {
         self.cleanup = Some(cleanup);
+        self
+    }
+
+    /// Refresh the Put.io storage gauges and run `storage`'s automatic free-up while
+    /// `[storage] auto_free` is on. The same service should be given to the API.
+    pub fn with_storage(mut self, storage: Arc<StorageService>) -> Self {
+        self.storage = Some(storage);
         self
     }
 
@@ -383,6 +394,10 @@ impl PutioDaemon {
             .cleanup
             .clone()
             .map(|cleanup| tokio::spawn(crate::schedule::run_daily(cleanup)));
+        let storage_task = self
+            .storage
+            .clone()
+            .map(|storage| tokio::spawn(crate::schedule::run_storage(storage)));
         let doctor_task = self
             .doctor
             .clone()
@@ -440,6 +455,23 @@ impl PutioDaemon {
             }
             _ => info!("  - Empty-folder cleanup task: disabled"),
         }
+        match (&storage_task, &self.storage) {
+            (Some(_), Some(storage)) => {
+                let config = storage.config();
+                info!(
+                    "  - Put.io storage task: running (automatic free-up {})",
+                    if config.auto_free {
+                        format!(
+                            "daily at {} below {}% free",
+                            config.run_at, config.warn_free_percent
+                        )
+                    } else {
+                        "off".to_string()
+                    }
+                );
+            }
+            _ => info!("  - Put.io storage task: disabled"),
+        }
         match (&doctor_task, &self.doctor) {
             (Some(_), Some(doctor)) => {
                 let settings = doctor.settings();
@@ -479,6 +511,9 @@ impl PutioDaemon {
             task.abort();
         }
         if let Some(task) = cleanup_task {
+            task.abort();
+        }
+        if let Some(task) = storage_task {
             task.abort();
         }
         if let Some(task) = stall_task {
