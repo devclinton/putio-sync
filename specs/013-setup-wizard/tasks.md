@@ -74,8 +74,8 @@ Tests are required by the constitution (Principle III: mocked Put.io, run under 
 **Goal**: same flow in the terminal, headless-capable.
 **Independent test**: non-interactive run with `PUTIO_SYNC_PUTIO_TOKEN`, `--download-dir`, `--yes` against a mock writes the config; missing required value fails before writing.
 
-- [ ] T025 [US7] Add `Setup` subcommand and flags to `putio-sync-cli/src/cli.rs` and dispatch in `putio-sync-cli/src/main.rs`
-- [ ] T026 [US7] Create `putio-sync-cli/src/commands/setup.rs` with a `Prompter` trait (terminal + scripted for tests), the steps, dry-run print, single save, API token printed once; tests with a scripted prompter and mock Put.io
+- [X] T025 [US7] Add `Setup` subcommand and flags to `putio-sync-cli/src/cli.rs` and dispatch in `putio-sync-cli/src/main.rs`
+- [X] T026 [US7] Create `putio-sync-cli/src/commands/setup.rs` with a `Prompter` trait (terminal + scripted for tests), the steps, dry-run print, single save, API token printed once; tests with a scripted prompter and mock Put.io
 
 ## Phase 9: User Story 6 — extras (P3)
 

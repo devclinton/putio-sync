@@ -111,7 +111,10 @@ async fn main() {
     }
 
     // Initialize logging system. The doctor's stdout is its report, so its logs go to stderr.
-    if matches!(args.command, Commands::Doctor { .. }) {
+    if matches!(
+        args.command,
+        Commands::Doctor { .. } | Commands::Setup { .. }
+    ) {
         logging::init_stderr(&config.logging.level);
     } else if let Err(e) = putio_sync_core::logging::init_logging(&config.logging) {
         eprintln!("⚠️  Failed to initialize logging: {}", e);
@@ -419,6 +422,27 @@ async fn main() {
         }
         Commands::Health {} => commands::execute_health(args.config).await,
         Commands::Debug {} => commands::execute_debug(args.config).await,
+        Commands::Setup {
+            download_dir,
+            preset,
+            watch_dir,
+            metrics,
+            no_metrics,
+            no_dry_run,
+            yes,
+        } => {
+            let setup_args = commands::setup::SetupArgs {
+                download_dir,
+                preset,
+                watch_dir,
+                metrics: (metrics || no_metrics).then_some(metrics),
+                no_dry_run,
+                yes,
+            };
+            let code = commands::execute_setup(setup_args, args.config).await;
+            let _ = std::io::stdout().flush();
+            std::process::exit(code);
+        }
         Commands::Doctor {
             json,
             fix,
