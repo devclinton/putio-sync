@@ -58,13 +58,13 @@ is the only way to exercise this feature.
 
 ## Phase 6: User Story 4 - Tailscale details for other clients (P3)
 
-- [ ] T023 [US4] Document `GET /tailscale` for the mobile app and scripts in README (API section); covered by T009/T010
+- [X] T023 [US4] Document `GET /tailscale` for the mobile app and scripts in README (API section); covered by T009/T010
 
 ## Phase 7: Polish
 
-- [ ] T024 README: Tailscale section (socket mount for Docker, sidecar layout, Unraid integration, `tailscale serve`, loopback trust, Funnel needs the token, bridge-network caveat)
-- [ ] T025 `CHANGELOG.md` entry; remove 036 from `ROADMAP.md`
-- [ ] T026 UI asset checks (`node --check`, size cap) pass; check the card and identity flow in the browser against a mock backend
+- [X] T024 README: Tailscale section (socket mount for Docker, sidecar layout, Unraid integration, `tailscale serve`, loopback trust, Funnel needs the token, bridge-network caveat)
+- [X] T025 `CHANGELOG.md` entry; remove 036 from `ROADMAP.md`
+- [X] T026 UI asset checks (`node --check`, size cap) pass; check the card and identity flow in the browser against a mock backend
 - [ ] T027 Merge `origin/main`, run `TMPDIR=<scratch> make ci`, push
 
 ## Dependencies

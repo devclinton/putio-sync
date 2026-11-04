@@ -935,7 +935,7 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | Route | Purpose |
 |---|---|
 | `GET /health` | Liveness, no token |
-| `GET /auth/status` | `{"token_configured": true}`, no token |
+| `GET /auth/status` | `{"token_configured": true}`, no token. With Tailscale sign-in on, adds `"tailscale_sign_in": true` and, when it lets this request in, `"tailscale": {"login", "name", "via"}` |
 | `POST /auth/login` | `{"token": "..."}` → 204, 401 or 429; counted by the lockout |
 | `GET /status` | Everything on the status page in one response |
 | `GET /whats-new`, `POST /whats-new/seen` | The built-in changelog with each entry marked `new`; record entries as seen (`{"ids": [...]}`) |
@@ -957,7 +957,8 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /putio/transfers/{id}/readd` | Cancel a transfer and add its magnet again to the same folder; answers `{"cancelled_id", "transfer"}`. 400 without a magnet link (nothing cancelled); 500 with the magnet in `details` if the add fails after the cancel |
 | `GET /history?action=&name=&limit=&offset=` | History; `name` is a case-insensitive substring |
 | `GET /history/stats`, `GET /stats/{downloads,transfers,disk}` | Totals |
-| `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
+| `GET /tailscale` | What Tailscale says about this machine: `state` (`running`, `needs_login`, `stopped`, `starting`, `unreachable`, `not_found`), `via`, `version`, `dns_name`, `tailnet`, `magic_dns`, `addresses`, `https`, `userspace`, `owner_login`, `serve`; plus `urls` (the addresses that open putio-sync over the tailnet, HTTPS `serve` first), `hints`, `tailnet_bind` or `tailnet_bind_error`, `settings` and this request's `identity`. Never fails: a missing Tailscale is a state |
+| `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck,tailscale}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
 | `POST /settings/{group}/preview` | The group's PUT body → `{"valid", "error", "changes": [{"key", "before", "after", "live"}], "when", "risks"}`; writes nothing |
 | `GET /settings/assistant` | Per group: what each field affects, the fields that apply live, the defaults; and the risks of the running config |
 | `GET /settings/export` | The settings as a TOML file, without `[auth]`, `api.auth_token` and `[arr]` |
@@ -990,6 +991,65 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 
 The legacy `/api/*` placeholder routes are removed, and no CORS headers are sent: the
 UI is served from the same origin, and non-browser clients are unaffected.
+
+## Tailscale
+
+putio-sync reads Tailscale's state from tailscaled's socket
+(`/var/run/tailscale/tailscaled.sock`, or `[tailscale] socket`, or
+`PUTIO_SYNC_TAILSCALE_SOCKET`), or from the `tailscale` CLI when there is no socket. It
+never changes your Tailscale setup. Settings → Tailscale shows the state, the MagicDNS
+name, the tailnet addresses, the addresses that open putio-sync over the tailnet, and
+hints when something is missing; the mobile app and scripts get the same from
+`GET /tailscale`. The doctor's Tailscale check warns when a Tailscale feature is on but
+Tailscale can't serve it.
+
+```toml
+[tailscale]
+identity_sign_in = true                # off by default
+allowed_users = ["alice@example.com"]  # empty lets nobody in
+tailnet_only = false                   # daemon only, after a restart
+```
+
+### Sign in with Tailscale
+
+With `identity_sign_in` on, allowed users open the UI and the API without the token:
+
+- **Through `tailscale serve`** (`tailscale serve --bg 15432`, which gives an
+  `https://<name>.<tailnet>.ts.net` address). serve adds `Tailscale-User-Login` and
+  `Tailscale-User-Name` to each request; putio-sync trusts them **only on a loopback
+  connection**, so anyone else on the LAN can't send them.
+- **Straight over the tailnet**, to `http://<name>:15432`: putio-sync asks tailscaled who
+  the peer address belongs to.
+
+Tagged devices (no user) are refused, and **Funnel** requests never sign in this way: on
+the public internet the token is needed. Everybody else still needs the token, which
+always works. Sign-ins and refusals are counted in `putio_sync_tailscale_identity_total`.
+
+### Listen on the tailnet only
+
+`tailnet_only` makes `daemon` listen on the node's tailnet IPv4 address, with `[api]
+bind`'s port, instead of `[api] bind`, so the LAN can't reach the API. If Tailscale isn't
+up when putio-sync starts, it asks again every 5 seconds for 5 minutes and then gives up
+with an error; it never falls back to another address. Saving it from Settings is
+refused when Tailscale has no address to give. `server` ignores it and uses `--bind`.
+With userspace networking (common in containers) there is no tailnet address to listen
+on: use `tailscale serve` instead.
+
+### Docker, sidecars and Unraid
+
+- **Tailscale on the host**: mount its socket,
+  `-v /var/run/tailscale:/var/run/tailscale`.
+- **Tailscale in a sidecar container**: put the sidecar's socket on a volume shared
+  with putio-sync (for example at `/var/run/tailscale`, with
+  `TS_SOCKET=/var/run/tailscale/tailscaled.sock` on the sidecar), and run putio-sync in
+  the sidecar's network (`network_mode: service:tailscale`) so serve and tailnet
+  connections reach it.
+- **Unraid**: Unraid's Tailscale plugin runs tailscaled on the host; mount
+  `/var/run/tailscale` into the container as above.
+- **Bridge networking caveat**: when serve runs on the host and putio-sync in a
+  bridge-network container, serve's requests arrive from the bridge gateway (such as
+  `172.17.0.1`), not loopback, so its identity headers are ignored. Use host
+  networking, the sidecar layout, or the token.
 
 ## Radarr and Sonarr
 

@@ -136,14 +136,6 @@ The web UI wrapped with Capacitor as an iOS and Android app: connect to a
 putio-sync server by address or QR code, push notifications for the events
 from 030, and share links or torrent files from other apps straight to Put.io.
 
-### 036 Tailscale awareness
-
-Detect Tailscale on the host and offer to listen on the tailnet address only,
-use Tailscale identity to sign in (the user and node from Tailscale, so no
-password inside the tailnet), and show the MagicDNS name and HTTPS address in
-the UI and the mobile app. It should work with `tailscale serve`, and with
-Tailscale in a sidecar container.
-
 ### 037 Listen address and interface
 
 `[api] bind` takes one `ip:port` today. Allow several addresses, binding by
