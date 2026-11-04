@@ -203,9 +203,9 @@ on `127.0.0.1:P`.
 - A list shared between API and metrics on the same port: validation fails naming both.
 - Metrics follow the same rules but are not covered by the lockout confirm (they are not
   the UI).
-- Browser reaching putio-sync through a name (`nas.local`): the check resolves the name
-  through the system resolver; when it cannot tell, the preview says it could not check
-  instead of warning or staying silent.
+- The current listener is a wildcard (`0.0.0.0:P`) and the browser used a name
+  (`nas.local`): the exact address cannot be told, so the check says it could not check
+  and the UI confirms anyway; an IP in the address bar is checked exactly.
 - Through `tailscale serve` or another reverse proxy, the browser's address is the proxy's
   and the check compares the address the request actually arrived on.
 
