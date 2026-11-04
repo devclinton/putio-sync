@@ -9,12 +9,15 @@
 //! - PUT  /settings/cleanup - Update the Put.io empty-folder cleanup settings
 //! - GET  /settings/precheck - Get the release check settings and what they come to
 //! - PUT  /settings/precheck - Update the release check settings
+//! - POST /settings/{group}/preview - What a PUT of that body would do, without saving
+//!   (feature 015; the assistant, export and import routes are in `assistant.rs`)
 
+use super::assistant::{self, Preview};
 use crate::error::ApiError;
 use crate::models::SuccessResponse;
 use axum::{
     extract::{rejection::JsonRejection, State},
-    routing::{get, put},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -23,6 +26,7 @@ use std::path::PathBuf;
 // Re-export AppState from parent
 pub use crate::AppState;
 use crate::Engine;
+use putio_sync_core::assistant::Change;
 use putio_sync_core::config::{
     CleanupConfig, Config, NotificationBackend, PrecheckConfig, PrecheckOverride, ProgressStyle,
     SortOrder,
@@ -77,6 +81,15 @@ pub(crate) async fn update<V: Serialize>(
 
 /// Top-level fields that differ between two serialised group bodies
 fn changed_fields<V: Serialize>(before: &V, after: &V) -> Vec<String> {
+    field_changes(before, after, &[])
+        .into_iter()
+        .map(|c| c.key)
+        .collect()
+}
+
+/// Top-level fields that differ between two serialised group bodies, with their values;
+/// `live` lists the fields that apply without a restart
+fn field_changes<V: Serialize>(before: &V, after: &V, live: &[&str]) -> Vec<Change> {
     let (Ok(serde_json::Value::Object(before)), Ok(serde_json::Value::Object(after))) =
         (serde_json::to_value(before), serde_json::to_value(after))
     else {
@@ -85,8 +98,109 @@ fn changed_fields<V: Serialize>(before: &V, after: &V) -> Vec<String> {
     after
         .iter()
         .filter(|(name, value)| before.get(*name) != Some(*value))
-        .map(|(name, _)| name.clone())
+        .map(|(name, value)| Change {
+            key: name.clone(),
+            before: before.get(name).cloned().filter(|v| !v.is_null()),
+            after: Some(value.clone()).filter(|v| !v.is_null()),
+            live: live.contains(&name.as_str()),
+        })
         .collect()
+}
+
+/// What a save of `change` would do (feature 015): the same apply and validation as
+/// [`update`] on a copy, without writing anything
+async fn preview<V: Serialize>(
+    state: &AppState,
+    view: fn(&Config) -> V,
+    (live, when): (&[&str], &'static str),
+    change: impl FnOnce(&mut Config) -> Result<(), ApiError>,
+) -> Json<Preview> {
+    let config = state.config.read().await.clone();
+    let mut candidate = config.clone();
+    if let Err(e) = change(&mut candidate).and_then(|()| candidate.validate().map_err(invalid)) {
+        return Json(Preview::refused(e, when));
+    }
+    Json(Preview {
+        valid: true,
+        changes: field_changes(&view(&config), &view(&candidate), live),
+        when,
+        risks: putio_sync_core::assistant::risks(&candidate),
+        ..Preview::default()
+    })
+}
+
+/// One settings group, for the assistant route: its defaults and what applies live
+pub(crate) struct GroupInfo {
+    pub key: &'static str,
+    pub defaults: serde_json::Value,
+    pub live: &'static [&'static str],
+    pub when: &'static str,
+}
+
+/// The six groups. Defaults are the default config's, with the current download
+/// folder kept: resetting it is almost never what a user means.
+pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
+    let mut defaults = Config::default();
+    let _ = defaults.expand_paths();
+    defaults.download.target_directory = current.download.target_directory.clone();
+    let json = |v: serde_json::Result<serde_json::Value>| v.unwrap_or_default();
+    let group = |key, defaults, (live, when)| GroupInfo {
+        key,
+        defaults,
+        live,
+        when,
+    };
+    vec![
+        group(
+            "download",
+            json(serde_json::to_value(download_view(&defaults))),
+            live_download(state),
+        ),
+        group(
+            "watcher",
+            json(serde_json::to_value(watcher_view(&defaults))),
+            live_watcher(state),
+        ),
+        group(
+            "cleanup",
+            json(serde_json::to_value(cleanup_view(&defaults))),
+            live_cleanup(state),
+        ),
+        group(
+            "logging",
+            json(serde_json::to_value(logging_view(&defaults))),
+            live_logging(state),
+        ),
+        group(
+            "notifications",
+            json(serde_json::to_value(notification_view(&defaults))),
+            (&[], ""),
+        ),
+        group(
+            "precheck",
+            json(serde_json::to_value(precheck_view(&defaults))),
+            (&[], ""),
+        ),
+    ]
+}
+
+/// Hand the running watcher its settings: a watcher shared with the daemon (it started
+/// with a watch folder) reads paths, parent folder and archive folder at its next scan.
+/// `enabled` and `delete_after_upload` are read by the daemon's watch loop only at startup.
+pub(crate) async fn push_watcher(state: &AppState) {
+    use putio_sync_file_manager::watcher::WatcherConfig as FileWatcherConfig;
+    use std::time::Duration;
+
+    if let Some(ref file_watcher) = state.file_watcher {
+        let watch = state.config.read().await.watch.clone();
+        file_watcher.update_config(FileWatcherConfig {
+            watch_dirs: watch.paths,
+            parent_id: watch.parent_folder_id,
+            interval: Duration::from_secs(watch.refresh_cycle.max(1) as u64),
+            archive_dir: watch.archive_directory,
+            delete_after_upload: watch.delete_after_upload,
+        });
+    }
 }
 
 /// The save message (FR-018): which changed fields apply now and which need a restart.
@@ -358,6 +472,79 @@ pub fn router() -> Router<AppState> {
         .route("/cleanup", put(update_cleanup_settings))
         .route("/precheck", get(get_precheck_settings))
         .route("/precheck", put(update_precheck_settings))
+        .route("/download/preview", post(preview_download))
+        .route("/watcher/preview", post(preview_watcher))
+        .route("/logging/preview", post(preview_logging))
+        .route("/notifications/preview", post(preview_notifications))
+        .route("/cleanup/preview", post(preview_cleanup))
+        .route("/precheck/preview", post(preview_precheck))
+        .merge(assistant::router())
+}
+
+// ---- Previews (feature 015): the PUT body in, what the PUT would do out ----------
+
+/// POST /settings/download/preview
+async fn preview_download(
+    State(state): State<AppState>,
+    settings: Result<Json<DownloadSettings>, JsonRejection>,
+) -> Result<Json<Preview>, ApiError> {
+    let settings = body(settings)?;
+    let live = live_download(&state);
+    Ok(preview(&state, download_view, live, |c| apply_download(settings, c)).await)
+}
+
+/// POST /settings/watcher/preview
+async fn preview_watcher(
+    State(state): State<AppState>,
+    settings: Result<Json<WatcherConfig>, JsonRejection>,
+) -> Result<Json<Preview>, ApiError> {
+    let settings = body(settings)?;
+    let live = live_watcher(&state);
+    Ok(preview(&state, watcher_view, live, |c| apply_watcher(settings, c)).await)
+}
+
+/// POST /settings/logging/preview
+async fn preview_logging(
+    State(state): State<AppState>,
+    settings: Result<Json<LoggingSettings>, JsonRejection>,
+) -> Result<Json<Preview>, ApiError> {
+    let settings = body(settings)?;
+    let live = live_logging(&state);
+    Ok(preview(&state, logging_view, live, |c| apply_logging(settings, c)).await)
+}
+
+/// POST /settings/notifications/preview
+async fn preview_notifications(
+    State(state): State<AppState>,
+    settings: Result<Json<NotificationSettings>, JsonRejection>,
+) -> Result<Json<Preview>, ApiError> {
+    let settings = body(settings)?;
+    Ok(preview(&state, notification_view, (&[], ""), |c| {
+        apply_notifications(settings, c)
+    })
+    .await)
+}
+
+/// POST /settings/cleanup/preview
+async fn preview_cleanup(
+    State(state): State<AppState>,
+    settings: Result<Json<CleanupSettings>, JsonRejection>,
+) -> Result<Json<Preview>, ApiError> {
+    let settings = body(settings)?;
+    let live = live_cleanup(&state);
+    Ok(preview(&state, cleanup_view, live, |c| apply_cleanup(settings, c)).await)
+}
+
+/// POST /settings/precheck/preview
+async fn preview_precheck(
+    State(state): State<AppState>,
+    settings: Result<Json<PrecheckSettings>, JsonRejection>,
+) -> Result<Json<Preview>, ApiError> {
+    let settings = body(settings)?;
+    Ok(preview(&state, precheck_view, (&[], ""), |c| {
+        apply_precheck(settings, c)
+    })
+    .await)
 }
 
 /// Download fields the engine's download manager picks up for the next download
@@ -527,36 +714,8 @@ async fn update_download_settings(
     settings: Result<Json<DownloadSettings>, JsonRejection>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
     let settings = body(settings)?;
-    // Parse enums before acquiring write lock
-    let progress_style = parse_progress_style(&settings.progress_style)?;
-    let sort_order = parse_sort_order(&settings.sort_order)?;
-
     let mut changed = update(&state, download_view, |config| {
-        config.download.workers = settings.workers;
-        config.download.target_directory = settings.target_directory.into();
-        config.download.buffer_size_mb = settings.buffer_size_mb;
-        // An unchanged choice leaves the file as it is, old `skip_existing` included
-        if let Some(choice) = settings
-            .on_existing
-            .or(settings.skip_existing.map(Into::into))
-            .filter(|choice| *choice != config.download.on_existing())
-        {
-            config.download.set_on_existing(choice);
-        }
-        config.download.delete_after_download = settings.delete_after_download;
-        config.download.resume_enabled = settings.resume_enabled;
-        config.download.chunk_size_mb = settings.chunk_size_mb;
-        config.download.progress_style = progress_style;
-        config.download.sort_order = sort_order;
-        config.download.reverse_sort = settings.reverse_sort;
-        config.download.whitelist_patterns = settings.whitelist_patterns;
-        config.download.blacklist_patterns = settings.blacklist_patterns;
-        config.download.blocked_extensions = settings.blocked_extensions;
-        config.download.bandwidth_limit_bytes_per_sec = settings.bandwidth_limit_bytes_per_sec;
-        config.download.max_retries = settings.max_retries;
-        config.download.retry_initial_delay_secs = settings.retry_initial_delay_secs;
-        config.download.delete_empty_folders = settings.delete_empty_folders;
-        Ok(())
+        apply_download(settings, config)
     })
     .await?;
 
@@ -578,22 +737,59 @@ async fn update_download_settings(
                 .to_string(),
         );
     }
-    let when = match state.engine {
-        Engine::Daemon => "Applies from the next download",
-        Engine::Server => {
-            if !changed.is_empty() || !notes.is_empty() {
-                notes.push(
-                    "The server --download background thread keeps its startup settings until a restart."
-                        .to_string(),
-                );
-            }
-            "Applies to the API's own download manager from the next download"
-        }
-    };
+    if state.engine == Engine::Server && (!changed.is_empty() || !notes.is_empty()) {
+        notes.push(
+            "The server --download background thread keeps its startup settings until a restart."
+                .to_string(),
+        );
+    }
+    let (live, when) = live_download(&state);
 
     Ok(Json(SuccessResponse {
-        message: saved_message("Download", &changed, DOWNLOAD_LIVE, when, &notes),
+        message: saved_message("Download", &changed, live, when, &notes),
     }))
+}
+
+/// Apply a download body to `config` (shared by PUT and preview)
+fn apply_download(settings: DownloadSettings, config: &mut Config) -> Result<(), ApiError> {
+    let progress_style = parse_progress_style(&settings.progress_style)?;
+    let sort_order = parse_sort_order(&settings.sort_order)?;
+    config.download.workers = settings.workers;
+    config.download.target_directory = settings.target_directory.into();
+    config.download.buffer_size_mb = settings.buffer_size_mb;
+    // An unchanged choice leaves the file as it is, old `skip_existing` included
+    if let Some(choice) = settings
+        .on_existing
+        .or(settings.skip_existing.map(Into::into))
+        .filter(|choice| *choice != config.download.on_existing())
+    {
+        config.download.set_on_existing(choice);
+    }
+    config.download.delete_after_download = settings.delete_after_download;
+    config.download.resume_enabled = settings.resume_enabled;
+    config.download.chunk_size_mb = settings.chunk_size_mb;
+    config.download.progress_style = progress_style;
+    config.download.sort_order = sort_order;
+    config.download.reverse_sort = settings.reverse_sort;
+    config.download.whitelist_patterns = settings.whitelist_patterns;
+    config.download.blacklist_patterns = settings.blacklist_patterns;
+    config.download.blocked_extensions = settings.blocked_extensions;
+    config.download.bandwidth_limit_bytes_per_sec = settings.bandwidth_limit_bytes_per_sec;
+    config.download.max_retries = settings.max_retries;
+    config.download.retry_initial_delay_secs = settings.retry_initial_delay_secs;
+    config.download.delete_empty_folders = settings.delete_empty_folders;
+    Ok(())
+}
+
+/// Download fields applied without a restart, and when
+pub(crate) fn live_download(state: &AppState) -> (&'static [&'static str], &'static str) {
+    match state.engine {
+        Engine::Daemon => (DOWNLOAD_LIVE, "Applies from the next download"),
+        Engine::Server => (
+            DOWNLOAD_LIVE,
+            "Applies to the API's own download manager from the next download",
+        ),
+    }
 }
 
 /// Get file watcher configuration
@@ -613,49 +809,23 @@ async fn update_watcher_config(
     watcher: Result<Json<WatcherConfig>, JsonRejection>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
     let watcher = body(watcher)?;
-    use putio_sync_file_manager::watcher::WatcherConfig as FileWatcherConfig;
-    use std::time::Duration;
-
-    let watch_paths: Vec<PathBuf> = watcher.paths.into_iter().map(PathBuf::from).collect();
-    let archive_dir = watcher.archive_directory.map(PathBuf::from);
-
     let mut changed = update(&state, watcher_view, |config| {
-        config.watch.enabled = watcher.enabled;
-        config.watch.paths = watch_paths.clone();
-        config.watch.refresh_cycle = watcher.refresh_cycle;
-        config.watch.parent_folder_id = watcher.parent_folder_id;
-        config.watch.archive_directory = archive_dir.clone();
-        config.watch.delete_after_upload = watcher.delete_after_upload;
-        Ok(())
+        apply_watcher(watcher, config)
     })
     .await?;
 
-    // A watcher shared with the daemon (it started with a watch folder) reads paths,
-    // parent folder and archive folder at its next scan. `enabled` and
-    // `delete_after_upload` are read by the daemon's watch loop only at startup.
-    if let Some(ref file_watcher) = state.file_watcher {
-        let new_watcher_config = FileWatcherConfig {
-            watch_dirs: watch_paths,
-            parent_id: watcher.parent_folder_id,
-            interval: Duration::from_secs(watcher.refresh_cycle.max(1) as u64),
-            archive_dir,
-            delete_after_upload: watcher.delete_after_upload,
-        };
-
-        file_watcher.update_config(new_watcher_config);
-    }
+    push_watcher(&state).await;
     // parent_folder_id is protected from the empty-folder cleanup
     state.cleanup.configure(&*state.config.read().await);
 
     let mut notes = Vec::new();
-    let live = match (state.engine, state.file_watcher.is_some()) {
+    match (state.engine, state.file_watcher.is_some()) {
         (Engine::Daemon, true) => {
             if take(&mut changed, "refresh_cycle") {
                 notes.push(
                     "refresh_cycle is saved, but the daemon scans on --watch-interval.".to_string(),
                 );
             }
-            WATCHER_LIVE
         }
         (Engine::Daemon, false) => {
             if !changed.is_empty() {
@@ -664,20 +834,35 @@ async fn update_watcher_config(
                         .to_string(),
                 );
             }
-            &[]
         }
-        (Engine::Server, _) => &[],
-    };
+        (Engine::Server, _) => {}
+    }
+    let (live, when) = live_watcher(&state);
 
     Ok(Json(SuccessResponse {
-        message: saved_message(
-            "Watcher",
-            &changed,
-            live,
-            "Applies at the next scan",
-            &notes,
-        ),
+        message: saved_message("Watcher", &changed, live, when, &notes),
     }))
+}
+
+/// Apply a watcher body to `config` (shared by PUT and preview)
+fn apply_watcher(watcher: WatcherConfig, config: &mut Config) -> Result<(), ApiError> {
+    config.watch.enabled = watcher.enabled;
+    config.watch.paths = watcher.paths.into_iter().map(PathBuf::from).collect();
+    config.watch.refresh_cycle = watcher.refresh_cycle;
+    config.watch.parent_folder_id = watcher.parent_folder_id;
+    config.watch.archive_directory = watcher.archive_directory.map(PathBuf::from);
+    config.watch.delete_after_upload = watcher.delete_after_upload;
+    Ok(())
+}
+
+/// Watcher fields applied without a restart, and when: only a watcher shared with the
+/// daemon picks changes up
+pub(crate) fn live_watcher(state: &AppState) -> (&'static [&'static str], &'static str) {
+    let live: &'static [&'static str] = match (state.engine, state.file_watcher.is_some()) {
+        (Engine::Daemon, true) => WATCHER_LIVE,
+        _ => &[],
+    };
+    (live, "Applies at the next scan")
 }
 
 /// Get logging settings
@@ -697,46 +882,50 @@ async fn update_logging_settings(
     settings: Result<Json<LoggingSettings>, JsonRejection>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
     let settings = body(settings)?;
-    // Parse enum before acquiring write lock
-    let console_format = parse_console_format(&settings.console_format)?;
-
     let mut changed = update(&state, logging_view, |config| {
-        config.logging.level = settings.level;
-        config.logging.file_enabled = settings.file_enabled;
-        config.logging.file_path = settings.file_path.into();
-        config.logging.console_enabled = settings.console_enabled;
-        config.logging.console_format = console_format;
-        config.logging.module_filters = settings.module_filters;
-        // The poller would refuse a bad level later; refuse it before it is saved
-        putio_sync_core::logging::validate_filters(&config.logging).map_err(invalid)
+        apply_logging(settings, config)
     })
     .await?;
 
-    // The config reload poller (feature 003) applies level and module_filters from the
-    // saved file, unless RUST_LOG is set; it runs only if the file existed at startup.
     let mut notes = Vec::new();
-    let live = if !state.logging_reload {
-        &[]
-    } else if std::env::var_os("RUST_LOG").is_some() {
+    if state.logging_reload && std::env::var_os("RUST_LOG").is_some() {
         let level = take(&mut changed, "level");
         let filters = take(&mut changed, "module_filters");
         if level || filters {
             notes.push("level and module_filters are ignored while RUST_LOG is set.".to_string());
         }
-        &[]
-    } else {
-        LOGGING_LIVE
-    };
+    }
+    let (live, when) = live_logging(&state);
 
     Ok(Json(SuccessResponse {
-        message: saved_message(
-            "Logging",
-            &changed,
-            live,
-            "Applies within 10 seconds",
-            &notes,
-        ),
+        message: saved_message("Logging", &changed, live, when, &notes),
     }))
+}
+
+/// Apply a logging body to `config` (shared by PUT and preview)
+fn apply_logging(settings: LoggingSettings, config: &mut Config) -> Result<(), ApiError> {
+    let console_format = parse_console_format(&settings.console_format)?;
+    config.logging.level = settings.level;
+    config.logging.file_enabled = settings.file_enabled;
+    config.logging.file_path = settings.file_path.into();
+    config.logging.console_enabled = settings.console_enabled;
+    config.logging.console_format = console_format;
+    config.logging.module_filters = settings.module_filters;
+    // The poller would refuse a bad level later; refuse it before it is saved
+    putio_sync_core::logging::validate_filters(&config.logging).map_err(invalid)
+}
+
+/// Logging fields applied without a restart, and when. The config reload poller
+/// (feature 003) applies level and module_filters from the saved file, unless RUST_LOG is
+/// set; it runs only if the file existed at startup.
+pub(crate) fn live_logging(state: &AppState) -> (&'static [&'static str], &'static str) {
+    let live: &'static [&'static str] =
+        if !state.logging_reload || std::env::var_os("RUST_LOG").is_some() {
+            &[]
+        } else {
+            LOGGING_LIVE
+        };
+    (live, "Applies within 10 seconds")
 }
 
 /// Get notification settings
@@ -756,22 +945,27 @@ async fn update_notification_settings(
     settings: Result<Json<NotificationSettings>, JsonRejection>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
     let settings = body(settings)?;
-    // Parse enum before acquiring write lock
-    let backend = parse_notification_backend(&settings.backend)?;
-
     // Notifications are set up at startup, so every change needs a restart
     let changed = update(&state, notification_view, |config| {
-        config.notifications.enabled = settings.enabled;
-        config.notifications.backend = backend;
-        config.notifications.webhook_url = settings.webhook_url;
-        config.notifications.email = settings.email;
-        Ok(())
+        apply_notifications(settings, config)
     })
     .await?;
 
     Ok(Json(SuccessResponse {
         message: saved_message("Notification", &changed, &[], "", &[]),
     }))
+}
+
+/// Apply a notifications body to `config` (shared by PUT and preview)
+fn apply_notifications(
+    settings: NotificationSettings,
+    config: &mut Config,
+) -> Result<(), ApiError> {
+    config.notifications.backend = parse_notification_backend(&settings.backend)?;
+    config.notifications.enabled = settings.enabled;
+    config.notifications.webhook_url = settings.webhook_url;
+    config.notifications.email = settings.email;
+    Ok(())
 }
 
 /// Get the empty-folder cleanup settings
@@ -793,13 +987,7 @@ async fn update_cleanup_settings(
     let settings = body(settings)?;
 
     let changed = update(&state, cleanup_view, |config| {
-        config.cleanup = CleanupConfig {
-            enabled: settings.enabled,
-            run_at: settings.run_at,
-            min_age_hours: settings.min_age_hours,
-            nested: settings.nested,
-        };
-        Ok(())
+        apply_cleanup(settings, config)
     })
     .await?;
 
@@ -808,28 +996,37 @@ async fn update_cleanup_settings(
     state.cleanup.configure(&*state.config.read().await);
 
     let mut notes = Vec::new();
-    let live: &[&str] = match state.engine {
-        Engine::Daemon => &["enabled", "run_at", "min_age_hours", "nested"],
-        Engine::Server => {
-            if !changed.is_empty() {
-                notes.push(
-                    "The daily run happens only under `daemon`; manual runs use min_age_hours and nested now."
-                        .to_string(),
-                );
-            }
-            &["min_age_hours", "nested"]
-        }
-    };
+    if state.engine == Engine::Server && !changed.is_empty() {
+        notes.push(
+            "The daily run happens only under `daemon`; manual runs use min_age_hours and nested now."
+                .to_string(),
+        );
+    }
+    let (live, when) = live_cleanup(&state);
 
     Ok(Json(SuccessResponse {
-        message: saved_message(
-            "Cleanup",
-            &changed,
-            live,
-            "Applies from the next run",
-            &notes,
-        ),
+        message: saved_message("Cleanup", &changed, live, when, &notes),
     }))
+}
+
+/// Apply a cleanup body to `config` (shared by PUT and preview)
+fn apply_cleanup(settings: CleanupSettings, config: &mut Config) -> Result<(), ApiError> {
+    config.cleanup = CleanupConfig {
+        enabled: settings.enabled,
+        run_at: settings.run_at,
+        min_age_hours: settings.min_age_hours,
+        nested: settings.nested,
+    };
+    Ok(())
+}
+
+/// Cleanup fields applied without a restart, and when
+pub(crate) fn live_cleanup(state: &AppState) -> (&'static [&'static str], &'static str) {
+    let live: &'static [&'static str] = match state.engine {
+        Engine::Daemon => &["enabled", "run_at", "min_age_hours", "nested"],
+        Engine::Server => &["min_age_hours", "nested"],
+    };
+    (live, "Applies from the next run")
 }
 
 /// Get the release check settings and what they come to per folder
@@ -857,18 +1054,22 @@ async fn update_precheck_settings(
     State(state): State<AppState>,
     settings: Result<Json<PrecheckSettings>, JsonRejection>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
-    let settings = body(settings)?.into_config();
-
+    let settings = body(settings)?;
     // The *arr service and the watcher build their check at startup
     let changed = update(&state, precheck_view, |config| {
-        config.precheck = settings;
-        Ok(())
+        apply_precheck(settings, config)
     })
     .await?;
 
     Ok(Json(SuccessResponse {
         message: saved_message("Release check", &changed, &[], "", &[]),
     }))
+}
+
+/// Apply a release check body to `config` (shared by PUT and preview)
+fn apply_precheck(settings: PrecheckSettings, config: &mut Config) -> Result<(), ApiError> {
+    config.precheck = settings.into_config();
+    Ok(())
 }
 
 #[cfg(test)]
