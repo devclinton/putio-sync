@@ -59,7 +59,7 @@
 - [X] T019 [P] README (folder rules, Download settings, the pattern language, the "now applied" note), `config.example.toml` and `example-config.toml` (`include` / `exclude` rule keys, comma / brace / AND / OR examples)
 - [X] T020 [P] `CHANGELOG.md` Unreleased entry (Added: patterns in folder rules and preview; Changed: Only / Never download now applied; Fixed: they were ignored)
 - [X] T021 UI bundle stays under 384 KB (`putio-sync-api/tests/ui_assets.rs`); `cargo fmt`, clippy
-- [ ] T022 Remove 020 from `ROADMAP.md`; merge `origin/main`; `TMPDIR=<scratch> make ci`; push; hand-over note in the shared notes folder
+- [X] T022 Remove 020 from `ROADMAP.md`; merge `origin/main`; `TMPDIR=<scratch> make ci`; push; hand-over note in the shared notes folder
 
 ## Dependencies
 
