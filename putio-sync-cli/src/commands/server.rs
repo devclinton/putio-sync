@@ -2,18 +2,23 @@
 //!
 //! Starts an HTTP API server with optional daemon modes for watch and download.
 //!
-//! This is the thin dev mode: it builds its own engine through `create_app`. Of `[api]`
-//! it reads only the token (`auth_token` / `PUTIO_SYNC_API_TOKEN`); `--bind` and `--port`
-//! decide the address, and `api.listen` / `api.bind` are ignored here (they are for
-//! `daemon`).
+//! This is the thin dev mode: it builds its own engine through `create_app_state`. Of
+//! `[api]` it reads the token (`auth_token` / `PUTIO_SYNC_API_TOKEN`) and the addresses
+//! (feature 037): it listens where `daemon` would (`[api] bind`, tailnet-only), unless
+//! `--bind` / `--port` say otherwise (see [`server_listen`]). `api.listen` is for
+//! `daemon` only.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use putio_sync_api::listen::{Bound, Supervisor};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthMethod, Config};
+use putio_sync_core::listen::ListenAddr;
 use putio_sync_db::Database;
 use putio_sync_download::{DownloadConfig, DownloadFile, DownloadManager};
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tokio::signal;
 use tracing::{debug, error, info, warn};
 
@@ -25,8 +30,8 @@ use tracing::{debug, error, info, warn};
 ///
 /// * `watch` - Enable watch mode for monitoring torrent directories
 /// * `download` - Enable automatic download mode
-/// * `port` - Port to bind the HTTP server
-/// * `bind` - Address to bind the HTTP server
+/// * `port` - Port for every API address, else the configured ports
+/// * `bind` - One address instead of `[api] bind`
 /// * `config_path` - Optional custom config file path
 ///
 /// # Examples
@@ -34,18 +39,18 @@ use tracing::{debug, error, info, warn};
 /// ```no_run
 /// # use putio_sync_cli::commands::execute_server;
 /// # async fn example() {
-/// // Start server only
-/// execute_server(false, false, 15432, "0.0.0.0".to_string(), None).await.unwrap();
+/// // Start server only, on the configured addresses
+/// execute_server(false, false, None, None, None).await.unwrap();
 ///
-/// // Start server with watch and download modes
-/// execute_server(true, true, 15432, "0.0.0.0".to_string(), None).await.unwrap();
+/// // Start server with watch and download modes on 0.0.0.0:15432
+/// execute_server(true, true, Some(15432), Some("0.0.0.0".to_string()), None).await.unwrap();
 /// # }
 /// ```
 pub async fn execute_server(
     watch: bool,
     download: bool,
-    port: u16,
-    bind: String,
+    port: Option<u16>,
+    bind: Option<String>,
     config_path: Option<PathBuf>,
 ) -> Result<()> {
     info!("Starting putio-sync server");
@@ -103,9 +108,14 @@ pub async fn execute_server(
         );
     }
 
-    // Prepare server address
-    let addr = format!("{}:{}", bind, port);
-    info!("HTTP API server will bind to: {}", addr);
+    let flags = bind.is_some() || port.is_some();
+    let entries = server_listen(&config, bind.as_deref(), port)?;
+    let shown = entries
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    info!("HTTP API server will listen on: {}", shown);
 
     // Report enabled modes
     if watch {
@@ -125,30 +135,43 @@ pub async fn execute_server(
 
     // Create application with config (with database path and config path)
     let database_path = Some(std::path::PathBuf::from(".putiosync.db"));
-    let app = putio_sync_api::create_app(
+    let bound = Bound::default();
+    let state = putio_sync_api::create_app_state(
         config.clone(),
         database_path,
         Some(config_file_path.clone()),
         None, // No file watcher in standalone server mode
     )
     .await
-    .map_err(|e| anyhow!("Failed to create API app: {}", e))?;
+    .map_err(|e| anyhow!("Failed to create API app: {}", e))?
+    .with_listening(bound.clone())
+    .with_listen_flags(flags.then(|| entries.clone()));
 
-    // Start HTTP server
-    info!("Starting HTTP server on http://{}", addr);
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .context(format!("Failed to bind to {}", addr))?;
-
-    info!("✓ HTTP API server started successfully");
-    info!("API endpoints available at:");
-    info!("  - Health:    http://{}/health", addr);
-    info!("  - Put.io:    http://{}/putio/{{files,transfers}}", addr);
-    info!(
-        "  - Local:     http://{}/local/{{files,queue,downloads,watcher,workers}}",
-        addr
+    // Every address through the supervisor: one that can't be had now is retried, and
+    // nothing falls back to another address
+    let handle = Supervisor::spawn(
+        "API",
+        entries,
+        state.tailscale.clone(),
+        putio_sync_api::router(state.clone()),
+        bound.clone(),
     );
-    info!("  - System:    http://{}/{{settings,stats,history}}", addr);
+    match handle.first_bound(Duration::from_secs(2)).await {
+        Some(addr) => {
+            info!("✓ HTTP API server started successfully");
+            info!("API endpoints available at:");
+            info!("  - Health:    http://{}/health", addr);
+            info!("  - Put.io:    http://{}/putio/{{files,transfers}}", addr);
+            info!(
+                "  - Local:     http://{}/local/{{files,queue,downloads,watcher,workers}}",
+                addr
+            );
+            info!("  - System:    http://{}/{{settings,stats,history}}", addr);
+        }
+        None => warn!("No API address could be listened on yet ({shown}); still trying"),
+    }
+    // After the first bind, so Radarr/Sonarr hear the port actually listened on
+    putio_sync_api::spawn_arr_refresh(&state).await;
     info!("");
     info!("Press Ctrl+C to stop the server");
 
@@ -177,15 +200,9 @@ pub async fn execute_server(
         None
     };
 
-    // Run server with graceful shutdown
-    // Connect info gives the auth limiter the client IP
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .context("Server error")?;
+    // Serve until Ctrl+C or SIGTERM, then let open requests finish
+    shutdown_signal().await;
+    handle.stop(Duration::from_secs(10)).await;
 
     info!("Server shut down gracefully");
 
@@ -195,6 +212,59 @@ pub async fn execute_server(
     // In the future, we could implement a shared shutdown signal for all threads
 
     Ok(())
+}
+
+/// The addresses `server` listens on (feature 037):
+///
+/// | Flags | Listens on |
+/// |-------|------------|
+/// | none | [`Config::api_listen`] (`[api] bind`, or tailnet-only) |
+/// | `--bind H` | `H` with the first configured port, or `H`'s own port |
+/// | `--bind H --port P` | `H:P` |
+/// | `--port P` | every configured entry, with port `P` |
+/// | `--bind H:P2 --port P` | an error: give the port once |
+///
+/// `H` is an IP, an interface name or `tailnet`.
+pub fn server_listen(
+    config: &Config,
+    bind: Option<&str>,
+    port: Option<u16>,
+) -> Result<Vec<ListenAddr>> {
+    let configured = config.api_listen()?;
+    let Some(host) = bind.map(str::trim) else {
+        let Some(port) = port else {
+            return Ok(configured);
+        };
+        let mut out: Vec<ListenAddr> = Vec::new();
+        for entry in configured.iter().map(|e| e.with_port(port)) {
+            if !out.contains(&entry) {
+                out.push(entry);
+            }
+        }
+        return Ok(out);
+    };
+    let with_port = |p: u16| -> Result<ListenAddr> {
+        let entry = match host.parse::<IpAddr>() {
+            Ok(IpAddr::V6(ip)) => format!("[{ip}]:{p}"),
+            _ => format!("{host}:{p}"),
+        };
+        entry
+            .parse()
+            .map_err(|why| anyhow!("invalid --bind '{host}': {why}"))
+    };
+    // An address without its port: a bare IP, or a name that doesn't parse with one
+    if host.parse::<IpAddr>().is_ok() || host.parse::<ListenAddr>().is_err() {
+        let p = port
+            .or_else(|| configured.first().map(ListenAddr::port))
+            .unwrap_or(putio_sync_core::config::DEFAULT_API_PORT);
+        return Ok(vec![with_port(p)?]);
+    }
+    if port.is_some() {
+        bail!("--bind {host} already has a port; give the port once (--bind or --port)");
+    }
+    Ok(vec![host.parse().map_err(|why| {
+        anyhow!("invalid --bind '{host}': {why}")
+    })?])
 }
 
 /// Wait for Ctrl+C signal for graceful shutdown
@@ -503,6 +573,53 @@ mod tests {
     #[test]
     fn test_server_command_signature() {
         // Just ensure the function signature compiles
-        let _f: fn(bool, bool, u16, String, Option<PathBuf>) -> _ = execute_server;
+        let _f: fn(bool, bool, Option<u16>, Option<String>, Option<PathBuf>) -> _ = execute_server;
+    }
+
+    fn listen(config: &Config, bind: Option<&str>, port: Option<u16>) -> Vec<String> {
+        server_listen(config, bind, port)
+            .unwrap()
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn server_flags_merge_with_the_config() {
+        use putio_sync_core::listen::BindList;
+        let mut config = Config::default();
+        config.api.bind = Some(BindList::from_entries(vec![
+            "127.0.0.1:8080".into(),
+            "[::1]:8080".into(),
+        ]));
+        assert_eq!(
+            listen(&config, None, None),
+            ["127.0.0.1:8080", "[::1]:8080"]
+        );
+        assert_eq!(listen(&config, Some("0.0.0.0"), None), ["0.0.0.0:8080"]);
+        assert_eq!(listen(&config, Some("::"), Some(9000)), ["[::]:9000"]);
+        assert_eq!(listen(&config, Some("lo0"), None), ["lo0:8080"]);
+        assert_eq!(
+            listen(&config, Some("tailnet"), Some(9000)),
+            ["tailnet:9000"]
+        );
+        assert_eq!(
+            listen(&config, Some("10.0.0.2:7000"), None),
+            ["10.0.0.2:7000"]
+        );
+        assert_eq!(
+            listen(&config, None, Some(9000)),
+            ["127.0.0.1:9000", "[::1]:9000"]
+        );
+        let e = server_listen(&config, Some("10.0.0.2:7000"), Some(9000)).unwrap_err();
+        assert!(e.to_string().contains("give the port once"), "{e}");
+        assert!(server_listen(&config, Some("not an address"), None).is_err());
+
+        // Tailnet only: `server` honours it too
+        config.tailscale.tailnet_only = true;
+        assert_eq!(listen(&config, None, None), ["tailnet:8080"]);
+        assert_eq!(listen(&config, None, Some(9000)), ["tailnet:9000"]);
+        // An explicit --bind takes its place
+        assert_eq!(listen(&config, Some("127.0.0.1"), None), ["127.0.0.1:8080"]);
     }
 }

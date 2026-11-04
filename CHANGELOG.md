@@ -28,8 +28,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   putio-sync. Settings has a Network group with both lists and what
   putio-sync listens on now, and asks before saving a list that would cut the
   page off. The doctor's new "Listening addresses" check warns about entries
-  with no address and about Tailscale sign-in with the API on loopback
-  (feature 037).
+  with no address and about Tailscale sign-in with the API on loopback.
+  `server` now listens on the configured addresses (tailnet-only included)
+  when no flag is given; `--bind` (an IP, interface or `tailnet`) replaces the
+  list and `--port` sets the port of every entry. The Tailscale card and the
+  Radarr/Sonarr host report the port actually listened on (feature 037).
 - Tailscale awareness. Settings has a Tailscale card: whether Tailscale is on
   this machine (through tailscaled's socket, or the `tailscale` CLI), the
   MagicDNS name, the tailnet addresses, the HTTPS address from

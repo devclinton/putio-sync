@@ -428,6 +428,20 @@ pub async fn create_app(
     config_path: Option<std::path::PathBuf>,
     file_watcher: Option<Arc<TorrentWatcher>>,
 ) -> Result<Router, Box<dyn std::error::Error>> {
+    let state = create_app_state(config, database_path, config_path, file_watcher).await?;
+    spawn_arr_refresh(&state).await;
+    Ok(router(state))
+}
+
+/// The state [`create_app`] builds its router from, for a caller that serves it itself
+/// (`server`, feature 037): it attaches what it listens on before building the router
+/// and starts the Radarr/Sonarr refresh once it has a port.
+pub async fn create_app_state(
+    config: Config,
+    database_path: Option<std::path::PathBuf>,
+    config_path: Option<std::path::PathBuf>,
+    file_watcher: Option<Arc<TorrentWatcher>>,
+) -> Result<AppState, Box<dyn std::error::Error>> {
     use putio_sync_core::config::AuthMethod;
     use tracing::{info, warn};
 
@@ -492,8 +506,7 @@ pub async fn create_app(
         Arc::new(download_manager),
         file_watcher,
     );
-    spawn_arr_refresh(&state).await;
-    Ok(router(state))
+    Ok(state)
 }
 
 /// Read each saved Radarr/Sonarr's categories now, then every 15 minutes (feature 018, R4)

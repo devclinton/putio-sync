@@ -624,25 +624,24 @@ pub enum Commands {
         )]
         download: bool,
 
-        /// Port to bind the HTTP server (default: 15432)
+        /// Port for every API address; without it, the configured ports
         #[arg(
             short = 'p',
             long = "port",
             value_name = "PORT",
-            default_value = "15432",
-            help = "Port to bind HTTP server"
+            help = "Port for every API address (default: the [api] bind ports)"
         )]
-        port: u16,
+        port: Option<u16>,
 
-        /// Bind address for the HTTP server (default: 0.0.0.0)
+        /// One address instead of `[api] bind`: an IP, an interface name or `tailnet`,
+        /// with or without `:port`
         #[arg(
             short = 'b',
             long = "bind",
             value_name = "ADDRESS",
-            default_value = "0.0.0.0",
-            help = "Address to bind HTTP server"
+            help = "Listen on this address only: IP, interface or tailnet, optionally :port (default: [api] bind)"
         )]
-        bind: String,
+        bind: Option<String>,
     },
 
     /// Show system status and health information
