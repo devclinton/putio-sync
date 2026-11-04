@@ -215,6 +215,7 @@ the account above the warning level it deletes nothing; with it turned off nothi
   applied, and the automatic run does nothing.
 - The setup wizard is running (013): the storage routes answer like other routes in setup
   mode.
+- One run deletes at most 1,000 files; a larger shortfall needs another run.
 - Deleting files can leave empty folders; they stay until empty-folder cleanup removes them.
 
 ## Requirements *(mandatory)*
