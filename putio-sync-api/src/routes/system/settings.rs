@@ -1198,13 +1198,8 @@ async fn update_tailscale_settings(
     settings: Result<Json<TailscaleSettings>, JsonRejection>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
     let settings = body(settings)?;
-    let (was_on, port) = {
-        let config = state.config.read().await;
-        (
-            config.tailscale.tailnet_only,
-            super::tailscale::api_bind(&config).port(),
-        )
-    };
+    let was_on = state.config.read().await.tailscale.tailnet_only;
+    let port = state.api_port().await;
     if settings.tailnet_only && !was_on {
         let candidate = TailscaleConfig {
             socket: settings.socket.clone(),

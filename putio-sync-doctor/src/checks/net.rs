@@ -131,7 +131,7 @@ pub(crate) async fn tailscale(ctx: &Ctx) -> Finding {
         let port = ctx
             .config
             .resolve_api()
-            .map(|r| r.value.bind.port())
+            .map(|r| r.value.port())
             .unwrap_or(15432);
         if let Err(reason) = tailnet_bind(&status, port) {
             return Finding::new(

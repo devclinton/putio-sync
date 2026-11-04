@@ -31,6 +31,7 @@
 pub mod changelog;
 pub mod error;
 pub mod handlers;
+pub mod listen;
 pub mod middleware;
 pub mod models;
 pub mod routes;
@@ -108,6 +109,9 @@ pub struct AppState {
     pub arr: Option<routes::arr::ArrRpc>,
     /// Tailscale on this machine (feature 036); the doctor shares it
     pub tailscale: Arc<TailscaleService>,
+    /// The addresses the API listens on now (feature 037); empty until a listener set
+    /// is attached with [`AppState::with_listening`]
+    pub listening: listen::Bound,
 }
 
 /// The engine behind the API (FR-018: a save says what applies now)
@@ -160,6 +164,7 @@ impl AppState {
         AppState {
             arr,
             tailscale,
+            listening: listen::Bound::default(),
             cleanup,
             storage,
             doctor,
@@ -190,6 +195,21 @@ impl AppState {
     pub fn with_tailscale(mut self, tailscale: Arc<TailscaleService>) -> AppState {
         self.tailscale = tailscale;
         self
+    }
+
+    /// Report this listener set's addresses (the supervisor serving this state fills it)
+    pub fn with_listening(mut self, bound: listen::Bound) -> AppState {
+        self.listening = bound;
+        self
+    }
+
+    /// The API port to tell others (Tailscale card, Radarr/Sonarr): the first address
+    /// listened on, else the first configured one, else 15432
+    pub async fn api_port(&self) -> u16 {
+        if let Some(addr) = self.listening.first() {
+            return addr.port();
+        }
+        self.config.read().await.api_port()
     }
 
     /// Mark the state as running on the daemon's own engine (`api_listener::start`)
@@ -465,13 +485,7 @@ pub async fn spawn_arr_refresh(state: &AppState) {
     let Some(arr) = &state.arr else {
         return;
     };
-    let port = state
-        .config
-        .read()
-        .await
-        .resolve_api()
-        .map(|r| r.value.bind.port())
-        .unwrap_or(15432);
+    let port = state.api_port().await;
     let hosts = routes::system::tailscale::tailnet_first_hosts(state, None, None).await;
     arr.service.spawn_category_refresh(port, hosts);
 }

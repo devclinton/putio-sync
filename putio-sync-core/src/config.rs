@@ -12,6 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::logging::LevelSource;
+use crate::listen::{BindList, ListenAddr};
 use putio_sync_telemetry::server::MetricsSettings;
 use putio_sync_telemetry::Detail;
 
@@ -883,9 +884,11 @@ pub struct ApiConfig {
     /// checked by [`Config::resolve_api`]. Default `true`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub listen: Option<Flag>,
-    /// Listener address for `daemon`, `ip:port`. Default `0.0.0.0:15432`.
+    /// Listener addresses for `daemon` and `server`: one entry or a list of `ip:port`,
+    /// `[ipv6]:port`, `interface:port` or `tailnet:port` (feature 037). Default
+    /// `0.0.0.0:15432`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub bind: Option<String>,
+    pub bind: Option<BindList>,
 }
 
 /// A boolean setting written either as a TOML bool or as a string, so a bad string
@@ -902,22 +905,47 @@ pub enum Flag {
 /// Default `[api] bind`
 pub const DEFAULT_API_BIND: &str = "0.0.0.0:15432";
 
+/// Default `[metrics] bind`
+pub const DEFAULT_METRICS_BIND: &str = "0.0.0.0:9742";
+
+/// Port used when nothing else gives one
+pub const DEFAULT_API_PORT: u16 = 15432;
+
 /// `[api]` listener settings after env overrides and validation
 #[derive(Clone, PartialEq, Eq)]
 pub struct ApiSettings {
     /// Open the listener (`daemon` only)
     pub listen: bool,
-    /// Listener address (`daemon` only)
-    pub bind: std::net::SocketAddr,
+    /// Listener addresses, before tailnet-only (see [`Config::api_listen`])
+    pub bind: Vec<ListenAddr>,
     /// Bearer token every protected route requires
     pub token: Option<String>,
+}
+
+impl ApiSettings {
+    /// The first entry's port: the one other programs are told about
+    pub fn port(&self) -> u16 {
+        self.bind.first().map_or(DEFAULT_API_PORT, ListenAddr::port)
+    }
+}
+
+/// `[metrics]` after env overrides: the server settings and where it listens
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetricsListen {
+    /// Enabled, path, detail
+    pub settings: MetricsSettings,
+    /// Listener addresses
+    pub bind: Vec<ListenAddr>,
 }
 
 impl std::fmt::Debug for ApiSettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ApiSettings")
             .field("listen", &self.listen)
-            .field("bind", &self.bind)
+            .field(
+                "bind",
+                &self.bind.iter().map(|b| b.to_string()).collect::<Vec<_>>(),
+            )
             .field(
                 "token",
                 &format_args!(
@@ -1365,6 +1393,7 @@ impl Config {
         self.precheck.validate(&self.watch.paths)?;
         self.storage.validate()?;
         self.tailscale.validate()?;
+        self.validate_binds()?;
 
         Ok(())
     }
@@ -1624,8 +1653,8 @@ impl ConfigBuilder {
 pub struct MetricsConfig {
     /// Start the metrics listener
     pub enabled: bool,
-    /// Listen address, `ip:port`
-    pub bind: String,
+    /// Listener addresses, one entry or a list (forms as `[api] bind`)
+    pub bind: BindList,
     /// Scrape path
     pub path: String,
     /// `basic` or `detailed`
@@ -1637,7 +1666,7 @@ impl Default for MetricsConfig {
         let d = MetricsSettings::default();
         Self {
             enabled: d.enabled,
-            bind: d.bind.to_string(),
+            bind: BindList::from(DEFAULT_METRICS_BIND),
             path: d.path,
             detail: d.detail.as_str().to_string(),
         }
@@ -1858,8 +1887,9 @@ fn invalid(setting: &str, value: &str, allowed: &str) -> CoreError {
 
 impl Config {
     /// Resolve `[metrics]`, applying the `PUTIO_SYNC_METRICS_*` overrides. Invalid
-    /// values in either place are an error, so startup fails.
-    pub fn resolve_metrics(&self) -> CoreResult<Resolved<MetricsSettings>> {
+    /// values in either place are an error, so startup fails. `PUTIO_SYNC_METRICS_BIND`
+    /// takes a comma-separated list.
+    pub fn resolve_metrics(&self) -> CoreResult<Resolved<MetricsListen>> {
         let m = &self.metrics;
         let mut source = LevelSource::Config;
         let mut env = |name: &str| {
@@ -1878,10 +1908,11 @@ impl Config {
                 _ => return Err(invalid("metrics.enabled", &v, "true, false, 1, 0")),
             },
         };
-        let bind_str = env("PUTIO_SYNC_METRICS_BIND").unwrap_or_else(|| m.bind.clone());
-        let bind = bind_str
-            .parse()
-            .map_err(|_| invalid("metrics.bind", &bind_str, "ip:port"))?;
+        let bind = env("PUTIO_SYNC_METRICS_BIND")
+            .map(|v| BindList::from_env(&v))
+            .unwrap_or_else(|| m.bind.clone())
+            .parse("metrics.bind")
+            .map_err(CoreError::ConfigError)?;
         let path = env("PUTIO_SYNC_METRICS_PATH").unwrap_or_else(|| m.path.clone());
         if !path.starts_with('/') || path.chars().any(char::is_whitespace) {
             return Err(invalid(
@@ -1894,11 +1925,13 @@ impl Config {
         let detail: Detail = detail_str.parse().map_err(CoreError::ConfigError)?;
 
         Ok(Resolved {
-            value: MetricsSettings {
-                enabled,
+            value: MetricsListen {
+                settings: MetricsSettings {
+                    enabled,
+                    path,
+                    detail,
+                },
                 bind,
-                path,
-                detail,
             },
             source,
         })
@@ -1908,6 +1941,7 @@ impl Config {
 impl Config {
     /// Resolve `[api]`, applying the `PUTIO_SYNC_API_*` overrides. Invalid values in
     /// either place are an error, so startup fails. Token errors never echo the value.
+    /// `PUTIO_SYNC_API_BIND` takes a comma-separated list.
     pub fn resolve_api(&self) -> CoreResult<Resolved<ApiSettings>> {
         let a = &self.api;
         let mut source = LevelSource::Config;
@@ -1932,12 +1966,12 @@ impl Config {
             Some("false") | Some("0") => false,
             Some(v) => return Err(invalid("api.listen", v, "true, false, 1, 0")),
         };
-        let bind_str = env("PUTIO_SYNC_API_BIND")
+        let bind = env("PUTIO_SYNC_API_BIND")
+            .map(|v| BindList::from_env(&v))
             .or_else(|| a.bind.clone())
-            .unwrap_or_else(|| DEFAULT_API_BIND.to_string());
-        let bind = bind_str
-            .parse()
-            .map_err(|_| invalid("api.bind", &bind_str, "ip:port"))?;
+            .unwrap_or_else(|| BindList::from(DEFAULT_API_BIND))
+            .parse("api.bind")
+            .map_err(CoreError::ConfigError)?;
         let token = env("PUTIO_SYNC_API_TOKEN").or_else(|| a.auth_token.clone());
         if let Some(t) = &token {
             if t.is_empty() || t.chars().any(char::is_whitespace) {
@@ -1956,6 +1990,54 @@ impl Config {
             },
             source,
         })
+    }
+}
+
+impl Config {
+    /// The addresses the API listens on: `[api] bind` after env, with `tailnet_only`
+    /// turning it into `tailnet:<port>` for each distinct port (feature 037)
+    pub fn api_listen(&self) -> CoreResult<Vec<ListenAddr>> {
+        let bind = self.resolve_api()?.value.bind;
+        if !self.tailscale.tailnet_only {
+            return Ok(bind);
+        }
+        let mut out: Vec<ListenAddr> = Vec::new();
+        for entry in bind {
+            let t = ListenAddr::Tailnet { port: entry.port() };
+            if !out.contains(&t) {
+                out.push(t);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The first API entry's port (after env and tailnet-only), else 15432: what other
+    /// programs are told when no listener reports a bound port
+    pub fn api_port(&self) -> u16 {
+        self.api_listen()
+            .ok()
+            .and_then(|l| l.first().map(ListenAddr::port))
+            .unwrap_or(DEFAULT_API_PORT)
+    }
+
+    /// Check both bind lists as written in the file, and that they stay apart
+    fn validate_binds(&self) -> CoreResult<()> {
+        let api = self
+            .api
+            .bind
+            .clone()
+            .unwrap_or_else(|| BindList::from(DEFAULT_API_BIND))
+            .parse("api.bind")
+            .map_err(CoreError::ConfigError)?;
+        let metrics = self
+            .metrics
+            .bind
+            .parse("metrics.bind")
+            .map_err(CoreError::ConfigError)?;
+        if self.metrics.enabled {
+            crate::listen::validate_apart(&api, &metrics).map_err(CoreError::ConfigError)?;
+        }
+        Ok(())
     }
 }
 
@@ -2976,7 +3058,8 @@ mod metrics_tests {
     #[test]
     fn defaults() {
         let r = with_env(&[], || Config::default().resolve_metrics().unwrap());
-        assert_eq!(r.value, MetricsSettings::default());
+        assert_eq!(r.value.settings, MetricsSettings::default());
+        assert_eq!(r.value.bind, vec!["0.0.0.0:9742".parse().unwrap()]);
         assert_eq!(r.source, LevelSource::Config);
     }
 
@@ -2987,10 +3070,10 @@ mod metrics_tests {
         )
         .unwrap();
         let r = with_env(&[], || config.resolve_metrics().unwrap());
-        assert!(!r.value.enabled);
-        assert_eq!(r.value.bind.to_string(), "127.0.0.1:9100");
-        assert_eq!(r.value.path, "/metrics");
-        assert_eq!(r.value.detail, Detail::Detailed);
+        assert!(!r.value.settings.enabled);
+        assert_eq!(r.value.bind, vec!["127.0.0.1:9100".parse().unwrap()]);
+        assert_eq!(r.value.settings.path, "/metrics");
+        assert_eq!(r.value.settings.detail, Detail::Detailed);
     }
 
     #[test]
@@ -3006,10 +3089,10 @@ mod metrics_tests {
             ],
             || config.resolve_metrics().unwrap(),
         );
-        assert!(r.value.enabled);
-        assert_eq!(r.value.bind.to_string(), "127.0.0.1:0");
-        assert_eq!(r.value.path, "/prom");
-        assert_eq!(r.value.detail, Detail::Detailed);
+        assert!(r.value.settings.enabled);
+        assert_eq!(r.value.bind, vec!["127.0.0.1:0".parse().unwrap()]);
+        assert_eq!(r.value.settings.path, "/prom");
+        assert_eq!(r.value.settings.detail, Detail::Detailed);
         assert_eq!(r.source, LevelSource::Env);
     }
 
@@ -3024,8 +3107,8 @@ mod metrics_tests {
             ),
             (
                 "PUTIO_SYNC_METRICS_BIND",
-                "nas:9742",
-                "invalid metrics.bind 'nas:9742': expected one of ip:port",
+                "na s:9742",
+                "invalid metrics.bind 'na s:9742': 'na s' is not an IPv4 address or interface name (expected ip:port, [ipv6]:port, interface:port or tailnet:port)",
             ),
             (
                 "PUTIO_SYNC_METRICS_PATH",
@@ -3069,7 +3152,7 @@ mod metrics_tests {
     fn api_defaults() {
         let r = with_env(&[], || Config::default().resolve_api().unwrap());
         assert!(r.value.listen);
-        assert_eq!(r.value.bind.to_string(), "0.0.0.0:15432");
+        assert_eq!(r.value.bind[0].to_string(), "0.0.0.0:15432");
         assert_eq!(r.value.token, None);
         assert_eq!(r.source, LevelSource::Config);
     }
@@ -3082,7 +3165,8 @@ mod metrics_tests {
         .unwrap();
         let r = with_env(&[], || config.resolve_api().unwrap());
         assert!(!r.value.listen);
-        assert_eq!(r.value.bind.to_string(), "127.0.0.1:8080");
+        assert_eq!(r.value.bind[0].to_string(), "127.0.0.1:8080");
+        assert_eq!(r.value.port(), 8080);
         assert_eq!(r.value.token.as_deref(), Some("t0k"));
         assert_eq!(r.source, LevelSource::Config);
 
@@ -3104,7 +3188,7 @@ mod metrics_tests {
             || config.resolve_api().unwrap(),
         );
         assert!(!r.value.listen);
-        assert_eq!(r.value.bind.to_string(), "127.0.0.1:1");
+        assert_eq!(r.value.bind[0].to_string(), "127.0.0.1:1");
         assert_eq!(r.value.token.as_deref(), Some("abc"));
         assert_eq!(r.source, LevelSource::Env);
     }
@@ -3121,7 +3205,7 @@ mod metrics_tests {
             with_env(&[("PUTIO_SYNC_API_BIND", "nope")], || api_err(
                 &Config::default()
             )),
-            "invalid api.bind 'nope': expected one of ip:port"
+            "invalid api.bind 'nope': missing :port (expected ip:port, [ipv6]:port, interface:port or tailnet:port)"
         );
 
         let mut config = Config::default();
@@ -3139,6 +3223,66 @@ mod metrics_tests {
             )),
             "invalid api.auth_token: expected a non-empty value without whitespace"
         );
+    }
+
+    #[test]
+    fn bind_lists_from_file_and_env() {
+        let config: Config = toml::from_str(
+            "[api]\nbind = [\"eth0:8080\", \"[::1]:8080\", \"tailnet:9000\"]\n\
+             [metrics]\nbind = [\"127.0.0.1:9100\", \"[::1]:9100\"]\n",
+        )
+        .unwrap();
+        config.validate_binds().unwrap();
+        let api = with_env(&[], || config.resolve_api().unwrap()).value;
+        let names: Vec<String> = api.bind.iter().map(|b| b.to_string()).collect();
+        assert_eq!(names, vec!["eth0:8080", "[::1]:8080", "tailnet:9000"]);
+        assert_eq!(api.port(), 8080);
+        let m = with_env(&[], || config.resolve_metrics().unwrap()).value;
+        assert_eq!(m.bind.len(), 2);
+
+        let env = with_env(
+            &[("PUTIO_SYNC_API_BIND", "127.0.0.1:1, [::1]:1")],
+            || Config::default().resolve_api().unwrap(),
+        );
+        assert_eq!(env.value.bind.len(), 2);
+        assert_eq!(env.source, LevelSource::Env);
+
+        // A single entry is written back as a plain string
+        let mut c = Config::default();
+        c.api.bind = Some(BindList::from_entries(vec!["127.0.0.1:2".into()]));
+        let text = toml::to_string(&c).unwrap();
+        assert!(text.contains("bind = \"127.0.0.1:2\""), "{text}");
+    }
+
+    #[test]
+    fn tailnet_only_makes_one_tailnet_entry_per_port() {
+        let mut config: Config =
+            toml::from_str("[api]\nbind = [\"eth0:1\", \"127.0.0.1:1\", \"[::1]:2\"]\n").unwrap();
+        let plain = with_env(&[], || config.api_listen().unwrap());
+        assert_eq!(plain.len(), 3);
+        config.tailscale.tailnet_only = true;
+        let only = with_env(&[], || config.api_listen().unwrap());
+        assert_eq!(
+            only,
+            vec![
+                ListenAddr::Tailnet { port: 1 },
+                ListenAddr::Tailnet { port: 2 }
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_refuses_bad_or_overlapping_binds() {
+        let config: Config = toml::from_str("[api]\nbind = [\"0.0.0.0:1\", \"10.0.0.1:1\"]\n").unwrap();
+        assert!(config.validate_binds().unwrap_err().to_string().contains("overlap"));
+        let config: Config =
+            toml::from_str("[api]\nbind = \"0.0.0.0:9742\"\n").unwrap();
+        assert!(config.validate_binds().unwrap_err().to_string().contains("metrics.bind"));
+        let mut config = config;
+        config.metrics.enabled = false;
+        assert!(config.validate_binds().is_ok());
+        let config: Config = toml::from_str("[metrics]\nbind = []\n").unwrap();
+        assert!(config.validate_binds().is_err());
     }
 
     #[test]

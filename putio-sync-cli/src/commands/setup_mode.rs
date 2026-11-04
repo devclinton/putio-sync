@@ -3,20 +3,24 @@
 //! the config is complete.
 
 use anyhow::Result;
+use putio_sync_api::listen::{Bound, Supervisor};
 use putio_sync_api::{setup_router, SetupState};
 use putio_sync_client::{PutioApiClient, DEFAULT_BASE_URL};
 use putio_sync_core::config::Config;
 use putio_sync_core::setup::{check_local, SetupReason};
+use putio_sync_core::listen::ListenAddr;
+use putio_sync_tailscale::{Cli, TailscaleService};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
-use tracing::{error, info, warn};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+use tracing::{info, warn};
 
 /// How often setup mode looks at the config file for changes made by hand
 const POLL: Duration = Duration::from_secs(5);
 
-/// How long to wait for the API port to be free (a previous listener may linger)
-const BIND_RETRY: Duration = Duration::from_secs(5);
+/// How long to wait for a first address before saying setup mode is waiting for one
+const FIRST_BIND: Duration = Duration::from_secs(10);
 
 /// Why setup is needed for the config at `path`, with the config when it parsed, or
 /// `None` when the daemon can start. Asks Put.io once: a rejected token needs setup,
@@ -51,19 +55,24 @@ pub async fn run(path: &Path, base: Option<Config>, reasons: Vec<SetupReason>) -
     warn!(reasons = ?described, config = %path.display(), "Setup needed; waiting in setup mode");
     putio_sync_telemetry::setup::set_required(true);
 
-    let api = base
+    // The partial config's addresses, else the default
+    let usable = base
         .as_ref()
-        .and_then(|c| c.resolve_api().ok())
-        .or_else(|| Config::default().resolve_api().ok())
-        .map(|r| r.value);
-    let listen = api.as_ref().is_none_or(|a| a.listen);
+        .filter(|c| c.resolve_api().is_ok() && c.api_listen().is_ok())
+        .cloned()
+        .unwrap_or_default();
+    let listen = usable.resolve_api().map_or(true, |r| r.value.listen);
+    let entries = usable.api_listen().unwrap_or_else(|_| {
+        vec![ListenAddr::Ip(SocketAddr::from(([0, 0, 0, 0], 15432)))]
+    });
+    let tailscale = Arc::new(TailscaleService::new(
+        usable.tailscale.socket_path(),
+        Cli::Auto,
+    ));
     let state = SetupState::new(path.to_path_buf(), base, reasons);
 
     let finished = if listen {
-        let bind = api
-            .map(|a| a.bind)
-            .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 15432)));
-        serve(path, state, bind, &described).await?
+        serve(path, state, entries, tailscale, &described).await?
     } else {
         banner_without_listener(path, &described);
         wait(path, None).await
@@ -76,48 +85,55 @@ pub async fn run(path: &Path, base: Option<Config>, reasons: Vec<SetupReason>) -
     Ok(finished)
 }
 
-/// Serve the wizard on `bind` until setup is finished, the file is fixed, or a signal
+/// Serve the wizard on `entries` until setup is finished, the file is fixed, or a
+/// signal. A busy port or an entry without an address is retried in the background.
 async fn serve(
     path: &Path,
     state: SetupState,
-    bind: SocketAddr,
+    entries: Vec<ListenAddr>,
+    tailscale: Arc<TailscaleService>,
     reasons: &[String],
 ) -> Result<bool> {
-    let listener = match bind_with_retry(bind).await {
-        Ok(listener) => listener,
-        Err(e) => {
-            error!(bind = %bind, error = %e, "Setup mode could not listen; edit the config file or run `putio-sync setup`");
-            banner_without_listener(path, reasons);
-            return Ok(wait(path, None).await);
-        }
+    let shown: Vec<String> = entries.iter().map(ToString::to_string).collect();
+    let handle = Supervisor::spawn(
+        "Setup",
+        entries,
+        tailscale,
+        setup_router(state.clone()),
+        Bound::default(),
+    );
+    let banner_task = {
+        let bound = handle.bound.clone();
+        let (path, reasons, state) = (path.to_path_buf(), reasons.to_vec(), state.clone());
+        tokio::spawn(async move {
+            let started = std::time::Instant::now();
+            let mut said = false;
+            loop {
+                if let Some(addr) = bound.first() {
+                    banner(&path, &reasons, addr, &state);
+                    return;
+                }
+                if !said && started.elapsed() >= FIRST_BIND {
+                    said = true;
+                    warn!(bind = %shown.join(", "), "Setup mode is not listening yet; edit the config file or run `putio-sync setup`");
+                    eprintln!();
+                    eprintln!("  putio-sync needs setting up: {}", reasons.join("; "));
+                    eprintln!("  It is waiting to listen on {}.", shown.join(", "));
+                    eprintln!(
+                        "  Or run `putio-sync setup --config {}` in a terminal.",
+                        shown_path(&path)
+                    );
+                    eprintln!();
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
     };
-    let addr = listener.local_addr().unwrap_or(bind);
-    banner(path, reasons, addr, &state);
-
-    let app = setup_router(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
-    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-    let server = tokio::spawn(async move {
-        let shutdown = async {
-            let _ = stop_rx.await;
-        };
-        if let Err(e) = axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown)
-            .await
-        {
-            error!(error = %e, "Setup listener stopped");
-        }
-    });
 
     let finished = wait(path, Some(&state)).await;
-    let _ = stop_tx.send(());
-    // Open connections get a moment to finish; then the port is freed for the API
-    let abort = server.abort_handle();
-    if tokio::time::timeout(Duration::from_secs(5), server)
-        .await
-        .is_err()
-    {
-        abort.abort();
-    }
+    banner_task.abort();
+    // Open connections get a moment to finish; then the ports are freed for the API
+    handle.stop(Duration::from_secs(5)).await;
     Ok(finished)
 }
 
@@ -180,20 +196,6 @@ async fn stop_signal() {
     }
 }
 
-async fn bind_with_retry(bind: SocketAddr) -> std::io::Result<tokio::net::TcpListener> {
-    let started = Instant::now();
-    loop {
-        match tokio::net::TcpListener::bind(bind).await {
-            Err(e)
-                if e.kind() == std::io::ErrorKind::AddrInUse && started.elapsed() < BIND_RETRY =>
-            {
-                tokio::time::sleep(Duration::from_millis(250)).await;
-            }
-            other => return other,
-        }
-    }
-}
-
 /// The setup code goes to the console only, never to the log
 fn banner(path: &Path, reasons: &[String], addr: SocketAddr, state: &SetupState) {
     let host = if addr.ip().is_unspecified() {
@@ -216,7 +218,7 @@ fn banner(path: &Path, reasons: &[String], addr: SocketAddr, state: &SetupState)
     }
     eprintln!(
         "  Or run `putio-sync setup --config {}` in a terminal.",
-        shown(path)
+        shown_path(path)
     );
     eprintln!();
 }
@@ -226,13 +228,13 @@ fn banner_without_listener(path: &Path, reasons: &[String]) {
     eprintln!("  putio-sync needs setting up: {}", reasons.join("; "));
     eprintln!(
         "  The web UI is off, so run `putio-sync setup --config {}`",
-        shown(path)
+        shown_path(path)
     );
     eprintln!("  or edit the config file. Waiting for it to change...");
     eprintln!();
 }
 
-fn shown(path: &Path) -> String {
+fn shown_path(path: &Path) -> String {
     PathBuf::from(path).display().to_string()
 }
 

@@ -64,7 +64,7 @@ pub async fn session(State(state): State<SetupState>) -> Json<Value> {
             base.watch.enabled.then(|| base.watch.paths.first().cloned()).flatten()
         }),
         "metrics": choices.metrics.unwrap_or(base.metrics.enabled),
-        "metrics_bind": choices.metrics_bind.clone().unwrap_or_else(|| base.metrics.bind.clone()),
+        "metrics_bind": choices.metrics_bind.clone().unwrap_or_else(|| base.metrics.bind.entries().join(", ")),
         "arr_enabled": arr_enabled,
         "app_id_available": resolve_app_id(base).is_some(),
         "in_container": in_container(),
@@ -389,10 +389,7 @@ fn arr_input(
         api_key,
         category: req.category.clone().filter(|c| !c.trim().is_empty()),
         hosts: arr_setup::candidate_hosts(browser_host(headers).as_deref(), req.host.as_deref()),
-        port: config
-            .resolve_api()
-            .map(|r| r.value.bind.port())
-            .unwrap_or(15432),
+        port: config.api_port(),
         username: settings.username.clone(),
         disable_blackhole: req.disable_blackhole,
         password: settings.password.clone().unwrap_or_default(),

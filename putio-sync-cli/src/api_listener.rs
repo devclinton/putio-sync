@@ -1,35 +1,27 @@
 //! Starts the API and web UI listener on the daemon's own engine (feature 004, R4).
-//! The `server` command serves the same router itself, with its own flags.
 //!
-//! With `[tailscale] tailnet_only` (feature 036) the listener takes the tailnet IPv4
-//! address instead of `[api] bind`. When Tailscale isn't ready it waits in the
-//! background and never falls back to another address.
+//! It listens on [`Config::api_listen`] through the API crate's supervisor (feature
+//! 037): every listed address, interface and tailnet entries followed as their addresses
+//! change. With `[tailscale] tailnet_only` (feature 036) the list is the tailnet address
+//! on each port. An entry with no address waits; nothing falls back to another address.
 
+use putio_sync_api::listen::{Bound, Supervisor};
 use putio_sync_api::{router, spawn_arr_refresh, AppState};
 use putio_sync_core::config::Config;
 use putio_sync_core::error::CoreError;
-use putio_sync_core::logging::LevelSource;
-use putio_sync_tailscale::{tailnet_bind, TailscaleService};
-use std::net::SocketAddr;
 use std::time::Duration;
-use tokio::time::Instant;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
-/// How often "tailnet only" asks Tailscale again while it isn't ready
-const TAILNET_RETRY: Duration = Duration::from_secs(5);
-/// How long it keeps asking
-const TAILNET_WAIT: Duration = Duration::from_secs(5 * 60);
-/// How often the wait is logged
-const TAILNET_LOG: Duration = Duration::from_secs(60);
+/// How long `start` waits for a first address before returning
+const FIRST_BIND: Duration = Duration::from_secs(2);
 
 /// Start the listener for `state` when `[api] listen` is on.
 ///
 /// The resolved token (env override applied) is written into the state's config, so
-/// the auth middleware sees it. Returns the bound address when the listener started. A
-/// bind failure is logged once and the daemon carries on (FR-004); an invalid setting
-/// is an error. With "tailnet only" and Tailscale not ready, it returns `None` and the
-/// listener starts later, once Tailscale gives an address.
-pub async fn start(config: &Config, state: AppState) -> Result<Option<SocketAddr>, CoreError> {
+/// the auth middleware sees it. Returns what the listener holds (filled in the
+/// background), or `None` when `[api] listen` is off. A bind failure is logged and
+/// retried, and the daemon carries on (FR-004); an invalid setting is an error.
+pub async fn start(config: &Config, state: AppState) -> Result<Option<Bound>, CoreError> {
     let resolved = config.resolve_api()?;
     let settings = resolved.value;
     let source = resolved.source;
@@ -45,125 +37,45 @@ pub async fn start(config: &Config, state: AppState) -> Result<Option<SocketAddr
     }
     state.config.write().await.api.auth_token = settings.token;
 
-    let bind = if config.tailscale.tailnet_only {
-        let port = settings.bind.port();
-        match tailnet_bind(&state.tailscale.refresh().await, port) {
-            Ok(addr) => addr,
-            Err(reason) => {
-                warn!(reason = %reason, "Tailnet only: waiting for Tailscale before the API listens");
-                tokio::spawn(async move {
-                    let tailscale = state.tailscale.clone();
-                    match wait_for_tailnet(&tailscale, port, TAILNET_RETRY, TAILNET_WAIT).await {
-                        Ok(addr) => {
-                            serve(addr, state, token_set, source).await;
-                        }
-                        Err(reason) => error!(
-                            reason = %reason,
-                            "Tailnet only: Tailscale gave no address in 5 minutes; the API isn't listening. Fix Tailscale and restart putio-sync"
-                        ),
-                    }
-                });
-                return Ok(None);
-            }
-        }
-    } else {
-        settings.bind
-    };
-    Ok(serve(bind, state, token_set, source).await)
-}
-
-/// Bind `bind` and serve the router on it; `None` (logged) when the bind fails
-async fn serve(
-    bind: SocketAddr,
-    state: AppState,
-    token_set: bool,
-    source: LevelSource,
-) -> Option<SocketAddr> {
-    let listener = match tokio::net::TcpListener::bind(bind).await {
-        Ok(listener) => listener,
-        Err(e) => {
-            error!(bind = %bind, error = %e, "API listener failed to start");
-            return None;
-        }
-    };
-    let addr = listener.local_addr().unwrap_or(bind);
+    let entries = config.api_listen()?;
+    let shown: Vec<String> = entries.iter().map(ToString::to_string).collect();
+    let bound = Bound::default();
+    let state = state.with_listening(bound.clone());
+    let handle = Supervisor::spawn(
+        "API",
+        entries,
+        state.tailscale.clone(),
+        router(state.clone()),
+        bound.clone(),
+    );
+    handle.first_bound(FIRST_BIND).await;
+    // After the first bind, so Radarr/Sonarr hear the port actually listened on
     spawn_arr_refresh(&state).await;
-
-    let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
-    tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
-            error!(error = %e, "API listener stopped");
-        }
-    });
     info!(
-        bind = %addr,
+        bind = %shown.join(", "),
+        tailnet_only = config.tailscale.tailnet_only,
         token = if token_set { "set" } else { "unset" },
         source = ?source,
         "API listener enabled"
     );
-    Some(addr)
-}
-
-/// Ask Tailscale for the tailnet address every `retry` until `give_up`, logging once a
-/// minute. The error is the last reason there was none.
-async fn wait_for_tailnet(
-    tailscale: &TailscaleService,
-    port: u16,
-    retry: Duration,
-    give_up: Duration,
-) -> Result<SocketAddr, String> {
-    let started = Instant::now();
-    let mut logged = started;
-    loop {
-        let reason = match tailnet_bind(&tailscale.refresh().await, port) {
-            Ok(addr) => return Ok(addr),
-            Err(reason) => reason,
-        };
-        if started.elapsed() >= give_up {
-            return Err(reason);
-        }
-        if logged.elapsed() >= TAILNET_LOG {
-            logged = Instant::now();
-            warn!(reason = %reason, waited_secs = started.elapsed().as_secs(), "Tailnet only: still waiting for Tailscale");
-        }
-        tokio::time::sleep(retry).await;
-    }
+    Ok(Some(bound))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use putio_sync_tailscale::Cli;
+    use putio_sync_api::listen::{resolve_all, Bound, Gives, Schedule, Supervisor};
+    use putio_sync_core::listen::ListenAddr;
+    use putio_sync_tailscale::{Cli, TailscaleService};
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::time::Duration;
 
-    #[tokio::test]
-    async fn waiting_gives_up_without_falling_back() {
-        let dir = short_dir();
-        let tailscale = TailscaleService::new(dir.path().join("none.sock"), Cli::Off)
-            .with_timeout(Duration::from_millis(100));
-        let started = std::time::Instant::now();
-        let result = wait_for_tailnet(
-            &tailscale,
-            15432,
-            Duration::from_millis(10),
-            Duration::from_millis(60),
-        )
-        .await;
-        assert!(result.unwrap_err().contains("isn't on"));
-        assert!(started.elapsed() >= Duration::from_millis(60));
-    }
-
-    #[tokio::test]
-    async fn waiting_returns_the_tailnet_address_once_tailscale_is_up() {
+    /// A fake tailscaled on `socket` that answers Running with 100.101.102.103
+    fn fake_tailscaled(socket: std::path::PathBuf, after: Duration) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let dir = short_dir();
-        let socket = dir.path().join("tailscaled.sock");
-        let tailscale =
-            TailscaleService::new(&socket, Cli::Off).with_timeout(Duration::from_millis(200));
-        // Tailscale comes up a little after the wait starts
-        let up = socket.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            let listener = tokio::net::UnixListener::bind(&up).unwrap();
+            tokio::time::sleep(after).await;
+            let listener = tokio::net::UnixListener::bind(&socket).unwrap();
             while let Ok((mut conn, _)) = listener.accept().await {
                 let mut buf = [0u8; 2048];
                 let _ = conn.read(&mut buf).await;
@@ -174,15 +86,67 @@ mod tests {
                     .await;
             }
         });
-        let addr = wait_for_tailnet(
-            &tailscale,
-            15432,
-            Duration::from_millis(20),
-            Duration::from_secs(5),
-        )
-        .await
-        .unwrap();
-        assert_eq!(addr, SocketAddr::from(([100, 101, 102, 103], 15432)));
+    }
+
+    #[tokio::test]
+    async fn tailnet_waits_then_gives_the_tailnet_address() {
+        let dir = short_dir();
+        let socket = dir.path().join("tailscaled.sock");
+        let tailscale =
+            TailscaleService::new(&socket, Cli::Off).with_timeout(Duration::from_millis(200));
+        let entries = [ListenAddr::Tailnet { port: 15432 }];
+        match &resolve_all(&entries, &tailscale).await[0] {
+            Gives::Waiting(why) => assert!(why.contains("isn't on"), "{why}"),
+            other => panic!("expected waiting, got {other:?}"),
+        }
+        fake_tailscaled(socket, Duration::ZERO);
+        let mut got = None;
+        for _ in 0..100 {
+            if let Gives::Addrs(a) = &resolve_all(&entries, &tailscale).await[0] {
+                got = Some(a.clone());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            got.unwrap(),
+            vec![SocketAddr::from(([100, 101, 102, 103], 15432))]
+        );
+    }
+
+    #[tokio::test]
+    async fn waiting_tailnet_never_falls_back() {
+        let dir = short_dir();
+        let tailscale = Arc::new(
+            TailscaleService::new(dir.path().join("none.sock"), Cli::Off)
+                .with_timeout(Duration::from_millis(100)),
+        );
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let resolver: putio_sync_api::listen::Resolver = Arc::new(move |entries| {
+            let tailscale = tailscale.clone();
+            Box::pin(async move { resolve_all(&entries, &tailscale).await })
+        });
+        let h = Supervisor::spawn_with(
+            "API",
+            vec![ListenAddr::Tailnet { port }],
+            resolver,
+            axum::Router::new(),
+            Bound::default(),
+            Schedule {
+                fast: Duration::from_millis(20),
+                fast_for: Duration::from_millis(100),
+                slow: Duration::from_millis(20),
+            },
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(h.bound.get().is_empty());
+        // Nothing took the port on any address
+        assert!(std::net::TcpListener::bind(("0.0.0.0", port)).is_ok());
+        h.stop(Duration::from_millis(100)).await;
     }
 
     /// A temp dir under /tmp: unix socket paths must stay under about 104 bytes, which a
