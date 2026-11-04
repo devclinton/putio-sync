@@ -89,7 +89,7 @@ async fn app(socket: PathBuf, customize: impl FnOnce(&mut Config)) -> TestApp {
 }
 
 async fn running_app(customize: impl FnOnce(&mut Config)) -> (tempfile::TempDir, TestApp) {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = short_dir();
     let socket = fake_tailscaled(dir.path(), RUNNING);
     (dir, app(socket, customize).await)
 }
@@ -154,7 +154,7 @@ async fn details_when_running() {
 
 #[tokio::test]
 async fn details_when_not_found_or_signed_out() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = short_dir();
     let app = app(dir.path().join("missing.sock"), |_| {}).await;
     let body = body_json(app.get("/tailscale").await).await;
     assert_eq!(body["state"], "not_found");
@@ -234,7 +234,7 @@ async fn whois_signs_in_tailnet_peers() {
 
 #[tokio::test]
 async fn daemon_down_or_nobody_allowed_falls_back_to_the_token() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = short_dir();
     let app = app(
         dir.path().join("missing.sock"),
         sign_in_for(&["alice@example.com"]),
@@ -295,7 +295,7 @@ async fn settings_round_trip() {
 
 #[tokio::test]
 async fn tailnet_only_needs_a_tailnet_address() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = short_dir();
     let socket = fake_tailscaled(dir.path(), NEEDS_LOGIN);
     let app = app(socket, |_| {}).await;
     let mut body = body_json(app.get("/settings/tailscale").await).await;
@@ -308,4 +308,13 @@ async fn tailnet_only_needs_a_tailnet_address() {
     );
     let after = body_json(app.get("/settings/tailscale").await).await;
     assert_eq!(after["tailnet_only"], false);
+}
+
+/// A temp dir under /tmp: unix socket paths must stay under about 104 bytes, which a
+/// long `TMPDIR` breaks
+fn short_dir() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("ts")
+        .tempdir_in("/tmp")
+        .unwrap()
 }

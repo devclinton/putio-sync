@@ -233,6 +233,15 @@ mod tests {
         assert_eq!(clock_skew(&c).await.status, Status::Skipped);
     }
 
+    /// A temp dir under /tmp: unix socket paths must stay under about 104 bytes, which a
+    /// long `TMPDIR` breaks
+    fn short_dir() -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix("ts")
+            .tempdir_in("/tmp")
+            .unwrap()
+    }
+
     /// A fake tailscaled answering every request with `status`
     fn fake_tailscaled(dir: &std::path::Path, status: &'static str) -> std::path::PathBuf {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -271,7 +280,7 @@ mod tests {
 
     #[tokio::test]
     async fn tailscale_grades() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = short_dir();
         let missing = dir.path().join("none.sock");
 
         // Nothing on: ok without asking
@@ -302,7 +311,7 @@ mod tests {
         assert!(f.summary.contains("nas.ts.net"));
 
         // Tailnet only in userspace mode: no address to listen on
-        let dir2 = tempfile::tempdir().unwrap();
+        let dir2 = short_dir();
         let userspace =
             r#"{"BackendState":"Running","TUN":false,"TailscaleIPs":["100.101.102.103"]}"#;
         let socket = fake_tailscaled(dir2.path(), userspace);

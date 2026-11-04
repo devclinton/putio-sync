@@ -137,7 +137,7 @@ mod tests {
 
     #[tokio::test]
     async fn waiting_gives_up_without_falling_back() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = short_dir();
         let tailscale = TailscaleService::new(dir.path().join("none.sock"), Cli::Off)
             .with_timeout(Duration::from_millis(100));
         let started = std::time::Instant::now();
@@ -155,7 +155,7 @@ mod tests {
     #[tokio::test]
     async fn waiting_returns_the_tailnet_address_once_tailscale_is_up() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let dir = tempfile::tempdir().unwrap();
+        let dir = short_dir();
         let socket = dir.path().join("tailscaled.sock");
         let tailscale =
             TailscaleService::new(&socket, Cli::Off).with_timeout(Duration::from_millis(200));
@@ -183,5 +183,14 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(addr, SocketAddr::from(([100, 101, 102, 103], 15432)));
+    }
+
+    /// A temp dir under /tmp: unix socket paths must stay under about 104 bytes, which a
+    /// long `TMPDIR` breaks
+    fn short_dir() -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix("ts")
+            .tempdir_in("/tmp")
+            .unwrap()
     }
 }

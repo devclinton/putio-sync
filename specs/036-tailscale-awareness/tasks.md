@@ -65,7 +65,7 @@ is the only way to exercise this feature.
 - [X] T024 README: Tailscale section (socket mount for Docker, sidecar layout, Unraid integration, `tailscale serve`, loopback trust, Funnel needs the token, bridge-network caveat)
 - [X] T025 `CHANGELOG.md` entry; remove 036 from `ROADMAP.md`
 - [X] T026 UI asset checks (`node --check`, size cap) pass; check the card and identity flow in the browser against a mock backend
-- [ ] T027 Merge `origin/main`, run `TMPDIR=<scratch> make ci`, push
+- [X] T027 Merge `origin/main`, run `TMPDIR=<scratch> make ci`, push
 
 ## Dependencies
 

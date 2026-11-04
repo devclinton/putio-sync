@@ -30,7 +30,7 @@ struct Fake {
 }
 
 fn fake(routes: Vec<(&'static str, Option<(u16, &'static str)>)>) -> Fake {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = short_dir();
     let socket = dir.path().join("tailscaled.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let hits = Arc::new(AtomicUsize::new(0));
@@ -148,7 +148,7 @@ async fn hang_junk_and_missing() {
     let f = fake(vec![("/localapi/v0/status", Some((403, "denied")))]);
     assert_eq!(service(&f.socket).status().await.state, State::Unreachable);
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = short_dir();
     let s = service(&dir.path().join("none.sock")).status().await;
     assert_eq!(s.state, State::NotFound);
     assert!(tailnet_bind(&s, 1).unwrap_err().contains("isn't on"));
@@ -242,7 +242,7 @@ async fn identities() {
 
 #[tokio::test]
 async fn daemon_down_refuses_tailnet_peers() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = short_dir();
     let ts = service(&dir.path().join("none.sock"));
     assert!(matches!(
         ts.identity_for(tailnet_peer(), None, None).await,
@@ -254,7 +254,7 @@ async fn daemon_down_refuses_tailnet_peers() {
 #[tokio::test]
 async fn cli_fallback() {
     use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = short_dir();
     let bin = dir.path().join("tailscale");
     let script = format!(
         "#!/bin/sh\ncase \"$1\" in\n  status) cat <<'EOF'\n{STATUS}\nEOF\n;;\n  serve) echo '{SERVE}' ;;\n  whois) [ \"$3\" = 100.90.1.2 ] && echo '{ALICE}' || {{ echo 'no match for IP' >&2; exit 1; }} ;;\nesac\n"
@@ -290,4 +290,13 @@ async fn cli_fallback() {
     assert_eq!(s.state, State::Unreachable);
     assert_eq!(s.via, Some(Via::Cli));
     assert!(s.error.unwrap().contains("failed to connect"));
+}
+
+/// A temp dir under /tmp: unix socket paths must stay under about 104 bytes, which a
+/// long `TMPDIR` breaks
+fn short_dir() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("ts")
+        .tempdir_in("/tmp")
+        .unwrap()
 }
