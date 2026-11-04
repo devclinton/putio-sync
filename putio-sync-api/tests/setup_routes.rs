@@ -96,6 +96,11 @@ async fn status_and_health_are_public() {
     );
     let (status, _) = s.call(Method::GET, "/", None, None).await;
     assert_eq!(status, StatusCode::OK);
+    // The wizard page and the shell it is loaded by are public too
+    for asset in ["/assets/app.js", "/assets/pages/setup.js", "/assets/app.css"] {
+        let (status, _) = s.call(Method::GET, asset, None, None).await;
+        assert_eq!(status, StatusCode::OK, "{asset}");
+    }
 }
 
 #[tokio::test]

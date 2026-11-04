@@ -14,8 +14,9 @@ import * as stats from "./pages/stats.js";
 import * as settings from "./pages/settings.js";
 import * as doctor from "./pages/doctor.js";
 import * as login from "./pages/login.js";
+import * as setup from "./pages/setup.js";
 
-const PAGES = { status, active, queue, putio, files, transfers, history, stats, doctor, settings, login };
+const PAGES = { status, active, queue, putio, files, transfers, history, stats, doctor, settings, login, setup };
 const TITLES = {
   status: "Status",
   active: "Active",
@@ -28,6 +29,7 @@ const TITLES = {
   doctor: "Doctor",
   settings: "Settings",
   login: "Sign in",
+  setup: "Set up",
 };
 const PAGE_KEY = "putio-sync.page";
 const BACKOFF_MS = 10000;
@@ -39,6 +41,8 @@ const banner = document.getElementById("banner");
 let current = null;
 let polls = new Set();
 let loginParams = {};
+// Set at boot when the daemon waits for its first-run setup (feature 013)
+let setupMode = false;
 
 // ---- DOM helper -------------------------------------------------------------
 
@@ -105,6 +109,10 @@ export function navigate(hash) {
 }
 
 function route() {
+  if (setupMode) {
+    if (current !== setup) mount("setup", {});
+    return;
+  }
   const { name, path, query } = parse(window.location.hash);
   if (name !== "login" && !getToken()) {
     showLogin({});
@@ -132,13 +140,13 @@ function mount(name, params) {
   polls = new Set();
   setBanner(false);
 
-  document.body.classList.toggle("signed-out", name === "login");
+  document.body.classList.toggle("signed-out", name === "login" || name === "setup");
   for (const a of document.querySelectorAll("#nav a")) {
     if (a.dataset.page === name) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
   document.title = `${TITLES[name]} · putio-sync`;
-  document.getElementById("signout").hidden = name === "login";
+  document.getElementById("signout").hidden = name === "login" || name === "setup";
 
   view.replaceChildren();
   enter();
@@ -313,7 +321,17 @@ document.getElementById("signout").addEventListener("click", () => {
 
 window.addEventListener("hashchange", route);
 
-if (!window.location.hash || window.location.hash === "#" || window.location.hash === "#/") {
+// A daemon without a usable config serves the setup wizard instead
+try {
+  const res = await fetch("/auth/status", { headers: { Accept: "application/json" } });
+  setupMode = res.ok && (await res.json()).setup_required === true;
+} catch {
+  // unreachable: route as usual and let the pages report it
+}
+
+if (setupMode) {
+  route();
+} else if (!window.location.hash || window.location.hash === "#" || window.location.hash === "#/") {
   const last = remembered();
   window.location.replace(last && getToken() ? last : "#/status");
 } else {

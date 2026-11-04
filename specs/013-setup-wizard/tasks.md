@@ -65,9 +65,9 @@ Tests are required by the constitution (Principle III: mocked Put.io, run under 
 
 - [X] T020 [P] [US5] Create `putio-sync-download/src/dry_run.rs` (`DryRunReport`, `dry_run(client, &DownloadConfig, target, deadline)`) reusing the manager's listing helpers; tests with mockito/wiremock listings, partial on deadline
 - [X] T021 [US5] Add `POST /setup/dry-run` and `POST /setup/finish` in `putio-sync-api/src/routes/setup.rs` (validate, apply, `Config::save`, create API token when none in file/env, fire `Notify`; second finish → 409); tests
-- [ ] T022 [US5] Create `putio-sync-api/ui/pages/setup.js` (steps: unlock, Put.io, folder, download, extras, review, finish; back navigation; code in `sessionStorage`) and styles in `putio-sync-api/ui/app.css`
-- [ ] T023 [US5] Boot into the wizard from `putio-sync-api/ui/app.js` when `/auth/status` says `setup_required`; after finish store the API token, wait until `setup_required` is false, go to `#/status`
-- [ ] T024 [US5] Embed `pages/setup.js` in the asset list (`putio-sync-api/src/` UI asset table) and add a UI asset test that it is served
+- [X] T022 [US5] Create `putio-sync-api/ui/pages/setup.js` (steps: unlock, Put.io, folder, download, extras, review, finish; back navigation; code in `sessionStorage`) and styles in `putio-sync-api/ui/app.css`
+- [X] T023 [US5] Boot into the wizard from `putio-sync-api/ui/app.js` when `/auth/status` says `setup_required`; after finish store the API token, wait until `setup_required` is false, go to `#/status`
+- [X] T024 [US5] Embed `pages/setup.js` in the asset list (`putio-sync-api/src/` UI asset table) and add a UI asset test that it is served
 
 ## Phase 8: User Story 7 — CLI `putio-sync setup` (P2)
 
@@ -80,7 +80,7 @@ Tests are required by the constitution (Principle III: mocked Put.io, run under 
 ## Phase 9: User Story 6 — extras (P3)
 
 - [X] T027 [US6] Add `POST /setup/watch/check`, `PUT /setup/extras`, and `POST /setup/arr/{discover,preview,run}` (reusing 018 discovery/setup with a session arr draft) in `putio-sync-api/src/routes/setup.rs`; tests for watch + metrics saved at finish and arr preview reachable
-- [ ] T028 [US6] Extras step UI in `putio-sync-api/ui/pages/setup.js` (watch, Radarr/Sonarr via the setup routes, metrics)
+- [X] T028 [US6] Extras step UI in `putio-sync-api/ui/pages/setup.js` (watch, Radarr/Sonarr via the setup routes, metrics)
 
 ## Phase 10: Polish
 
