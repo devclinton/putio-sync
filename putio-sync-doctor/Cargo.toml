@@ -13,6 +13,7 @@ putio-sync-client = { path = "../putio-sync-client" }
 putio-sync-db = { path = "../putio-sync-db" }
 putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-telemetry = { path = "../putio-sync-telemetry" }
+putio-sync-tailscale = { path = "../putio-sync-tailscale" }
 
 tokio = { workspace = true }
 serde = { workspace = true }

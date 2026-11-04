@@ -42,6 +42,7 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_storage_free_runs_total",
     "putio_sync_storage_freed_files_total",
     "putio_sync_storage_freed_bytes_total",
+    "putio_sync_tailscale_identity_total",
     "putio_sync_transfers_stalled",
     "putio_sync_setup_required",
     "putio_sync_pipeline_items",
@@ -234,8 +235,10 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v.extend(strs(LookupResult::ALL, LookupResult::as_str));
             v.extend(strs(FallbackResult::ALL, FallbackResult::as_str));
             v.extend(strs(HoldResult::ALL, HoldResult::as_str));
+            v.extend(putio_sync_telemetry::tailscale::RESULTS);
             v
         }
+        "via" => putio_sync_telemetry::tailscale::VIAS.to_vec(),
         "kind" => {
             let mut v = strs(SyncKind::ALL, SyncKind::as_str);
             v.extend(strs(ArrSetupKind::ALL, ArrSetupKind::as_str));

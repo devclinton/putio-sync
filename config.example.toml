@@ -297,6 +297,35 @@ auto_free = false
 run_at = "02:30"
 
 # ============================================================================
+# Tailscale (feature 036)
+# ============================================================================
+# putio-sync reads Tailscale's state through tailscaled's local socket (or the
+# `tailscale` CLI) and never changes the Tailscale setup. In Docker, mount the
+# socket: -v /var/run/tailscale:/var/run/tailscale:ro (host Tailscale or a
+# sidecar's socket volume). Settings > Tailscale shows what was found.
+[tailscale]
+# Listen only on this node's tailnet IPv4 address (with [api] bind's port)
+# instead of [api] bind. Applies at the next start of `daemon`; it waits for
+# Tailscale to come up and never falls back to [api] bind.
+# Default: false
+tailnet_only = false
+
+# Let in requests from allowed Tailscale users without the API token: through
+# `tailscale serve` (identity headers on a loopback connection), or directly
+# from a tailnet address that tailscaled says belongs to the user. Tagged
+# devices are never let in. The token keeps working.
+# Default: false
+identity_sign_in = false
+
+# Tailscale logins identity sign-in lets in. Empty lets nobody in.
+# Default: []
+allowed_users = []
+
+# tailscaled's LocalAPI socket. PUTIO_SYNC_TAILSCALE_SOCKET overrides it.
+# Default: "/var/run/tailscale/tailscaled.sock"
+# socket = "/var/run/tailscale/tailscaled.sock"
+
+# ============================================================================
 # Notification Configuration
 # ============================================================================
 [notifications]

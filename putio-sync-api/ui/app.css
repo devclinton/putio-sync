@@ -181,6 +181,12 @@ body { padding-left: var(--side); }
 .topbar-end .btn { justify-content: flex-start; gap: 11px; padding: 0 10px; font-weight: 500; }
 #metrics-link { padding: 8px 10px; font-size: var(--fs-sm); text-decoration: none; }
 #metrics-link:hover { color: var(--text); }
+#who { padding: 8px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#signout[hidden] { display: none; }
+
+/* Tailscale details under its settings group (feature 036) */
+.tailscale { margin-top: 12px; }
+.tailscale-urls { margin: 4px 0 8px; padding-left: 18px; word-break: break-all; }
 
 /* Appearance toggle: sun, moon, or half-filled circle for "system" */
 .mode {

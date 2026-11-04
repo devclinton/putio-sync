@@ -8,17 +8,28 @@
 //! A token is always required. When none is configured, every protected request is
 //! refused with a body that names the setting. Failures are counted per client IP and
 //! rate limited (see [`crate::middleware::ratelimit`]).
+//!
+//! With `[tailscale] identity_sign_in` on, a request without a valid token is also let
+//! in when its Tailscale identity is on `allowed_users` (feature 036). The identity is
+//! attached to the request as a [`putio_sync_tailscale::Identity`] extension.
 
 use crate::error::ApiError;
 use crate::middleware::ratelimit::client_ip;
 use crate::AppState;
 use axum::{
-    extract::{Request, State},
-    http::header::AUTHORIZATION,
+    extract::{ConnectInfo, Request, State},
+    http::{header::AUTHORIZATION, HeaderMap},
     middleware::Next,
     response::Response,
 };
-use tracing::warn;
+use putio_sync_tailscale::{Identity, Lookup};
+use std::net::SocketAddr;
+use tracing::{info, warn};
+
+/// `tailscale serve`'s header with the user's login
+pub const TAILSCALE_USER_LOGIN: &str = "Tailscale-User-Login";
+/// `tailscale serve`'s header with the user's display name
+pub const TAILSCALE_USER_NAME: &str = "Tailscale-User-Name";
 
 /// Authentication middleware
 ///
@@ -62,21 +73,81 @@ pub async fn require_auth(
     };
 
     // Extract the token from the Authorization header; `Some(None)` is a header that
-    // isn't valid text, which counts as a wrong token
-    let provided = request
+    // isn't valid text, which counts as a wrong token. `None` here is no token at all
+    let wrong_token = match request
         .headers()
         .get(AUTHORIZATION)
-        .map(|h| h.to_str().ok().map(extract_token));
+        .map(|h| h.to_str().ok().map(extract_token))
+    {
+        None | Some(Some("")) => false,
+        Some(Some(token)) if token_matches(token, &expected_token) => {
+            return Ok(next.run(request).await)
+        }
+        _ => true,
+    };
 
-    match provided {
-        // No token at all is not a failed authentication: browsers ask for paths
-        // nobody links to (robots.txt, touch icons) and must not lock their operator out
-        None | Some(Some("")) => Err(ApiError::Unauthorized("Unauthorized".to_string())),
-        Some(Some(token)) if token_matches(token, &expected_token) => Ok(next.run(request).await),
-        _ => {
-            let failures = state.limiter.record_failure(ip);
-            warn!(ip = %ip, failures, "Authentication failed");
-            Err(ApiError::Unauthorized("Unauthorized".to_string()))
+    // Tailscale sign-in: after the token, so scripts never wait on tailscaled
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| *addr);
+    if let Some(identity) = tailscale_identity(&state, request.headers(), peer).await {
+        let mut request = request;
+        request.extensions_mut().insert(identity);
+        return Ok(next.run(request).await);
+    }
+
+    // No token at all is not a failed authentication: browsers ask for paths nobody
+    // links to (robots.txt, touch icons) and must not lock their operator out
+    if wrong_token {
+        let failures = state.limiter.record_failure(ip);
+        warn!(ip = %ip, failures, "Authentication failed");
+    }
+    Err(ApiError::Unauthorized("Unauthorized".to_string()))
+}
+
+/// The Tailscale identity that lets this request in, when identity sign-in is on and
+/// the user is on the allow-list. Counted on the metrics; refusals are logged.
+///
+/// `peer` is the TCP peer from `ConnectInfo`. Without it there is no identity; it is
+/// never assumed to be loopback.
+pub async fn tailscale_identity(
+    state: &AppState,
+    headers: &HeaderMap,
+    peer: Option<SocketAddr>,
+) -> Option<Identity> {
+    let ts = state.config.read().await.tailscale.clone();
+    if !ts.identity_sign_in {
+        return None;
+    }
+    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    let lookup = state
+        .tailscale
+        .identity_for(
+            peer,
+            header(TAILSCALE_USER_LOGIN),
+            header(TAILSCALE_USER_NAME),
+        )
+        .await;
+    match lookup {
+        Lookup::None => None,
+        Lookup::Found(identity) if ts.allows(&identity.login) => {
+            putio_sync_telemetry::tailscale::record_identity(identity.via.as_str(), true);
+            Some(identity)
+        }
+        Lookup::Found(identity) => {
+            putio_sync_telemetry::tailscale::record_identity(identity.via.as_str(), false);
+            info!(
+                login = %identity.login,
+                via = identity.via.as_str(),
+                "Tailscale sign-in refused: not on the allowed users"
+            );
+            None
+        }
+        Lookup::Refused { via, reason } => {
+            putio_sync_telemetry::tailscale::record_identity(via.as_str(), false);
+            info!(via = via.as_str(), %reason, "Tailscale sign-in refused");
+            None
         }
     }
 }

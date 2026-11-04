@@ -131,6 +131,7 @@ ids!(
         Reachability => "reachability",
         RateLimit => "rate_limit",
         ClockSkew => "clock_skew",
+        Tailscale => "tailscale",
     }
 );
 
@@ -142,7 +143,7 @@ impl CheckId {
             | StuckWatchFiles => Area::Putio,
             DeadQueueRows | FailingDownloads | OrphanPartials => Area::Sync,
             DownloadDir | DiskSpace | Database | Config => Area::Local,
-            Reachability | RateLimit | ClockSkew => Area::Connectivity,
+            Reachability | RateLimit | ClockSkew | Tailscale => Area::Connectivity,
         }
     }
 
@@ -166,6 +167,7 @@ impl CheckId {
             Reachability => "Put.io reachability",
             RateLimit => "Rate limit",
             ClockSkew => "Clock",
+            Tailscale => "Tailscale",
         }
     }
 
@@ -552,7 +554,7 @@ mod tests {
                 format!("\"{}\"", fix.as_str())
             );
         }
-        assert_eq!(CheckId::ALL.len(), 17);
+        assert_eq!(CheckId::ALL.len(), 18);
         assert!("nope".parse::<FixId>().is_err());
     }
 

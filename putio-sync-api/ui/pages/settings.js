@@ -1,4 +1,4 @@
-// Settings page: appearance (this browser only, via theme.js), then the download, watcher, Put.io cleanup, Put.io storage (033), logging and notification groups
+// Settings page: appearance (this browser only, via theme.js), then the download, watcher, Put.io cleanup, Put.io storage (033), Tailscale (036), logging and notification groups
 // as forms built from each GET body. Save PUTs the whole group and shows the API's
 // message verbatim; a 400 shows its error under the form. Tokens are shown only as set /
 // not set. The Radarr / Sonarr card has the download client form, auto-setup, and the
@@ -28,6 +28,7 @@ import {
   testArrApplication,
   testArrForm,
 } from "../api.js";
+import { tailscaleBeforeSave, tailscaleExtra } from "../tailscale.js";
 import { confirm, h, toast } from "../app.js";
 import { relative } from "../format.js";
 import { settingsCards } from "../rules.js";
@@ -94,6 +95,18 @@ const GROUPS = [
       ["run_at", "Daily run at", "24-hour local time, HH:MM", "s"],
       ["auto_free", "Automatic free-up", "Once a day, free up space when below the warning level (daemon only)", "b"],
     ],
+  },
+  {
+    key: "tailscale",
+    title: "Tailscale",
+    fields: [
+      ["identity_sign_in", "Tailscale sign-in", "Let the allowed Tailscale users in without the API token", "b"],
+      ["allowed_users", "Allowed users", "Tailscale logins, one per line, e.g. alice@example.com", "l"],
+      ["tailnet_only", "Tailnet only", "Listen on the Tailscale address only, so the LAN can't reach the API (daemon, after a restart)", "b"],
+      ["socket", "tailscaled socket", "Empty for the default; in Docker, mount the host's socket", "s?"],
+    ],
+    extra: tailscaleExtra,
+    beforeSave: tailscaleBeforeSave,
   },
   {
     key: "logging",
@@ -380,6 +393,7 @@ function form(g, data, reload, help) {
     clearTimeout(timer);
     asked += 1;
     const body = read();
+    if (g.beforeSave && !(await g.beforeSave(body, data))) return;
     save.disabled = true;
     error.hidden = true;
     note.textContent = "";

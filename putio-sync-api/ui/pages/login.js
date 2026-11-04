@@ -1,7 +1,7 @@
 // Sign-in page: checks the token with POST /auth/login and keeps it only when accepted.
 // The shell sends signed-out visitors here, with `reason` and, after a 429, `retryAfter`.
 
-import { get, login } from "../api.js";
+import { authStatus, login } from "../api.js";
 import { afterLogin, h } from "../app.js";
 
 let countdown = null;
@@ -23,7 +23,13 @@ export function unmount() {
 async function load(body, message, params) {
   let configured;
   try {
-    configured = (await get("/auth/status")).token_configured;
+    const status = await authStatus();
+    configured = status.token_configured;
+    // Tailscale sign-in let this browser in (feature 036): no token needed
+    if (status.tailscale && mounted) {
+      afterLogin();
+      return;
+    }
   } catch (e) {
     if (!mounted) return;
     const retry = h("button", { type: "button", class: "btn" }, "Retry");

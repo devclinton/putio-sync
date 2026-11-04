@@ -46,6 +46,8 @@ pub struct Doctor {
     /// Finished runs, so a waiter can tell a run finished while it waited
     runs: AtomicU64,
     metrics: bool,
+    /// Tailscale (feature 036); built from the config per run when not shared
+    tailscale: Option<Arc<putio_sync_tailscale::TailscaleService>>,
 }
 
 impl Doctor {
@@ -66,7 +68,17 @@ impl Doctor {
             running: tokio::sync::Mutex::new(()),
             runs: AtomicU64::new(0),
             metrics: false,
+            tailscale: None,
         }
+    }
+
+    /// Ask this Tailscale service (the API's), so the check shares its cache
+    pub fn with_tailscale(
+        mut self,
+        tailscale: Arc<putio_sync_tailscale::TailscaleService>,
+    ) -> Self {
+        self.tailscale = Some(tailscale);
+        self
     }
 
     /// Use the daemon's stall tracker, so the transfers check can report stalls
@@ -107,14 +119,16 @@ impl Doctor {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        Ctx::new(
+        let mut ctx = Ctx::new(
             config,
             self.config_path.clone(),
             self.client.clone(),
             self.db.clone(),
             self.cleanup.clone(),
             self.stalls.clone(),
-        )
+        );
+        ctx.tailscale = self.tailscale.clone();
+        ctx
     }
 
     /// The last finished run's report

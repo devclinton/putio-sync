@@ -15,6 +15,7 @@
 use crate::error::ApiError;
 use crate::middleware::auth::token_matches;
 use crate::middleware::ratelimit::client_ip;
+use crate::routes::system::tailscale::tailnet_first_hosts;
 use crate::AppState;
 use axum::body::Body;
 use axum::extract::{Path, Request, State};
@@ -276,7 +277,7 @@ pub async fn get_arr(
         .iter()
         .map(|s| s.category.clone())
         .collect();
-    let hosts = setup::candidate_hosts(browser_host(&headers).as_deref(), None);
+    let hosts = tailnet_first_hosts(&state, browser_host(&headers).as_deref(), None).await;
     let info = |url: &str| state.arr.as_ref().and_then(|a| a.service.client_info(url));
 
     let applications: Vec<Value> = settings
@@ -551,7 +552,7 @@ async fn test_application(
         Err(e) => return json!({ "ok": false, "reason": e.kind(), "detail": e.to_string() }),
     };
     let port = listen_port(state).await;
-    let hosts = setup::candidate_hosts(browser_host(headers).as_deref(), None);
+    let hosts = tailnet_first_hosts(state, browser_host(headers).as_deref(), None).await;
     let info: ClientInfo = match keep {
         Some(service) => service
             .refresh_client_info(server, port, &hosts)
@@ -638,7 +639,7 @@ async fn refresh_saved(state: &AppState, headers: &HeaderMap, url: &str) {
         return;
     };
     let port = listen_port(state).await;
-    let hosts = setup::candidate_hosts(browser_host(headers).as_deref(), None);
+    let hosts = tailnet_first_hosts(state, browser_host(headers).as_deref(), None).await;
     arr.service.refresh_client_info(server, port, &hosts).await;
 }
 
@@ -840,7 +841,8 @@ async fn setup_input(
         url,
         api_key,
         category: req.category.clone().filter(|c| !c.trim().is_empty()),
-        hosts: setup::candidate_hosts(browser_host(headers).as_deref(), req.host.as_deref()),
+        hosts: tailnet_first_hosts(state, browser_host(headers).as_deref(), req.host.as_deref())
+            .await,
         port: listen_port(state).await,
         username: settings.username.clone(),
         disable_blackhole: req.disable_blackhole,

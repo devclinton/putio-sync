@@ -2116,6 +2116,7 @@ dependencies = [
  "putio-sync-file-manager",
  "putio-sync-precheck",
  "putio-sync-storage",
+ "putio-sync-tailscale",
  "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",
@@ -2186,6 +2187,7 @@ dependencies = [
  "putio-sync-download",
  "putio-sync-file-manager",
  "putio-sync-storage",
+ "putio-sync-tailscale",
  "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",
@@ -2302,6 +2304,7 @@ dependencies = [
  "putio-sync-core",
  "putio-sync-db",
  "putio-sync-download",
+ "putio-sync-tailscale",
  "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",
@@ -2393,6 +2396,17 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "putio-sync-tailscale"
+version = "0.1.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

@@ -188,6 +188,24 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "tailscale",
+        &[
+            (
+                "tailnet_only",
+                "Listens on the Tailscale address only, so the LAN can't reach the API (after a restart)",
+            ),
+            (
+                "identity_sign_in",
+                "Lets allowed Tailscale users in without the API token",
+            ),
+            (
+                "allowed_users",
+                "Tailscale logins that may sign in this way",
+            ),
+            ("socket", "Where tailscaled's socket is; empty for the default"),
+        ],
+    ),
+    (
         "logging",
         &[
             ("level", "How much detail the logs hold"),

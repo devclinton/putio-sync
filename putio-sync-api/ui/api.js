@@ -16,6 +16,19 @@ export class ApiError extends Error {
   }
 }
 
+// Who Tailscale sign-in let in (feature 036): `{login, name, via}`, or null
+let identity = null;
+
+export const getIdentity = () => identity;
+
+/** Ask /auth/status who this browser is; keeps and returns the whole answer */
+export async function authStatus() {
+  const res = await fetch("/auth/status", { headers: { Accept: "application/json" } });
+  const status = res.ok ? await res.json() : {};
+  identity = status.tailscale || null;
+  return status;
+}
+
 export function getToken() {
   try {
     return window.localStorage.getItem(TOKEN_KEY);

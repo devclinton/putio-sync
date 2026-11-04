@@ -178,6 +178,9 @@ pub struct Config {
     /// Put.io storage levels and the automatic free-up run (feature 033)
     #[serde(default)]
     pub storage: StorageConfig,
+    /// Tailscale: tailnet-only listening and identity sign-in (feature 036)
+    #[serde(default)]
+    pub tailscale: TailscaleConfig,
 }
 
 /// `[doctor]`: how often the daemon runs the doctor's checks (feature 010). The CLI and
@@ -1361,6 +1364,7 @@ impl Config {
         self.transfers.validate()?;
         self.precheck.validate(&self.watch.paths)?;
         self.storage.validate()?;
+        self.tailscale.validate()?;
 
         Ok(())
     }
@@ -1607,6 +1611,7 @@ impl ConfigBuilder {
             putio: PutioConfig::default(),
             precheck: PrecheckConfig::default(),
             storage: StorageConfig::default(),
+            tailscale: TailscaleConfig::default(),
         }
     }
 }
@@ -1746,6 +1751,69 @@ impl StorageConfig {
             )));
         }
         Ok(())
+    }
+}
+
+/// Default `[tailscale] socket`: where tailscaled's LocalAPI listens on Linux
+pub const DEFAULT_TAILSCALE_SOCKET: &str = "/var/run/tailscale/tailscaled.sock";
+
+/// `[tailscale]` (feature 036). putio-sync only reads Tailscale's state; it never
+/// changes the Tailscale setup.
+///
+/// - `tailnet_only`: the daemon's listener binds this node's tailnet IPv4 address with
+///   `[api] bind`'s port instead of `[api] bind` (applies at the next start)
+/// - `identity_sign_in`: a request without a valid token is let in when its Tailscale
+///   user is in `allowed_users` (applies at once)
+/// - `socket`: tailscaled's LocalAPI socket; `PUTIO_SYNC_TAILSCALE_SOCKET` wins
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct TailscaleConfig {
+    /// Listen on the tailnet address only
+    pub tailnet_only: bool,
+    /// Sign in allowed Tailscale users without the token
+    pub identity_sign_in: bool,
+    /// Tailscale logins (e.g. `alice@example.com`) identity sign-in lets in
+    pub allowed_users: Vec<String>,
+    /// LocalAPI socket path; default [`DEFAULT_TAILSCALE_SOCKET`]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub socket: Option<String>,
+}
+
+impl TailscaleConfig {
+    /// Check that each login is non-empty without whitespace, and `socket` is non-empty
+    pub fn validate(&self) -> CoreResult<()> {
+        for login in &self.allowed_users {
+            if login.trim().is_empty() || login.trim().contains(char::is_whitespace) {
+                return Err(CoreError::ConfigError(format!(
+                    "invalid tailscale allowed_users entry '{}': expected a login without spaces, e.g. alice@example.com",
+                    login
+                )));
+            }
+        }
+        if self.socket.as_deref().is_some_and(|s| s.trim().is_empty()) {
+            return Err(CoreError::ConfigError(
+                "tailscale socket must not be empty; leave it out for the default".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The LocalAPI socket: `PUTIO_SYNC_TAILSCALE_SOCKET`, then `socket`, then the default
+    pub fn socket_path(&self) -> PathBuf {
+        env_value("PUTIO_SYNC_TAILSCALE_SOCKET")
+            .or_else(|| self.socket.clone())
+            .unwrap_or_else(|| DEFAULT_TAILSCALE_SOCKET.to_string())
+            .into()
+    }
+
+    /// Whether `login` is allowed, ignoring case and surrounding spaces
+    pub fn allows(&self, login: &str) -> bool {
+        let login = login.trim();
+        !login.is_empty()
+            && self
+                .allowed_users
+                .iter()
+                .any(|a| a.trim().eq_ignore_ascii_case(login))
     }
 }
 
@@ -2424,6 +2492,7 @@ mod tests {
             putio: PutioConfig::default(),
             precheck: PrecheckConfig::default(),
             storage: StorageConfig::default(),
+            tailscale: TailscaleConfig::default(),
         }
     }
 
@@ -3995,5 +4064,46 @@ mod precheck_tests {
             assert!(!DEFAULT_BLOCKED_EXTENSIONS.contains(&ext), "{ext}");
         }
         assert_eq!(DEFAULT_BLOCKED_EXTENSIONS.len(), 15);
+    }
+
+    #[test]
+    fn tailscale_config_defaults_validation_and_allow_list() {
+        let config: Config = toml::from_str("").unwrap();
+        assert_eq!(config.tailscale, TailscaleConfig::default());
+        assert!(!config.tailscale.tailnet_only);
+        assert!(!config.tailscale.identity_sign_in);
+
+        let config: Config = toml::from_str(
+            "[tailscale]\nidentity_sign_in = true\nallowed_users = [\"Alice@Example.com\"]\nsocket = \"/tmp/ts.sock\"\n",
+        )
+        .unwrap();
+        assert!(config.tailscale.validate().is_ok());
+        assert!(config.tailscale.allows(" alice@example.com "));
+        assert!(!config.tailscale.allows("mallory@example.com"));
+        assert!(!config.tailscale.allows(""));
+        assert_eq!(
+            config.tailscale.socket_path(),
+            PathBuf::from("/tmp/ts.sock")
+        );
+        assert_eq!(
+            TailscaleConfig::default().socket_path(),
+            PathBuf::from(DEFAULT_TAILSCALE_SOCKET)
+        );
+
+        let bad = TailscaleConfig {
+            allowed_users: vec!["has space@x".into()],
+            ..Default::default()
+        };
+        assert!(bad.validate().is_err());
+        let bad = TailscaleConfig {
+            allowed_users: vec!["  ".into()],
+            ..Default::default()
+        };
+        assert!(bad.validate().is_err());
+        let bad = TailscaleConfig {
+            socket: Some(" ".into()),
+            ..Default::default()
+        };
+        assert!(bad.validate().is_err());
     }
 }
