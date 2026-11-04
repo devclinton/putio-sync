@@ -313,9 +313,19 @@ fn secrets(hook: &HookConfig) -> Vec<String> {
         out.push(value.clone());
         out.extend(value.split_whitespace().map(str::to_string));
     }
-    if let Some(url) = hook.url.as_deref().and_then(|u| reqwest::Url::parse(u).ok()) {
+    if let Some(url) = hook
+        .url
+        .as_deref()
+        .and_then(|u| reqwest::Url::parse(u).ok())
+    {
         out.extend(url.password().map(str::to_string));
-        out.extend(url.path_segments().into_iter().flatten().skip(1).map(str::to_string));
+        out.extend(
+            url.path_segments()
+                .into_iter()
+                .flatten()
+                .skip(1)
+                .map(str::to_string),
+        );
         out.extend(url.query_pairs().map(|(_, value)| value.into_owned()));
     }
     out.retain(|value| value.len() >= MIN_SECRET);

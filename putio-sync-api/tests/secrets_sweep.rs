@@ -568,8 +568,7 @@ async fn no_hook_secret_in_responses_or_logs() {
                 name: "web".to_string(),
                 events: vec!["*".to_string()],
                 url: Some(url.clone()),
-                headers: [("Authorization".to_string(), format!("Bearer {HOOK_HEADER}"))]
-                    .into(),
+                headers: [("Authorization".to_string(), format!("Bearer {HOOK_HEADER}"))].into(),
                 timeout_secs: 5,
                 ..Default::default()
             },
@@ -595,7 +594,13 @@ async fn no_hook_secret_in_responses_or_logs() {
         texts.push(body_text(app.post_json("/hooks/test", json!({ "name": name })).await).await);
     }
     texts.push(body_text(app.post_json("/doctor/run", json!({})).await).await);
-    for path in ["/hooks", "/settings/hooks", "/settings/export", "/doctor", "/metrics"] {
+    for path in [
+        "/hooks",
+        "/settings/hooks",
+        "/settings/export",
+        "/doctor",
+        "/metrics",
+    ] {
         texts.push(body_text(app.get(path).await).await);
     }
     // The settings page sends back what it was given, masks and all

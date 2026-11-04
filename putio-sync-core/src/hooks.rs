@@ -563,11 +563,17 @@ mod tests {
         secret.url = Some("https://ha.local:8123/api/webhook/abc?token=t".to_string());
         let current = vec![secret];
         let masked = mask(&current);
-        assert_eq!(masked[0].url.as_deref(), Some("https://ha.local:8123/api/…"));
+        assert_eq!(
+            masked[0].url.as_deref(),
+            Some("https://ha.local:8123/api/…")
+        );
         assert_eq!(unmask(&masked, &current).unwrap(), current);
         let mut edited = masked.clone();
         edited[0].url = Some("https://ha.local:8123/new".to_string());
-        assert_eq!(unmask(&edited, &current).unwrap()[0].url.as_deref(), edited[0].url.as_deref());
+        assert_eq!(
+            unmask(&edited, &current).unwrap()[0].url.as_deref(),
+            edited[0].url.as_deref()
+        );
         let mut renamed = masked;
         renamed[0].name = "other".to_string();
         let e = unmask(&renamed, &current).unwrap_err().to_string();
