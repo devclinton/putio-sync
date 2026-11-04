@@ -20,11 +20,6 @@ Homebrew, binary). Task guides for Radarr/Sonarr, folder rules, watch
 folders, metrics and Grafana, and troubleshooting with the doctor. They live
 in `docs/` and are linked from the UI.
 
-### 017 What's new
-
-After an upgrade, the web UI shows the CHANGELOG.md entries since the version
-the user last saw. The changelog is built into the binary.
-
 ## Queued: features
 
 ### 019 Sign-in options

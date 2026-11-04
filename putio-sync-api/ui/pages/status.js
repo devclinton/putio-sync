@@ -282,7 +282,7 @@ function buildCard(build, uptime) {
   return card(
     "Daemon",
     kv([
-      ["Version", build ? build.version : "—"],
+      ["Version", build ? h("a", { href: "#/news", title: "What's new", text: build.version }) : "—"],
       build && build.commit && build.commit !== "unknown" ? ["Commit", build.commit.slice(0, 12)] : null,
       ["Uptime", duration(uptime)],
     ]),

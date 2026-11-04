@@ -15,8 +15,9 @@ import * as settings from "./pages/settings.js";
 import * as doctor from "./pages/doctor.js";
 import * as login from "./pages/login.js";
 import * as setup from "./pages/setup.js";
+import * as news from "./pages/news.js";
 
-const PAGES = { status, active, queue, putio, files, transfers, history, stats, doctor, settings, login, setup };
+const PAGES = { status, active, queue, putio, files, transfers, history, stats, doctor, settings, login, setup, news };
 const TITLES = {
   status: "Status",
   active: "Active",
@@ -30,6 +31,7 @@ const TITLES = {
   settings: "Settings",
   login: "Sign in",
   setup: "Set up",
+  news: "What's new",
 };
 const PAGE_KEY = "putio-sync.page";
 const BACKOFF_MS = 10000;
@@ -43,6 +45,9 @@ let polls = new Set();
 let loginParams = {};
 // Set at boot when the daemon waits for its first-run setup (feature 013)
 let setupMode = false;
+// What's new (feature 017) is checked once per page load, on the first signed-in page;
+// a failed check (an expired token, say) is tried again on the next one
+let newsChecked = false;
 
 // ---- DOM helper -------------------------------------------------------------
 
@@ -126,6 +131,10 @@ function route() {
   }
   remember(window.location.hash || "#/status");
   mount(name, { path, query });
+  if (!newsChecked) {
+    newsChecked = true;
+    news.checkNews().then((ok) => (newsChecked = ok));
+  }
 }
 
 function mount(name, params) {
