@@ -70,18 +70,10 @@ Open WebUI, LM Studio and hosted APIs all work. Subtitles are translated in
 chunks with timestamps kept exactly, and a test button checks the connection
 and model.
 
-### 027 Event hooks
-
-Run a command or call a webhook on events: download finished or failed,
-transfer added, finished or failed, sync run complete, Put.io storage low. The
-event is sent as JSON (stdin for commands, the body for webhooks), so hooks can
-be written in any language, Python and Go included. Hooks have a timeout, their
-output is logged, and a failing hook never stops a sync.
-
 ### 028 Lua plugins
 
 Embedded Lua scripts for small in-process logic: custom file filters, rename
-rules and folder rules, and handlers for the events from 027. Scripts get a
+rules and folder rules, and handlers for the events from 027 (event hooks, see EVENTS.md). Scripts get a
 small, documented API and run with limits on time and memory.
 
 ### 029 WebAssembly plugins
