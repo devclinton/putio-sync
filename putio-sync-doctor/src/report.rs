@@ -124,6 +124,7 @@ ids!(
         DeadQueueRows => "dead_queue_rows",
         FailingDownloads => "failing_downloads",
         OrphanPartials => "orphan_partials",
+        Bandwidth => "bandwidth",
         DownloadDir => "download_dir",
         DiskSpace => "disk_space",
         Database => "database",
@@ -142,7 +143,7 @@ impl CheckId {
         match self {
             Auth | Storage | Transfers | EmptyFolders | Duplicates | OrphanedTorrents
             | StuckWatchFiles => Area::Putio,
-            DeadQueueRows | FailingDownloads | OrphanPartials => Area::Sync,
+            DeadQueueRows | FailingDownloads | OrphanPartials | Bandwidth => Area::Sync,
             DownloadDir | DiskSpace | Database | Config => Area::Local,
             Reachability | RateLimit | ClockSkew | Tailscale | Listen => Area::Connectivity,
         }
@@ -161,6 +162,7 @@ impl CheckId {
             DeadQueueRows => "Queue entries for deleted files",
             FailingDownloads => "Failing downloads",
             OrphanPartials => "Leftover partial downloads",
+            Bandwidth => "Bandwidth limit",
             DownloadDir => "Download folder",
             DiskSpace => "Disk space",
             Database => "Database",
@@ -556,7 +558,7 @@ mod tests {
                 format!("\"{}\"", fix.as_str())
             );
         }
-        assert_eq!(CheckId::ALL.len(), 19);
+        assert_eq!(CheckId::ALL.len(), 20);
         assert!("nope".parse::<FixId>().is_err());
     }
 

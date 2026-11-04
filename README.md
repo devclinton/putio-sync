@@ -1407,6 +1407,7 @@ daemon also runs it 2 minutes after it starts and then every `interval_minutes`.
 | Sync | Queue entries for deleted files | A queue row points at a file Put.io no longer has |
 | | Failing downloads | A download failed 3 or more times |
 | | Leftover partial downloads | A `.downloading` file older than an hour that no download owns |
+| | Bandwidth limit | Shows the download limit in force, its source and the daemon's time; a pause from the Status page is a warning until it ends |
 | This machine | Download folder | The folder is missing or not writable (problem) |
 | | Disk space | Under 10% free, or less than the queue needs (warning); under 2% (problem) |
 | | Database | SQLite's integrity check fails (problem) |
