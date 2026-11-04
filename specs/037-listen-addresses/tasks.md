@@ -59,9 +59,9 @@
 
 ## Phase 8: Polish
 
-- [ ] T023 [P] `config.example.toml`: `[api] bind` and `[metrics] bind` forms, lists, interfaces, IPv6, tailnet, env lists
-- [ ] T024 [P] README: listen addresses section, `server` flags, API table rows (`/listen`, `/settings/network`), the loopback + identity caveat; update the 036 tailnet-only text (keeps waiting, `server` honours it)
-- [ ] T025 CHANGELOG entry; remove 037 from `ROADMAP.md`
+- [X] T023 [P] `config.example.toml`: `[api] bind` and `[metrics] bind` forms, lists, interfaces, IPv6, tailnet, env lists
+- [X] T024 [P] README: listen addresses section, `server` flags, API table rows (`/listen`, `/settings/network`), the loopback + identity caveat; update the 036 tailnet-only text (keeps waiting, `server` honours it)
+- [X] T025 CHANGELOG entry; remove 037 from `ROADMAP.md`
 - [ ] T026 Merge `origin/main`, `TMPDIR=<scratch> make ci`, push
 
 ## Dependencies

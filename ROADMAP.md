@@ -136,13 +136,6 @@ The web UI wrapped with Capacitor as an iOS and Android app: connect to a
 putio-sync server by address or QR code, push notifications for the events
 from 030, and share links or torrent files from other apps straight to Put.io.
 
-### 037 Listen address and interface
-
-`[api] bind` takes one `ip:port` today. Allow several addresses, binding by
-interface name (`eth0`, `tailscale0`) so a changing IP does not matter, IPv6,
-and a separate address for `/metrics`. Settable from the UI, with a warning
-before saving an address that would lock the UI out.
-
 ### 038 Processing pipeline and its view
 
 Every item goes through a pipeline of steps, and the UI shows where it is:
