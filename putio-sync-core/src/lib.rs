@@ -31,8 +31,14 @@ pub mod config_lint;
 /// Error types and result aliases
 pub mod error;
 
+/// Events on the internal event bus, and their JSON schema (feature 027)
+pub mod events;
+
 /// File filtering and sorting logic
 pub mod filter;
+
+/// Event hook config: validation and secret masking (feature 027)
+pub mod hooks;
 
 /// Listen addresses: `ip:port`, `[v6]:port`, `eth0:port`, `tailnet:port` (feature 037)
 pub mod listen;
@@ -48,6 +54,9 @@ pub mod path_utils;
 
 /// Saved file patterns with AND, OR and NOT (feature 020)
 pub mod pattern;
+
+/// Shortened forms of values that may carry secrets (feature 027)
+pub mod redact;
 
 /// Per-folder file rules: presets, inheritance and decisions
 pub mod rules;

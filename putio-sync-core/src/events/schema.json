@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/devclinton/putio-sync/blob/main/EVENTS.md",
+  "title": "putio-sync event",
+  "description": "One event from putio-sync's event bus, as sent to hooks. Schema version 1. Consumers must ignore fields they do not know.",
+  "type": "object",
+  "required": ["schema_version", "id", "type", "occurred_at", "source", "data"],
+  "properties": {
+    "schema_version": { "const": 1, "description": "Raised only when a field is removed, renamed or changes type." },
+    "id": { "type": "string", "description": "UUID v4, unique per event." },
+    "type": {
+      "type": "string",
+      "enum": [
+        "download.finished",
+        "download.failed",
+        "transfer.added",
+        "transfer.finished",
+        "transfer.failed",
+        "sync.completed",
+        "storage.low",
+        "hook.test"
+      ]
+    },
+    "occurred_at": { "type": "string", "format": "date-time", "description": "UTC, RFC 3339 with milliseconds." },
+    "source": {
+      "type": "object",
+      "required": ["app", "version", "host"],
+      "properties": {
+        "app": { "const": "putio-sync" },
+        "version": { "type": "string" },
+        "host": { "type": "string" }
+      }
+    },
+    "data": { "type": "object" }
+  },
+  "oneOf": [
+    { "properties": { "type": { "const": "download.finished" }, "data": { "$ref": "#/$defs/download_finished" } } },
+    { "properties": { "type": { "const": "download.failed" }, "data": { "$ref": "#/$defs/download_failed" } } },
+    { "properties": { "type": { "const": "transfer.added" }, "data": { "$ref": "#/$defs/transfer" } } },
+    { "properties": { "type": { "const": "transfer.finished" }, "data": { "$ref": "#/$defs/transfer" } } },
+    { "properties": { "type": { "const": "transfer.failed" }, "data": { "$ref": "#/$defs/transfer" } } },
+    { "properties": { "type": { "const": "sync.completed" }, "data": { "$ref": "#/$defs/sync_completed" } } },
+    { "properties": { "type": { "const": "storage.low" }, "data": { "$ref": "#/$defs/storage_low" } } },
+    { "properties": { "type": { "const": "hook.test" }, "data": { "$ref": "#/$defs/hook_test" } } }
+  ],
+  "$defs": {
+    "download_finished": {
+      "type": "object",
+      "required": ["file_id", "name", "relative_path", "local_path", "size_bytes", "duration_seconds", "average_bytes_per_second", "resumed"],
+      "properties": {
+        "file_id": { "type": "integer", "description": "Put.io file id." },
+        "name": { "type": "string", "description": "File name as saved." },
+        "relative_path": { "type": "string", "description": "Path under the download folder, /-separated." },
+        "local_path": { "type": "string", "description": "Absolute path on the daemon's disk." },
+        "size_bytes": { "type": "integer" },
+        "duration_seconds": { "type": "number" },
+        "average_bytes_per_second": { "type": "integer" },
+        "resumed": { "type": "boolean" }
+      }
+    },
+    "download_failed": {
+      "type": "object",
+      "required": ["file_id", "name", "relative_path", "size_bytes", "error", "reason", "attempts"],
+      "properties": {
+        "file_id": { "type": "integer" },
+        "name": { "type": "string" },
+        "relative_path": { "type": "string" },
+        "size_bytes": { "type": "integer" },
+        "error": { "type": "string" },
+        "reason": { "enum": ["network", "http", "io", "integrity", "other"] },
+        "attempts": { "type": "integer" }
+      }
+    },
+    "transfer": {
+      "type": "object",
+      "required": ["transfer_id", "name", "origin", "status", "size_bytes", "file_id", "error"],
+      "properties": {
+        "transfer_id": { "type": "integer" },
+        "name": { "type": "string" },
+        "origin": { "enum": ["radarr", "sonarr", "watch", "manual", "putio"] },
+        "status": { "type": "string", "description": "Put.io status, such as DOWNLOADING or COMPLETED." },
+        "size_bytes": { "type": ["integer", "null"] },
+        "file_id": { "type": ["integer", "null"], "description": "The Put.io file or folder the transfer made." },
+        "error": { "type": ["string", "null"] }
+      }
+    },
+    "sync_completed": {
+      "type": "object",
+      "required": ["trigger", "result", "error", "started_at", "duration_seconds", "files_found", "files_queued", "files_skipped", "files_blocked", "files_failed"],
+      "properties": {
+        "trigger": { "enum": ["schedule", "manual"] },
+        "result": { "enum": ["success", "failure"] },
+        "error": { "type": ["string", "null"] },
+        "started_at": { "type": "string", "format": "date-time" },
+        "duration_seconds": { "type": "number" },
+        "files_found": { "type": "integer" },
+        "files_queued": { "type": "integer" },
+        "files_skipped": { "type": "integer" },
+        "files_blocked": { "type": "integer" },
+        "files_failed": { "type": "integer" }
+      }
+    },
+    "storage_low": {
+      "type": "object",
+      "required": ["total_bytes", "used_bytes", "free_bytes", "free_percent", "warn_free_percent"],
+      "properties": {
+        "total_bytes": { "type": "integer" },
+        "used_bytes": { "type": "integer" },
+        "free_bytes": { "type": "integer" },
+        "free_percent": { "type": "number" },
+        "warn_free_percent": { "type": "integer" }
+      }
+    },
+    "hook_test": {
+      "type": "object",
+      "required": ["hook", "message"],
+      "properties": {
+        "hook": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}

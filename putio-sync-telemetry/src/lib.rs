@@ -22,6 +22,7 @@ pub mod db;
 pub mod doctor;
 pub mod download;
 pub mod gauges;
+pub mod hooks;
 pub mod labels;
 pub mod pipeline;
 pub mod precheck;
@@ -41,6 +42,8 @@ const DOWNLOAD_BUCKETS: &[f64] = &[1.0, 5.0, 15.0, 60.0, 300.0, 900.0, 1800.0, 3
 const LOOKUP_BUCKETS: &[f64] = &[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0];
 /// How long a magnet was held (043)
 const HOLD_BUCKETS: &[f64] = &[30.0, 60.0, 120.0, 180.0, 300.0, 600.0];
+/// Hook run time (027)
+const HOOK_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 600.0];
 const SYNC_BUCKETS: &[f64] = &[1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0];
 
 /// Every metric family, registered in one registry.
@@ -125,6 +128,11 @@ pub struct Telemetry {
     pub(crate) storage_freed_bytes: IntCounter,
     // Feature 036
     pub(crate) tailscale_identity: IntCounterVec,
+    // Feature 027
+    pub(crate) events: IntCounterVec,
+    pub(crate) hook_runs: IntCounterVec,
+    pub(crate) hook_duration: HistogramVec,
+    pub(crate) hook_dropped: IntCounterVec,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -556,6 +564,36 @@ impl Telemetry {
                 &["via", "result"],
             )
             .unwrap(),
+            events: IntCounterVec::new(
+                opts("events_total", "Events put on the internal event bus, by type."),
+                &["type"],
+            )
+            .unwrap(),
+            hook_runs: IntCounterVec::new(
+                opts(
+                    "hook_runs_total",
+                    "Finished hook runs, by hook, event type and result.",
+                ),
+                &["hook", "event", "result"],
+            )
+            .unwrap(),
+            hook_duration: HistogramVec::new(
+                hopts(
+                    "hook_run_duration_seconds",
+                    "How long hook runs took, retries included.",
+                    HOOK_BUCKETS,
+                ),
+                &["hook"],
+            )
+            .unwrap(),
+            hook_dropped: IntCounterVec::new(
+                opts(
+                    "hook_events_dropped_total",
+                    "Events a hook never ran for because its queue was full.",
+                ),
+                &["hook"],
+            )
+            .unwrap(),
 
             db_errors: IntCounterVec::new(
                 opts("db_errors_total", "Database errors."),
@@ -656,6 +694,10 @@ impl Telemetry {
             Box::new(self.storage_freed_files.clone()),
             Box::new(self.storage_freed_bytes.clone()),
             Box::new(self.tailscale_identity.clone()),
+            Box::new(self.events.clone()),
+            Box::new(self.hook_runs.clone()),
+            Box::new(self.hook_duration.clone()),
+            Box::new(self.hook_dropped.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
             Box::new(self.disk_total.clone()),
@@ -709,6 +751,9 @@ impl Telemetry {
             for result in tailscale::RESULTS {
                 self.tailscale_identity.with_label_values(&[via, result]);
             }
+        }
+        for t in hooks::EVENT_TYPES {
+            self.events.with_label_values(&[t]);
         }
         for m in ArrMethod::ALL {
             for o in ArrOutcome::ALL {
