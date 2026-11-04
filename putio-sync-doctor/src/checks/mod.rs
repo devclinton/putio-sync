@@ -3,6 +3,7 @@
 pub(crate) mod hooks;
 pub(crate) mod local;
 pub(crate) mod net;
+pub(crate) mod plugins;
 pub(crate) mod putio;
 pub(crate) mod sync;
 
@@ -154,6 +155,7 @@ async fn detect(ctx: &Ctx, id: CheckId) -> Finding {
         Tailscale => net::tailscale(ctx).await,
         Listen => net::listen(ctx).await,
         Hooks => hooks::hooks(ctx).await,
+        Plugins => plugins::plugins(ctx).await,
     }
 }
 

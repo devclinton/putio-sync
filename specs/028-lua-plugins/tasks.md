@@ -50,7 +50,7 @@ Tests come first in each task where behaviour changes (Constitution III).
 
 ## Phase 7: User Story 5 - Doctor and monitoring (P3)
 
-- [ ] T020 [US5] `putio-sync-doctor`: `CheckId::Plugins` in `report.rs` (ALL count), `checks/plugins.rs` (broken enabled → problem; needs approval, missing config, settings for an unknown plugin, last run failed/timed out in 24 h → warning; none enabled → ok), `Ctx.plugins`, `Doctor::with_plugins`; without a service it builds an unstarted one from the config; tests in `putio-sync-doctor/tests/plugins.rs`
+- [X] T020 [US5] `putio-sync-doctor`: `CheckId::Plugins` in `report.rs` (ALL count), `checks/plugins.rs` (broken enabled → problem; needs approval, missing config, settings for an unknown plugin, last run failed/timed out in 24 h → warning; none enabled → ok), `Ctx.plugins`, `Doctor::with_plugins`; without a service it builds an unstarted one from the config; tests in `putio-sync-doctor/tests/plugins.rs`
 - [ ] T021 [US5] Extend `putio-sync-api/tests/secrets_sweep.rs` with a plugin secret (settings view, export, `/plugins`, doctor, metrics, test-run logs)
 
 ## Phase 8: Polish
