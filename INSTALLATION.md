@@ -434,7 +434,9 @@ winver
 
 After installation:
 
-1. **Authenticate**: `putio-sync login`
+1. **Set up**: start the daemon and open `http://<host>:15432/` for the setup
+   wizard (enter the setup code it prints), or run `putio-sync setup` in a
+   terminal. `putio-sync login` still works for the token alone.
 2. **Browse files**: `putio-sync files list`
 3. **Download**: `putio-sync download`
 4. **View help**: `putio-sync --help`

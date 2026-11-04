@@ -7,21 +7,6 @@ what is queued, in the order planned. Each entry is the starting brief for
 
 ## Queued: onboarding and setup
 
-### 013 First-run setup wizard
-
-When the daemon has no Put.io token or no usable download folder, the web UI
-opens a step-by-step setup instead of the dashboard:
-
-1. Connect Put.io (OAuth, without copying a token by hand).
-2. Choose the download folder, with checks that it is writable and how much
-   space is free.
-3. Choose what to download, using the folder rule presets from 009.
-4. Optional: a watch folder, Radarr/Sonarr, metrics.
-5. A dry-run sync that shows what would be downloaded before anything starts.
-
-The CLI gets the same flow as `putio-sync setup`, for headless installs. It
-works the same in Docker, the snap and a plain binary.
-
 ### 014 Guided tour and in-app help
 
 A short, skippable tour of each page on first visit, re-runnable from

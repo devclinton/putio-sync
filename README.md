@@ -148,9 +148,37 @@ See [INSTALLATION.md](INSTALLATION.md) for detailed installation instructions.
 
 The binary will be available at `./target/release/putio-sync`.
 
+### First run
+
+Start the daemon (`putio-sync daemon`, the Docker image or the snap service)
+before anything is configured and it waits in setup mode instead of exiting. It
+prints a one-time setup code; open `http://<host>:15432/`, enter the code, and
+the setup wizard walks through:
+
+1. Connecting Put.io (the device link at put.io/link, or a pasted token).
+2. The download folder, checked for write access and free space.
+3. What to download, with the presets and top-level folder rules.
+4. Optional extras: a watch folder, metrics, Radarr/Sonarr.
+5. A dry run showing what the first sync would download.
+
+Finishing writes the config once, creates an API token for the web UI (shown
+once) and starts syncing. An API token that is already configured also unlocks
+the wizard.
+
+On a headless machine, run the same steps in a terminal:
+
+```bash
+putio-sync setup
+# or without prompts:
+PUTIO_SYNC_PUTIO_TOKEN=... putio-sync setup --download-dir /srv/putio --preset video --yes
+```
+
+A daemon in setup mode notices the new config within seconds. Exit codes: 0
+written, 1 error, 2 cancelled.
+
 ### Authentication
 
-First, authenticate with Put.io:
+To authenticate with Put.io without the wizard:
 
 ```bash
 putio-sync login

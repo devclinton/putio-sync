@@ -18,13 +18,15 @@ file.
 
 ```bash
 sudo snap install putio-sync --edge
-sudo putio-sync login
 sudo snap set putio-sync api-token="$(openssl rand -hex 24)"
 sudo snap start --enable putio-sync.daemon
 ```
 
-Then open `http://<host>:15432/` and sign in with the api-token
-(`sudo snap get putio-sync api-token` shows it). Metrics are on port 9742.
+Until Put.io is connected the daemon waits in setup mode: open
+`http://<host>:15432/` and unlock the setup wizard with the api-token
+(`sudo snap get putio-sync api-token` shows it) or the setup code in
+`sudo snap logs putio-sync.daemon`. Or run `sudo putio-sync setup` in a
+terminal. Afterwards sign in with the api-token. Metrics are on port 9742.
 
 - **api-token**: the web UI and API token (`PUTIO_SYNC_API_TOKEN`). Setting it
   restarts a running daemon (`hooks/configure`).

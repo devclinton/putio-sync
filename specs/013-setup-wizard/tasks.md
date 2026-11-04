@@ -84,9 +84,9 @@ Tests are required by the constitution (Principle III: mocked Put.io, run under 
 
 ## Phase 10: Polish
 
-- [ ] T029 [P] Document `[putio] app_id` and `[download] preset` in `config.example.toml`
-- [ ] T030 [P] README, INSTALLATION.md and snap README: first run now opens the wizard; `putio-sync setup`
-- [ ] T031 CHANGELOG.md entry; remove 013 from ROADMAP.md
+- [X] T029 [P] Document `[putio] app_id` and `[download] preset` in `config.example.toml`
+- [X] T030 [P] README, INSTALLATION.md and snap README: first run now opens the wizard; `putio-sync setup`
+- [X] T031 CHANGELOG.md entry; remove 013 from ROADMAP.md
 - [ ] T032 Merge `origin/main`, run `TMPDIR=<scratchpad> make ci`, report UI size
 
 ## Dependencies
