@@ -72,6 +72,7 @@ pub mod delete;
 pub mod error;
 pub mod files;
 pub mod models;
+pub mod oob;
 pub mod path;
 pub mod probe;
 pub mod transfers;
