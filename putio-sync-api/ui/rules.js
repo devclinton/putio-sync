@@ -1,11 +1,13 @@
 // Folder rules (feature 009): the rule card and editor of the Put.io page, and the
 // Folder rules, Presets and Recently blocked cards of Settings. A rule is set on a Put.io
 // folder by id; each part of the effective rule says where it comes from (this folder,
-// a parent folder, or the global Download settings).
+// a parent folder, or the global Download settings). Feature 020 adds the Only download
+// and Never download patterns, in the filter language of query.js.
 
 import { del, get, post, put } from "./api.js";
 import { confirm, h, toast } from "./app.js";
 import { dateTime } from "./format.js";
+import { filterMatcher } from "./query.js";
 
 const FLAGS = [
   ["skip", "Skip folder", "Download nothing here"],
@@ -45,10 +47,22 @@ function filterText(filter) {
   return filter.blocked.length ? `All except ${exts(filter.blocked)}` : "Everything";
 }
 
-/** What the effective rule does with a file name: null, or { badge, why } */
-function verdict(eff, name) {
+const matchers = new Map();
+/** The matcher of pattern `text`, kept so a long list builds each one once */
+function matcher(text) {
+  if (!matchers.has(text)) matchers.set(text, filterMatcher(text));
+  return matchers.get(text);
+}
+
+/** What the effective rule does with file `name` in folder `folder`: null, or { badge, why } */
+function verdict(eff, name, folder) {
   if (!eff) return null;
   if (eff.skip.value) return { badge: "skipped", why: "Folder is skipped" };
+  const path = folder ? `${folder}/${name}` : name;
+  const never = eff.exclude.value;
+  if (never && matcher(never)(name, path)) return { badge: "blocked", why: `Matches never-download pattern ${never}` };
+  const only = eff.include.value;
+  if (only && !matcher(only)(name, path)) return { badge: "blocked", why: `Doesn't match only-download pattern ${only}` };
   const dot = name.lastIndexOf(".");
   const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : null;
   const f = eff.filter;
@@ -106,6 +120,8 @@ export function ruleCard(id, onChange) {
         { class: "kv rule-kv" },
         row("Preset", preset, eff.preset.from),
         row("Types", filterText(eff.filter), eff.filter.from),
+        row("Only download", eff.include.value || "everything", eff.include.from),
+        row("Never download", eff.exclude.value || "nothing", eff.exclude.from),
         FLAGS.map(([k, label]) => row(label, yesNo(eff[k].value), eff[k].from)),
         row("When a file exists", existingLabel(eff.on_existing.value), eff.on_existing.from),
       ),
@@ -139,6 +155,25 @@ export function ruleCard(id, onChange) {
     const block = h("input", { class: "input", id: fid("block"), autocomplete: "off", spellcheck: "false", placeholder: "e.g. iso" });
     allow.value = (rule.allow || []).join(", ");
     block.value = (rule.block || []).join(", ");
+    // feature 020: blank inherits; "Don't inherit" sends "" to clear a parent's pattern
+    const pattern = (k, placeholder) => {
+      const input = h("input", { class: "input", id: fid(k), autocomplete: "off", spellcheck: "false", placeholder });
+      input.value = rule[k] || "";
+      const inherited = eff[k].from !== data.path && eff[k].value;
+      const reset = rule[k] === "" || inherited ? h("input", { type: "checkbox", id: fid(`${k}-reset`), checked: rule[k] === "" }) : null;
+      return { input, reset, inherited, value: () => input.value.trim() || (reset && reset.checked ? "" : null) };
+    };
+    const include = pattern("include", "e.g. *.mkv OR *.mp4");
+    const exclude = pattern("exclude", "e.g. *sample* OR *.exe");
+    const patternField = (p, label) =>
+      h(
+        "div",
+        { class: "field" },
+        h("label", { for: p.input.id, text: label }),
+        p.input,
+        h("small", { text: p.inherited ? `Blank inherits ${p.inherited}` : "Patterns with AND, OR and NOT; blank inherits" }),
+        p.reset ? h("label", { class: "field check", for: p.reset.id }, p.reset, h("span", { text: "Don't inherit" })) : null,
+      );
     const flags = FLAGS.map(([k, label, hint]) => {
       const v = rule[k];
       const sel = h(
@@ -161,7 +196,7 @@ export function ruleCard(id, onChange) {
     const error = h("p", { class: "error-text", role: "alert", hidden: true });
 
     const body = () => {
-      const b = { preset: presetSel.value || null, allow: parseExts(allow.value), block: parseExts(block.value) };
+      const b = { preset: presetSel.value || null, allow: parseExts(allow.value), block: parseExts(block.value), include: include.value(), exclude: exclude.value() };
       for (const [k, sel] of flags) b[k] = sel.value === "" ? null : sel.value === "true";
       b.on_existing = existingSel.value || null;
       return b;
@@ -223,6 +258,8 @@ export function ruleCard(id, onChange) {
         field(presetSel, "Preset", "Replaces the inherited type filter"),
         field(allow, "Also allow", "Extensions, comma separated"),
         field(block, "Also block", "Extensions, comma separated"),
+        patternField(include, "Only download"),
+        patternField(exclude, "Never download"),
         flags.map((f) => f[2]),
         field(existingSel, "When a file exists", "Resume, overwrite, or keep both under a new name"),
       ),
@@ -243,16 +280,20 @@ export function ruleCard(id, onChange) {
   load();
   return {
     el,
-    badge: (name) => (data ? verdict(data.effective, name) : null),
+    badge: (name) => (data ? verdict(data.effective, name, data.path) : null),
   };
 }
 
 const SHOWN_ITEMS = 20;
 
-function previewView(p) {
+const fullName = (i) => (i.path ? `${i.path}/${i.name}` : i.name);
+
+/** A rules preview: the counts, the files refused and a sample of those downloaded */
+export function previewView(p) {
   const head = `${plural(p.files, "file", "files")}: ${p.download} download, ${p.blocked} blocked, ${p.skipped} skipped, ${p.would_delete} would be deleted`;
   const items = p.items.slice(0, SHOWN_ITEMS);
   const more = p.items.length - items.length + (p.truncated ? 1 : 0);
+  const downloads = (p.downloads || []).slice(0, SHOWN_ITEMS);
   return [
     h("p", { class: "spaced", text: head }),
     items.length
@@ -263,7 +304,7 @@ function previewView(p) {
             h(
               "li",
               {},
-              h("span", { class: "name", text: i.path ? `${i.path}/${i.name}` : i.name }),
+              h("span", { class: "name", text: fullName(i) }),
               h("small", { class: "muted", text: ` ${i.reason}` }),
               i.would_delete ? h("span", { class: "badge bad", text: "would be deleted" }) : null,
             ),
@@ -271,6 +312,12 @@ function previewView(p) {
         )
       : null,
     more > 0 ? h("p", { class: "muted", text: p.truncated ? "and more" : `and ${more} more` }) : null,
+    downloads.length
+      ? [
+          h("p", { class: "spaced muted", text: p.download > downloads.length ? `Downloaded, first ${downloads.length}:` : "Downloaded:" }),
+          h("ul", { class: "rule-items" }, downloads.map((i) => h("li", {}, h("span", { class: "name", text: fullName(i) })))),
+        ]
+      : null,
   ];
 }
 
@@ -322,13 +369,15 @@ function ruleSummary(r, presets) {
   if (r.preset) parts.push(presetLabel(r.preset, presets));
   if (r.allow && r.allow.length) parts.push(`allow ${r.allow.join(", ")}`);
   if (r.block && r.block.length) parts.push(`block ${r.block.join(", ")}`);
+  if (r.include != null) parts.push(r.include ? `only ${r.include}` : "only: not inherited");
+  if (r.exclude != null) parts.push(r.exclude ? `never ${r.exclude}` : "never: not inherited");
   for (const [k, label] of FLAGS) if (r[k] != null) parts.push(`${label.toLowerCase()}: ${yesNo(r[k])}`);
   return parts.join(" · ");
 }
 
 function rulesList(all, reload) {
   const g = all.global;
-  const global = h("p", { class: "muted", text: `Root (global): ${g.blocked_extensions.length ? `blocks ${exts(g.blocked_extensions)}` : "blocks nothing"} · delete after download: ${yesNo(g.delete_after_download)} · when a file exists: ${existingLabel(g.on_existing).toLowerCase()}` });
+  const global = h("p", { class: "muted", text: `Root (global): ${g.blocked_extensions.length ? `blocks ${exts(g.blocked_extensions)}` : "blocks nothing"} · delete after download: ${yesNo(g.delete_after_download)} · when a file exists: ${existingLabel(g.on_existing).toLowerCase()}${g.include ? ` · only ${g.include}` : ""}${g.exclude ? ` · never ${g.exclude}` : ""}` });
   if (!all.rules.length) return [global, h("p", { class: "muted", text: "No folder rules. Set one from a folder on the Put.io page." })];
   const remove = async (button, path) => {
     const ok = await confirm({ title: "Remove folder rule", text: `Remove the rule for ${path}? Its folders go back to the inherited settings.`, verb: "Remove" });

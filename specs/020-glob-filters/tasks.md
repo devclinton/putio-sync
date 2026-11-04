@@ -27,7 +27,7 @@
 - [X] T007 [US1] In `putio-sync-api/src/routes/system/rules.rs`: `RuleBody.include` / `exclude` (trim; `""` kept, null inherit), `EffectiveView.include` / `exclude` as `{ value, from }`; `GlobalView.include` / `exclude`; fix every struct literal of `FolderRule` / `RuleBody` across the workspace
 - [X] T008 [US1] `RulePreview.downloads` (first 50 `{ file_id, name, path }`) in `putio-sync-download/src/manager.rs` and `PreviewResponse.downloads` in `putio-sync-api/src/routes/system/rules.rs`
 - [X] T009 [US1] Route tests in `putio-sync-api/tests/rules.rs`: PUT a rule with exclude, GET shows it in `rule` and `effective`, preview lists the sample as blocked with the pattern reason and the rest in `downloads`, `would_delete` with `delete_blocked`; a bad pattern is 400 naming "Never download"
-- [ ] T010 [US1] Rule card and editor in `putio-sync-api/ui/rules.js`: "Only download" / "Never download" rows with source, two inputs (blank = inherit, "Don't inherit" checkbox sending `""` when one is inherited), `verdict()` checks exclude then include with `filterMatcher(value)(name, path)` before the type filter, preview shows `downloads`
+- [X] T010 [US1] Rule card and editor in `putio-sync-api/ui/rules.js`: "Only download" / "Never download" rows with source, two inputs (blank = inherit, "Don't inherit" checkbox sending `""` when one is inherited), `verdict()` checks exclude then include with `filterMatcher(value)(name, path)` before the type filter, preview shows `downloads`
 
 **Checkpoint**: US1 works from the Put.io page.
 
@@ -36,7 +36,7 @@
 **Goal**: combined patterns mean the same everywhere. **Independent test**: the shared table.
 
 - [X] T011 [US2] Rule tests in `putio-sync-core/src/rules.rs` for `*.mkv OR *.mp4 -sample` include and `Sample/* OR *.nfo` exclude, and an API preview test in `putio-sync-api/tests/rules.rs` with a nested `Sample` folder
-- [ ] T012 [P] [US2] Review the filter-box hints and header comments in `putio-sync-api/ui/pages/putio.js`, `transfers.js` and `files.js` against the 020 grammar; fix any that contradict it (no change expected: "Try fewer terms, or * around a word." still holds)
+- [X] T012 [P] [US2] Review the filter-box hints and header comments in `putio-sync-api/ui/pages/putio.js`, `transfers.js` and `files.js` against the 020 grammar; fix any that contradict it (no change expected: "Try fewer terms, or * around a word." still holds)
 
 ## Phase 5: User Story 3 - Account-wide Only and Never download (P1)
 
@@ -45,7 +45,7 @@
 - [X] T013 [US3] Validate `whitelist_patterns` ("[download] whitelist_patterns (Only download): …") and `blacklist_patterns` ("… (Never download): …") strictly in `Config::validate` (`putio-sync-core/src/config.rs`) and the wizard validation in `putio-sync-core/src/setup.rs`; tests: old comma and brace values load and match as before, an unclosed quote fails to load
 - [X] T014 [US3] Test in `putio-sync-download/tests/config_from_settings.rs` (or `enqueue_tree.rs`) that the root patterns refuse files in the sync decision, and that the refusal is a `Decision::Blocked` whose `reason()` names the pattern (FR-013: the existing log line, recorded decision and "blocked" metric use these)
 - [X] T015 [US3] `POST /rules/preview` accepts `global { include, exclude }` replacing the two settings in the candidate config, allowed on `folder_id: 0`, in `putio-sync-api/src/routes/system/rules.rs`; route test in `putio-sync-api/tests/rules.rs`; settings route test that a bad pattern is 400 in `putio-sync-api/tests/settings.rs`, and the same for a settings import carrying it
-- [ ] T016 [US3] Settings Download group in `putio-sync-api/ui/pages/settings.js`: help text "Patterns, e.g. *.mkv OR *.mp4; empty for all" / "e.g. *sample* OR *.exe", and an `extra` with a Preview button that posts the typed values as `global` for the root and renders the result with the rules preview view (export it from `putio-sync-api/ui/rules.js`), with the note "Lists your whole Put.io account; this can take a while."
+- [X] T016 [US3] Settings Download group in `putio-sync-api/ui/pages/settings.js`: help text "Patterns, e.g. *.mkv OR *.mp4; empty for all" / "e.g. *sample* OR *.exe", and an `extra` with a Preview button that posts the typed values as `global` for the root and renders the result with the rules preview view (export it from `putio-sync-api/ui/rules.js`), with the note "Lists your whole Put.io account; this can take a while."
 
 ## Phase 6: User Story 4 - Bad and risky patterns (P2)
 
