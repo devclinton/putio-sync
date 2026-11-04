@@ -40,6 +40,8 @@ pub mod path_utils;
 /// Per-folder file rules: presets, inheritance and decisions
 pub mod rules;
 
+pub mod setup;
+
 /// Stalled Put.io transfer detection
 pub mod stall;
 
