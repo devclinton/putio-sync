@@ -10,6 +10,7 @@
 //! last runs; a failing or slow plugin never holds anything else up.
 
 pub mod discover;
+pub mod host;
 pub mod manifest;
 pub mod sandbox;
 pub mod store;
