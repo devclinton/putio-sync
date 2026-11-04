@@ -56,7 +56,12 @@ async fn a_matching_hook_runs_quickly_and_in_order() {
 
     let start = Instant::now();
     let first = events::emit(storage_low());
-    let got = wait_for(&log, &[first.id.clone()], Duration::from_secs(5)).await;
+    let got = wait_for(
+        &log,
+        std::slice::from_ref(&first.id),
+        Duration::from_secs(5),
+    )
+    .await;
     assert_eq!(got, vec![first.id.clone()]);
     assert!(
         start.elapsed() < Duration::from_secs(2),

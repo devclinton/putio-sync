@@ -69,8 +69,9 @@
   The id → class map of the latest list is stored in `daemon_flags`
   (`transfer_events_seen`) whenever it changes. With no stored map (first start after
   upgrading) the first list is taken as the baseline without events.
-- **Origin**: `transfer_origins` (watch, manual) first, then the arr table by Put.io
-  transfer id (`radarr`/`sonarr` from the arr item), else `putio`.
+- **Origin**: `transfer_origins` by Put.io transfer id: `watch` and `manual` as stored;
+  an arr item stores only its category (`arr:<category>`), so `radarr` or `sonarr` when
+  the category names the app, else `arr`; no row → `putio`.
 - **Where**: `DownloadManager::transfers_snapshot` when it fetches a fresh list; the
   daemon's pipeline loop calls it every 10 s with a 60 s max age. In `server` mode the CLI
   runs a 30 s ticker that calls it when a hook wants a `transfer.*` type.
