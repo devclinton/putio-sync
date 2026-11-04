@@ -94,7 +94,7 @@ export function fromStatus(plugin, settings) {
   return {
     name: plugin.name,
     enabled: s.enabled === true,
-    timeout_secs: s.timeout_secs ?? 5,
+    timeout_secs: s.timeout_secs ?? 10,
     memory_mb: s.memory_mb ?? 32,
     approved_hosts: [...(s.approved_hosts || [])],
     fields,

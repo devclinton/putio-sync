@@ -46,7 +46,7 @@ test("a plugin with no settings starts off with its defaults", () => {
   assert.equal(row.values.loud, false);
   assert.deepEqual(row.secrets.token, { set: false, value: "" });
   // Defaults are left out of the save
-  assert.deepEqual(toSettings(row), { name: "ntfy", enabled: false, timeout_secs: 5, memory_mb: 32 });
+  assert.deepEqual(toSettings(row), { name: "ntfy", enabled: false, timeout_secs: 10, memory_mb: 32 });
 });
 
 test("settings round trip and a kept secret sends the mask", () => {

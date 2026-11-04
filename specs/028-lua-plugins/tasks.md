@@ -55,7 +55,7 @@ Tests come first in each task where behaviour changes (Constitution III).
 
 ## Phase 8: Polish
 
-- [ ] T022 `PLUGINS.md` (guide: folder layout, manifest, host API from `contracts/host-api.md`, sandbox and limits, approval, bundled plugins, 029 note), README sections (plugins, metrics, HTTP API, doctor, settings tables), `config.example.toml`, `example-config.toml`, `CHANGELOG.md`, `ROADMAP.md` (028 reduced to the extension-point follow-up; 030 lists the bundled channels)
+- [X] T022 `PLUGINS.md` (guide: folder layout, manifest, host API from `contracts/host-api.md`, sandbox and limits, approval, bundled plugins, 029 note), README sections (plugins, metrics, HTTP API, doctor, settings tables), `config.example.toml`, `example-config.toml`, `CHANGELOG.md`, `ROADMAP.md` (028 reduced to the extension-point follow-up; 030 lists the bundled channels)
 - [ ] T023 Merge `origin/main`, `TMPDIR=<scratch> make ci`, push
 
 ## Dependencies

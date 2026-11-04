@@ -75,3 +75,11 @@ delete_after_upload = true
 # events = ["download.finished"]
 # command = ["/config/hooks/on-download.py"]
 # timeout_secs = 30
+
+# Plugins: bundled ntfy, discord, telegram and pushover notifiers (see PLUGINS.md)
+# [[plugins]]
+# name = "ntfy"
+# enabled = true
+# approved_hosts = ["ntfy.sh"]
+# [plugins.config]
+# topic = "my-nas-8f3k"

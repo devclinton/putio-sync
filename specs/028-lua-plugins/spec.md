@@ -173,7 +173,7 @@ within the plugin's limit, and the timeout counter rises.
 ### User Story 4 - Manage plugins from Settings (Priority: P2)
 
 A user opens Settings › Plugins and sees every plugin found (bundled and their own) with
-its state (enabled, disabled, broken, needs approval), version, events, the hosts it may
+its state (enabled, disabled, broken, needs approval, missing config), version, events, the hosts it may
 contact, and its last runs. They can enable or disable it, edit its config (secret fields
 masked once saved), send it a test event and see the result, and reload all plugins.
 
@@ -321,7 +321,7 @@ check and the metrics endpoint counts plugin runs, failures, timeouts and droppe
   config fields.
 - **Plugin settings**: name, enabled, approved hosts, timeout, memory limit, config values.
 - **Plugin**: manifest, source (bundled or folder), state (enabled, disabled, broken,
-  needs approval), queue, run history, store.
+  needs approval, missing config), queue, run history, store.
 - **Plugin run**: plugin, event type and id (or `tick` / `init`), start time, duration, result,
   error, logged lines (up to 20, test runs only).
 - **Plugin store**: string keys to JSON values, per plugin, kept on disk.

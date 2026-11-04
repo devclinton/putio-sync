@@ -70,11 +70,13 @@ Open WebUI, LM Studio and hosted APIs all work. Subtitles are translated in
 chunks with timestamps kept exactly, and a test button checks the connection
 and model.
 
-### 028 Lua plugins
+### 028 Lua plugins: sync extension points
 
-Embedded Lua scripts for small in-process logic: custom file filters, rename
-rules and folder rules, and handlers for the events from 027 (event hooks, see EVENTS.md). Scripts get a
-small, documented API and run with limits on time and memory.
+Event-handler plugins are done (see PLUGINS.md). Still to do: plugins that
+decide things during a sync, called synchronously with a short time limit:
+custom file filters, rename rules and folder rules. They reuse the plugin
+manifest, sandbox and `putio` API, and need a safe answer when a plugin fails
+or is slow (fall back to the built-in rule).
 
 ### 029 WebAssembly plugins
 
@@ -86,9 +88,11 @@ URL.
 ### 030 Notifications
 
 Send notifications for finished, failed and stuck downloads, failed transfers,
-low Put.io storage and doctor problems to Telegram, Discord, Pushover, ntfy and
-email (SMTP). Each channel picks its events, has a test button, and repeats
-are grouped so one bad night does not send a hundred messages.
+low Put.io storage and doctor problems. The ntfy, Discord, Telegram and
+Pushover channels already exist as bundled plugins from 028 (each picks its
+events, has a test button, and groups repeats). Still to do: email (SMTP),
+which cannot be a plugin, stuck-download and doctor-problem events, and a
+simpler Notifications page over the bundled channels.
 
 ### 031 Media server refresh
 

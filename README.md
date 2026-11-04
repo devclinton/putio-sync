@@ -773,6 +773,9 @@ H = histogram.
 | `putio_sync_hook_runs_total` | counter | `hook`, `event`, `result` | Hook runs: `success`, `failure`, `timeout` |
 | `putio_sync_hook_run_duration_seconds` | H | `hook` | Duration of each hook run, retries included |
 | `putio_sync_hook_events_dropped_total` | counter | `hook` | Events dropped because the hook's queue was full |
+| `putio_sync_plugin_runs_total` | counter | `plugin`, `event`, `result` | Plugin calls (an event type, `tick` or `init`): `success`, `failure`, `timeout` |
+| `putio_sync_plugin_run_duration_seconds` | H | `plugin` | Duration of each plugin call |
+| `putio_sync_plugin_events_dropped_total` | counter | `plugin` | Events dropped because the plugin's queue was full |
 | `putio_sync_start_time_seconds` | gauge | — | Process start, Unix seconds |
 | `putio_sync_build_info` | gauge (=1) | `version`, `commit` | Build identity |
 | `putio_sync_process_cpu_seconds_total` | counter | — | CPU time used (user + system); `rate()` gives cores in use |
@@ -983,6 +986,7 @@ daemon's download manager and watcher:
 | Notifications | — | everything |
 | Network | — | everything (`api_bind`, `metrics_bind`); the UI asks first when the new list wouldn't reach the page you're on |
 | Event hooks | everything, at once | — |
+| Plugins | everything, at once (a new `plugins_dir` is read on save) | — |
 
 Under `server`, the logging rows are the same (when the config file existed at
 startup). Download changes reach only the API's own download manager, not the
@@ -1065,7 +1069,7 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `GET /tailscale` | What Tailscale says about this machine: `state` (`running`, `needs_login`, `stopped`, `starting`, `unreachable`, `not_found`), `via`, `version`, `dns_name`, `tailnet`, `magic_dns`, `addresses`, `https`, `userspace`, `owner_login`, `serve`; plus `urls` (the addresses that open putio-sync over the tailnet, HTTPS `serve` first), `hints`, `tailnet_bind` or `tailnet_bind_error`, `settings` and this request's `identity`. Never fails: a missing Tailscale is a state |
 | `GET /listen` | What this process listens on: `api` (`configured`, `effective`, `listening`, each entry with its `addresses` or why it is `waiting`, `port`, `tailnet_only`, `env_override`), `metrics` (the same, plus `enabled`), `engine` and `server_flags` (whether `server --bind/--port` replaced the list) |
 | `POST /settings/network/check` | The `network` PUT body → what each entry would listen on, `this_page` (`kept`, `cut_off` or `unknown`: whether the page you're on would still reach putio-sync), `listened_on`, `ui_at` and `warnings`; saves nothing |
-| `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck,tailscale,network,hooks}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
+| `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck,tailscale,network,hooks,plugins}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
 | `POST /settings/{group}/preview` | The group's PUT body → `{"valid", "error", "changes": [{"key", "before", "after", "live"}], "when", "risks"}`; writes nothing |
 | `GET /settings/assistant` | Per group: what each field affects, the fields that apply live, the defaults; and the risks of the running config |
 | `GET /settings/export` | The settings as a TOML file, without `[auth]`, `api.auth_token` and `[arr]` |
@@ -1081,6 +1085,9 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `DELETE /bandwidth/override` | Back to the schedule now; fine when nothing is in force |
 | `GET /hooks` | Each hook with its kind, cut-down target, events, timeout, waiting events and last 20 runs |
 | `POST /hooks/test` | `{"name": "..."}`: send a `hook.test` event to that hook and answer with the run; 404 for an unknown hook, 409 while a test of it runs |
+| `GET /plugins` | The plugins folder and each plugin with its source, state, manifest (events, permissions, config fields), hosts needed and approved, waiting events and last 20 runs; never a secret value |
+| `POST /plugins/test` | `{"name": "..."}`: send a `plugin.test` event to that plugin, even when it is off, and answer with the run and its logged lines; 404 for an unknown plugin, 409 while a test of it runs, 422 when it cannot load |
+| `POST /plugins/reload` | Read the plugins folder again → `{"message": "Reloaded 5 plugins"}` |
 | `GET /events/schema` | The JSON Schema of the events (see [EVENTS.md](EVENTS.md)) |
 | `GET /doctor` | The latest doctor report; 404 before the first run |
 | `POST /doctor/run` | Run every check now and answer with the report (a run already going is joined, not repeated) |
@@ -1390,6 +1397,32 @@ the hook and field named. Up to 32 hooks.
 The doctor's Event hooks check reports a command hook whose program is missing or not
 executable, and a hook whose last run failed in the last day.
 
+## Plugins
+
+Plugins are small Lua scripts that run inside putio-sync on the same events as hooks,
+with no other program to install. Four come with it, all off until turned on: **ntfy**,
+**Discord**, **Telegram** and **Pushover** notifications, which group repeats so a busy
+night sends a summary instead of a hundred messages. Settings › Plugins turns them on,
+edits their settings, shows the hosts each one contacts and sends a test event.
+
+```toml
+[[plugins]]
+name = "ntfy"
+enabled = true
+approved_hosts = ["ntfy.sh"]   # written by Settings when you save
+
+[plugins.config]
+topic = "my-nas-8f3k"
+```
+
+Your own plugins go in a folder per plugin under `plugins_dir` (default `plugins` next to
+the config file), each with a `plugin.toml` and a `main.lua`. They run sandboxed: no
+files, programs or sockets, a time limit per call (default 10 s) and a memory limit
+(default 32 MiB). They can only reach the HTTP hosts they declare and you approve, and
+they can keep a small key-value store. A slow or failing plugin never holds up a sync.
+Secret settings are masked everywhere and never logged. See [PLUGINS.md](PLUGINS.md) for
+the manifest, the `putio` API and the limits.
+
 ## Advanced Features
 
 ### Folder Rules
@@ -1536,6 +1569,7 @@ daemon also runs it 2 minutes after it starts and then every `interval_minutes`.
 | | Database | SQLite's integrity check fails (problem) |
 | | Config file | Unknown keys, or settings that are probably a mistake |
 | | Event hooks | An enabled command hook's program is missing or not executable (problem); a hook's last run failed in the last 24 hours (warning; needs the daemon) |
+| | Plugins | An enabled plugin can't load (problem); a plugin needs host approval or a required setting, settings name a plugin that isn't found, or an enabled plugin's last run failed in the last 24 hours (warning) |
 | Connection | Put.io reachability | Put.io can't be reached (problem), errors or is slow (warning) |
 | | Rate limit | Under 10% of requests left, or Put.io is limiting now |
 | | Clock | This machine's clock is over 60 s off Put.io's (warning), 300 s (problem) |

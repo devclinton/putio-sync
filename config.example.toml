@@ -344,6 +344,27 @@ run_at = "02:30"
 # enabled = false                       # keep it without running it
 
 # ============================================================================
+# Lua plugins (feature 028)
+# ============================================================================
+# Sandboxed Lua scripts run on the same events as hooks. ntfy, discord,
+# telegram and pushover are bundled; your own go in a folder each under
+# plugins_dir. Settings > Plugins edits these and approves hosts. PLUGINS.md
+# has the details.
+# A top-level key: set it above the first [section] of this file.
+# plugins_dir = "/config/plugins"       # Default: "plugins" next to this file
+# [[plugins]]
+# name = "ntfy"
+# enabled = true                        # Default: false
+# approved_hosts = ["ntfy.sh"]          # hosts it may call; Settings writes these
+# timeout_secs = 10                     # per call, 1 to 60. Default: 10
+# memory_mb = 32                        # 4 to 256. Default: 32
+# [plugins.config]
+# topic = "my-nas-8f3k"
+# group_minutes = 5                     # repeats within this time are summed up
+# [plugins.secrets]                     # masked in Settings and the export
+# token = "tk_..."
+
+# ============================================================================
 # Tailscale (feature 036)
 # ============================================================================
 # putio-sync reads Tailscale's state through tailscaled's local socket (or the

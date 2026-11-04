@@ -21,9 +21,16 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   or `require`; a failing or slow plugin never holds up a sync. They may only
   call the hosts they declare and you approve, and keep a small key-value
   store. Secrets are masked and never logged. `[[plugins]]` entries turn them
-  on and hold their settings. New event type `plugin.test` and metrics
-  `putio_sync_plugin_runs_total`, `putio_sync_plugin_run_duration_seconds` and
-  `putio_sync_plugin_events_dropped_total` (feature 028).
+  on and hold their settings. Bundled ntfy, Discord, Telegram and Pushover
+  notifiers (off until turned on) send the first event of a kind at once and
+  group later repeats into one summary. Settings › Plugins lists them with
+  their state and the hosts they contact, edits their settings, approves
+  hosts on save, sends a test event and reloads the folder without a restart
+  (`GET /plugins`, `POST /plugins/test`, `POST /plugins/reload`,
+  `/settings/plugins`). New event type `plugin.test`, a doctor check, Plugins,
+  and metrics `putio_sync_plugin_runs_total`,
+  `putio_sync_plugin_run_duration_seconds` and
+  `putio_sync_plugin_events_dropped_total`. See `PLUGINS.md` (feature 028).
 - Event hooks: `[[hooks]]` entries run a command or call a webhook when a
   download finishes or fails, a Put.io transfer is added, finishes or fails, a
   sync run ends, or Put.io storage runs low. The event goes as JSON (stdin for
