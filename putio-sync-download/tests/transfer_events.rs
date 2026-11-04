@@ -77,7 +77,11 @@ async fn transitions_emit_events_and_the_map_is_stored() {
     manager.transfers_snapshot(fresh).await.unwrap();
     assert!(drain(&mut rx).await.is_empty());
     assert_eq!(
-        db.flags().get_text(TRANSFER_EVENTS_SEEN).await.unwrap().as_deref(),
+        db.flags()
+            .get_text(TRANSFER_EVENTS_SEEN)
+            .await
+            .unwrap()
+            .as_deref(),
         Some(r#"{"880001":"a"}"#)
     );
     mock.remove_async().await;

@@ -148,6 +148,9 @@ pub async fn execute_server(
     .with_listen_flags(flags.then(|| entries.clone()));
     // Hooks run off the event bus from here on (feature 027)
     state.hooks.start();
+    // This mode has no daemon loops, so poll for `transfer.*` and `storage.low` here
+    // (feature 027, R6 and R7)
+    tokio::spawn(hook_events_ticker(state.clone()));
 
     // Every address through the supervisor: one that can't be had now is retried, and
     // nothing falls back to another address
@@ -569,6 +572,36 @@ fn spawn_download_daemon(
             }
         })
     })
+}
+
+/// Every 30 s, the shared transfer list (which sends `transfer.*`) while a hook wants a
+/// transfer event; every 15 minutes, Put.io storage (which sends `storage.low`)
+async fn hook_events_ticker(state: putio_sync_api::AppState) {
+    use putio_sync_core::events::EventType;
+    const TRANSFERS: Duration = Duration::from_secs(30);
+    const STORAGE: Duration = Duration::from_secs(15 * 60);
+    let mut ticker = tokio::time::interval(TRANSFERS);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut storage_at: Option<tokio::time::Instant> = None;
+    loop {
+        ticker.tick().await;
+        let transfers = [
+            EventType::TransferAdded,
+            EventType::TransferFinished,
+            EventType::TransferFailed,
+        ];
+        if transfers.into_iter().any(|t| state.hooks.wants(t)) {
+            if let Err(e) = state.download_manager.transfers_snapshot(TRANSFERS).await {
+                debug!("Could not list Put.io transfers: {}", e);
+            }
+        }
+        if storage_at.is_none_or(|at| at.elapsed() >= STORAGE) {
+            storage_at = Some(tokio::time::Instant::now());
+            if let Err(e) = state.storage.refresh().await {
+                debug!("Could not read Put.io storage: {}", e);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

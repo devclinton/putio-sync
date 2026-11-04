@@ -10,6 +10,7 @@ pub mod plan;
 use plan::{Candidate, Inputs};
 use putio_sync_client::{ClientError, PutioApiClient};
 use putio_sync_core::config::{Config, StorageConfig};
+use putio_sync_core::events::{self, Payload};
 use putio_sync_db::models::HistoryAction;
 use putio_sync_db::{Database, DbError, NewRunFile, StorageRun};
 use putio_sync_telemetry::{storage as metrics, SyncResult};
@@ -137,6 +138,9 @@ pub struct StorageService {
     config: RwLock<StorageConfig>,
     running: tokio::sync::Mutex<()>,
     latest: Mutex<Option<StoredPlan>>,
+    /// The last reading was low, so `storage.low` is not sent again until it recovers
+    /// (feature 027, R7)
+    low: std::sync::atomic::AtomicBool,
 }
 
 fn free_of(size: i64, used: i64) -> i64 {
@@ -168,6 +172,7 @@ impl StorageService {
             config: RwLock::new(config.storage.clone()),
             running: tokio::sync::Mutex::new(()),
             latest: Mutex::new(None),
+            low: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -188,10 +193,25 @@ impl StorageService {
         self.db.as_deref().ok_or(StorageError::NoDatabase)
     }
 
-    /// Account numbers only, setting the gauges; `(size, used)`
+    /// Account numbers only, setting the gauges; `(size, used)`. Sends `storage.low`
+    /// when free space first drops below `warn_free_percent`, and again only after a
+    /// reading above it.
     pub async fn refresh(&self) -> Result<(i64, i64), StorageError> {
         let disk = self.client.get_account_info().await?.disk;
         metrics::set_storage(disk.size, disk.used);
+        let warn = self.config().warn_free_percent;
+        let free = free_of(disk.size, disk.used);
+        let low = is_low(disk.size, free, warn);
+        let was_low = self.low.swap(low, std::sync::atomic::Ordering::SeqCst);
+        if low && !was_low {
+            events::emit(Payload::StorageLow(events::StorageLow {
+                total_bytes: disk.size,
+                used_bytes: disk.used,
+                free_bytes: free,
+                free_percent: (free as f64 * 1000.0 / disk.size as f64).round() / 10.0,
+                warn_free_percent: warn,
+            }));
+        }
         Ok((disk.size, disk.used))
     }
 

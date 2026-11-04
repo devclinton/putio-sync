@@ -457,3 +457,48 @@ fn low_is_strictly_below_the_level() {
     assert!(!is_low(100, 10, 10));
     assert!(!is_low(0, 0, 10));
 }
+
+#[tokio::test]
+async fn storage_low_is_sent_on_the_way_down_only() {
+    // A size no other test uses, since the event bus is shared
+    const SIZE: i64 = 777 * GB;
+    let mut rx = events::subscribe();
+    let mut w = World::new(Config::default()).await;
+    let warn = w.svc.config().warn_free_percent as i64;
+    let low_used = SIZE - SIZE * (warn - 1) / 100;
+    let lows = |rx: &mut tokio::sync::broadcast::Receiver<Arc<events::Event>>| {
+        let mut n = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let Payload::StorageLow(l) = &event.payload {
+                if l.total_bytes == SIZE {
+                    n.push(l.clone());
+                }
+            }
+        }
+        n
+    };
+
+    let m = w.account(SIZE, SIZE / 2).await;
+    w.svc.refresh().await.unwrap();
+    assert!(lows(&mut rx).is_empty(), "not low");
+    m.remove_async().await;
+
+    let m = w.account(SIZE, low_used).await;
+    w.svc.refresh().await.unwrap();
+    let sent = lows(&mut rx);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].used_bytes, low_used);
+    assert_eq!(sent[0].free_bytes, SIZE - low_used);
+    assert_eq!(sent[0].warn_free_percent as i64, warn);
+    assert!(sent[0].free_percent < warn as f64);
+    w.svc.refresh().await.unwrap();
+    assert!(lows(&mut rx).is_empty(), "still low sends nothing");
+    m.remove_async().await;
+
+    let m = w.account(SIZE, SIZE / 2).await;
+    w.svc.refresh().await.unwrap();
+    m.remove_async().await;
+    w.account(SIZE, low_used).await;
+    w.svc.refresh().await.unwrap();
+    assert_eq!(lows(&mut rx).len(), 1, "low again after recovering");
+}

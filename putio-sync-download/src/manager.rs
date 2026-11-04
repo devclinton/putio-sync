@@ -525,6 +525,8 @@ pub struct DownloadManager {
     sync_status: Arc<RwLock<SyncStatus>>,
     /// Wakes `run_sync_loop` for "sync now"
     sync_notify: Arc<Notify>,
+    /// Set by `request_sync`, so the next sync's `sync.completed` says `manual` (feature 027)
+    manual_sync: Arc<std::sync::atomic::AtomicBool>,
     /// Target paths a worker is writing (R7)
     paths_in_use: Arc<Mutex<HashSet<PathBuf>>>,
     /// Files whose checksum is being computed: bytes read and when it started
@@ -602,6 +604,7 @@ impl DownloadManager {
             decided: Arc::new(Mutex::new(HashSet::new())),
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
+            manual_sync: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stop_signals: Arc::new(Mutex::new(HashMap::new())),
             stopped_partial: Arc::new(Mutex::new(HashSet::new())),
             notes: Arc::new(Mutex::new(HashMap::new())),
@@ -635,6 +638,7 @@ impl DownloadManager {
             decided: Arc::new(Mutex::new(HashSet::new())),
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
+            manual_sync: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stop_signals: Arc::new(Mutex::new(HashMap::new())),
             stopped_partial: Arc::new(Mutex::new(HashSet::new())),
             notes: Arc::new(Mutex::new(HashMap::new())),
@@ -1516,6 +1520,10 @@ impl DownloadManager {
     /// Statistics about the sync operation
     pub async fn sync_downloads(&self) -> DownloadResult<SyncStats> {
         let started = Instant::now();
+        let started_at = chrono::Utc::now();
+        let manual = self
+            .manual_sync
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
         self.sync_status.write().await.begin();
         telemetry::sync::started();
         let result = self.sync_downloads_inner().await;
@@ -1540,6 +1548,18 @@ impl DownloadManager {
                 (SyncKind::Failed, stats.files_failed),
             ],
         );
+        events::emit(Payload::SyncCompleted(events::SyncCompleted {
+            trigger: if manual { "manual" } else { "schedule" }.to_string(),
+            result: if result.is_ok() { "success" } else { "failure" }.to_string(),
+            error: result.as_ref().err().map(|e| redact::text(&error_chain(e))),
+            started_at,
+            duration_seconds: started.elapsed().as_secs_f64(),
+            files_found: stats.total_files as u64,
+            files_queued: stats.files_downloaded as u64,
+            files_skipped: stats.files_skipped as u64,
+            files_blocked: stats.files_blocked as u64,
+            files_failed: stats.files_failed as u64,
+        }));
         result
     }
 
@@ -2193,6 +2213,8 @@ impl DownloadManager {
             status.begin();
             status.interval.is_some()
         };
+        self.manual_sync
+            .store(true, std::sync::atomic::Ordering::SeqCst);
 
         if has_loop {
             self.sync_notify.notify_one();
