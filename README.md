@@ -769,6 +769,10 @@ H = histogram.
 | `putio_sync_precheck_fallback_total` | counter | `result` | Magnets sent to Put.io unchecked, by how the check there went: `passed`, `rejected` |
 | `putio_sync_precheck_fallback_putio_bytes_total` | counter | — | Bytes Put.io fetched for unchecked magnets that were then rejected |
 | `putio_sync_release_flags_total` | counter | `kind` | Operator flags: `fake`, `not_fake` |
+| `putio_sync_events_total` | counter | `type` | Events put on the internal event bus |
+| `putio_sync_hook_runs_total` | counter | `hook`, `event`, `result` | Hook runs: `success`, `failure`, `timeout` |
+| `putio_sync_hook_run_duration_seconds` | H | `hook` | Duration of each hook run, retries included |
+| `putio_sync_hook_events_dropped_total` | counter | `hook` | Events dropped because the hook's queue was full |
 | `putio_sync_start_time_seconds` | gauge | — | Process start, Unix seconds |
 | `putio_sync_build_info` | gauge (=1) | `version`, `commit` | Build identity |
 | `putio_sync_process_cpu_seconds_total` | counter | — | CPU time used (user + system); `rate()` gives cores in use |
@@ -978,6 +982,7 @@ daemon's download manager and watcher:
 | Release check | — | everything |
 | Notifications | — | everything |
 | Network | — | everything (`api_bind`, `metrics_bind`); the UI asks first when the new list wouldn't reach the page you're on |
+| Event hooks | everything, at once | — |
 
 Under `server`, the logging rows are the same (when the config file existed at
 startup). Download changes reach only the API's own download manager, not the
@@ -1060,7 +1065,7 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `GET /tailscale` | What Tailscale says about this machine: `state` (`running`, `needs_login`, `stopped`, `starting`, `unreachable`, `not_found`), `via`, `version`, `dns_name`, `tailnet`, `magic_dns`, `addresses`, `https`, `userspace`, `owner_login`, `serve`; plus `urls` (the addresses that open putio-sync over the tailnet, HTTPS `serve` first), `hints`, `tailnet_bind` or `tailnet_bind_error`, `settings` and this request's `identity`. Never fails: a missing Tailscale is a state |
 | `GET /listen` | What this process listens on: `api` (`configured`, `effective`, `listening`, each entry with its `addresses` or why it is `waiting`, `port`, `tailnet_only`, `env_override`), `metrics` (the same, plus `enabled`), `engine` and `server_flags` (whether `server --bind/--port` replaced the list) |
 | `POST /settings/network/check` | The `network` PUT body → what each entry would listen on, `this_page` (`kept`, `cut_off` or `unknown`: whether the page you're on would still reach putio-sync), `listened_on`, `ui_at` and `warnings`; saves nothing |
-| `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck,tailscale,network}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
+| `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck,tailscale,network,hooks}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
 | `POST /settings/{group}/preview` | The group's PUT body → `{"valid", "error", "changes": [{"key", "before", "after", "live"}], "when", "risks"}`; writes nothing |
 | `GET /settings/assistant` | Per group: what each field affects, the fields that apply live, the defaults; and the risks of the running config |
 | `GET /settings/export` | The settings as a TOML file, without `[auth]`, `api.auth_token` and `[arr]` |
@@ -1074,6 +1079,9 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `GET /bandwidth` | The download limit in force: `limit`, `bytes_per_sec`, `source` (`default`, `schedule`, `pause`, `slow`), `entry`, `override`, `next_change`, `local_time`, `utc_offset`, `slow_limit_bytes_per_sec`. Also the `bandwidth` section of `GET /status` |
 | `PUT /bandwidth/override` | `{"mode": "pause" \| "slow", "minutes": 60}` (1 to 1440, default 60) → the `GET /bandwidth` body; 400 for anything else |
 | `DELETE /bandwidth/override` | Back to the schedule now; fine when nothing is in force |
+| `GET /hooks` | Each hook with its kind, cut-down target, events, timeout, waiting events and last 20 runs |
+| `POST /hooks/test` | `{"name": "..."}`: send a `hook.test` event to that hook and answer with the run; 404 for an unknown hook, 409 while a test of it runs |
+| `GET /events/schema` | The JSON Schema of the events (see [EVENTS.md](EVENTS.md)) |
 | `GET /doctor` | The latest doctor report; 404 before the first run |
 | `POST /doctor/run` | Run every check now and answer with the report (a run already going is joined, not repeated) |
 | `POST /doctor/fixes/{fix}/preview` | Check again and list the items the fix would act on; changes nothing |
@@ -1329,6 +1337,58 @@ blocklist it. A wrong rejection can be marked "Not fake" in History → Rejected
 be undone, but a blocklist already sent stays. Stats sums up the reports and downloads them
 as CSV or JSON, with file types, sizes and tracker hosts, to share without giving anything
 away. Checks and reports older than 400 days are deleted.
+
+## Event hooks
+
+A hook runs a command or calls a webhook when something happens: a download finishes or
+fails, a Put.io transfer is added, finishes or fails, a sync run ends, or Put.io storage
+runs low. Each event goes as JSON (on stdin for a command, as the body for a webhook),
+so a hook can be written in any language. Every type, field and example is in
+[EVENTS.md](EVENTS.md); the JSON Schema is at `GET /events/schema`.
+
+```toml
+[[hooks]]
+name = "on-download"                    # letters, digits, - and _; used in logs and metrics
+events = ["download.finished"]          # or "*" for every type
+command = ["/config/hooks/on-download.py", "--verbose"]   # absolute program and arguments
+env = { LIBRARY = "/data/media" }       # commands only
+timeout_secs = 30                       # 1 to 600, default 30
+
+[[hooks]]
+name = "home-assistant"
+events = ["download.finished", "storage.low"]
+url = "https://ha.local:8123/api/webhook/putio"   # http or https; gets a POST
+headers = { Authorization = "Bearer abc" }       # webhooks only
+timeout_secs = 10
+enabled = true                          # false keeps it without running it
+```
+
+[examples/hooks/on-download.py](examples/hooks/on-download.py) is a small command hook.
+Settings › Event hooks edits the same list and applies it at once; **Send test event**
+sends one `hook.test` event to a hook and shows how it went. Mistakes are refused with
+the hook and field named. Up to 32 hooks.
+
+- **Never holds up a sync.** Each hook has its own queue and runs one event at a time,
+  in order. A slow or failing hook only delays its own events; past 1 000 waiting, the
+  oldest are dropped and counted.
+- **Timeouts.** A command still running at `timeout_secs` is killed; a webhook attempt
+  is cut off.
+- **Retries.** A webhook that cannot be reached, times out, or answers 429 or 5xx is
+  tried again after 5 s and 30 s. A command is not retried.
+- **Output.** Each run is logged with its result, exit code or HTTP status, duration and
+  the first 4 KB of output. `GET /hooks` and the settings page show the last 20 runs per
+  hook.
+- **Commands** run as the daemon's user, with a clean environment: `PATH`, `HOME`,
+  `LANG`, `TZ`, the hook's `env`, and `PUTIO_SYNC_EVENT_TYPE`, `PUTIO_SYNC_EVENT_ID` and
+  `PUTIO_SYNC_HOOK_NAME`. The Put.io and API tokens never reach them.
+- **Secrets.** Header and env values are shown as `********` in the API, Settings and
+  the export; a webhook URL is shown cut down (`https://ha.local:8123/api/…`) there and
+  in every log line and error. Saving the masked value keeps the stored one. A hook's own
+  header, env and URL secrets are masked in its output too, in case the far end echoes
+  them. Put tokens in `headers` rather than the URL where the service allows it.
+
+The doctor's Event hooks check reports a command hook whose program is missing or not
+executable, and a hook whose last run failed in the last day.
 
 ## Advanced Features
 

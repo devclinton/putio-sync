@@ -68,3 +68,10 @@ parent_folder_id = 0
 # Post-processing options (choose one)
 delete_after_upload = true
 # archive_directory = "./processed"
+
+# Event hooks: run a command or call a webhook on events (see EVENTS.md)
+# [[hooks]]
+# name = "on-download"
+# events = ["download.finished"]
+# command = ["/config/hooks/on-download.py"]
+# timeout_secs = 30

@@ -33,6 +33,7 @@ timeout_secs = 10
 | header names valid tokens, at most 32 | `hooks "x".headers: "Bad Name" is not a valid header name` |
 | env names `[A-Za-z_][A-Za-z0-9_]*`, not `PUTIO_SYNC_EVENT_*`/`PUTIO_SYNC_HOOK_NAME` | `hooks "x".env: PUTIO_SYNC_EVENT_ID is set by putio-sync` |
 | a value of `********` in headers or env (unresolved mask) | `hooks "x".headers.Authorization: still masked; type the value again` |
+| a cut-down URL ending in `…` (unresolved mask) | `hooks "x".url: still shortened; type the full URL again` |
 
 ## Risks (assistant banner and doctor Config check; warnings)
 
