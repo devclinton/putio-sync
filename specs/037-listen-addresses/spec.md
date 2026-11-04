@@ -52,6 +52,8 @@ given."
   changed IP (DHCP, re-registered Tailscale node) needs no restart.
 - Q: What if an interface or Tailscale has no address at start? → A: that entry waits and
   keeps checking; other entries listen at once. Nothing ever falls back to all addresses.
+  Unlike 036, a tailnet entry no longer gives up after 5 minutes: it logs an error then and
+  keeps checking every 30 seconds.
 - Q: What does `server` listen on? → A: with no `--bind` and no `--port`, the configured
   `[api] bind` list (and tailnet-only). `--bind ADDR` replaces the list with that one
   address (any of the forms above; port from `--port`, else the first configured port).
@@ -166,7 +168,7 @@ Radarr/Sonarr setup uses P.
 
 1. **Given** `server --port P`, **Then** `/tailscale` and the Radarr/Sonarr client use port P.
 2. **Given** a list with two ports, **Then** the first entry's port is "the" port reported
-   and the card lists every address.
+   and the Network group lists every address listened on.
 3. **Given** the listener has not bound yet (waiting for an interface), **Then** the
    configured first port is reported.
 
@@ -250,8 +252,8 @@ on `127.0.0.1:P`.
   and port it arrived on) is still covered by the new API list, with the API addresses the
   UI would be at.
 - **FR-014**: A `network` save MUST be refused when no API entry gives an address now, and
-  its message MUST say a restart is needed. The UI MUST confirm before a save the preview
-  marks as cutting off the current page.
+  its message MUST say a restart is needed. The UI MUST confirm before a save the check
+  marks as cutting off the current page, or as unable to tell.
 - **FR-015**: The doctor MUST warn when identity sign-in is on and the API listens on
   loopback, saying only `tailscale serve` may reach putio-sync there; and when an
   interface or `tailnet` entry has no address.
