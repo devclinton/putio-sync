@@ -48,6 +48,8 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_pipeline_items",
     "putio_sync_pipeline_actions_total",
     "putio_sync_nas_downloads_paused",
+    "putio_sync_download_bandwidth_limit_bytes_per_second",
+    "putio_sync_download_bandwidth_override",
     "putio_sync_arr_rpc_requests_total",
     "putio_sync_arr_items",
     "putio_sync_arr_blocklist_total",
@@ -497,6 +499,29 @@ fn pipeline_metrics() {
 
     t.set_nas_downloads_paused(true);
     assert_eq!(t.sample("putio_sync_nas_downloads_paused", &[]), Some(1.0));
+}
+
+/// Feature 032: the limit starts unlimited (+Inf) and reads 0 while paused
+#[test]
+fn bandwidth_metrics() {
+    let t = Telemetry::new();
+    let limit = "putio_sync_download_bandwidth_limit_bytes_per_second";
+    assert_eq!(t.sample(limit, &[]), Some(f64::INFINITY));
+    assert_eq!(
+        t.sample("putio_sync_download_bandwidth_override", &[]),
+        Some(0.0)
+    );
+    t.set_bandwidth_limit(Some(5_242_880));
+    assert_eq!(t.sample(limit, &[]), Some(5_242_880.0));
+    t.set_bandwidth_limit(Some(0));
+    t.set_bandwidth_override(true);
+    assert_eq!(t.sample(limit, &[]), Some(0.0));
+    assert_eq!(
+        t.sample("putio_sync_download_bandwidth_override", &[]),
+        Some(1.0)
+    );
+    t.set_bandwidth_limit(None);
+    assert_eq!(t.sample(limit, &[]), Some(f64::INFINITY));
 }
 
 /// Feature 010: doctor series appear after the first run and hold the last result

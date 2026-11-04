@@ -10,6 +10,9 @@ use std::collections::HashMap;
 /// The daemon flag for the Pause NAS downloads switch (R11)
 pub const NAS_DOWNLOADS_PAUSED: &str = "nas_downloads_paused";
 
+/// The daemon flag holding a timed bandwidth pause or slow-down as JSON (feature 032)
+pub const BANDWIDTH_OVERRIDE: &str = "bandwidth_override";
+
 /// A transfer paused while still on Put.io
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hold {
@@ -93,17 +96,25 @@ impl<'a> FlagsRepository<'a> {
 
     /// A flag's value; a missing key means off
     pub async fn get_bool(&self, key: &str) -> DbResult<bool> {
-        let value: Option<String> =
-            sqlx::query_scalar("SELECT value FROM daemon_flags WHERE key = ?")
-                .bind(key)
-                .fetch_optional(self.pool)
-                .await
-                .map_err(tracked(DbOp::Other, "Failed to read daemon flag"))?;
-        Ok(value.as_deref() == Some("1"))
+        Ok(self.get_text(key).await?.as_deref() == Some("1"))
     }
 
     /// Set a flag, stored as "1" or "0"
     pub async fn set_bool(&self, key: &str, value: bool) -> DbResult<()> {
+        self.set_text(key, if value { "1" } else { "0" }).await
+    }
+
+    /// A flag's stored text, `None` when missing
+    pub async fn get_text(&self, key: &str) -> DbResult<Option<String>> {
+        sqlx::query_scalar("SELECT value FROM daemon_flags WHERE key = ?")
+            .bind(key)
+            .fetch_optional(self.pool)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to read daemon flag"))
+    }
+
+    /// Store a flag's text, replacing any value
+    pub async fn set_text(&self, key: &str, value: &str) -> DbResult<()> {
         sqlx::query(
             r#"
             INSERT INTO daemon_flags (key, value) VALUES (?, ?)
@@ -113,11 +124,21 @@ impl<'a> FlagsRepository<'a> {
             "#,
         )
         .bind(key)
-        .bind(if value { "1" } else { "0" })
+        .bind(value)
         .execute(self.pool)
         .await
         .map_err(tracked(DbOp::Other, "Failed to set daemon flag"))?;
         Ok(())
+    }
+
+    /// Delete a flag; true when it existed
+    pub async fn remove(&self, key: &str) -> DbResult<bool> {
+        let result = sqlx::query("DELETE FROM daemon_flags WHERE key = ?")
+            .bind(key)
+            .execute(self.pool)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to delete daemon flag"))?;
+        Ok(result.rows_affected() > 0)
     }
 }
 

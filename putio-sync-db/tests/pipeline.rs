@@ -1,7 +1,9 @@
 //! Holds, daemon flags, Recently finished and the pipeline file lookup (feature 039)
 
 use putio_sync_db::models::{DownloadSource, DownloadStatus, Origin, QueueStatus};
-use putio_sync_db::pipeline::{FileState, FinishedOutcome, FinishedRow, NAS_DOWNLOADS_PAUSED};
+use putio_sync_db::pipeline::{
+    FileState, FinishedOutcome, FinishedRow, BANDWIDTH_OVERRIDE, NAS_DOWNLOADS_PAUSED,
+};
 use putio_sync_db::Database;
 
 async fn db() -> (tempfile::TempDir, Database) {
@@ -74,6 +76,28 @@ async fn flags_default_off_and_persist() {
     assert_eq!(raw, "1");
     flags.set_bool(NAS_DOWNLOADS_PAUSED, false).await.unwrap();
     assert!(!flags.get_bool(NAS_DOWNLOADS_PAUSED).await.unwrap());
+}
+
+#[tokio::test]
+async fn text_flags_set_replace_and_remove() {
+    let (_dir, db) = db().await;
+    let flags = db.flags();
+    assert_eq!(flags.get_text(BANDWIDTH_OVERRIDE).await.unwrap(), None);
+    flags
+        .set_text(BANDWIDTH_OVERRIDE, "{\"a\":1}")
+        .await
+        .unwrap();
+    flags
+        .set_text(BANDWIDTH_OVERRIDE, "{\"a\":2}")
+        .await
+        .unwrap();
+    assert_eq!(
+        flags.get_text(BANDWIDTH_OVERRIDE).await.unwrap().as_deref(),
+        Some("{\"a\":2}")
+    );
+    assert!(flags.remove(BANDWIDTH_OVERRIDE).await.unwrap());
+    assert!(!flags.remove(BANDWIDTH_OVERRIDE).await.unwrap());
+    assert_eq!(flags.get_text(BANDWIDTH_OVERRIDE).await.unwrap(), None);
 }
 
 #[tokio::test]
