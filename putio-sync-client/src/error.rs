@@ -38,10 +38,18 @@ pub type ClientResult<T> = Result<T, ClientError>;
 /// The `ApiError` message for a 404 from Put.io
 pub(crate) const NOT_FOUND_MESSAGE: &str = "Resource not found.";
 
+/// The `ApiError` message for a 401 from Put.io
+pub(crate) const UNAUTHORIZED_MESSAGE: &str = "Authentication failed. Invalid or expired token.";
+
 impl ClientError {
     /// Put.io answered 404: the file, folder or transfer does not exist
     pub fn is_not_found(&self) -> bool {
         matches!(self, ClientError::ApiError(msg) if msg == NOT_FOUND_MESSAGE)
+    }
+
+    /// Put.io answered 401: the token is invalid, expired or revoked
+    pub fn is_unauthorized(&self) -> bool {
+        matches!(self, ClientError::ApiError(msg) if msg == UNAUTHORIZED_MESSAGE)
     }
 
     /// Create an AuthError with a helpful suggestion
@@ -88,6 +96,13 @@ mod tests {
     fn test_api_error() {
         let err = ClientError::ApiError("test error".to_string());
         assert_eq!(err.to_string(), "API error: test error");
+    }
+
+    #[test]
+    fn test_is_unauthorized() {
+        assert!(ClientError::ApiError(UNAUTHORIZED_MESSAGE.to_string()).is_unauthorized());
+        assert!(!ClientError::ApiError(NOT_FOUND_MESSAGE.to_string()).is_unauthorized());
+        assert!(!ClientError::AuthError(UNAUTHORIZED_MESSAGE.to_string()).is_unauthorized());
     }
 
     #[test]

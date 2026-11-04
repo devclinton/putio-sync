@@ -136,6 +136,9 @@ pub fn default_blocked_extensions() -> Vec<String> {
 pub struct Config {
     /// Authentication configuration
     pub auth: Option<AuthConfig>,
+    /// Put.io app settings (`[putio]`, feature 013)
+    #[serde(default, skip_serializing_if = "PutioConfig::is_empty")]
+    pub putio: PutioConfig,
     /// Sync configuration
     #[serde(default)]
     pub sync: SyncConfig,
@@ -612,6 +615,22 @@ pub enum AuthMethod {
     AppPassword,
 }
 
+/// `[putio]`: the Put.io app putio-sync identifies as
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+pub struct PutioConfig {
+    /// Public app ID for the device link (put.io/link). Overrides
+    /// `PUTIO_SYNC_APP_ID` and the built-in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+}
+
+impl PutioConfig {
+    /// Nothing set (the section is left out when saving)
+    pub fn is_empty(&self) -> bool {
+        self.app_id.is_none()
+    }
+}
+
 /// Authentication configuration
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AuthConfig {
@@ -776,6 +795,10 @@ pub struct DownloadConfig {
     /// A missing key uses the default list; `[]` disables the guard.
     #[serde(default = "default_blocked_extensions")]
     pub blocked_extensions: Vec<String>,
+    /// Account-wide preset (feature 013): the root filter instead of `blocked_extensions`.
+    /// Folder rules still override it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
     /// Per-folder rules (`[[download.rules]]`); folders below a rule inherit it
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rules: Vec<FolderRule>,
@@ -936,6 +959,7 @@ impl Default for DownloadConfig {
             retry_initial_delay_secs: 1,         // Start with 1 second delay
             delete_empty_folders: true,          // Delete empty folders by default
             blocked_extensions: default_blocked_extensions(),
+            preset: None,
             rules: Vec::new(),
             presets: BTreeMap::new(),
         }
@@ -1325,6 +1349,10 @@ impl Config {
         }
 
         crate::rules::validate(&self.download.rules, &self.download.presets)?;
+        crate::rules::validate_root_preset(
+            self.download.preset.as_deref(),
+            &self.download.presets,
+        )?;
         self.cleanup.validate()?;
         self.arr.validate()?;
         self.transfers.validate()?;
@@ -1572,6 +1600,7 @@ impl ConfigBuilder {
             transfers: TransfersConfig::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
+            putio: PutioConfig::default(),
             precheck: PrecheckConfig::default(),
         }
     }
@@ -2240,6 +2269,7 @@ mod tests {
                 retry_initial_delay_secs: 1,
                 delete_empty_folders: true,
                 blocked_extensions: default_blocked_extensions(),
+                preset: None,
                 rules: Vec::new(),
                 presets: BTreeMap::new(),
             },
@@ -2259,6 +2289,7 @@ mod tests {
             transfers: TransfersConfig::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
+            putio: PutioConfig::default(),
             precheck: PrecheckConfig::default(),
         }
     }
@@ -3339,6 +3370,32 @@ mod save_keeping_file_credentials_tests {
             .presets
             .insert("Bad".to_string(), Preset::default());
         assert!(config.validate().is_err());
+    }
+
+    /// `[putio] app_id` and `[download] preset` (feature 013)
+    #[test]
+    fn putio_app_id_and_root_preset() {
+        let mut config = Config::default();
+        config.putio.app_id = Some("1234".to_string());
+        config.download.preset = Some("video".to_string());
+        let text = toml::to_string_pretty(&config).unwrap();
+        assert!(text.contains("[putio]\napp_id = \"1234\""), "{text}");
+        let config: Config = toml::from_str(&text).unwrap();
+        assert_eq!(config.putio.app_id.as_deref(), Some("1234"));
+        assert_eq!(config.download.preset.as_deref(), Some("video"));
+        config.validate().unwrap();
+
+        let empty: Config = toml::from_str("").unwrap();
+        assert_eq!(empty.putio, PutioConfig::default());
+        assert_eq!(empty.download.preset, None);
+        let text = toml::to_string_pretty(&empty).unwrap();
+        assert!(!text.contains("[putio]"), "{text}");
+        assert!(!text.contains("preset"), "{text}");
+
+        let mut bad = Config::default();
+        bad.download.preset = Some("nope".to_string());
+        let err = bad.validate().unwrap_err().to_string();
+        assert!(err.contains("[download] preset"), "{err}");
     }
 
     /// A file without `[cleanup]` gains the section on save; comments elsewhere stay

@@ -14,6 +14,18 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- A first-run setup wizard. A daemon with no config, no Put.io token, a
+  rejected token or an unusable download folder no longer exits: it stays up
+  in setup mode, prints a one-time setup code to its console (`docker logs`,
+  `snap logs`), and the web UI walks through connecting Put.io (device link at
+  put.io/link, or paste a token), choosing and checking the download folder
+  (free space, writable), choosing what to download (a preset for the whole
+  account plus one per top-level folder), optional extras (watch folder,
+  Radarr/Sonarr, metrics) and a dry run of what would be downloaded. "Start
+  syncing" writes the config once, creates the API token and starts syncing
+  without a restart. `putio-sync setup` runs the same steps in a terminal,
+  with flags for headless installs. New settings: `[putio] app_id` and
+  `[download] preset` (feature 013).
 - The Put.io, Transfers and Local files pages can be filtered and sorted. The
   filter takes wildcards and AND, OR and NOT: `-*photoshop* *exe*` shows names
   containing "exe" but not "photoshop", `*.mkv OR *.mp4 -sample` shows mkv or

@@ -275,6 +275,19 @@ pub fn validate(rules: &[FolderRule], presets: &BTreeMap<String, Preset>) -> Cor
     Ok(())
 }
 
+/// Check the account-wide `[download] preset` names a built-in or `[download.presets]` entry
+pub fn validate_root_preset(
+    preset: Option<&str>,
+    presets: &BTreeMap<String, Preset>,
+) -> CoreResult<()> {
+    match preset {
+        Some(name) if builtin(name).is_none() && !presets.contains_key(name) => Err(invalid(
+            format!("[download] preset: unknown preset '{name}'"),
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// The rule names a user preset is used by
 pub fn rules_using<'a>(rules: &'a [FolderRule], preset: &str) -> Vec<&'a str> {
     rules
@@ -471,6 +484,7 @@ impl Decision {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleSet {
     blocked: Vec<String>,
+    root_preset: Option<String>,
     delete_after_download: bool,
     on_existing: ExistingFile,
     rules: HashMap<String, FolderRule>,
@@ -506,8 +520,13 @@ impl RuleSet {
                 ))
             })
             .collect();
+        let root_preset = config
+            .preset
+            .clone()
+            .filter(|name| presets.contains_key(name));
         Self {
             blocked: config.blocked_extensions.clone(),
+            root_preset,
             delete_after_download: config.delete_after_download,
             on_existing: config.on_existing(),
             rules,
@@ -515,19 +534,28 @@ impl RuleSet {
         }
     }
 
-    /// True when no folder rule exists
+    /// True when no folder rule and no account-wide preset exists
     pub fn is_empty(&self) -> bool {
-        self.rules.is_empty()
+        self.rules.is_empty() && self.root_preset.is_none()
+    }
+
+    /// The root filter: the account-wide `[download] preset` when set, else
+    /// `blocked_extensions`
+    fn root_filter(&self) -> TypeFilter {
+        match self.root_preset.as_ref().and_then(|n| self.presets.get(n)) {
+            Some(preset) => TypeFilter::from_preset(preset),
+            None => TypeFilter {
+                only: None,
+                blocked: ext_set(&self.blocked),
+            },
+        }
     }
 
     /// The settings in force in `folder_path` (relative to the Put.io root, `""` for it)
     pub fn resolve(&self, folder_path: &str) -> Effective {
         let mut effective = Effective {
-            filter: Sourced::global(TypeFilter {
-                only: None,
-                blocked: ext_set(&self.blocked),
-            }),
-            preset: Sourced::global(None),
+            filter: Sourced::global(self.root_filter()),
+            preset: Sourced::global(self.root_preset.clone()),
             skip: Sourced::global(false),
             delete_blocked: Sourced::global(false),
             delete_after_download: Sourced::global(self.delete_after_download),
@@ -859,5 +887,60 @@ mod tests {
         }
         assert_eq!(preset_label("no-binaries"), "No binaries");
         assert_eq!(preset_label("comics"), "comics");
+    }
+
+    fn with_root(preset: Option<&str>, rules: Vec<FolderRule>) -> RuleSet {
+        RuleSet::from_config(&DownloadConfig {
+            preset: preset.map(str::to_string),
+            ..config(rules)
+        })
+    }
+
+    #[test]
+    fn root_preset_filters_the_whole_account() {
+        let rules = with_root(Some("video"), vec![]);
+        assert!(!rules.is_empty());
+        assert!(downloads(&rules, "", "a.mkv"));
+        assert!(!downloads(&rules, "Music", "a.mp3"));
+        let effective = rules.resolve("Music");
+        assert_eq!(effective.preset.value.as_deref(), Some("video"));
+        assert_eq!(effective.preset.from, None);
+        assert_eq!(effective.filter.from, None);
+    }
+
+    #[test]
+    fn folder_rule_overrides_the_root_preset() {
+        let rules = with_root(Some("video"), vec![preset_rule("Music", "audio")]);
+        assert!(downloads(&rules, "Music/Album", "a.mp3"));
+        assert!(!downloads(&rules, "Movies", "a.mp3"));
+        let skip = FolderRule {
+            skip: Some(true),
+            ..rule("Junk")
+        };
+        let rules = with_root(Some("everything"), vec![skip]);
+        assert!(!downloads(&rules, "Junk", "a.mkv"));
+        assert!(downloads(&rules, "Other", "a.exe"));
+    }
+
+    #[test]
+    fn no_root_preset_keeps_blocked_extensions() {
+        let rules = with_root(None, vec![]);
+        assert!(rules.is_empty());
+        assert_eq!(rules, RuleSet::default());
+        assert!(!downloads(&rules, "", "setup.exe"));
+        assert!(downloads(&rules, "", "a.mp3"));
+        // An unknown name (refused by validation) falls back to the same
+        assert_eq!(with_root(Some("nope"), vec![]), RuleSet::default());
+    }
+
+    #[test]
+    fn root_preset_must_exist() {
+        let none = BTreeMap::new();
+        assert!(validate_root_preset(None, &none).is_ok());
+        assert!(validate_root_preset(Some("no-binaries"), &none).is_ok());
+        let err = validate_root_preset(Some("comics"), &none).unwrap_err();
+        assert!(err.to_string().contains("unknown preset 'comics'"), "{err}");
+        let user = BTreeMap::from([("comics".to_string(), Preset::default())]);
+        assert!(validate_root_preset(Some("comics"), &user).is_ok());
     }
 }
