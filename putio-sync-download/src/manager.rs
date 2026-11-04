@@ -9,6 +9,7 @@ use crate::progress::{DownloadProgress, OverallProgress, ProgressCallback, Progr
 use crate::rate_limiter::RateLimiter;
 use crate::stream::{finish_download, stream_to_temp, StopSignal};
 use crate::sync_status::{SyncOutcome, SyncRequestError, SyncStatus};
+use crate::transfer_events::{self, TransferChange, TransferClass, TransferEvents};
 use crate::utils::retry_with_stall_detection;
 use putio_sync_client::models::Transfer;
 use putio_sync_client::{error_chain, FileEntry, PutioApiClient};
@@ -21,6 +22,7 @@ use putio_sync_core::redact;
 use putio_sync_core::rules::{extension, Decision, Effective, RuleSet};
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::models::{DownloadSource, DownloadStatus, Origin, QueueStatus, SourceType};
+use putio_sync_db::pipeline::TRANSFER_EVENTS_SEEN;
 use putio_sync_db::Database;
 use putio_sync_telemetry::{self as telemetry, RuleDecision, SyncKind, SyncResult};
 use std::collections::{HashMap, HashSet};
@@ -536,6 +538,9 @@ pub struct DownloadManager {
     /// The last Put.io transfer list, shared by the Active page, Status and the daemon
     /// loop (feature 039, R3). The async lock makes concurrent callers share one fetch.
     transfers_cache: Arc<tokio::sync::Mutex<Option<CachedTransfers>>>,
+    /// The transfer classes behind `transfer.*` events; `None` until read from the
+    /// database (feature 027)
+    transfer_events: Arc<tokio::sync::Mutex<Option<TransferEvents>>>,
     /// The one bandwidth limiter every download shares (feature 032)
     bandwidth: RateLimiter,
 }
@@ -601,6 +606,7 @@ impl DownloadManager {
             stopped_partial: Arc::new(Mutex::new(HashSet::new())),
             notes: Arc::new(Mutex::new(HashMap::new())),
             transfers_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            transfer_events: Arc::new(tokio::sync::Mutex::new(None)),
             paths_in_use: Arc::new(Mutex::new(HashSet::new())),
             checking: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -633,6 +639,7 @@ impl DownloadManager {
             stopped_partial: Arc::new(Mutex::new(HashSet::new())),
             notes: Arc::new(Mutex::new(HashMap::new())),
             transfers_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            transfer_events: Arc::new(tokio::sync::Mutex::new(None)),
             paths_in_use: Arc::new(Mutex::new(HashSet::new())),
             checking: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -2580,14 +2587,19 @@ impl DownloadManager {
             }
         }
         match self.client.list_transfers().await {
-            Ok(response) => Ok(cache
-                .insert(CachedTransfers {
-                    attempted: Instant::now(),
-                    fetched_at: SystemTime::now(),
-                    transfers: Arc::new(response.transfers),
-                    stale: false,
-                })
-                .snapshot()),
+            Ok(response) => {
+                let snapshot = cache
+                    .insert(CachedTransfers {
+                        attempted: Instant::now(),
+                        fetched_at: SystemTime::now(),
+                        transfers: Arc::new(response.transfers),
+                        stale: false,
+                    })
+                    .snapshot();
+                drop(cache);
+                self.track_transfers(&snapshot.transfers).await;
+                Ok(snapshot)
+            }
             Err(e) => match cache.as_mut() {
                 Some(cached) => {
                     warn!(error = %error_chain(&e), "Failed to list transfers; using the last list");
@@ -2597,6 +2609,70 @@ impl DownloadManager {
                 }
                 None => Err(e.into()),
             },
+        }
+    }
+
+    /// Compare a fresh transfer list with the last one and emit the `transfer.*` events
+    /// due (feature 027, R6). A database error is logged and sends nothing.
+    async fn track_transfers(&self, transfers: &[Transfer]) {
+        let Some(db) = self.database.as_ref() else {
+            return;
+        };
+        let mut guard = self.transfer_events.lock().await;
+        if guard.is_none() {
+            match db.flags().get_text(TRANSFER_EVENTS_SEEN).await {
+                Ok(stored) => *guard = Some(TransferEvents::from_stored(stored.as_deref())),
+                Err(e) => {
+                    warn!(error = %e, "Failed to read the transfers seen for events");
+                    return;
+                }
+            }
+        }
+        let Some(tracker) = guard.as_mut() else {
+            return;
+        };
+        let list: Vec<_> = transfers
+            .iter()
+            .map(|t| (t.id, TransferClass::of(&t.status)))
+            .collect();
+        let (changes, changed) = tracker.observe(&list);
+        if changed {
+            if let Err(e) = db
+                .flags()
+                .set_text(TRANSFER_EVENTS_SEEN, &tracker.to_stored())
+                .await
+            {
+                warn!(error = %e, "Failed to store the transfers seen for events");
+            }
+        }
+        if changes.is_empty() {
+            return;
+        }
+        let mut ids: Vec<i64> = changes.iter().map(|(id, _)| *id).collect();
+        ids.dedup();
+        let labels = db.transfer_origins(&ids).await.unwrap_or_else(|e| {
+            warn!(error = %e, "Failed to read transfer origins for events");
+            HashMap::new()
+        });
+        let by_id: HashMap<i64, &Transfer> = transfers.iter().map(|t| (t.id, t)).collect();
+        for (id, change) in changes {
+            let Some(t) = by_id.get(&id) else {
+                continue;
+            };
+            let data = events::TransferChanged {
+                transfer_id: id,
+                name: t.name.clone(),
+                origin: transfer_events::origin(labels.get(&id).map(String::as_str)),
+                status: t.status.clone(),
+                size_bytes: t.size,
+                file_id: t.file_id,
+                error: t.error_message.clone().filter(|e| !e.is_empty()),
+            };
+            events::emit(match change {
+                TransferChange::Added => Payload::TransferAdded(data),
+                TransferChange::Finished => Payload::TransferFinished(data),
+                TransferChange::Failed => Payload::TransferFailed(data),
+            });
         }
     }
 

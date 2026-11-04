@@ -134,7 +134,7 @@ already finished or failed when it is first seen sends `transfer.added` and then
 |-------|------|-------|
 | `transfer_id` | integer | the Put.io transfer id |
 | `name` | string | |
-| `origin` | string | who added it: `radarr`, `sonarr`, `watch`, `manual` or `putio` (outside putio-sync) |
+| `origin` | string | who added it: `radarr` or `sonarr` (a Radarr or Sonarr category that names the app), `arr` (another Radarr or Sonarr category), `watch`, `manual` or `putio` (outside putio-sync) |
 | `status` | string | the Put.io status, such as `IN_QUEUE` or `DOWNLOADING` |
 | `size_bytes` | integer or null | |
 | `file_id` | integer or null | the Put.io file or folder it made, once known |

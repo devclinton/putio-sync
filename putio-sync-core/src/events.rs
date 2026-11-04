@@ -302,7 +302,7 @@ pub struct TransferChanged {
     pub transfer_id: i64,
     /// Transfer name
     pub name: String,
-    /// `radarr`, `sonarr`, `watch`, `manual` or `putio`
+    /// `radarr`, `sonarr`, `arr`, `watch`, `manual` or `putio`
     pub origin: String,
     /// Put.io status, such as `DOWNLOADING`
     pub status: String,

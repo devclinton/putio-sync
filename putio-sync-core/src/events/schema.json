@@ -77,7 +77,7 @@
       "properties": {
         "transfer_id": { "type": "integer" },
         "name": { "type": "string" },
-        "origin": { "enum": ["radarr", "sonarr", "watch", "manual", "putio"] },
+        "origin": { "enum": ["radarr", "sonarr", "arr", "watch", "manual", "putio"] },
         "status": { "type": "string", "description": "Put.io status, such as DOWNLOADING or COMPLETED." },
         "size_bytes": { "type": ["integer", "null"] },
         "file_id": { "type": ["integer", "null"], "description": "The Put.io file or folder the transfer made." },

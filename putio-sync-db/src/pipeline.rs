@@ -13,6 +13,10 @@ pub const NAS_DOWNLOADS_PAUSED: &str = "nas_downloads_paused";
 /// The daemon flag holding a timed bandwidth pause or slow-down as JSON (feature 032)
 pub const BANDWIDTH_OVERRIDE: &str = "bandwidth_override";
 
+/// The daemon flag holding the class of each transfer in the last list, for `transfer.*`
+/// events (feature 027)
+pub const TRANSFER_EVENTS_SEEN: &str = "transfer_events_seen";
+
 /// A transfer paused while still on Put.io
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hold {
