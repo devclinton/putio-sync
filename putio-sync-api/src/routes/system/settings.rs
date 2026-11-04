@@ -15,6 +15,9 @@
 //! - PUT  /settings/tailscale - Update the Tailscale settings
 //! - GET  /settings/hooks - Get the event hooks, header and env values masked (feature 027)
 //! - PUT  /settings/hooks - Replace the event hooks; a masked value keeps the stored one
+//! - GET  /settings/plugins - Get the plugins folder and plugin settings, secrets masked
+//!   (feature 028)
+//! - PUT  /settings/plugins - Replace them; checked against the manifests, applied now
 //! - GET/PUT /settings/network - The listen addresses (feature 037, in `network.rs`)
 //! - POST /settings/{group}/preview - What a PUT of that body would do, without saving
 //!   (feature 015; the assistant, export and import routes are in `assistant.rs`)
@@ -187,6 +190,11 @@ pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
             "hooks",
             json(serde_json::to_value(hooks_view(&defaults))),
             live_hooks(),
+        ),
+        group(
+            "plugins",
+            json(serde_json::to_value(plugins_view(&defaults))),
+            live_plugins(),
         ),
         group(
             "network",
@@ -424,6 +432,16 @@ pub struct HooksSettings {
     pub hooks: Vec<putio_sync_core::hooks::HookConfig>,
 }
 
+/// Lua plugins (`plugins_dir` and `[[plugins]]`, feature 028). The view masks every
+/// secret value with `"********"`; a PUT sending it keeps the stored value.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct PluginsSettings {
+    #[serde(default)]
+    pub plugins_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub plugins: Vec<putio_sync_core::plugins::PluginSettings>,
+}
+
 /// Tailscale sign-in and listening (`[tailscale]`, feature 036)
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -548,6 +566,8 @@ pub fn router() -> Router<AppState> {
         .route("/tailscale", put(update_tailscale_settings))
         .route("/hooks", get(get_hooks_settings))
         .route("/hooks", put(update_hooks_settings))
+        .route("/plugins", get(get_plugins_settings))
+        .route("/plugins", put(update_plugins_settings))
         .route("/download/preview", post(preview_download))
         .route("/watcher/preview", post(preview_watcher))
         .route("/logging/preview", post(preview_logging))
@@ -557,6 +577,7 @@ pub fn router() -> Router<AppState> {
         .route("/precheck/preview", post(preview_precheck))
         .route("/tailscale/preview", post(preview_tailscale))
         .route("/hooks/preview", post(preview_hooks))
+        .route("/plugins/preview", post(preview_plugins))
         .merge(super::network::settings_router())
         .merge(assistant::router())
 }
@@ -635,6 +656,16 @@ async fn preview_hooks(
         apply_hooks(settings, c)
     })
     .await)
+}
+
+/// POST /settings/plugins/preview
+async fn preview_plugins(
+    State(state): State<AppState>,
+    settings: Result<Json<PluginsSettings>, JsonRejection>,
+) -> Result<Json<Preview>, ApiError> {
+    let settings = body(settings)?;
+    let apply = apply_plugins(&state, settings);
+    Ok(preview(&state, plugins_view, live_plugins(), apply).await)
 }
 
 /// POST /settings/tailscale/preview
@@ -1218,6 +1249,81 @@ pub(crate) fn live_hooks() -> (&'static [&'static str], &'static str) {
 fn hooks_view(config: &Config) -> HooksSettings {
     HooksSettings {
         hooks: putio_sync_core::hooks::mask(&config.hooks),
+    }
+}
+
+/// Get the plugins folder and plugin settings
+///
+/// GET /settings/plugins
+async fn get_plugins_settings(State(state): State<AppState>) -> Json<PluginsSettings> {
+    Json(plugins_view(&*state.config.read().await))
+}
+
+/// Replace the plugins folder and plugin settings
+///
+/// PUT /settings/plugins. Applies now: running plugins take the new settings, and a
+/// changed folder is read again.
+async fn update_plugins_settings(
+    State(state): State<AppState>,
+    settings: Result<Json<PluginsSettings>, JsonRejection>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let settings = body(settings)?;
+    let before = state.config.read().await.plugins.clone();
+    let apply = apply_plugins(&state, settings);
+    let mut changed = update(&state, plugins_view, apply).await?;
+    let config = state.config.read().await.clone();
+    // The view masks secrets, so a changed secret alone shows no change there
+    if !changed.iter().any(|c| c == "plugins") && config.plugins != before {
+        changed.push("plugins".to_string());
+    }
+    state.plugins.configure(config.plugins.clone());
+    let dir = plugins_dir(&state, &config);
+    if dir != state.plugins.dir() {
+        state.plugins.set_dir(dir);
+    }
+    let (live, when) = live_plugins();
+    Ok(Json(SuccessResponse {
+        message: saved_message("Plugins", &changed, live, when, &[]),
+    }))
+}
+
+/// The folder a config's plugins come from
+fn plugins_dir(state: &AppState, config: &Config) -> Option<PathBuf> {
+    putio_sync_core::plugins::dir_for(
+        config.plugins_dir.as_deref(),
+        state.config_path.as_deref().map(PathBuf::as_path),
+    )
+}
+
+/// Apply a plugins body (shared by PUT and preview): masked secrets come back from the
+/// stored plugin of the same name, values are checked against the manifests in the
+/// folder being saved, and each enabled plugin's approved hosts become the hosts it needs
+fn apply_plugins(
+    state: &AppState,
+    settings: PluginsSettings,
+) -> impl FnOnce(&mut Config) -> Result<(), ApiError> + '_ {
+    move |config| {
+        let plugins = putio_sync_core::plugins::unmask(&settings.plugins, &config.plugins)
+            .map_err(invalid)?;
+        config.plugins_dir = settings.plugins_dir;
+        let dir = plugins_dir(state, config);
+        config.plugins = state
+            .plugins
+            .check_at(dir.as_deref(), &plugins)
+            .map_err(ApiError::BadRequest)?;
+        Ok(())
+    }
+}
+
+/// Plugins apply without a restart under both engines
+pub(crate) fn live_plugins() -> (&'static [&'static str], &'static str) {
+    (&["plugins_dir", "plugins"], "Applies now")
+}
+
+fn plugins_view(config: &Config) -> PluginsSettings {
+    PluginsSettings {
+        plugins_dir: config.plugins_dir.clone(),
+        plugins: putio_sync_core::plugins::mask(&config.plugins),
     }
 }
 

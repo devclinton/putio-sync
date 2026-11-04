@@ -20,6 +20,7 @@ const GROUPS: &[&str] = &[
     "tailscale",
     "network",
     "hooks",
+    "plugins",
 ];
 
 async fn get_ok(app: &TestApp, path: &str) -> Value {
@@ -437,4 +438,50 @@ async fn import_with_a_bad_pattern_is_refused() {
         "{error}"
     );
     assert_eq!(config_text(&app), before_file);
+}
+
+#[tokio::test]
+async fn plugin_secrets_are_masked_in_export_and_kept_on_import() {
+    let app = test_app().await;
+    let body = json!({ "plugins_dir": null, "plugins": [{
+        "name": "ntfy", "enabled": true,
+        "config": { "topic": "nas" },
+        "secrets": { "token": "plugin-export-secret" }
+    }]});
+    let response = app
+        .req(
+            Method::PUT,
+            "/settings/plugins",
+            Some(&app.token),
+            Some(body),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let exported = body_text(app.get("/settings/export").await).await;
+    assert!(!exported.contains("plugin-export-secret"), "{exported}");
+    assert!(exported.contains("[[plugins]]"), "{exported}");
+    assert!(exported.contains("\"********\""), "{exported}");
+
+    let edited = exported.replace("topic = \"nas\"", "topic = \"other\"");
+    let (status, applied) = post(
+        &app,
+        "/settings/import",
+        json!({"toml": edited, "apply": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(applied["message"], "Imported 1 change.");
+    assert!(!applied.to_string().contains("plugin-export-secret"));
+    let plugins = saved(&app).plugins;
+    assert_eq!(plugins[0].config["topic"], "other");
+    assert_eq!(plugins[0].secrets["token"], "plugin-export-secret");
+    let ntfy = app
+        .state
+        .plugins
+        .status()
+        .into_iter()
+        .find(|p| p.name == "ntfy")
+        .unwrap();
+    assert_eq!(ntfy.state, putio_sync_plugins::PluginState::Enabled);
 }

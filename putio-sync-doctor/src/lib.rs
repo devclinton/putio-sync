@@ -50,6 +50,8 @@ pub struct Doctor {
     tailscale: Option<Arc<putio_sync_tailscale::TailscaleService>>,
     /// The hooks service (feature 027), for each hook's last run
     hooks: Option<Arc<putio_sync_hooks::HooksService>>,
+    /// The plugins service (feature 028), for each plugin's state and last runs
+    plugins: Option<Arc<putio_sync_plugins::PluginsService>>,
 }
 
 impl Doctor {
@@ -72,6 +74,7 @@ impl Doctor {
             metrics: false,
             tailscale: None,
             hooks: None,
+            plugins: None,
         }
     }
 
@@ -87,6 +90,12 @@ impl Doctor {
     /// Report the last runs of these hooks (feature 027)
     pub fn with_hooks(mut self, hooks: Arc<putio_sync_hooks::HooksService>) -> Self {
         self.hooks = Some(hooks);
+        self
+    }
+
+    /// Report the state and last runs of these plugins (feature 028)
+    pub fn with_plugins(mut self, plugins: Arc<putio_sync_plugins::PluginsService>) -> Self {
+        self.plugins = Some(plugins);
         self
     }
 
@@ -138,6 +147,7 @@ impl Doctor {
         );
         ctx.tailscale = self.tailscale.clone();
         ctx.hooks = self.hooks.clone();
+        ctx.plugins = self.plugins.clone();
         ctx
     }
 

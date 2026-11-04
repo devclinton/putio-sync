@@ -25,6 +25,7 @@ pub mod gauges;
 pub mod hooks;
 pub mod labels;
 pub mod pipeline;
+pub mod plugins;
 pub mod precheck;
 pub mod process;
 pub mod server;
@@ -42,6 +43,8 @@ const DOWNLOAD_BUCKETS: &[f64] = &[1.0, 5.0, 15.0, 60.0, 300.0, 900.0, 1800.0, 3
 const LOOKUP_BUCKETS: &[f64] = &[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0];
 /// How long a magnet was held (043)
 const HOLD_BUCKETS: &[f64] = &[30.0, 60.0, 120.0, 180.0, 300.0, 600.0];
+/// Plugin call time (028)
+const PLUGIN_BUCKETS: &[f64] = &[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0];
 /// Hook run time (027)
 const HOOK_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 600.0];
 const SYNC_BUCKETS: &[f64] = &[1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0];
@@ -133,6 +136,10 @@ pub struct Telemetry {
     pub(crate) hook_runs: IntCounterVec,
     pub(crate) hook_duration: HistogramVec,
     pub(crate) hook_dropped: IntCounterVec,
+    // Feature 028
+    pub(crate) plugin_runs: IntCounterVec,
+    pub(crate) plugin_duration: HistogramVec,
+    pub(crate) plugin_dropped: IntCounterVec,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -594,6 +601,31 @@ impl Telemetry {
                 &["hook"],
             )
             .unwrap(),
+            plugin_runs: IntCounterVec::new(
+                opts(
+                    "plugin_runs_total",
+                    "Finished plugin calls, by plugin, event type (or tick, init) and result.",
+                ),
+                &["plugin", "event", "result"],
+            )
+            .unwrap(),
+            plugin_duration: HistogramVec::new(
+                hopts(
+                    "plugin_run_duration_seconds",
+                    "How long plugin calls took.",
+                    PLUGIN_BUCKETS,
+                ),
+                &["plugin"],
+            )
+            .unwrap(),
+            plugin_dropped: IntCounterVec::new(
+                opts(
+                    "plugin_events_dropped_total",
+                    "Events a plugin never ran for because its queue was full.",
+                ),
+                &["plugin"],
+            )
+            .unwrap(),
 
             db_errors: IntCounterVec::new(
                 opts("db_errors_total", "Database errors."),
@@ -698,6 +730,9 @@ impl Telemetry {
             Box::new(self.hook_runs.clone()),
             Box::new(self.hook_duration.clone()),
             Box::new(self.hook_dropped.clone()),
+            Box::new(self.plugin_runs.clone()),
+            Box::new(self.plugin_duration.clone()),
+            Box::new(self.plugin_dropped.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
             Box::new(self.disk_total.clone()),

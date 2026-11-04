@@ -430,22 +430,23 @@ fn flatten(table: &toml::Table) -> BTreeMap<String, toml::Value> {
 
 const EXPORT_HEADER: &str = "# putio-sync settings export\n\
 # Credentials ([auth], api.auth_token) and the Radarr/Sonarr section ([arr]) are left out.\n\
-# Hook header and env values read \"********\"; an import keeps the stored ones.\n\
+# Hook header and env values and plugin secrets read \"********\"; an import keeps the stored ones.\n\
 # Import it from Settings > Backup and restore.\n\n";
 
-/// `config` with every hook header and env value replaced by
-/// [`MASK`](crate::hooks::MASK) (feature 027)
+/// `config` with every hook header and env value (feature 027) and plugin secret
+/// (feature 028) replaced by [`MASK`](crate::hooks::MASK)
 fn masked(config: &Config) -> std::borrow::Cow<'_, Config> {
-    if config.hooks.is_empty() {
+    if config.hooks.is_empty() && config.plugins.is_empty() {
         return std::borrow::Cow::Borrowed(config);
     }
     let mut config = config.clone();
     config.hooks = crate::hooks::mask(&config.hooks);
+    config.plugins = crate::plugins::mask(&config.plugins);
     std::borrow::Cow::Owned(config)
 }
 
 /// The settings as TOML, without `[auth]`, `api.auth_token` and `[arr]`, and with hook
-/// header and env values masked
+/// header and env values and plugin secrets masked
 pub fn export_toml(config: &Config) -> CoreResult<String> {
     let body = toml::to_string_pretty(&settings_table(&masked(config))?)
         .map_err(|e| CoreError::ConfigError(format!("Failed to serialize config: {e}")))?;
@@ -508,6 +509,7 @@ pub fn import(current: &Config, text: &str) -> CoreResult<Import> {
     // An exported file's masked hook values are the stored ones; a mask for a hook or
     // key this config lacks is refused
     config.hooks = crate::hooks::unmask(&config.hooks, &current.hooks)?;
+    config.plugins = crate::plugins::unmask(&config.plugins, &current.plugins)?;
     config.expand_paths()?;
     Ok(Import {
         config,

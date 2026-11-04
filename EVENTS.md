@@ -304,3 +304,28 @@ it. Nothing else receives it.
   }
 }
 ```
+
+### `plugin.test`
+
+Sent only to one plugin, by the **Send test event** button in Settings › Plugins or
+`POST /plugins/test`. A plugin gets it whatever its `events` say, and `"*"` does not
+include it. Nothing else receives it, hooks included.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `plugin` | string | the plugin's name |
+| `message` | string | |
+
+```json
+{
+  "schema_version": 1,
+  "id": "0c3e7a51-6b2f-4f0e-9a1d-2b7c8d9e0f12",
+  "type": "plugin.test",
+  "occurred_at": "2026-11-04T09:30:00.000Z",
+  "source": { "app": "putio-sync", "version": "0.1.1", "host": "nas01" },
+  "data": {
+    "plugin": "ntfy",
+    "message": "Test event from putio-sync"
+  }
+}
+```

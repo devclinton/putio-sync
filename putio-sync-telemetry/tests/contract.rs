@@ -68,6 +68,9 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_hook_runs_total",
     "putio_sync_hook_run_duration_seconds",
     "putio_sync_hook_events_dropped_total",
+    "putio_sync_plugin_runs_total",
+    "putio_sync_plugin_run_duration_seconds",
+    "putio_sync_plugin_events_dropped_total",
     "putio_sync_db_errors_total",
     "putio_sync_disk_free_bytes",
     "putio_sync_disk_total_bytes",
@@ -201,6 +204,15 @@ fn record_everything(t: &Telemetry) {
     t.hook_configured("test-hook");
     t.hook_run("test-hook", "hook.test", "timeout", Duration::from_secs(30));
     t.hook_dropped("test-hook", 1);
+    t.plugin_configured("test-plugin");
+    t.plugin_run(
+        "test-plugin",
+        "plugin.test",
+        "success",
+        Duration::from_millis(5),
+    );
+    t.plugin_run("test-plugin", "tick", "timeout", Duration::from_secs(10));
+    t.plugin_dropped("test-plugin", 1);
     t.db_error(DbOp::Queue);
     t.set_queue_counts(&[(QueueState::Pending, 2)]);
     let dir = tempfile::tempdir().unwrap();
@@ -249,9 +261,16 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v.extend(putio_sync_telemetry::hooks::RESULTS);
             v
         }
-        "type" | "event" => putio_sync_telemetry::hooks::EVENT_TYPES.to_vec(),
+        "type" => putio_sync_telemetry::hooks::EVENT_TYPES.to_vec(),
+        "event" => {
+            let mut v = putio_sync_telemetry::hooks::EVENT_TYPES.to_vec();
+            v.extend(putio_sync_telemetry::plugins::RUN_KINDS);
+            v
+        }
         // Hook names from the config
         "hook" => vec!["test-hook"],
+        // Plugin names from the manifests
+        "plugin" => vec!["test-plugin"],
         "via" => putio_sync_telemetry::tailscale::VIAS.to_vec(),
         "kind" => {
             let mut v = strs(SyncKind::ALL, SyncKind::as_str);

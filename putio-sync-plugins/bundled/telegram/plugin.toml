@@ -1,0 +1,43 @@
+name = "telegram"
+version = "1.0.0"
+description = "Messages from a Telegram bot. Repeats of one kind are grouped into a summary."
+events = ["*"]
+
+[permissions.http]
+host_from_config = ["api_url"]
+
+[[config]]
+key = "bot_token"
+type = "string"
+label = "Bot token"
+help = "From @BotFather"
+required = true
+secret = true
+
+[[config]]
+key = "chat_id"
+type = "string"
+label = "Chat ID"
+help = "The chat, group or channel to send to"
+required = true
+
+[[config]]
+key = "api_url"
+type = "url"
+label = "Bot API server"
+default = "https://api.telegram.org"
+required = true
+
+[[config]]
+key = "notify"
+type = "string_list"
+label = "Events"
+help = "Event types to send"
+default = ["download.finished", "download.failed", "transfer.failed", "sync.completed", "storage.low"]
+
+[[config]]
+key = "group_minutes"
+type = "integer"
+label = "Group repeats for (minutes)"
+help = "Later events of the same kind within this time are sent as one summary; 0 sends each"
+default = 5

@@ -21,7 +21,7 @@ pub const MAX_HOOKS: usize = 32;
 pub const MAX_HEADERS: usize = 32;
 /// Longest run, in seconds
 pub const MAX_TIMEOUT_SECS: u64 = 600;
-/// Matches every event type except `hook.test`
+/// Matches every event type except `hook.test` and `plugin.test`
 pub const ALL_EVENTS: &str = "*";
 
 /// Env names putio-sync sets for every command
@@ -116,10 +116,10 @@ impl HookConfig {
         }
     }
 
-    /// Whether the hook runs for `event_type`. `*` matches all but `hook.test`, which
-    /// only the test button sends.
+    /// Whether the hook runs for `event_type`. `*` matches all but `hook.test` and
+    /// `plugin.test`, which only the test buttons send.
     pub fn matches(&self, event_type: EventType) -> bool {
-        if event_type == EventType::HookTest {
+        if event_type.is_test() {
             return false;
         }
         self.events
@@ -192,10 +192,10 @@ impl HookConfig {
             }
             match event.parse::<EventType>() {
                 Err(e) => return bad(format!("{}.events: {}", hook, e)),
-                Ok(EventType::HookTest) => {
+                Ok(t) if t.is_test() => {
                     return bad(format!(
-                        "{}.events: hook.test is only sent by the test button",
-                        hook
+                        "{}.events: {} is only sent by the test button",
+                        hook, t
                     ))
                 }
                 Ok(_) => {}
@@ -443,7 +443,9 @@ mod tests {
         h.events = vec!["download.done".to_string()];
         assert!(err(h.clone()).contains("unknown event \"download.done\""));
         h.events = vec!["hook.test".to_string()];
-        assert!(err(h).contains("only sent by the test button"));
+        assert!(err(h.clone()).contains("only sent by the test button"));
+        h.events = vec!["plugin.test".to_string()];
+        assert!(err(h).contains("plugin.test is only sent by the test button"));
     }
 
     #[test]
@@ -513,6 +515,7 @@ mod tests {
         let all = url_hook();
         assert!(all.matches(EventType::StorageLow));
         assert!(!all.matches(EventType::HookTest));
+        assert!(!all.matches(EventType::PluginTest));
     }
 
     #[test]

@@ -15,6 +15,7 @@ members = [
     "putio-sync-storage",
     "putio-sync-tailscale",
     "putio-sync-hooks",
+    "putio-sync-plugins",
 ]
 resolver = "2"
 

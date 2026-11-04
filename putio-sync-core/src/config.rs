@@ -189,6 +189,12 @@ pub struct Config {
     /// Event hooks: commands and webhooks run for events (feature 027)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<crate::hooks::HookConfig>,
+    /// Folder of Lua plugins; default `plugins` next to the config file (feature 028)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugins_dir: Option<PathBuf>,
+    /// Lua plugin settings (feature 028)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugins: Vec<crate::plugins::PluginSettings>,
 }
 
 /// `[doctor]`: how often the daemon runs the doctor's checks (feature 010). The CLI and
@@ -1414,6 +1420,7 @@ impl Config {
         self.storage.validate()?;
         self.tailscale.validate()?;
         crate::hooks::validate(&self.hooks)?;
+        crate::plugins::validate(&self.plugins)?;
         self.validate_binds()?;
 
         Ok(())
@@ -1663,6 +1670,8 @@ impl ConfigBuilder {
             storage: StorageConfig::default(),
             tailscale: TailscaleConfig::default(),
             hooks: Vec::new(),
+            plugins_dir: None,
+            plugins: Vec::new(),
         }
     }
 }
@@ -2630,6 +2639,8 @@ mod tests {
             storage: StorageConfig::default(),
             tailscale: TailscaleConfig::default(),
             hooks: Vec::new(),
+            plugins_dir: None,
+            plugins: Vec::new(),
         }
     }
 

@@ -148,6 +148,12 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         get("/settings/hooks"),
         (Method::PUT, "/settings/hooks", Some(json!({}))),
         post("/settings/hooks/preview"),
+        get("/plugins"),
+        post("/plugins/test"),
+        post("/plugins/reload"),
+        get("/settings/plugins"),
+        (Method::PUT, "/settings/plugins", Some(json!({}))),
+        post("/settings/plugins/preview"),
         // Unknown paths fall through to the protected fallback
         get("/robots.txt"),
     ]
@@ -618,4 +624,98 @@ async fn no_hook_secret_in_responses_or_logs() {
     let all = texts.join("\n");
     assert!(all.contains("HTTP 400") || all.contains("400"), "{all}");
     assert!(logs.contains("web"), "{logs}");
+}
+
+/// Plugin secrets never come back from the API, the doctor, the metrics, a test run's
+/// lines or a log line, even when the plugin logs one or fails with it (feature 028)
+#[tokio::test]
+async fn no_plugin_secret_in_responses_or_logs() {
+    const WEBHOOK_PATH: &str = "PLUGINWEBHOOK0123";
+    const TOKEN: &str = "PLUGINTOKEN0123";
+    let logs = captured_logs();
+    let mut webhook = mockito::Server::new_async().await;
+    webhook
+        .mock("POST", mockito::Matcher::Any)
+        .with_status(401)
+        .with_body(format!("bad {WEBHOOK_PATH}"))
+        .create_async()
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let leaky = dir.path().join("leaky");
+    std::fs::create_dir_all(&leaky).unwrap();
+    std::fs::write(
+        leaky.join("plugin.toml"),
+        concat!(
+            "name = \"leaky\"\nversion = \"1\"\nevents = [\"*\"]\n",
+            "[[config]]\nkey = \"token\"\ntype = \"string\"\nrequired = true\nsecret = true\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        leaky.join("main.lua"),
+        concat!(
+            "return {on_event = function()\n",
+            "  putio.log.info('token ' .. putio.config.token)\n",
+            "  error('refused ' .. putio.config.token)\n",
+            "end}\n",
+        ),
+    )
+    .unwrap();
+    let url = format!("{}/api/webhooks/{WEBHOOK_PATH}", webhook.url());
+    let plugins_dir = dir.path().to_path_buf();
+    let app = common::test_app_with(move |config| {
+        config.plugins_dir = Some(plugins_dir);
+        config.plugins = vec![
+            putio_sync_core::plugins::PluginSettings {
+                name: "discord".to_string(),
+                enabled: true,
+                approved_hosts: vec!["127.0.0.1".to_string()],
+                secrets: [("webhook_url".to_string(), url)].into(),
+                ..Default::default()
+            },
+            putio_sync_core::plugins::PluginSettings {
+                name: "leaky".to_string(),
+                enabled: true,
+                secrets: [("token".to_string(), TOKEN.to_string())].into(),
+                ..Default::default()
+            },
+        ];
+    })
+    .await;
+    app.state.plugins.start();
+
+    let mut texts = Vec::new();
+    for name in ["discord", "leaky"] {
+        let response = app
+            .post_json("/plugins/test", json!({ "name": name }))
+            .await;
+        assert_eq!(response.status(), StatusCode::OK, "{name}");
+        texts.push(body_text(response).await);
+    }
+    texts.push(body_text(app.post_json("/doctor/run", json!({})).await).await);
+    for path in [
+        "/plugins",
+        "/settings/plugins",
+        "/settings/export",
+        "/doctor",
+        "/metrics",
+    ] {
+        texts.push(body_text(app.get(path).await).await);
+    }
+    // The settings page sends back what it was given, masks and all
+    let settings: Value = serde_json::from_str(&texts[texts.len() - 4]).unwrap();
+    texts.push(body_text(app.post_json("/settings/plugins/preview", settings).await).await);
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let logs = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
+    for text in texts.iter().chain([&logs]) {
+        for secret in [WEBHOOK_PATH, TOKEN] {
+            assert!(!text.contains(secret), "{secret} in {text}");
+        }
+    }
+    // Both runs failed and the leaky one logged, so those paths were swept too
+    let all = texts.join("\n");
+    assert!(all.contains("HTTP 401"), "{all}");
+    assert!(all.contains("refused "), "{all}");
+    assert!(all.contains("token "), "{all}");
 }

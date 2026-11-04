@@ -38,6 +38,7 @@ COPY putio-sync-precheck/Cargo.toml ./putio-sync-precheck/
 COPY putio-sync-storage/Cargo.toml ./putio-sync-storage/
 COPY putio-sync-tailscale/Cargo.toml ./putio-sync-tailscale/
 COPY putio-sync-hooks/Cargo.toml ./putio-sync-hooks/
+COPY putio-sync-plugins/Cargo.toml ./putio-sync-plugins/
 
 # Create minimal source files for dependency analysis
 RUN mkdir -p putio-sync-client/src \
@@ -54,7 +55,8 @@ RUN mkdir -p putio-sync-client/src \
              putio-sync-precheck/src \
              putio-sync-storage/src \
              putio-sync-tailscale/src \
-             putio-sync-hooks/src && \
+             putio-sync-hooks/src \
+             putio-sync-plugins/src && \
     echo 'fn main() {}' > putio-sync-cli/src/main.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-client/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-db/src/lib.rs && \
@@ -70,7 +72,8 @@ RUN mkdir -p putio-sync-client/src \
     echo 'pub fn placeholder() {}' > putio-sync-precheck/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-storage/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-tailscale/src/lib.rs && \
-    echo 'pub fn placeholder() {}' > putio-sync-hooks/src/lib.rs
+    echo 'pub fn placeholder() {}' > putio-sync-hooks/src/lib.rs && \
+    echo 'pub fn placeholder() {}' > putio-sync-plugins/src/lib.rs
 
 # Generate dependency recipe
 RUN cargo chef prepare --recipe-path recipe.json
@@ -96,6 +99,7 @@ COPY putio-sync-precheck ./putio-sync-precheck
 COPY putio-sync-storage ./putio-sync-storage
 COPY putio-sync-tailscale ./putio-sync-tailscale
 COPY putio-sync-hooks ./putio-sync-hooks
+COPY putio-sync-plugins ./putio-sync-plugins
 # Built into the binary for the web UI's What's new (feature 017)
 COPY CHANGELOG.md ./
 

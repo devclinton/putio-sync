@@ -40,6 +40,9 @@ pub mod filter;
 /// Event hook config: validation and secret masking (feature 027)
 pub mod hooks;
 
+/// Lua plugin settings: validation and secret masking (feature 028)
+pub mod plugins;
+
 /// Listen addresses: `ip:port`, `[v6]:port`, `eth0:port`, `tailnet:port` (feature 037)
 pub mod listen;
 

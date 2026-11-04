@@ -3,6 +3,7 @@
 pub(crate) mod hooks;
 pub(crate) mod local;
 pub(crate) mod net;
+pub(crate) mod plugins;
 pub(crate) mod putio;
 pub(crate) mod sync;
 
@@ -43,6 +44,8 @@ pub(crate) struct Ctx {
     pub tailscale: Option<Arc<putio_sync_tailscale::TailscaleService>>,
     /// The running hooks, for their last runs; the check reads the config alone without it
     pub hooks: Option<Arc<putio_sync_hooks::HooksService>>,
+    /// The running plugins, for their state and last runs
+    pub plugins: Option<Arc<putio_sync_plugins::PluginsService>>,
     pub started: Instant,
     probe: OnceCell<(AccountProbe, DateTime<Utc>)>,
     transfers: OnceCell<Result<Vec<Transfer>, String>>,
@@ -67,6 +70,7 @@ impl Ctx {
             stalls,
             tailscale: None,
             hooks: None,
+            plugins: None,
             started: Instant::now(),
             probe: OnceCell::new(),
             transfers: OnceCell::new(),
@@ -151,6 +155,7 @@ async fn detect(ctx: &Ctx, id: CheckId) -> Finding {
         Tailscale => net::tailscale(ctx).await,
         Listen => net::listen(ctx).await,
         Hooks => hooks::hooks(ctx).await,
+        Plugins => plugins::plugins(ctx).await,
     }
 }
 
