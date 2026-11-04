@@ -6,6 +6,7 @@
 // folder's rule card, and "blocked" / "skipped" badges on files its rule won't download.
 // Feature 042: flag a file as fake, and undo it. Feature 045: the filter takes globs with
 // AND, OR and NOT, and the Name, Size and Date headings sort (folders stay first).
+// Feature 033: the Storage card at the top of the root (storage.js).
 
 import { del, get, post } from "../api.js";
 import { confirm, empty, h, toast } from "../app.js";
@@ -14,6 +15,7 @@ import { bytes, dateTime, utc } from "../format.js";
 import { listControls } from "../listctl.js";
 import { ruleCard } from "../rules.js";
 import { selection } from "../select.js";
+import { storageCard } from "../storage.js";
 
 const ROOT = { id: 0, name: "Put.io" };
 const KEEP = new Set(["pending", "downloading", "paused"]);
@@ -62,7 +64,7 @@ export function mount(el, { path = [], query } = {}) {
   if (crumbs[1] && crumbs[1].id == null) walkUp(folder);
   el.append(
     h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Put.io" }), els.crumbs), h("div", { class: "toolbar" }, ctl.filter, ctl.menu, els.clean)),
-    h("div", { class: "stack" }, rule.el, els.details, els.list),
+    h("div", { class: "stack" }, folder === 0 ? storageCard(load).el : null, rule.el, els.details, els.list),
   );
   load();
 }

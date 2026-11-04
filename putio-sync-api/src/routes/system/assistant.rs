@@ -170,6 +170,24 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "storage",
+        &[
+            (
+                "warn_free_percent",
+                "Warns when less than this percent of Put.io is free",
+            ),
+            (
+                "target_free_percent",
+                "Freeing space deletes old downloaded files until this percent is free",
+            ),
+            (
+                "auto_free",
+                "Frees space once a day when below the warning level",
+            ),
+            ("run_at", "Time of day the automatic free-up runs"),
+        ],
+    ),
+    (
         "logging",
         &[
             ("level", "How much detail the logs hold"),

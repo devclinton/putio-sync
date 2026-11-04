@@ -7,6 +7,8 @@
 //! - PUT  /settings/watcher - Update file watcher configuration
 //! - GET  /settings/cleanup - Get the Put.io empty-folder cleanup settings
 //! - PUT  /settings/cleanup - Update the Put.io empty-folder cleanup settings
+//! - GET  /settings/storage - Get the Put.io storage levels and automatic free-up
+//! - PUT  /settings/storage - Update the Put.io storage levels and automatic free-up
 //! - GET  /settings/precheck - Get the release check settings and what they come to
 //! - PUT  /settings/precheck - Update the release check settings
 //! - POST /settings/{group}/preview - What a PUT of that body would do, without saving
@@ -29,7 +31,7 @@ use crate::Engine;
 use putio_sync_core::assistant::Change;
 use putio_sync_core::config::{
     CleanupConfig, Config, NotificationBackend, PrecheckConfig, PrecheckOverride, ProgressStyle,
-    SortOrder,
+    SortOrder, StorageConfig,
 };
 use putio_sync_core::error::CoreError;
 use putio_sync_core::logging::ConsoleFormat;
@@ -137,7 +139,7 @@ pub(crate) struct GroupInfo {
     pub when: &'static str,
 }
 
-/// The six groups. Defaults are the default config's, with the current download
+/// The seven groups. Defaults are the default config's, with the current download
 /// folder kept: resetting it is almost never what a user means.
 pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
     let mut defaults = Config::default();
@@ -165,6 +167,11 @@ pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
             "cleanup",
             json(serde_json::to_value(cleanup_view(&defaults))),
             live_cleanup(state),
+        ),
+        group(
+            "storage",
+            json(serde_json::to_value(storage_view(&defaults))),
+            live_storage(state),
         ),
         group(
             "logging",
@@ -371,6 +378,15 @@ fn default_nested() -> bool {
     CleanupConfig::default().nested
 }
 
+/// Put.io storage levels and automatic free-up (`[storage]`, feature 033)
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StorageSettings {
+    pub warn_free_percent: u8,
+    pub target_free_percent: u8,
+    pub auto_free: bool,
+    pub run_at: String,
+}
+
 /// The release check settings (`[precheck]`, feature 042). A PUT body leaves out
 /// `effective`; a missing field means its default.
 #[derive(Debug, Serialize, Deserialize)]
@@ -470,6 +486,8 @@ pub fn router() -> Router<AppState> {
         .route("/notifications", put(update_notification_settings))
         .route("/cleanup", get(get_cleanup_settings))
         .route("/cleanup", put(update_cleanup_settings))
+        .route("/storage", get(get_storage_settings))
+        .route("/storage", put(update_storage_settings))
         .route("/precheck", get(get_precheck_settings))
         .route("/precheck", put(update_precheck_settings))
         .route("/download/preview", post(preview_download))
@@ -477,6 +495,7 @@ pub fn router() -> Router<AppState> {
         .route("/logging/preview", post(preview_logging))
         .route("/notifications/preview", post(preview_notifications))
         .route("/cleanup/preview", post(preview_cleanup))
+        .route("/storage/preview", post(preview_storage))
         .route("/precheck/preview", post(preview_precheck))
         .merge(assistant::router())
 }
@@ -533,6 +552,16 @@ async fn preview_cleanup(
     let settings = body(settings)?;
     let live = live_cleanup(&state);
     Ok(preview(&state, cleanup_view, live, |c| apply_cleanup(settings, c)).await)
+}
+
+/// POST /settings/storage/preview
+async fn preview_storage(
+    State(state): State<AppState>,
+    settings: Result<Json<StorageSettings>, JsonRejection>,
+) -> Result<Json<Preview>, ApiError> {
+    let settings = body(settings)?;
+    let live = live_storage(&state);
+    Ok(preview(&state, storage_view, live, |c| apply_storage(settings, c)).await)
 }
 
 /// POST /settings/precheck/preview
@@ -631,6 +660,15 @@ fn cleanup_view(config: &Config) -> CleanupSettings {
         run_at: config.cleanup.run_at.clone(),
         min_age_hours: config.cleanup.min_age_hours,
         nested: config.cleanup.nested,
+    }
+}
+
+fn storage_view(config: &Config) -> StorageSettings {
+    StorageSettings {
+        warn_free_percent: config.storage.warn_free_percent,
+        target_free_percent: config.storage.target_free_percent,
+        auto_free: config.storage.auto_free,
+        run_at: config.storage.run_at.clone(),
     }
 }
 
@@ -1027,6 +1065,68 @@ pub(crate) fn live_cleanup(state: &AppState) -> (&'static [&'static str], &'stat
         Engine::Server => &["min_age_hours", "nested"],
     };
     (live, "Applies from the next run")
+}
+
+/// Get the Put.io storage settings
+///
+/// GET /settings/storage
+async fn get_storage_settings(
+    State(state): State<AppState>,
+) -> Result<Json<StorageSettings>, ApiError> {
+    Ok(Json(storage_view(&*state.config.read().await)))
+}
+
+/// Update the Put.io storage settings
+///
+/// PUT /settings/storage
+async fn update_storage_settings(
+    State(state): State<AppState>,
+    settings: Result<Json<StorageSettings>, JsonRejection>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let settings = body(settings)?;
+    let changed = update(&state, storage_view, |config| {
+        apply_storage(settings, config)
+    })
+    .await?;
+
+    // The storage service reads its levels on every summary, plan and run, and the
+    // daemon's schedule on every check
+    state.storage.configure(&*state.config.read().await);
+
+    let mut notes = Vec::new();
+    if state.engine == Engine::Server && changed.iter().any(|c| c == "auto_free" || c == "run_at") {
+        notes.push("The automatic run happens only under `daemon`.".to_string());
+    }
+    let (live, when) = live_storage(&state);
+
+    Ok(Json(SuccessResponse {
+        message: saved_message("Storage", &changed, live, when, &notes),
+    }))
+}
+
+/// Apply a storage body to `config` (shared by PUT and preview)
+fn apply_storage(settings: StorageSettings, config: &mut Config) -> Result<(), ApiError> {
+    config.storage = StorageConfig {
+        warn_free_percent: settings.warn_free_percent,
+        target_free_percent: settings.target_free_percent,
+        auto_free: settings.auto_free,
+        run_at: settings.run_at,
+    };
+    Ok(())
+}
+
+/// Storage fields applied without a restart, and when
+pub(crate) fn live_storage(state: &AppState) -> (&'static [&'static str], &'static str) {
+    let live: &'static [&'static str] = match state.engine {
+        Engine::Daemon => &[
+            "warn_free_percent",
+            "target_free_percent",
+            "auto_free",
+            "run_at",
+        ],
+        Engine::Server => &["warn_free_percent", "target_free_percent"],
+    };
+    (live, "Applies now")
 }
 
 /// Get the release check settings and what they come to per folder

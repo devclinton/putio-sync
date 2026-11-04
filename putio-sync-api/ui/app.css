@@ -445,6 +445,21 @@ form > .error-text { margin: 12px 0 0; }
 
 /* Tables: a table on wide screens, labelled cards on phones */
 
+/* Put.io storage card (feature 033) */
+.storage h3 { margin: 18px 0 8px; font-size: var(--fs-md); }
+.storage h4 { margin: 10px 0 4px; font-size: var(--fs-sm); color: var(--muted); }
+.storage .small { font-size: var(--fs-sm); }
+.storage .toolbar { align-items: center; }
+.storage-warn { color: var(--warn); font-weight: 550; }
+.notice.storage-warn { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: var(--text); margin-bottom: var(--gap); }
+.storage-top { display: grid; gap: 10px; margin: 14px 0 0; padding: 0; list-style: none; }
+.storage-top li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; }
+.storage-top .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.storage-top .bar { grid-column: 1 / -1; height: 6px; margin-top: 4px; }
+.storage-top .bar > span { --bar: var(--chart-1); }
+.storage-runs { margin: 0; padding: 0; list-style: none; }
+.storage-runs summary { cursor: pointer; padding: 4px 0; }
+
 .table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .table th, .table td { padding: 12px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--line); }
 .table th { padding-top: 4px; font-size: var(--fs-sm); font-weight: 550; color: var(--muted); white-space: nowrap; }

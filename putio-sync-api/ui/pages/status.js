@@ -1,8 +1,10 @@
 // Status page: GET /status and GET /arr/status every 3 s, answering "is it working?".
+// Feature 033: a Put.io low-space notice, checked once when the page opens.
 
 import { arrRuntime, get, syncNow } from "../api.js";
 import { empty, h, poll, toast, toastError } from "../app.js";
 import { bytes, duration, percent, relative } from "../format.js";
+import { storageNotice } from "../storage.js";
 import { BADGE, LABEL, STAGES } from "./active.js";
 
 const REFRESH_MS = 3000;
@@ -18,6 +20,7 @@ export function mount(el) {
   grid = h("div", { class: "grid" });
   el.append(
     h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Status" }), summary), syncButton),
+    storageNotice(),
     grid,
   );
   timer = poll(refresh, REFRESH_MS);

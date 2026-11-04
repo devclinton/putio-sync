@@ -73,7 +73,10 @@ fn print_plan(plan: &Plan) {
         println!("No files are safe to delete");
     } else {
         println!("\nFiles to delete, oldest first:");
-        println!("{:<10} {:<12} {:<20} Path / local copy", "Size", "ID", "Added");
+        println!(
+            "{:<10} {:<12} {:<20} Path / local copy",
+            "Size", "ID", "Added"
+        );
         println!("{}", "-".repeat(90));
         for f in &plan.files {
             println!(
