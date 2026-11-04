@@ -17,6 +17,9 @@ putio-sync-client = { path = "../putio-sync-client" }
 # Async runtime
 tokio = { workspace = true }
 
+# Network interface addresses for `[api] bind = "eth0:15432"` (feature 037)
+if-addrs = "0.15"
+
 # HTTP client
 reqwest = { workspace = true }
 

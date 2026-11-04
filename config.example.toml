@@ -304,9 +304,10 @@ run_at = "02:30"
 # socket: -v /var/run/tailscale:/var/run/tailscale:ro (host Tailscale or a
 # sidecar's socket volume). Settings > Tailscale shows what was found.
 [tailscale]
-# Listen only on this node's tailnet IPv4 address (with [api] bind's port)
-# instead of [api] bind. Applies at the next start of `daemon`; it waits for
-# Tailscale to come up and never falls back to [api] bind.
+# Listen only on this node's tailnet IPv4 address instead of [api] bind: the
+# same as bind = "tailnet:<port>" for each port in [api] bind. Applies at the
+# next start of `daemon` or `server` (unless `server --bind` is given); it
+# keeps waiting for Tailscale to come up and never falls back to [api] bind.
 # Default: false
 tailnet_only = false
 
@@ -421,10 +422,13 @@ module_filters = []
 # Env: PUTIO_SYNC_METRICS_ENABLED (true, false, 1, 0). Default: true
 enabled = true
 
-# host:port to listen on. 0.0.0.0 means all interfaces; in Docker, exposure is
-# decided by which port the container publishes.
-# Env: PUTIO_SYNC_METRICS_BIND. Default: "0.0.0.0:9742"
+# Where to listen: one address or a list, in the same forms as [api] bind
+# (ip:port, [ipv6]:port, interface:port, tailnet:port). 0.0.0.0 means all
+# IPv4 addresses; in Docker, exposure is decided by which port the container
+# publishes. Settings > Network can change it.
+# Env: PUTIO_SYNC_METRICS_BIND (a comma-separated list). Default: "0.0.0.0:9742"
 bind = "0.0.0.0:9742"
+# bind = ["127.0.0.1:9742", "tailnet:9742"]
 
 # URL path, must start with "/". Env: PUTIO_SYNC_METRICS_PATH. Default: "/metrics"
 path = "/metrics"
@@ -471,9 +475,10 @@ interval_minutes = 60
 # API and Web UI
 # ============================================================================
 # `daemon` serves the JSON API and the web UI on one port (http://<host>:15432/).
-# `server` serves the same API and UI but uses its --bind/--port flags instead of
-# `listen` and `bind`. Plain HTTP: keep the port on a trusted LAN. Restart to
-# change any of these. Each has an env override, which wins.
+# `server` serves the same API and UI on `bind` too, unless its --bind/--port
+# flags say otherwise; it ignores `listen`. Plain HTTP: keep the port on a
+# trusted LAN. Restart to change any of these. Each has an env override, which
+# wins.
 [api]
 # Bearer token for the web UI and every API route except /health. REQUIRED for
 # the UI: without it every request is refused with 401 "API token not
@@ -489,10 +494,20 @@ interval_minutes = 60
 # Env: PUTIO_SYNC_API_LISTEN. Default: true
 listen = true
 
-# `daemon` only: host:port to listen on. 0.0.0.0 means all interfaces; in
-# Docker, exposure is decided by which port the container publishes.
-# Env: PUTIO_SYNC_API_BIND. Default: "0.0.0.0:15432"
+# Where to listen: one address or a list. Each entry is one of
+#   "0.0.0.0:15432"        an IPv4 address (0.0.0.0 = all IPv4 addresses)
+#   "[::]:15432"           an IPv6 address in brackets ([::] = all IPv6)
+#   "eth0:15432"           every address the interface has, followed as the
+#                          interface's addresses change (DHCP, VPN up/down)
+#   "tailnet:15432"        this machine's Tailscale IPv4 address
+# An entry with no address now (interface down, Tailscale signed out) waits and
+# is checked again; putio-sync never falls back to all addresses. In Docker,
+# exposure is decided by which port the container publishes. Settings > Network
+# can change it and warns before a list that would cut the page off.
+# Env: PUTIO_SYNC_API_BIND (a comma-separated list). Default: "0.0.0.0:15432"
 bind = "0.0.0.0:15432"
+# bind = ["127.0.0.1:15432", "tailnet:15432"]
+# bind = ["eth0:15432", "[::1]:15432"]
 
 # Unrelated to the listener: make the daemon hand downloads to a remote API
 # server at `url` instead of downloading itself. The daemon's own API and UI

@@ -3,6 +3,7 @@
 use super::Ctx;
 use crate::report::{Finding, Status};
 use putio_sync_client::ClientError;
+use putio_sync_core::listen::ListenAddr;
 use std::time::Duration;
 
 /// Answers slower than this give a warning
@@ -84,7 +85,16 @@ pub(crate) async fn clock_skew(ctx: &Ctx) -> Finding {
 pub(crate) async fn tailscale(ctx: &Ctx) -> Finding {
     use putio_sync_tailscale::{tailnet_bind, Cli, State, TailscaleService};
     let cfg = &ctx.config.tailscale;
-    if !cfg.identity_sign_in && !cfg.tailnet_only {
+    // `tailnet:<port>` API entries, from tailnet-only or written in `[api] bind`
+    let tailnet_ports: Vec<u16> = ctx
+        .config
+        .api_listen()
+        .unwrap_or_default()
+        .iter()
+        .filter(|e| matches!(e, ListenAddr::Tailnet { .. }))
+        .map(ListenAddr::port)
+        .collect();
+    if !cfg.identity_sign_in && tailnet_ports.is_empty() {
         return Finding::ok("Tailscale sign-in and listening on the tailnet are off.");
     }
     if cfg.identity_sign_in && cfg.allowed_users.is_empty() {
@@ -105,6 +115,8 @@ pub(crate) async fn tailscale(ctx: &Ctx) -> Finding {
     let status = ts.status().await;
     let feature = if cfg.tailnet_only {
         "Listening on the tailnet only"
+    } else if !tailnet_ports.is_empty() {
+        "Listening on the tailnet"
     } else {
         "Tailscale sign-in"
     };
@@ -127,18 +139,18 @@ pub(crate) async fn tailscale(ctx: &Ctx) -> Finding {
         }
         return Finding::new(Status::Warning, summary).suggest(suggestion);
     }
-    if cfg.tailnet_only {
-        let port = ctx
-            .config
-            .resolve_api()
-            .map(|r| r.value.bind.port())
-            .unwrap_or(15432);
-        if let Err(reason) = tailnet_bind(&status, port) {
+    if let Some(port) = tailnet_ports.first() {
+        if let Err(reason) = tailnet_bind(&status, *port) {
+            let fix = if cfg.tailnet_only {
+                "Turn it off in Settings, Tailscale, or give Tailscale a tailnet address on this machine."
+            } else {
+                "Change the tailnet entry in Settings, Network, or give Tailscale a tailnet address on this machine."
+            };
             return Finding::new(
                 Status::Warning,
-                format!("Listening on the tailnet only is on, but there is no tailnet address: {reason}."),
+                format!("{feature} is on, but there is no tailnet address: {reason}."),
             )
-            .suggest("Turn it off in Settings, Tailscale, or give Tailscale a tailnet address on this machine.");
+            .suggest(fix);
         }
     }
     let name = status
@@ -147,6 +159,58 @@ pub(crate) async fn tailscale(ctx: &Ctx) -> Finding {
         .or_else(|| status.ipv4().map(|ip| ip.to_string()))
         .unwrap_or_else(|| "this machine".to_string());
     Finding::ok(format!("Tailscale is running as {name}."))
+}
+
+/// Shown when identity sign-in is on and the API listens on loopback (as the API's
+/// network check says)
+const LOOPBACK_IDENTITY: &str = "Only `tailscale serve` should reach putio-sync on loopback: another local proxy could forward forged identity headers.";
+
+/// Listen addresses (feature 037), from the config: entries with no address now, and
+/// identity sign-in with the API on loopback. Tailnet entries are the Tailscale check's.
+pub(crate) async fn listen(ctx: &Ctx) -> Finding {
+    let api = match ctx.config.api_listen() {
+        Ok(api) => api,
+        Err(e) => {
+            return Finding::new(
+                Status::Warning,
+                format!("The API addresses are invalid: {e}."),
+            )
+            .suggest("Fix [api] bind in the config file or Settings, Network.")
+        }
+    };
+    let mut lists = vec![("API", api.clone())];
+    if let Ok(m) = ctx.config.resolve_metrics() {
+        if m.value.settings.enabled {
+            lists.push(("Metrics", m.value.bind));
+        }
+    }
+    let mut on = Vec::new();
+    let mut waiting = Vec::new();
+    for (name, list) in &lists {
+        for entry in list {
+            if matches!(entry, ListenAddr::Tailnet { .. }) {
+                on.push(format!("{entry} ({name})"));
+                continue;
+            }
+            match entry.resolve_local() {
+                Ok(addrs) => on.extend(addrs.iter().map(|a| format!("{a} ({name})"))),
+                Err(why) => waiting.push(format!("{entry}: {why}")),
+            }
+        }
+    }
+    if !waiting.is_empty() {
+        return Finding::new(
+            Status::Warning,
+            format!("No address now for {}.", waiting.join("; ")),
+        )
+        .suggest("Check the interface name (ip addr) or change the entry in Settings, Network; putio-sync keeps checking and listens once it has an address.");
+    }
+    if ctx.config.tailscale.identity_sign_in && api.iter().any(ListenAddr::is_loopback) {
+        return Finding::new(Status::Warning, LOOPBACK_IDENTITY).suggest(
+            "Keep Tailscale sign-in off when another reverse proxy on this machine forwards to putio-sync.",
+        );
+    }
+    Finding::ok(format!("Listening on {}.", on.join(", ")))
 }
 
 #[cfg(test)]
@@ -276,6 +340,31 @@ mod tests {
                 .with_timeout(Duration::from_millis(300)),
         ));
         (dir, c)
+    }
+
+    #[tokio::test]
+    async fn listen_grades() {
+        use putio_sync_core::listen::BindList;
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = ctx("http://127.0.0.1:9", dir.path(), None);
+        c.config.api.bind = Some(BindList::from_entries(vec!["127.0.0.1:15432".into()]));
+        let f = listen(&c).await;
+        assert_eq!(f.status, Status::Ok, "{}", f.summary);
+        assert!(f.summary.contains("127.0.0.1:15432 (API)"), "{}", f.summary);
+
+        c.config.api.bind = Some(BindList::from_entries(vec![
+            "127.0.0.1:15432".into(),
+            "nosuchif0:15432".into(),
+        ]));
+        let f = listen(&c).await;
+        assert_eq!(f.status, Status::Warning);
+        assert!(f.summary.contains("nosuchif0:15432"), "{}", f.summary);
+
+        c.config.api.bind = Some(BindList::from_entries(vec!["127.0.0.1:15432".into()]));
+        c.config.tailscale.identity_sign_in = true;
+        let f = listen(&c).await;
+        assert_eq!(f.status, Status::Warning);
+        assert!(f.summary.contains("tailscale serve"), "{}", f.summary);
     }
 
     #[tokio::test]

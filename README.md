@@ -840,13 +840,12 @@ no token at all are refused but not counted.
 |---|---|---|---|
 | `PUTIO_SYNC_API_TOKEN` | `api.auth_token` | non-empty, no whitespace | unset (everything refused) |
 | `PUTIO_SYNC_API_LISTEN` | `api.listen` | `true`, `false`, `1`, `0` | `true` |
-| `PUTIO_SYNC_API_BIND` | `api.bind` | `host:port` | `0.0.0.0:15432` |
+| `PUTIO_SYNC_API_BIND` | `api.bind` | comma-separated addresses (see below) | `0.0.0.0:15432` |
 
-The variable wins over `config.toml`. All three need a restart. `listen` and `bind` are
-read by `daemon` only; `server` keeps its `--bind`/`--port` flags (default
-`0.0.0.0:15432`) and reads only the token. Set `PUTIO_SYNC_API_LISTEN=0` to turn the
-listener off. If the port can't be bound, the daemon logs one
-`API listener failed to start` error and keeps syncing. With `[api] enabled = true`
+The variable wins over `config.toml`. All three need a restart. `listen` is read by
+`daemon` only; `bind` by both `daemon` and `server` (see [Listen addresses](#listen-addresses)).
+Set `PUTIO_SYNC_API_LISTEN=0` to turn the listener off. If an address can't be bound,
+the daemon logs one `API listener failed to start` error, keeps syncing and tries again. With `[api] enabled = true`
 (downloads delegated to a remote API server) the daemon doesn't start its own listener.
 
 Startup lines:
@@ -858,6 +857,46 @@ API token not configured (set [api] auth_token or PUTIO_SYNC_API_TOKEN); all API
 
 In Docker, publish the port: `-p 15432:15432`, or add a port mapping for container
 port 15432 in the Unraid template.
+
+### Listen addresses
+
+`[api] bind` and `[metrics] bind` take one address or a list:
+
+```toml
+[api]
+bind = ["127.0.0.1:15432", "eth0:15432", "[::1]:15432", "tailnet:15432"]
+```
+
+| Entry | Listens on |
+|---|---|
+| `0.0.0.0:15432`, `192.168.1.10:15432` | that IPv4 address (`0.0.0.0` = all IPv4 addresses) |
+| `[::]:15432`, `[::1]:15432` | that IPv6 address |
+| `eth0:15432`, `tailscale0:15432` | every address the interface has, followed as it changes (DHCP, VPN up or down) |
+| `tailnet:15432` | this machine's Tailscale IPv4 address, once Tailscale gives one |
+
+An entry with no address now (the interface is down, Tailscale is signed out) waits and
+is checked again (every second for 5 minutes, then every 30 seconds); putio-sync never falls back to all
+addresses. `PUTIO_SYNC_API_BIND` and `PUTIO_SYNC_METRICS_BIND` take a comma-separated
+list. `GET /listen` and Settings → Network show each entry and what it listens on now,
+and the doctor's "Listening addresses" check warns about an entry with no address.
+
+`server` listens on the same list (tailnet-only included) when no flag is given:
+
+| `server` flags | Listens on |
+|---|---|
+| none | `[api] bind` (or `tailnet:<port>` with tailnet-only) |
+| `--bind H` | `H` with the first configured port; `H` is an IP, an interface or `tailnet` |
+| `--bind H --port P` | `H:P` |
+| `--port P` | every configured entry, on port `P` |
+| `--bind H:P2 --port P` | an error: give the port once |
+
+The Tailscale card and the Radarr/Sonarr host report the port actually listened on.
+
+**Loopback behind a reverse proxy.** With the API on loopback only (`127.0.0.1:15432`)
+behind a local reverse proxy (nginx, Caddy), every request arrives from loopback. Keep
+`[tailscale] identity_sign_in` off then: putio-sync trusts `tailscale serve`'s identity
+headers on a loopback connection, and a proxy could pass them on. The doctor and the
+Network settings warn about this combination.
 
 ### Settings from the UI
 
@@ -878,6 +917,7 @@ daemon's download manager and watcher:
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Release check | — | everything |
 | Notifications | — | everything |
+| Network | — | everything (`api_bind`, `metrics_bind`); the UI asks first when the new list wouldn't reach the page you're on |
 
 Under `server`, the logging rows are the same (when the config file existed at
 startup). Download changes reach only the API's own download manager, not the
@@ -958,7 +998,9 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `GET /history?action=&name=&limit=&offset=` | History; `name` is a case-insensitive substring |
 | `GET /history/stats`, `GET /stats/{downloads,transfers,disk}` | Totals |
 | `GET /tailscale` | What Tailscale says about this machine: `state` (`running`, `needs_login`, `stopped`, `starting`, `unreachable`, `not_found`), `via`, `version`, `dns_name`, `tailnet`, `magic_dns`, `addresses`, `https`, `userspace`, `owner_login`, `serve`; plus `urls` (the addresses that open putio-sync over the tailnet, HTTPS `serve` first), `hints`, `tailnet_bind` or `tailnet_bind_error`, `settings` and this request's `identity`. Never fails: a missing Tailscale is a state |
-| `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck,tailscale}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
+| `GET /listen` | What this process listens on: `api` (`configured`, `effective`, `listening`, each entry with its `addresses` or why it is `waiting`, `port`, `tailnet_only`, `env_override`), `metrics` (the same, plus `enabled`), `engine` and `server_flags` (whether `server --bind/--port` replaced the list) |
+| `POST /settings/network/check` | The `network` PUT body → what each entry would listen on, `this_page` (`kept`, `cut_off` or `unknown`: whether the page you're on would still reach putio-sync), `listened_on`, `ui_at` and `warnings`; saves nothing |
+| `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck,tailscale,network}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
 | `POST /settings/{group}/preview` | The group's PUT body → `{"valid", "error", "changes": [{"key", "before", "after", "live"}], "when", "risks"}`; writes nothing |
 | `GET /settings/assistant` | Per group: what each field affects, the fields that apply live, the defaults; and the risks of the running config |
 | `GET /settings/export` | The settings as a TOML file, without `[auth]`, `api.auth_token` and `[arr]` |
@@ -1007,7 +1049,7 @@ Tailscale can't serve it.
 [tailscale]
 identity_sign_in = true                # off by default
 allowed_users = ["alice@example.com"]  # empty lets nobody in
-tailnet_only = false                   # daemon only, after a restart
+tailnet_only = false                   # after a restart
 ```
 
 ### Sign in with Tailscale
@@ -1027,11 +1069,13 @@ always works. Sign-ins and refusals are counted in `putio_sync_tailscale_identit
 
 ### Listen on the tailnet only
 
-`tailnet_only` makes `daemon` listen on the node's tailnet IPv4 address, with `[api]
-bind`'s port, instead of `[api] bind`, so the LAN can't reach the API. If Tailscale isn't
-up when putio-sync starts, it asks again every 5 seconds for 5 minutes and then gives up
-with an error; it never falls back to another address. Saving it from Settings is
-refused when Tailscale has no address to give. `server` ignores it and uses `--bind`.
+`tailnet_only` makes `daemon` and `server` listen on the node's tailnet IPv4 address
+instead of `[api] bind`, so the LAN can't reach the API: it is the same as
+`bind = "tailnet:<port>"` for each port in `[api] bind`, and a list can mix `tailnet:`
+with other entries (see [Listen addresses](#listen-addresses)). If Tailscale isn't up
+when putio-sync starts, it keeps asking (every second for 5 minutes, then every 30
+seconds); it never falls back to another address. Saving it from Settings is refused when
+Tailscale has no address to give. `server --bind` replaces it.
 With userspace networking (common in containers) there is no tailnet address to listen
 on: use `tailscale serve` instead.
 
@@ -1363,7 +1407,8 @@ daemon also runs it 2 minutes after it starts and then every `interval_minutes`.
 | Connection | Put.io reachability | Put.io can't be reached (problem), errors or is slow (warning) |
 | | Rate limit | Under 10% of requests left, or Put.io is limiting now |
 | | Clock | This machine's clock is over 60 s off Put.io's (warning), 300 s (problem) |
-| | Tailscale | Tailscale sign-in or tailnet-only listening is on and Tailscale isn't running, has no tailnet address, or no user is allowed (warning) |
+| | Tailscale | Tailscale sign-in or a tailnet address (`tailnet:<port>` or tailnet-only) is on and Tailscale isn't running, has no tailnet address, or no user is allowed (warning) |
+| | Listening addresses | An API or metrics entry has no address now, e.g. an interface that is missing or down; or Tailscale sign-in is on while the API listens on loopback (warning) |
 
 Fixes, on the check's line in the UI or with `putio-sync doctor --fix <id>`:
 

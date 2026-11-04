@@ -188,6 +188,19 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "network",
+        &[
+            (
+                "api_bind",
+                "Addresses the API and web UI listen on (after a restart)",
+            ),
+            (
+                "metrics_bind",
+                "Addresses /metrics listens on (after a restart)",
+            ),
+        ],
+    ),
+    (
         "tailscale",
         &[
             (

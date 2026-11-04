@@ -30,6 +30,8 @@ tower-http = { version = "0.5", features = ["trace"] }
 
 # Async runtime
 tokio = { workspace = true }
+# IPV6_V6ONLY on listeners, so `[::]` and `0.0.0.0` can share a port (feature 037)
+socket2 = { version = "0.6", features = ["all"] }
 
 # Serialization
 serde = { workspace = true }

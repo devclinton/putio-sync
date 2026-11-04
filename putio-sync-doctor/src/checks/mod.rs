@@ -144,6 +144,7 @@ async fn detect(ctx: &Ctx, id: CheckId) -> Finding {
         RateLimit => net::rate_limit(ctx).await,
         ClockSkew => net::clock_skew(ctx).await,
         Tailscale => net::tailscale(ctx).await,
+        Listen => net::listen(ctx).await,
     }
 }
 

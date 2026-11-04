@@ -9,6 +9,7 @@
 
 use axum::{extract::State, routing::get, Extension, Json, Router};
 use putio_sync_core::config::{Config, TailscaleConfig};
+use putio_sync_core::listen::ListenAddr;
 use putio_sync_tailscale::{tailnet_bind, Identity, ServeEntry, State as TsState, Status};
 use serde::Serialize;
 use std::net::{IpAddr, SocketAddr};
@@ -71,39 +72,37 @@ pub(crate) fn tailnet_first(mut hosts: Vec<String>, ip: Option<IpAddr>) -> Vec<S
     hosts
 }
 
-/// The listener address the daemon uses (or would use) for the API
-pub(crate) fn api_bind(config: &Config) -> SocketAddr {
-    config
-        .resolve_api()
-        .map(|r| r.value.bind)
-        .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 15432)))
-}
-
 async fn details(
     State(state): State<AppState>,
     identity: Option<Extension<Identity>>,
 ) -> Json<TailscaleDetails> {
     let config = state.config.read().await.clone();
     let status = state.tailscale.status().await;
-    Json(build(&config, status, identity.map(|Extension(i)| i)))
+    let port = state.api_port().await;
+    Json(build(&config, status, identity.map(|Extension(i)| i), port))
 }
 
 pub(crate) fn build(
     config: &Config,
     status: Status,
     identity: Option<Identity>,
+    port: u16,
 ) -> TailscaleDetails {
-    let bind = api_bind(config);
-    let port = bind.port();
     let ts = &config.tailscale;
-    // On "tailnet only" the daemon listens on the tailnet address, not `[api] bind`
-    let loopback_only = !ts.tailnet_only && bind.ip().is_loopback();
+    // The effective list: on "tailnet only" it holds tailnet entries, never loopback
+    let entries = config.api_listen().unwrap_or_default();
+    let loopback_only = !entries.is_empty() && entries.iter().all(ListenAddr::is_loopback);
+    let on = entries
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
     let urls = status.urls(port, loopback_only);
     let (tailnet_bind, tailnet_bind_error) = match tailnet_bind(&status, port) {
         Ok(addr) => (Some(addr), None),
         Err(e) => (None, Some(e)),
     };
-    let hints = hints(&status, ts, port, loopback_only, bind.ip());
+    let hints = hints(&status, ts, port, loopback_only, &on);
     TailscaleDetails {
         port,
         urls,
@@ -125,7 +124,7 @@ fn hints(
     ts: &TailscaleConfig,
     port: u16,
     loopback_only: bool,
-    ip: IpAddr,
+    on: &str,
 ) -> Vec<String> {
     let mut hints = Vec::new();
     let serve_cmd = format!("tailscale serve --bg {port}");
@@ -157,7 +156,7 @@ fn hints(
             }
             if loopback_only && served.is_empty() && !status.userspace {
                 hints.push(format!(
-                    "The API listens on {ip} only, so the tailnet can't reach it directly. Share it with: {serve_cmd}"
+                    "The API listens on {on} only, so the tailnet can't reach it directly. Share it with: {serve_cmd}"
                 ));
             }
             for e in served.iter().filter(|e| e.funnel) {

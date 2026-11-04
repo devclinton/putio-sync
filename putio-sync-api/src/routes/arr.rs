@@ -196,13 +196,7 @@ async fn current_settings(state: &AppState) -> Result<Arc<ArrSettings>, ApiError
 
 /// The port the *arr apps should connect to
 async fn listen_port(state: &AppState) -> u16 {
-    state
-        .config
-        .read()
-        .await
-        .resolve_api()
-        .map(|r| r.value.bind.port())
-        .unwrap_or(15432)
+    state.api_port().await
 }
 
 /// The host the browser used to reach putio-sync, without its port

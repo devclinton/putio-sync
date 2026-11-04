@@ -1,4 +1,4 @@
-//! Listener test: content type, 404, bind failure, and scrape latency under load.
+//! Listener test: content type, 404, and scrape latency under load.
 
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -13,11 +13,8 @@ fn leak() -> &'static Telemetry {
 }
 
 async fn start(t: &'static Telemetry) -> SocketAddr {
-    let settings = MetricsSettings {
-        bind: "127.0.0.1:0".parse().unwrap(),
-        ..MetricsSettings::default()
-    };
-    let listener = server::bind(&settings).await.unwrap();
+    let settings = MetricsSettings::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     server::serve(listener, &settings.path, t);
     addr
@@ -43,16 +40,6 @@ async fn other_paths_are_not_found() {
     let addr = start(leak()).await;
     let resp = reqwest::get(format!("http://{}/nope", addr)).await.unwrap();
     assert_eq!(resp.status(), 404);
-}
-
-#[tokio::test]
-async fn bind_in_use_returns_err() {
-    let taken = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let settings = MetricsSettings {
-        bind: taken.local_addr().unwrap(),
-        ..MetricsSettings::default()
-    };
-    assert!(server::bind(&settings).await.is_err());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

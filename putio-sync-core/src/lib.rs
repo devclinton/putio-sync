@@ -31,6 +31,9 @@ pub mod error;
 /// File filtering and sorting logic
 pub mod filter;
 
+/// Listen addresses: `ip:port`, `[v6]:port`, `eth0:port`, `tailnet:port` (feature 037)
+pub mod listen;
+
 /// Structured logging infrastructure
 pub mod logging;
 

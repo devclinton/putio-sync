@@ -14,6 +14,25 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Listen addresses and interfaces. `[api] bind` and `[metrics] bind` take one
+  address or a list, each `ip:port`, `[ipv6]:port`, an interface name such as
+  `eth0:15432` (every address the interface has, followed as it changes) or
+  `tailnet:15432` (this machine's Tailscale address). An entry without an
+  address waits and is checked again; nothing ever falls back to all
+  addresses. `PUTIO_SYNC_API_BIND` and `PUTIO_SYNC_METRICS_BIND` take a
+  comma-separated list. `tailnet_only` now means `tailnet:<port>` and keeps
+  waiting for Tailscale instead of giving up after 5 minutes. `GET /listen`
+  shows each entry and what it listens on now; `/settings/network` saves both
+  lists, refusing a list with nothing to listen on, and
+  `/settings/network/check` says whether the page you are on would still reach
+  putio-sync. Settings has a Network group with both lists and what
+  putio-sync listens on now, and asks before saving a list that would cut the
+  page off. The doctor's new "Listening addresses" check warns about entries
+  with no address and about Tailscale sign-in with the API on loopback.
+  `server` now listens on the configured addresses (tailnet-only included)
+  when no flag is given; `--bind` (an IP, interface or `tailnet`) replaces the
+  list and `--port` sets the port of every entry. The Tailscale card and the
+  Radarr/Sonarr host report the port actually listened on (feature 037).
 - Tailscale awareness. Settings has a Tailscale card: whether Tailscale is on
   this machine (through tailscaled's socket, or the `tailscale` CLI), the
   MagicDNS name, the tailnet addresses, the HTTPS address from

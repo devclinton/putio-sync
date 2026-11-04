@@ -310,6 +310,48 @@ async fn tailnet_only_needs_a_tailnet_address() {
     assert_eq!(after["tailnet_only"], false);
 }
 
+/// The port reported follows what is listened on (feature 037): the configured port
+/// until something binds, then the bound one (e.g. `server --port N`)
+#[tokio::test]
+async fn port_follows_the_listener() {
+    use putio_sync_api::listen::{Bound, Supervisor};
+    use putio_sync_core::listen::BindList;
+
+    let (_dir, app) = running_app(|c| {
+        c.api.bind = Some(BindList::from_entries(vec!["127.0.0.1:18001".into()]));
+    })
+    .await;
+    assert_eq!(app.state.api_port().await, 18001);
+    let body = body_json(app.get("/tailscale").await).await;
+    assert_eq!(body["port"], 18001);
+
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let bound = Bound::default();
+    let state = app.state.clone().with_listening(bound.clone());
+    let handle = Supervisor::spawn(
+        "API",
+        vec![format!("127.0.0.1:{port}").parse().unwrap()],
+        state.tailscale.clone(),
+        axum::Router::new(),
+        bound,
+    );
+    assert!(handle.first_bound(Duration::from_secs(2)).await.is_some());
+    assert_eq!(state.api_port().await, port);
+    let app = TestApp {
+        router: router(state.clone()),
+        state,
+        ..app
+    };
+    let body = body_json(app.get("/tailscale").await).await;
+    assert_eq!(body["port"], port);
+    assert_eq!(body["tailnet_bind"], format!("100.101.102.103:{port}"));
+    handle.stop(Duration::from_millis(200)).await;
+}
+
 /// A temp dir under /tmp: unix socket paths must stay under about 104 bytes, which a
 /// long `TMPDIR` breaks
 fn short_dir() -> tempfile::TempDir {

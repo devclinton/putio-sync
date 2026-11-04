@@ -509,7 +509,7 @@ impl SetupChoices {
             config.metrics.enabled = on;
         }
         if let Some(bind) = &self.metrics_bind {
-            config.metrics.bind = bind.clone();
+            config.metrics.bind = crate::listen::BindList::from_env(bind);
         }
         if let Some(token) = &self.api_token {
             config.api.auth_token = Some(token.clone());

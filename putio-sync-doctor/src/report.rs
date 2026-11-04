@@ -132,6 +132,7 @@ ids!(
         RateLimit => "rate_limit",
         ClockSkew => "clock_skew",
         Tailscale => "tailscale",
+        Listen => "listen",
     }
 );
 
@@ -143,7 +144,7 @@ impl CheckId {
             | StuckWatchFiles => Area::Putio,
             DeadQueueRows | FailingDownloads | OrphanPartials => Area::Sync,
             DownloadDir | DiskSpace | Database | Config => Area::Local,
-            Reachability | RateLimit | ClockSkew | Tailscale => Area::Connectivity,
+            Reachability | RateLimit | ClockSkew | Tailscale | Listen => Area::Connectivity,
         }
     }
 
@@ -168,6 +169,7 @@ impl CheckId {
             RateLimit => "Rate limit",
             ClockSkew => "Clock",
             Tailscale => "Tailscale",
+            Listen => "Listening addresses",
         }
     }
 
@@ -554,7 +556,7 @@ mod tests {
                 format!("\"{}\"", fix.as_str())
             );
         }
-        assert_eq!(CheckId::ALL.len(), 18);
+        assert_eq!(CheckId::ALL.len(), 19);
         assert!("nope".parse::<FixId>().is_err());
     }
 

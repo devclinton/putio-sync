@@ -31,6 +31,7 @@
 pub mod changelog;
 pub mod error;
 pub mod handlers;
+pub mod listen;
 pub mod middleware;
 pub mod models;
 pub mod routes;
@@ -108,6 +109,11 @@ pub struct AppState {
     pub arr: Option<routes::arr::ArrRpc>,
     /// Tailscale on this machine (feature 036); the doctor shares it
     pub tailscale: Arc<TailscaleService>,
+    /// The addresses the API listens on now (feature 037); empty until a listener set
+    /// is attached with [`AppState::with_listening`]
+    pub listening: listen::Bound,
+    /// The API list `server --bind/--port` gave instead of the configured one
+    pub listen_flags: Option<Vec<putio_sync_core::listen::ListenAddr>>,
 }
 
 /// The engine behind the API (FR-018: a save says what applies now)
@@ -160,6 +166,8 @@ impl AppState {
         AppState {
             arr,
             tailscale,
+            listening: listen::Bound::default(),
+            listen_flags: None,
             cleanup,
             storage,
             doctor,
@@ -190,6 +198,30 @@ impl AppState {
     pub fn with_tailscale(mut self, tailscale: Arc<TailscaleService>) -> AppState {
         self.tailscale = tailscale;
         self
+    }
+
+    /// Report this listener set's addresses (the supervisor serving this state fills it)
+    pub fn with_listening(mut self, bound: listen::Bound) -> AppState {
+        self.listening = bound;
+        self
+    }
+
+    /// Record the API list `server` flags gave (reported by `GET /listen`)
+    pub fn with_listen_flags(
+        mut self,
+        entries: Option<Vec<putio_sync_core::listen::ListenAddr>>,
+    ) -> AppState {
+        self.listen_flags = entries;
+        self
+    }
+
+    /// The API port to tell others (Tailscale card, Radarr/Sonarr): the first address
+    /// listened on, else the first configured one, else 15432
+    pub async fn api_port(&self) -> u16 {
+        if let Some(addr) = self.listening.first() {
+            return addr.port();
+        }
+        self.config.read().await.api_port()
     }
 
     /// Mark the state as running on the daemon's own engine (`api_listener::start`)
@@ -318,6 +350,10 @@ pub fn router(state: AppState) -> Router {
         .nest("/whats-new", routes::system::whats_new::router())
         .nest("/tailscale", routes::system::tailscale::router())
         .route(
+            "/listen",
+            axum::routing::get(routes::system::network::get_listen),
+        )
+        .route(
             "/status",
             axum::routing::get(routes::system::status::get_status),
         )
@@ -392,6 +428,20 @@ pub async fn create_app(
     config_path: Option<std::path::PathBuf>,
     file_watcher: Option<Arc<TorrentWatcher>>,
 ) -> Result<Router, Box<dyn std::error::Error>> {
+    let state = create_app_state(config, database_path, config_path, file_watcher).await?;
+    spawn_arr_refresh(&state).await;
+    Ok(router(state))
+}
+
+/// The state [`create_app`] builds its router from, for a caller that serves it itself
+/// (`server`, feature 037): it attaches what it listens on before building the router
+/// and starts the Radarr/Sonarr refresh once it has a port.
+pub async fn create_app_state(
+    config: Config,
+    database_path: Option<std::path::PathBuf>,
+    config_path: Option<std::path::PathBuf>,
+    file_watcher: Option<Arc<TorrentWatcher>>,
+) -> Result<AppState, Box<dyn std::error::Error>> {
     use putio_sync_core::config::AuthMethod;
     use tracing::{info, warn};
 
@@ -456,8 +506,7 @@ pub async fn create_app(
         Arc::new(download_manager),
         file_watcher,
     );
-    spawn_arr_refresh(&state).await;
-    Ok(router(state))
+    Ok(state)
 }
 
 /// Read each saved Radarr/Sonarr's categories now, then every 15 minutes (feature 018, R4)
@@ -465,13 +514,7 @@ pub async fn spawn_arr_refresh(state: &AppState) {
     let Some(arr) = &state.arr else {
         return;
     };
-    let port = state
-        .config
-        .read()
-        .await
-        .resolve_api()
-        .map(|r| r.value.bind.port())
-        .unwrap_or(15432);
+    let port = state.api_port().await;
     let hosts = routes::system::tailscale::tailnet_first_hosts(state, None, None).await;
     arr.service.spawn_category_refresh(port, hosts);
 }
