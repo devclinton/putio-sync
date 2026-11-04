@@ -6,18 +6,25 @@
 // Feature 009: Folder rules, Presets and Recently blocked cards (rules.js).
 // Feature 042: the Release check card, with per-category and per-watch-folder overrides
 // and a read-only table of what the check does for each.
+// Feature 015: each group previews a save as you type, says what each field affects and
+// whether it applies now, has a Defaults button; a warnings banner and a Backup and
+// restore card (export and import without credentials).
 
 import {
   addArrApplication,
   arrStatus,
   deleteArrApplication,
   discoverArr,
+  exportSettings,
   get,
+  importSettings,
   previewArrSetup,
+  previewSettings,
   put,
   runArrSetup,
   saveArrApplication,
   saveArrClient,
+  settingsAssistant,
   testArrApplication,
   testArrForm,
 } from "../api.js";
@@ -121,23 +128,68 @@ const PRECHECK = {
 const PUTIO_AUTH = { token: "OAuth token set", app_password: "app password set", none: "not set" };
 
 let seq = 0;
+let assist = null;
+let riskBox = null;
+
+/** GET /settings/assistant once per page (help, defaults, risks); null when it fails */
+const assistant = () => (assist ||= settingsAssistant().catch(() => null));
+
+/** Refetch the risks of the saved config into the banner at the top */
+async function showRisks() {
+  assist = null;
+  const box = riskBox;
+  const risks = ((await assistant()) || {}).risks || [];
+  if (box !== riskBox) return;
+  box.hidden = !risks.length;
+  box.replaceChildren(h("h2", { text: "Warnings" }), ...riskList(risks));
+}
+
+const riskList = (risks) =>
+  risks.map((r) => h("p", { class: r.level === "danger" ? "error-text" : "warn-text" }, h("strong", { text: r.level === "danger" ? "Danger: " : "Warning: " }), r.message));
+
+const shown = (v) => {
+  const s = v == null ? "empty" : Array.isArray(v) ? v.join(", ") || "none" : typeof v === "object" ? JSON.stringify(v) : String(v);
+  return s.length > 60 ? `${s.slice(0, 57)}…` : s;
+};
+
+/** A preview: what would change and whether it applies now, the refusal, and the risks */
+function previewNodes(p) {
+  if (!p.valid) return h("p", { class: "error-text", text: `Would be refused: ${p.error}` });
+  const changes = p.changes.length
+    ? h(
+        "ul",
+        { class: "changes" },
+        p.changes.map((c) => h("li", {}, h("code", { text: c.key }), ` ${shown(c.before)} → ${shown(c.after)} `, h("span", { class: `badge ${c.live ? "ok" : "warn"}`, text: c.live ? "applies now" : "needs a restart" }))),
+      )
+    : h("p", { class: "muted", text: "Nothing would change." });
+  return h("div", {}, changes, riskList(p.risks || []));
+}
 
 export function mount(el) {
   const mine = ++seq;
+  assist = null;
+  riskBox = h("section", { class: "card", role: "status", hidden: true });
   const secrets = h("dl", { class: "kv" }, h("dt", { text: "Put.io" }), h("dd", { class: "muted", text: "…" }));
   el.append(
     h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Settings" }), h("p", { class: "muted", text: "Saved to the config file. Each save says whether it applies now or after a restart." }))),
     h(
       "div",
       { class: "stack" },
+      riskBox,
       appearance(),
       h("section", { class: "card" }, h("h2", { text: "Credentials" }), secrets, h("p", { class: "muted spaced", text: "Tokens and passwords are never shown here. Change them in the config file or environment." })),
       arrCard(mine),
       GROUPS.map((g) => group(g, mine)),
       precheckCard(mine),
       settingsCards(() => mine === seq),
+      backupCard(() => {
+        unmount();
+        el.replaceChildren();
+        mount(el);
+      }),
     ),
   );
+  showRisks();
   get("/status")
     .then((s) => {
       if (mine !== seq) return;
@@ -192,8 +244,8 @@ function group(g, mine) {
   const load = async () => {
     card.replaceChildren(h("h2", { text: g.title }), h("p", { class: "muted", text: "Loading…" }));
     try {
-      const data = await get(`/settings/${g.key}`);
-      if (mine === seq) card.replaceChildren(form(g, data, load));
+      const [data, a] = await Promise.all([get(`/settings/${g.key}`), assistant()]);
+      if (mine === seq) card.replaceChildren(form(g, data, load, a && a.groups[g.key]));
     } catch (e) {
       if (mine !== seq || e.status === 401 || e.status === 429) return;
       card.replaceChildren(
@@ -207,11 +259,18 @@ function group(g, mine) {
   return card;
 }
 
-function form(g, data, reload) {
+function form(g, data, reload, help) {
   const inputs = {};
   const note = h("p", { class: "muted", role: "status" });
   const save = h("button", { type: "submit", class: "btn btn-primary" }, "Save");
-  const fields = g.fields.map(([name, label, hint, kind, min, max]) => {
+  // What the field affects and whether a change applies now (feature 015)
+  const affects = (name) => {
+    const text = help && help.affects[name];
+    if (!text) return null;
+    const live = help.live.includes(name);
+    return h("small", { class: "affects" }, `Affects: ${text}. `, h("span", { class: `badge ${live ? "ok" : "warn"}`, text: live ? "applies now" : "needs a restart" }));
+  };
+  const build = ([name, label, hint, kind, min, max]) => {
     const id = `set-${g.key}-${name}`;
     const value = data[name];
     let input;
@@ -249,16 +308,68 @@ function form(g, data, reload) {
       };
     }
     return h("label", { class: "field", for: id }, h("span", { text: label }), input, hint ? h("small", { text: hint }) : null);
+  };
+  const fields = g.fields.map((f) => {
+    const node = build(f);
+    const line = affects(f[0]);
+    if (line) (f[3] === "b" ? node.lastChild : node).append(line);
+    return node;
   });
   const error = h("p", { class: "error-text", role: "alert", hidden: true });
   const extra = g.extra ? g.extra(data) : null;
+  const read = () => {
+    const body = { ...data };
+    for (const [name, value] of Object.entries(inputs)) body[name] = value();
+    if (extra) Object.assign(body, extra.read());
+    delete body.effective;
+    return body;
+  };
+
+  // Preview the save 400 ms after the last edit; a newer edit drops an older answer
+  const panel = h("div", { class: "preview", "aria-live": "polite", hidden: true });
+  let timer = 0;
+  let asked = 0;
+  const preview = () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const mine = ++asked;
+      try {
+        const p = await previewSettings(g.key, read());
+        if (mine !== asked || !panel.isConnected) return;
+        panel.replaceChildren(h("h3", { text: "If you save" }), previewNodes(p));
+        panel.hidden = false;
+      } catch (e) {
+        if (mine === asked && e.status !== 401 && e.status !== 429) {
+          panel.replaceChildren(h("p", { class: "error-text", text: reason(e) }));
+          panel.hidden = false;
+        }
+      }
+    }, 400);
+  };
+  const defaults =
+    help && help.defaults
+      ? h(
+          "button",
+          {
+            type: "button",
+            class: "btn",
+            title: "Fill in the defaults; nothing is saved until Save",
+            onclick: () => {
+              const fresh = form(g, { ...data, ...help.defaults }, reload, help);
+              el.replaceWith(fresh);
+              fresh.querySelector("[role=status]").textContent = "Defaults filled in; not saved yet.";
+              fresh.dispatchEvent(new Event("change"));
+            },
+          },
+          "Defaults",
+        )
+      : null;
 
   const onSubmit = async (ev) => {
     ev.preventDefault();
-    const body = { ...data };
-    for (const [name, read] of Object.entries(inputs)) body[name] = read();
-    if (extra) Object.assign(body, extra.read());
-    delete body.effective;
+    clearTimeout(timer);
+    asked += 1;
+    const body = read();
     save.disabled = true;
     error.hidden = true;
     note.textContent = "";
@@ -266,6 +377,7 @@ function form(g, data, reload) {
       const res = await put(`/settings/${g.key}`, body);
       const message = (res && res.message) || "Saved";
       toast(message);
+      showRisks();
       await reload();
       // reload replaced the form; show the message on the new one
       const fresh = document.querySelector(`form[data-group="${g.key}"] [role=status]`);
@@ -278,14 +390,100 @@ function form(g, data, reload) {
     }
   };
 
-  return h(
+  const el = h(
     "form",
-    { "data-group": g.key, onsubmit: onSubmit, oninput: () => (note.textContent = "") },
+    {
+      "data-group": g.key,
+      onsubmit: onSubmit,
+      oninput: () => {
+        note.textContent = "";
+        preview();
+      },
+      onchange: preview,
+    },
     h("h2", { text: g.title }),
     h("div", { class: "fields" }, fields),
     extra ? extra.nodes : null,
+    panel,
     error,
-    h("div", { class: "form-foot" }, save, note),
+    h("div", { class: "form-foot" }, save, defaults, note),
+  );
+  return el;
+}
+
+// ---- Backup and restore (feature 015) ---------------------------------------
+
+function backupCard(remount) {
+  const text = h("textarea", { class: "input wide", rows: 5, spellcheck: "false", placeholder: "Paste a settings file, or choose one", "aria-label": "Settings file" });
+  const out = h("div", { class: "preview", "aria-live": "polite", hidden: true });
+  const apply = h("button", { type: "button", class: "btn btn-primary", disabled: true }, "Apply");
+  let last = null;
+  const show = (...nodes) => {
+    out.replaceChildren(h("div", {}, nodes));
+    out.hidden = false;
+  };
+  const check = async () => {
+    apply.disabled = true;
+    last = null;
+    if (!text.value.trim()) return void (out.hidden = true);
+    try {
+      const p = await importSettings(text.value, false);
+      last = p;
+      const lists = [
+        [p.ignored, "Left out (credentials stay as they are)"],
+        [(p.unknown || []).map((u) => u.key), "Not known, ignored"],
+      ].map(([keys, label]) => (keys && keys.length ? h("p", { class: "muted", text: `${label}: ${keys.join(", ")}` }) : null));
+      show(h("h3", { text: "If you import" }), previewNodes(p), lists);
+      apply.disabled = !p.valid || !p.changes.length;
+    } catch (e) {
+      if (e.status !== 401 && e.status !== 429) show(h("p", { class: "error-text", text: reason(e) }));
+    }
+  };
+  const file = h("input", {
+    type: "file",
+    accept: ".toml,text/plain",
+    "aria-label": "Choose a settings file",
+    onchange: async () => {
+      const f = file.files[0];
+      if (f) text.value = await f.text();
+      check();
+    },
+  });
+  let timer = 0;
+  text.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(check, 400);
+  });
+  apply.addEventListener("click", async () => {
+    const n = last ? last.changes.length : 0;
+    if (!(await confirm({ title: "Import these settings?", text: `${n} setting${n === 1 ? "" : "s"} will change and be saved to the config file.`, verb: "Import" }))) return;
+    apply.disabled = true;
+    try {
+      const p = await importSettings(text.value, true);
+      toast(p.message || "Imported");
+      remount();
+    } catch (e) {
+      if (e.status !== 401 && e.status !== 429) show(h("p", { class: "error-text", text: reason(e) }));
+    }
+  });
+  const download = async () => {
+    try {
+      const url = URL.createObjectURL(new Blob([await exportSettings()], { type: "text/plain" }));
+      h("a", { href: url, download: "putio-sync-settings.toml" }).click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      if (e.status !== 401 && e.status !== 429) toast(reason(e), "error");
+    }
+  };
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: "Backup and restore" }),
+    h("p", { class: "muted", text: "The file holds every setting except credentials and the Radarr / Sonarr section. Importing changes only the settings the file has; you see what changes first." }),
+    h("div", { class: "form-foot" }, h("button", { type: "button", class: "btn", onclick: download }, "Export"), file),
+    h("div", { class: "spaced" }, text),
+    out,
+    h("div", { class: "form-foot" }, apply),
   );
 }
 

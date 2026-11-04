@@ -388,6 +388,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .field.check small { display: block; }
 .form-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 20px; }
 .form-foot p { margin: 0; }
+.field small.affects { display: block; }
+.preview { margin-top: 16px; padding: var(--s-4); border-radius: var(--r-md); background: var(--surface-2); }
+.preview h3 { margin: 0 0 6px; font-size: var(--fs-sm); }
+.wide { width: 100%; }
+.changes { margin: 0 0 6px; padding-left: 1.2em; word-break: break-word; }
 form > .error-text { margin: 12px 0 0; }
 
 /* Appearance (Settings): segmented mode control and accent swatches */

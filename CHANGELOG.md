@@ -14,6 +14,20 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- A configuration assistant on the Settings page. Each card previews what a
+  save would change (old and new value, and whether it applies now or needs a
+  restart) or why it would be refused; a preview never writes the config file.
+  Each field says what it affects. Risky combinations are flagged in the
+  preview, in a banner at the top of Settings and in the doctor's config
+  check: for example deleting from Put.io after download into a temporary
+  folder or a container layer, a watch folder inside the download folder, or a
+  cleanup with no minimum age. A Defaults button fills a card with its
+  defaults without saving (the download folder is kept). Backup and restore
+  exports the settings as a TOML file and imports one over the current
+  settings, with a preview first; the file never holds credentials or the
+  Radarr/Sonarr section, and an imported file's credentials are ignored. New
+  API routes: `POST /settings/{group}/preview`, `GET /settings/assistant`,
+  `GET /settings/export` and `POST /settings/import` (feature 015).
 - A first-run setup wizard. A daemon with no config, no Put.io token, a
   rejected token or an unusable download folder no longer exits: it stays up
   in setup mode, prints a one-time setup code to its console (`docker logs`,

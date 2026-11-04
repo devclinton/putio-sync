@@ -13,14 +13,6 @@ A short, skippable tour of each page on first visit, re-runnable from
 Settings. Help panels and tooltips explain each setting in plain words, with
 links to the guides from 016.
 
-### 015 Configuration assistant
-
-Settings explain what each option does and what it affects. They validate
-values before saving, and preview the change against the current config.
-They warn about risky combinations (for example deleting from Put.io after
-download with no local copy). They can also reset a section to defaults and
-import or export the config.
-
 ### 016 Onboarding guides
 
 Getting-started guides for each way to run putio-sync (Unraid/Docker, snap,

@@ -19,6 +19,9 @@ pub mod cleanup;
 /// Configuration management
 pub mod config;
 
+/// Settings risks, diffs, export and import (feature 015)
+pub mod assistant;
+
 /// Config file warnings for the doctor
 pub mod config_lint;
 

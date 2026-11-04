@@ -2,7 +2,7 @@
 
 use super::{bytes, count, Ctx};
 use crate::report::{Finding, Item, Status};
-use putio_sync_core::config_lint;
+use putio_sync_core::{assistant, config_lint};
 use putio_sync_telemetry::gauges::disk_usage;
 
 /// Free space that gives a warning / a problem, in percent
@@ -100,44 +100,78 @@ fn line_of(text: &str, offset: usize) -> usize {
         + 1
 }
 
+/// Unknown or misspelt keys in the config file, and risky combinations of settings in the
+/// running config (feature 015)
 pub(crate) async fn config(ctx: &Ctx) -> Finding {
-    let Some(path) = &ctx.config_path else {
-        return Finding::skipped("No config file is in use.");
+    let risks: Vec<Item> = assistant::risks(&ctx.config)
+        .into_iter()
+        .map(|r| Item::new(r.id, r.keys.join(" + ")).detail(r.message))
+        .collect();
+    let lint = match &ctx.config_path {
+        None => None,
+        Some(path) => match std::fs::read_to_string(path) {
+            Ok(text) => Some(lint_items(&text)),
+            Err(e) if risks.is_empty() => {
+                return Finding::skipped(format!("Could not read {}: {e}", path.display()));
+            }
+            Err(_) => None,
+        },
     };
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) => {
-            return Finding::skipped(format!("Could not read {}: {e}", path.display()));
-        }
+    let warnings = match lint {
+        Some(Err(problem)) => return problem,
+        Some(Ok(items)) => items,
+        None if risks.is_empty() => return Finding::skipped("No config file is in use."),
+        None => Vec::new(),
     };
-    match config_lint::lint(&text) {
-        Ok(warnings) if warnings.is_empty() => Finding::ok("No unknown or risky settings."),
-        Ok(warnings) => {
-            let items = warnings
-                .into_iter()
-                .map(|w| Item::new(&w.key, &w.key).detail(w.message))
-                .collect::<Vec<_>>();
-            let verb = if items.len() == 1 { "needs" } else { "need" };
-            Finding::new(
-                Status::Warning,
-                format!(
-                    "{} {verb} a look in the config file.",
-                    count(items.len(), "setting")
-                ),
-            )
-            .suggest("Fix or remove these lines in the config file.")
-            .items(items)
-        }
+    if warnings.is_empty() && risks.is_empty() {
+        return Finding::ok("No unknown or risky settings.");
+    }
+
+    let mut parts = Vec::new();
+    let mut suggestions = Vec::new();
+    if !warnings.is_empty() {
+        let verb = if warnings.len() == 1 { "needs" } else { "need" };
+        parts.push(format!(
+            "{} {verb} a look in the config file",
+            count(warnings.len(), "setting")
+        ));
+        suggestions.push("Fix or remove these lines in the config file.");
+    }
+    if !risks.is_empty() {
+        parts.push(format!(
+            "{} could lose data or cause trouble",
+            count(risks.len(), "combination")
+        ));
+        suggestions
+            .push("Change one of the settings named, on the Settings page or in the config file.");
+    }
+    let mut summary = parts.join("; ");
+    summary.push('.');
+    let mut items = risks;
+    items.extend(warnings);
+    Finding::new(Status::Warning, summary)
+        .suggest(suggestions.join(" "))
+        .items(items)
+}
+
+/// The lint warnings of the config file `text` as items, or a Problem when it is not
+/// valid TOML
+fn lint_items(text: &str) -> Result<Vec<Item>, Finding> {
+    match config_lint::lint(text) {
+        Ok(warnings) => Ok(warnings
+            .into_iter()
+            .map(|w| Item::new(&w.key, &w.key).detail(w.message))
+            .collect()),
         // Only the message and line: the error's own text quotes the line, which could
         // hold the token
         Err(e) => {
-            let line = e.span().map(|s| line_of(&text, s.start));
+            let line = e.span().map(|s| line_of(text, s.start));
             let at = line.map(|l| format!(" (line {l})")).unwrap_or_default();
-            Finding::new(
+            Err(Finding::new(
                 Status::Problem,
                 format!("The config file can't be read{at}: {}", e.message()),
             )
-            .suggest("Fix the file; putio-sync will not start with it as it is.")
+            .suggest("Fix the file; putio-sync will not start with it as it is."))
         }
     }
 }
@@ -197,5 +231,33 @@ mod tests {
         assert_eq!(f.status, Status::Problem);
         assert!(!f.summary.contains("SECRET"), "{}", f.summary);
         assert!(f.summary.contains("line 2"), "{}", f.summary);
+    }
+
+    #[tokio::test]
+    async fn config_lists_risks_with_the_lint() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut c = ctx("http://127.0.0.1:9", dir.path(), None);
+        c.config.download.delete_after_download = true;
+        c.config.download.target_directory = std::env::temp_dir().join("putio-sync-015");
+
+        // No config file: the risks alone
+        let f = config(&c).await;
+        assert_eq!(f.status, Status::Warning);
+        assert_eq!(f.items[0].key, "delete_temp_folder");
+        assert!(f.summary.contains("1 combination"), "{}", f.summary);
+
+        c.config_path = Some(path.clone());
+        let good = toml::to_string(&putio_sync_core::config::Config::default()).unwrap();
+        std::fs::write(&path, format!("typo_section = 1\n{good}")).unwrap();
+        let f = config(&c).await;
+        assert_eq!(f.status, Status::Warning);
+        let keys: Vec<&str> = f.items.iter().map(|i| i.key.as_str()).collect();
+        assert_eq!(keys, ["delete_temp_folder", "typo_section"]);
+        assert!(
+            f.summary.starts_with("1 setting needs a look"),
+            "{}",
+            f.summary
+        );
     }
 }

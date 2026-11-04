@@ -93,6 +93,12 @@ export async function request(method, path, body) {
 export const get = (path) => request("GET", path);
 export const post = (path, body) => request("POST", path, body);
 export const put = (path, body) => request("PUT", path, body);
+
+// Configuration assistant (feature 015)
+export const settingsAssistant = () => get("/settings/assistant");
+export const previewSettings = (group, body) => post(`/settings/${group}/preview`, body);
+export const exportSettings = () => get("/settings/export");
+export const importSettings = (toml, apply) => post("/settings/import", { toml, apply });
 export const del = (path) => request("DELETE", path);
 
 /** Check `token` with the daemon and keep it only when accepted (204). */

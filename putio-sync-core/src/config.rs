@@ -2067,7 +2067,7 @@ pub fn spawn_reload_poller(
 
 /// `config` as a TOML table without the credentials (`[auth]`, `api.auth_token`), which
 /// the settings save never writes
-fn settings_table(config: &Config) -> CoreResult<toml::Table> {
+pub(crate) fn settings_table(config: &Config) -> CoreResult<toml::Table> {
     let mut table = toml::Table::try_from(config)
         .map_err(|e| CoreError::ConfigError(format!("Failed to serialize config: {}", e)))?;
     table.remove("auth");

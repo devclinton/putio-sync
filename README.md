@@ -863,6 +863,36 @@ apply to manual runs.
 Invalid values are refused with 400 and a JSON `error`, and nothing is saved. A
 watch folder must exist before the watcher can be enabled.
 
+### Configuration assistant
+
+Each settings card helps before you save:
+
+- **Preview.** As you edit, the card lists what Save would change, old and new value,
+  each marked *applies now* or *needs a restart* for the engine you run (the table
+  above), or the reason Save would refuse it. A preview never writes the file.
+- **What it affects.** Each field has an *Affects* line saying what it changes.
+- **Warnings.** Risky combinations show in the preview, in a banner at the top of
+  Settings and in the doctor's *Config file* check:
+
+  | Warning | When |
+  |---|---|
+  | Danger: only copy in a temporary folder | `delete_after_download` with the download folder in `/tmp`, `/var/tmp` or the system temp folder |
+  | Danger: only copy in the container | `delete_after_download` in a container, with the download folder on the container's own disk rather than a mounted volume |
+  | Watch folder in the download folder | the watcher on, with a watch folder inside the download folder |
+  | Archive in a watch folder | the watcher on, with its archive folder inside a watch folder |
+  | Cleanup without a minimum age | the daily cleanup with `min_age_hours = 0` |
+  | Many workers | more than 10 download workers |
+  | Verbose log file | the log file on with level `trace` or `debug` |
+
+- **Defaults.** The Defaults button fills the card with the default values, keeping
+  the download folder; nothing is saved until Save.
+- **Backup and restore.** Export downloads `putio-sync-settings.toml` with every
+  setting except `[auth]`, `api.auth_token` and `[arr]`. Import (a file or pasted
+  text) merges the file over the current settings: keys it leaves out keep their
+  value, credentials and `[arr]` in it are ignored and listed, unknown keys are
+  listed, and you see the changes before Apply. Apply saves the same way as a card,
+  so comments and the file's credentials stay.
+
 ### HTTP API
 
 All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
@@ -893,6 +923,10 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `GET /history?action=&name=&limit=&offset=` | History; `name` is a case-insensitive substring |
 | `GET /history/stats`, `GET /stats/{downloads,transfers,disk}` | Totals |
 | `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
+| `POST /settings/{group}/preview` | The group's PUT body → `{"valid", "error", "changes": [{"key", "before", "after", "live"}], "when", "risks"}`; writes nothing |
+| `GET /settings/assistant` | Per group: what each field affects, the fields that apply live, the defaults; and the risks of the running config |
+| `GET /settings/export` | The settings as a TOML file, without `[auth]`, `api.auth_token` and `[arr]` |
+| `POST /settings/import` | `{"toml": "...", "apply": false}` → a preview with `changes` (dotted keys), `risks`, `unknown` and `ignored`; with `true`, saves it and adds `message`. 400 for invalid TOML (line number only), a refused config or a file over 1 MB |
 | `GET /stats/releases?range=` | Rejected releases and bytes kept off the NAS, by stage and reason; magnet lookups by cache; fallbacks to Put.io; report counts with the top file types and trackers |
 | `GET /releases/reports?range=&format=json\|csv` | The rejection and flag reports as a download: file types, sizes and tracker hosts, never a link, magnet or passkey |
 | `GET /releases/flags?file_id=&history_id=&arr_hash=&report_id=` | The flags on up to 200 releases, and which of the `file_id`s a Radarr/Sonarr item holds |
