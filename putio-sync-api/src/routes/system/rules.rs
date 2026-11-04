@@ -7,8 +7,7 @@
 //! - POST   /rules/delete            - Remove a rule by path (`{path}`)
 //! - PUT    /rules/presets/{name}    - Create a user preset or override a built-in
 //! - DELETE /rules/presets/{name}    - Delete a user preset or reset a built-in
-//! - POST   /rules/preview           - What a rule (or the account-wide patterns) would do
-//!                                     under a folder; changes nothing
+//! - POST   /rules/preview           - What a rule or the account-wide patterns would do; changes nothing
 //! - GET    /rules/decisions         - Recent blocked, skipped and deleted files
 //! - POST   /rules/decisions/clear   - Forget the recorded decisions
 //!

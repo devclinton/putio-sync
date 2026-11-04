@@ -51,8 +51,8 @@
 
 **Goal**: errors refuse saves; warnings show in Settings and the doctor. **Independent test**: rule include `*.mkv` with delete_blocked → doctor Config warns.
 
-- [ ] T017 [US4] In `putio-sync-core/src/assistant.rs`: `pattern_warning` risks (Level::Warning; keys `download.whitelist_patterns`, `download.blacklist_patterns` or `download.rules`) for every check warning, and `delete_unmatched` (Level::Warning, `download.rules`) for a rule with `delete_blocked = true` whose effective include is non-empty: "Files under {path} that don't match `{p}` are deleted from Put.io at each sync"; tests
-- [ ] T018 [US4] Doctor test in `putio-sync-doctor/src/checks/local.rs` that the config check lists `delete_unmatched`
+- [X] T017 [US4] In `putio-sync-core/src/assistant.rs`: `pattern_warning` risks (Level::Warning; keys `download.whitelist_patterns`, `download.blacklist_patterns` or `download.rules`) for every check warning, and `delete_unmatched` (Level::Warning, `download.rules`) for a rule with `delete_blocked = true` whose effective include is non-empty: "Files under {path} that don't match `{p}` are deleted from Put.io at each sync"; tests
+- [X] T018 [US4] Doctor test in `putio-sync-doctor/src/checks/local.rs` that the config check lists `delete_unmatched`
 
 ## Phase 7: Polish
 
