@@ -330,6 +330,8 @@ impl PartialEq for Pattern {
     }
 }
 
+impl Eq for Pattern {}
+
 impl Serialize for Pattern {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&self.text)

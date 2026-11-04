@@ -1383,6 +1383,7 @@ impl Config {
         }
 
         crate::rules::validate(&self.download.rules, &self.download.presets)?;
+        crate::rules::validate_root_patterns(&self.download)?;
         crate::rules::validate_root_preset(
             self.download.preset.as_deref(),
             &self.download.presets,
@@ -2495,6 +2496,27 @@ fn write_atomically(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn old_pattern_values_load_and_bad_ones_are_refused() {
+        // feature 020: comma lists and braces mean what they always meant
+        for text in ["*.mkv,*.mp4", "*.{mkv,mp4}", "*.mkv, *.mp4"] {
+            let mut config = super::Config::default();
+            config.download.whitelist_patterns = Some(text.to_string());
+            config.validate().unwrap();
+            let rules = crate::rules::RuleSet::from_config(&config.download);
+            assert_eq!(rules.decide("", "a.mkv"), crate::rules::Decision::Download);
+            assert_eq!(rules.decide("", "b.MP4"), crate::rules::Decision::Download);
+            assert_ne!(rules.decide("", "c.avi"), crate::rules::Decision::Download);
+        }
+        let mut config = super::Config::default();
+        config.download.blacklist_patterns = Some("\"abc".to_string());
+        let err = config.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("[download] blacklist_patterns (Never download): unclosed quote"),
+            "{err}"
+        );
+    }
+
     #[test]
     fn transfers_section_defaults_and_overrides() {
         let config: super::Config = toml::from_str("").unwrap();

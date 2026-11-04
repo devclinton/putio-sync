@@ -8,9 +8,15 @@
 //! The type filter is folded from the root down (R3): the global `blocked_extensions`
 //! is the start, a rule's preset replaces the inherited filter, its `allow` extensions
 //! are then allowed and its `block` extensions blocked.
+//!
+//! Feature 020 adds `include` (Only download) and `exclude` (Never download) patterns,
+//! inherited like the other settings from `[download] whitelist_patterns` /
+//! `blacklist_patterns`. A file is refused when its folder is skipped, then when it
+//! matches `exclude`, then when it misses `include`, then by the type filter.
 
 use crate::config::{DownloadConfig, ExistingFile};
 use crate::error::{CoreError, CoreResult};
+use crate::pattern::{self, Pattern};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -31,6 +37,12 @@ pub struct FolderRule {
     /// Extensions blocked on top of the preset or inherited filter; wins over `allow`
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub block: Vec<String>,
+    /// Only download files matching this pattern; `""` clears an inherited one
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include: Option<String>,
+    /// Never download files matching this pattern; `""` clears an inherited one
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<String>,
     /// Download nothing below this folder
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip: Option<bool>,
@@ -54,6 +66,8 @@ impl FolderRule {
         self.preset.is_none()
             && self.allow.is_empty()
             && self.block.is_empty()
+            && self.include.is_none()
+            && self.exclude.is_none()
             && self.skip.is_none()
             && self.delete_blocked.is_none()
             && self.delete_after_download.is_none()
@@ -271,8 +285,30 @@ pub fn validate(rules: &[FolderRule], presets: &BTreeMap<String, Preset>) -> Cor
         }
         check_extensions(&rule.allow, &what)?;
         check_extensions(&rule.block, &what)?;
+        check_pattern(rule.include.as_deref(), &format!("{what}: Only download"))?;
+        check_pattern(rule.exclude.as_deref(), &format!("{what}: Never download"))?;
     }
     Ok(())
+}
+
+/// Check the account-wide `[download] whitelist_patterns` / `blacklist_patterns` strictly
+pub fn validate_root_patterns(config: &DownloadConfig) -> CoreResult<()> {
+    check_pattern(
+        config.whitelist_patterns.as_deref(),
+        "[download] whitelist_patterns (Only download)",
+    )?;
+    check_pattern(
+        config.blacklist_patterns.as_deref(),
+        "[download] blacklist_patterns (Never download)",
+    )
+}
+
+/// Check one saved pattern strictly; `what` names it in the error
+pub fn check_pattern(text: Option<&str>, what: &str) -> CoreResult<()> {
+    match text.map(pattern::check) {
+        Some(Err(e)) => Err(invalid(format!("{what}: {e}"))),
+        _ => Ok(()),
+    }
 }
 
 /// Check the account-wide `[download] preset` names a built-in or `[download.presets]` entry
@@ -374,6 +410,10 @@ pub struct Effective {
     pub filter: Sourced<TypeFilter>,
     /// The preset in force, if any rule on the path set one
     pub preset: Sourced<Option<String>>,
+    /// Only download files matching this (empty: every file)
+    pub include: Sourced<Pattern>,
+    /// Never download files matching this (empty: none)
+    pub exclude: Sourced<Pattern>,
     /// Download nothing here
     pub skip: Sourced<bool>,
     /// Delete type-blocked files from Put.io
@@ -382,6 +422,9 @@ pub struct Effective {
     pub delete_after_download: Sourced<bool>,
     /// What to do when a file already exists locally
     pub on_existing: Sourced<ExistingFile>,
+    /// The folder this was resolved for, for path patterns
+    #[serde(skip)]
+    pub folder: String,
 }
 
 impl Effective {
@@ -390,6 +433,29 @@ impl Effective {
         if self.skip.value {
             return Decision::Skipped {
                 rule: self.skip.from.clone(),
+            };
+        }
+        let path = if self.folder.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}/{name}", self.folder)
+        };
+        let exclude = &self.exclude.value;
+        if !exclude.is_empty() && exclude.matches(name, &path) {
+            return Decision::Blocked {
+                reason: Reason::Excluded {
+                    pattern: exclude.as_str().to_string(),
+                },
+                rule: self.exclude.from.clone(),
+            };
+        }
+        let include = &self.include.value;
+        if !include.is_empty() && !include.matches(name, &path) {
+            return Decision::Blocked {
+                reason: Reason::NotIncluded {
+                    pattern: include.as_str().to_string(),
+                },
+                rule: self.include.from.clone(),
             };
         }
         match self
@@ -421,12 +487,26 @@ pub enum Reason {
         /// The file's extension
         extension: String,
     },
+    /// The name matches the Never download pattern
+    Excluded {
+        /// The pattern text
+        pattern: String,
+    },
+    /// The name misses the Only download pattern
+    NotIncluded {
+        /// The pattern text
+        pattern: String,
+    },
 }
 
 impl fmt::Display for Reason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Reason::Blocked { extension } => write!(f, "extension {extension} is blocked"),
+            Reason::Excluded { pattern } => write!(f, "matches never-download pattern `{pattern}`"),
+            Reason::NotIncluded { pattern } => {
+                write!(f, "doesn't match only-download pattern `{pattern}`")
+            }
             Reason::NotAllowed { extension, preset } => {
                 match extension {
                     Some(e) => write!(f, "extension {e} is not allowed")?,
@@ -446,11 +526,11 @@ impl fmt::Display for Reason {
 pub enum Decision {
     /// Download it
     Download,
-    /// The type filter refuses it
+    /// A pattern or the type filter refuses it
     Blocked {
         /// Why
         reason: Reason,
-        /// The rule path that set the filter, `None` for `[download]`
+        /// The rule path that set the pattern or filter, `None` for `[download]`
         rule: Option<String>,
     },
     /// Its folder is skipped
@@ -485,6 +565,8 @@ impl Decision {
 pub struct RuleSet {
     blocked: Vec<String>,
     root_preset: Option<String>,
+    include: Pattern,
+    exclude: Pattern,
     delete_after_download: bool,
     on_existing: ExistingFile,
     rules: HashMap<String, FolderRule>,
@@ -527,6 +609,8 @@ impl RuleSet {
         Self {
             blocked: config.blocked_extensions.clone(),
             root_preset,
+            include: Pattern::parse(config.whitelist_patterns.as_deref().unwrap_or("")),
+            exclude: Pattern::parse(config.blacklist_patterns.as_deref().unwrap_or("")),
             delete_after_download: config.delete_after_download,
             on_existing: config.on_existing(),
             rules,
@@ -534,9 +618,12 @@ impl RuleSet {
         }
     }
 
-    /// True when no folder rule and no account-wide preset exists
+    /// True when no folder rule, account-wide preset or pattern exists
     pub fn is_empty(&self) -> bool {
-        self.rules.is_empty() && self.root_preset.is_none()
+        self.rules.is_empty()
+            && self.root_preset.is_none()
+            && self.include.is_empty()
+            && self.exclude.is_empty()
     }
 
     /// The root filter: the account-wide `[download] preset` when set, else
@@ -556,10 +643,17 @@ impl RuleSet {
         let mut effective = Effective {
             filter: Sourced::global(self.root_filter()),
             preset: Sourced::global(self.root_preset.clone()),
+            include: Sourced::global(self.include.clone()),
+            exclude: Sourced::global(self.exclude.clone()),
             skip: Sourced::global(false),
             delete_blocked: Sourced::global(false),
             delete_after_download: Sourced::global(self.delete_after_download),
             on_existing: Sourced::global(self.on_existing),
+            folder: folder_path
+                .split('/')
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("/"),
         };
         if self.rules.is_empty() {
             return effective;
@@ -601,6 +695,9 @@ impl RuleSet {
         if changed {
             filter.from = Some(path.to_string());
         }
+        let parse = |p: &Option<String>| p.as_deref().map(Pattern::parse);
+        effective.include.set(parse(&rule.include), path);
+        effective.exclude.set(parse(&rule.exclude), path);
         effective.skip.set(rule.skip, path);
         effective.delete_blocked.set(rule.delete_blocked, path);
         effective
@@ -942,5 +1039,147 @@ mod tests {
         assert!(err.to_string().contains("unknown preset 'comics'"), "{err}");
         let user = BTreeMap::from([("comics".to_string(), Preset::default())]);
         assert!(validate_root_preset(Some("comics"), &user).is_ok());
+    }
+
+    fn patterns(path: &str, include: Option<&str>, exclude: Option<&str>) -> FolderRule {
+        FolderRule {
+            include: include.map(str::to_string),
+            exclude: exclude.map(str::to_string),
+            ..rule(path)
+        }
+    }
+
+    fn with_globals(
+        include: Option<&str>,
+        exclude: Option<&str>,
+        rules: Vec<FolderRule>,
+    ) -> RuleSet {
+        RuleSet::from_config(&DownloadConfig {
+            whitelist_patterns: include.map(str::to_string),
+            blacklist_patterns: exclude.map(str::to_string),
+            ..config(rules)
+        })
+    }
+
+    #[test]
+    fn exclude_refuses_matching_files() {
+        let rules = set(vec![patterns("Movies", None, Some("*sample*"))]);
+        assert!(!downloads(&rules, "Movies", "Film.sample.mkv"));
+        assert!(downloads(&rules, "Movies", "Film.mkv"));
+        assert!(downloads(&rules, "TV", "Show.sample.mkv"));
+        let d = rules.decide("Movies/2024", "Film.sample.mkv");
+        assert_eq!(d.rule(), Some("Movies"));
+        assert_eq!(d.reason(), "matches never-download pattern `*sample*`");
+    }
+
+    #[test]
+    fn include_refuses_the_rest() {
+        let rules = set(vec![patterns("Movies", Some("*.mkv"), None)]);
+        assert!(downloads(&rules, "Movies", "a.mkv"));
+        assert!(!downloads(&rules, "Movies", "a.avi"));
+        assert_eq!(
+            rules.decide("Movies", "a.avi").reason(),
+            "doesn't match only-download pattern `*.mkv`"
+        );
+        let e = rules.resolve("Movies/Sub");
+        assert_eq!(e.include.value.as_str(), "*.mkv");
+        assert_eq!(e.include.from.as_deref(), Some("Movies"));
+        assert!(e.exclude.value.is_empty());
+    }
+
+    #[test]
+    fn deeper_pattern_wins_and_empty_clears() {
+        let rules = set(vec![
+            patterns("Movies", Some("*.mkv"), Some("*sample*")),
+            patterns("Movies/Kids", Some("*.mp4"), None),
+            patterns("Movies/Raw", Some(""), Some("")),
+        ]);
+        assert!(downloads(&rules, "Movies/Kids", "a.mp4"));
+        assert!(!downloads(&rules, "Movies/Kids", "a.mkv"));
+        assert!(!downloads(&rules, "Movies/Kids", "a.sample.mp4"));
+        assert!(downloads(&rules, "Movies/Raw", "a.sample.avi"));
+        let e = rules.resolve("Movies/Raw");
+        assert!(e.include.value.is_empty());
+        assert_eq!(e.include.from.as_deref(), Some("Movies/Raw"));
+    }
+
+    #[test]
+    fn path_patterns_see_the_folder() {
+        let rules = set(vec![patterns("Movies", None, Some("Sample/*"))]);
+        assert!(!downloads(&rules, "Movies/Film/Sample", "a.mkv"));
+        assert!(downloads(&rules, "Movies/Film", "a.mkv"));
+        assert!(downloads(&rules, "Movies/Film/Samples", "a.mkv"));
+        let root = with_globals(None, Some("Movies/Extras/*"), vec![]);
+        assert!(!downloads(&root, "Movies/Extras", "b.mkv"));
+        assert!(downloads(&root, "Movies", "b.mkv"));
+    }
+
+    #[test]
+    fn patterns_never_unblock() {
+        let rules = set(vec![patterns("Apps", Some("*.exe"), None)]);
+        let d = rules.decide("Apps", "setup.exe");
+        assert_eq!(d.reason(), "extension exe is blocked");
+    }
+
+    #[test]
+    fn no_patterns_change_nothing() {
+        let rules = set(vec![preset_rule("Movies", "video")]);
+        let e = rules.resolve("Movies");
+        assert!(e.include.value.is_empty() && e.exclude.value.is_empty());
+        assert!(set(vec![]).is_empty());
+        assert!(!with_globals(Some("*.mkv"), None, vec![]).is_empty());
+        assert!(!patterns("A", None, Some("")).is_empty());
+    }
+
+    #[test]
+    fn global_patterns_come_from_the_old_settings() {
+        let rules = with_globals(Some("*.mkv,*.mp4"), Some("*sample*"), vec![]);
+        assert!(downloads(&rules, "", "a.mkv"));
+        assert!(downloads(&rules, "Movies", "b.MP4"));
+        assert!(!downloads(&rules, "Movies", "c.avi"));
+        assert!(!downloads(&rules, "Movies", "a.sample.mkv"));
+        let d = rules.decide("Movies", "c.avi");
+        assert_eq!(d.rule(), None);
+        let rules = with_globals(Some("*.{mkv,mp4}"), None, vec![]);
+        assert!(downloads(&rules, "", "a.mkv") && !downloads(&rules, "", "b.avi"));
+    }
+
+    #[test]
+    fn combined_patterns() {
+        let rules = set(vec![
+            patterns("Movies", Some("*.mkv OR *.mp4 -sample"), None),
+            patterns("TV", None, Some("Sample/* OR *.nfo")),
+        ]);
+        assert!(downloads(&rules, "Movies", "a.mkv"));
+        assert!(downloads(&rules, "Movies", "a.MP4"));
+        assert!(!downloads(&rules, "Movies", "a.sample.mkv"));
+        assert!(!downloads(&rules, "Movies", "a.avi"));
+        assert!(!downloads(&rules, "TV/Show/Sample", "e1.mkv"));
+        assert!(!downloads(&rules, "TV/Show", "e1.nfo"));
+        assert!(downloads(&rules, "TV/Show", "e1.mkv"));
+    }
+
+    #[test]
+    fn bad_patterns_are_refused() {
+        let presets = BTreeMap::new();
+        let err = validate(&[patterns("Movies", None, Some("\"abc"))], &presets)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("Folder rule Movies: Never download: unclosed quote"),
+            "{err}"
+        );
+        let err = validate(&[patterns("Movies", Some("*.{mkv"), None)], &presets)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("Folder rule Movies: Only download: unbalanced { }"),
+            "{err}"
+        );
+        assert!(validate(
+            &[patterns("Movies", Some("*.mkv,*.mp4"), Some(""))],
+            &presets
+        )
+        .is_ok());
     }
 }
