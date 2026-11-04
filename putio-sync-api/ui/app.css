@@ -585,6 +585,9 @@ dialog p { margin: 0 0 24px; color: var(--muted); word-break: break-word; }
 .override-table .input { width: 100%; }
 .override-table td:first-child { width: 30%; }
 .override-table select.input { min-width: 8em; padding-right: 8px; }
+.schedule-table td.time { width: 6em; min-width: 6em; }
+.schedule-table td.limit .toolbar { flex-wrap: nowrap; }
+.schedule-table td.limit input { width: 6em; }
 .table td.nowrap { white-space: nowrap; }
 
 /* Motion: one entrance per page, and replies to actions */

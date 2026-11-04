@@ -1,7 +1,9 @@
 // Status page: GET /status and GET /arr/status every 3 s, answering "is it working?".
 // Feature 033: a Put.io low-space notice, checked once when the page opens.
+// Feature 032: the Bandwidth card, with Pause 1 h, Slow 1 h and Resume schedule.
 
-import { arrRuntime, get, syncNow } from "../api.js";
+import { arrRuntime, clearBandwidthOverride, get, setBandwidthOverride, syncNow } from "../api.js";
+import { describeSource, rate } from "../bandwidth.js";
 import { empty, h, poll, toast, toastError } from "../app.js";
 import { bytes, duration, percent, relative } from "../format.js";
 import { storageNotice } from "../storage.js";
@@ -71,6 +73,7 @@ function render(s, arr) {
     queueCard(s.queue, reasons.get("queue")),
     activeCard(s.active, reasons.get("active")),
     workersCard(s.workers),
+    bandwidthCard(s.bandwidth),
     diskCard(s.disk, reasons.get("disk")),
     watcherCard(s.watcher),
     connectionsCard(s.reachability, s.auth),
@@ -206,6 +209,50 @@ function workersCard(w) {
     "Workers",
     h("p", { class: "big" }, `${w.busy}`, h("span", { class: "unit" }, ` of ${w.configured} busy`)),
     h("div", { class: "bar" }, h("span", { style: `width:${clamp(pct)}%` })),
+  );
+}
+
+/** The limit in force, why, when it changes, and the daemon's clock (feature 032) */
+function bandwidthCard(b) {
+  if (!b) return unavailableCard("Bandwidth");
+  const next = b.next_change;
+  const tone = b.limit === "paused" ? " warn-text" : "";
+  const action = (label, title, run, done) =>
+    h(
+      "button",
+      {
+        type: "button",
+        class: "btn btn-small",
+        title,
+        onclick: async (ev) => {
+          ev.currentTarget.disabled = true;
+          try {
+            await run();
+            toast(done);
+          } catch (e) {
+            if (e.status !== 401 && e.status !== 429) toastError(e);
+          }
+          if (timer) timer.now();
+        },
+      },
+      label,
+    );
+  return card(
+    "Bandwidth",
+    h("p", { class: `big${tone}` }, rate(b.limit)),
+    kv([
+      ["Because", describeSource(b.source, b.entry)],
+      b.override ? ["Ends", relative(b.override.until)] : null,
+      next ? ["Next", `${rate(next.limit)} at ${next.at.replace("T", " ")}`] : null,
+      ["Daemon time", `${b.local_time.slice(11, 16)} (UTC${b.utc_offset})`],
+    ]),
+    h(
+      "div",
+      { class: "toolbar spaced" },
+      action("Pause 1 h", "Stop downloads for an hour", () => setBandwidthOverride("pause"), "Downloads paused for an hour"),
+      action("Slow 1 h", `Limit downloads to ${rate(b.slow_limit_bytes_per_sec)} for an hour`, () => setBandwidthOverride("slow"), "Downloads slowed for an hour"),
+      b.override ? action("Resume schedule", "End the pause or slow-down now", clearBandwidthOverride, "Following the schedule again") : null,
+    ),
   );
 }
 

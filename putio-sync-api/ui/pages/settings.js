@@ -31,6 +31,7 @@ import {
 } from "../api.js";
 import { networkBeforeSave, networkExtra } from "../network.js";
 import { tailscaleBeforeSave, tailscaleExtra } from "../tailscale.js";
+import { describeEntry, entryFromRow, move, rowFromEntry } from "../bandwidth.js";
 import { confirm, h, toast } from "../app.js";
 import { relative } from "../format.js";
 import { previewView, settingsCards } from "../rules.js";
@@ -47,7 +48,8 @@ const GROUPS = [
       ["target_directory", "Download folder", "Where files are saved", "s"],
       ["buffer_size_mb", "Buffer (MB)", "Write buffer per download", "n", 1],
       ["chunk_size_mb", "Chunk size (MB)", "Empty downloads each file in one request", "n?", 1],
-      ["bandwidth_limit_bytes_per_sec", "Bandwidth limit (bytes/s)", "Empty for unlimited", "n?", 1],
+      ["bandwidth_limit_bytes_per_sec", "Bandwidth limit (bytes/s)", "Outside the schedule below; empty for unlimited", "n?", 1],
+      ["slow_limit_bytes_per_sec", "Slow limit (bytes/s)", "Used by Slow 1 h on the Status page; 1048576 is 1 MB/s", "n", 1],
       ["max_retries", "Retries", "Attempts after a failed download", "n", 0],
       ["retry_initial_delay_secs", "First retry delay (s)", "Doubles on each retry", "n", 0],
       ["sort_order", "Sort order", "Order new files are queued in", ["ByDate", "ByName", "ByExtension", "BySize"]],
@@ -184,8 +186,10 @@ const riskList = (risks) =>
   risks.map((r) => h("p", { class: r.level === "danger" ? "error-text" : "warn-text" }, h("strong", { text: r.level === "danger" ? "Danger: " : "Warning: " }), r.message));
 
 const shown = (v) => {
-  const s = v == null ? "empty" : Array.isArray(v) ? v.join(", ") || "none" : typeof v === "object" ? JSON.stringify(v) : String(v);
-  return s.length > 60 ? `${s.slice(0, 57)}…` : s;
+  const item = (x) => (x && typeof x === "object" ? ("days" in x ? describeEntry(x) : JSON.stringify(x)) : x);
+  const s = v == null ? "empty" : Array.isArray(v) ? v.map(item).join(", ") || "none" : typeof v === "object" ? JSON.stringify(v) : String(v);
+  const max = Array.isArray(v) ? 200 : 60;
+  return s.length > max ? `${s.slice(0, max - 3)}…` : s;
 };
 
 /** A preview: what would change and whether it applies now, the refusal, and the risks */
@@ -538,7 +542,8 @@ const TRISTATE = [
 
 /** The override editors and the effective table; `read()` gives `{categories, watch}` */
 /** Preview of the typed Only and Never download patterns over the whole account (020) */
-function downloadExtra() {
+function downloadExtra(data) {
+  const schedule = scheduleEditor(data.bandwidth_schedule || []);
   const out = h("div", { class: "rule-preview", "aria-live": "polite" });
   const value = (name) => document.getElementById(`set-download-${name}`).value;
   const run = async (ev) => {
@@ -562,9 +567,91 @@ function downloadExtra() {
         h("small", { class: "muted", text: "Lists your whole Put.io account; this can take a while." }),
       ),
       out,
+      schedule.node,
     ],
-    read: () => ({}),
+    read: () => ({ bandwidth_schedule: schedule.read() }),
   };
+}
+
+const LIMIT_KINDS = [
+  ["rate", "MB/s"],
+  ["unlimited", "Unlimited"],
+  ["paused", "Paused"],
+];
+
+/**
+ * The bandwidth schedule (feature 032): rows of days, start, end and limit, checked in
+ * order; the first row containing the daemon's local time wins.
+ */
+function scheduleEditor(entries) {
+  let rows = entries.map(rowFromEntry);
+  const body = h("tbody");
+  const table = h(
+    "table",
+    { class: "table override-table schedule-table" },
+    h("thead", {}, h("tr", {}, ["Days", "Start", "End", "Limit", ""].map((t) => h("th", { text: t })))),
+    body,
+  );
+  const none = h("p", { class: "muted", text: "No entries: the bandwidth limit above applies all day." });
+  const changed = () => table.closest("form")?.dispatchEvent(new Event("change"));
+  const input = (row, key, label, placeholder) =>
+    h("input", { class: "input", value: row[key], placeholder, "aria-label": label, autocomplete: "off", spellcheck: "false", oninput: (ev) => (row[key] = ev.currentTarget.value) });
+  const draw = () => {
+    body.replaceChildren(
+      ...rows.map((row, i) => {
+        const mbs = input(row, "mbs", "Limit in MB/s", "5");
+        mbs.type = "number";
+        mbs.min = "0.01";
+        mbs.step = "any";
+        mbs.hidden = row.kind !== "rate";
+        const kind = h(
+          "select",
+          { class: "input", "aria-label": "Limit", onchange: (ev) => ((row.kind = ev.currentTarget.value), (mbs.hidden = row.kind !== "rate")) },
+          LIMIT_KINDS.map(([v, t]) => h("option", { value: v, selected: row.kind === v, text: t })),
+        );
+        const button = (text, label, onclick, disabled = false) => h("button", { type: "button", class: "btn btn-small", "aria-label": label, disabled, onclick }, text);
+        const redraw = (next) => () => {
+          rows = next();
+          draw();
+          changed();
+        };
+        return h(
+          "tr",
+          {},
+          h("td", { "data-label": "Days" }, input(row, "days", "Days", "daily, mon-fri, sat,sun")),
+          h("td", { class: "time", "data-label": "Start" }, input(row, "start", "Start", "01:00")),
+          h("td", { class: "time", "data-label": "End" }, input(row, "end", "End", "07:00")),
+          h("td", { class: "limit", "data-label": "Limit" }, h("div", { class: "toolbar" }, kind, mbs)),
+          h(
+            "td",
+            { class: "actions-cell" },
+            button("↑", `Move entry ${i + 1} up`, redraw(() => move(rows, i, -1)), i === 0),
+            button("↓", `Move entry ${i + 1} down`, redraw(() => move(rows, i, 1)), i === rows.length - 1),
+            button("Remove", `Remove entry ${i + 1}`, redraw(() => rows.filter((_, j) => j !== i))),
+          ),
+        );
+      }),
+    );
+    table.hidden = !rows.length;
+    none.hidden = rows.length > 0;
+  };
+  draw();
+  const add = () => {
+    rows = [...rows, { days: "daily", start: "01:00", end: "07:00", kind: "unlimited", mbs: "" }];
+    draw();
+    changed();
+    body.lastChild.querySelector("input").focus();
+  };
+  const node = h(
+    "div",
+    { class: "spaced" },
+    h("h3", { class: "sub", text: "Bandwidth schedule" }),
+    h("p", { class: "muted small", text: "In the daemon's local time (see Daemon time on the Status page). The first matching entry wins; an end before the start runs past midnight." }),
+    table,
+    none,
+    h("button", { type: "button", class: "btn btn-small spaced", onclick: add }, "Add entry"),
+  );
+  return { node, read: () => rows.map(entryFromRow) };
 }
 
 function precheckExtra(data) {
