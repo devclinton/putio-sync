@@ -551,6 +551,12 @@ dialog {
 dialog::backdrop { background: rgb(8 10 20 / 0.4); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
 dialog h2 { margin-bottom: 8px; font-size: var(--fs-xl); letter-spacing: -0.02em; }
 dialog p { margin: 0 0 24px; color: var(--muted); word-break: break-word; }
+.news-panel { width: min(600px, calc(100vw - 32px)); }
+.news-panel .stack { max-height: 60vh; overflow: auto; margin-bottom: 16px; }
+.news-panel .card { padding: 0; box-shadow: none; }
+.news { margin: 0; padding-left: 20px; }
+.news li { margin-bottom: 6px; }
+.news li.new::marker { color: var(--accent); font-weight: 700; }
 .dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .flag-form { display: grid; gap: 16px; }
 .flag-form h2, .flag-form p { margin: 0; }

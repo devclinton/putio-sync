@@ -116,6 +116,9 @@ async fn other_paths_answer_503() {
     let code = s.state.code().to_string();
     let (status, _) = s.call(Method::GET, "/local/queue", Some(&code), None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    // What's new (feature 017) waits for setup too
+    let (status, _) = s.call(Method::GET, "/whats-new", Some(&code), None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]

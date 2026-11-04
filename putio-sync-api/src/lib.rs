@@ -28,6 +28,7 @@
 //! }
 //! ```
 
+pub mod changelog;
 pub mod error;
 pub mod handlers;
 pub mod middleware;
@@ -281,6 +282,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/arr", routes::arr::router())
         .route("/active", axum::routing::get(routes::active::get_active))
         .nest("/releases", routes::releases::router())
+        .nest("/whats-new", routes::system::whats_new::router())
         .route(
             "/status",
             axum::routing::get(routes::system::status::get_status),

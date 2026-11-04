@@ -893,6 +893,15 @@ Each settings card helps before you save:
   listed, and you see the changes before Apply. Apply saves the same way as a card,
   so comments and the file's credentials stay.
 
+### What's new
+
+The release notes (`CHANGELOG.md`) are built into the binary. After an upgrade, the first
+page you open in the web UI shows a *What's new* panel with the entries the new build
+added; *Got it* (or closing it) marks them seen for every browser. The whole changelog is
+on the What's new page, linked from the version on the Status page. A new install, and
+the first build with this feature, show no panel: everything in that build counts as
+seen. Seen entries are kept in the database.
+
 ### HTTP API
 
 All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
@@ -904,6 +913,7 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `GET /auth/status` | `{"token_configured": true}`, no token |
 | `POST /auth/login` | `{"token": "..."}` → 204, 401 or 429; counted by the lockout |
 | `GET /status` | Everything on the status page in one response |
+| `GET /whats-new`, `POST /whats-new/seen` | The built-in changelog with each entry marked `new`; record entries as seen (`{"ids": [...]}`) |
 | `POST /local/sync` | Start a folder sync now: 202, 409 while one runs, 503 without a database |
 | `GET /local/queue`, `/local/queue/stats` | Queue rows and counts |
 | `POST /local/queue` | `{"file_id": 123}`: queue a file or every file under a folder → 202 with found/queued/skipped/blocked/failed, 404 if unknown |

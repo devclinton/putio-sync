@@ -14,6 +14,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- A What's new panel in the web UI. After an upgrade, the first page opened
+  lists the changelog entries the new build added; closing it marks them seen
+  for every browser. The whole changelog, built into the binary, is on a
+  What's new page linked from the version on the Status page. A new install
+  shows no panel. New API routes: `GET /whats-new` and
+  `POST /whats-new/seen` (feature 017).
 - A configuration assistant on the Settings page. Each card previews what a
   save would change (old and new value, and whether it applies now or needs a
   restart) or why it would be refused; a preview never writes the config file.
