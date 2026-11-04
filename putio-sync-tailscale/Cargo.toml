@@ -1,0 +1,22 @@
+[package]
+name = "putio-sync-tailscale"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tailscale awareness for putio-sync - reads tailscaled's status, serve config and peer identities"
+
+[dependencies]
+# Socket, CLI and timeouts
+tokio = { workspace = true }
+
+# LocalAPI and CLI JSON
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.8"

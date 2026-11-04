@@ -14,6 +14,20 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Tailscale awareness. Settings has a Tailscale card: whether Tailscale is on
+  this machine (through tailscaled's socket, or the `tailscale` CLI), the
+  MagicDNS name, the tailnet addresses, the HTTPS address from
+  `tailscale serve`, and hints when something is missing. Opt-in sign-in
+  with Tailscale identity (`[tailscale] identity_sign_in`, off by default):
+  users on the allow-list (`allowed_users`, filled with this node's owner when
+  turned on) open the UI without the API token, through `tailscale serve` or
+  straight over the tailnet; everybody else still needs the token, and tagged
+  devices and Funnel never get in this way. Opt-in `tailnet_only` makes the
+  daemon listen on the tailnet IPv4 address instead of `[api] bind`, waiting
+  for Tailscale when it starts later, and never falling back to the LAN. Works
+  with Tailscale in a sidecar container when its socket is mounted. Also
+  `GET /tailscale`, a `tailscale` doctor check, and
+  `putio_sync_tailscale_identity_total` in `/metrics` (feature 036).
 - Put.io storage management. The Put.io page opens with a storage card: used,
   free and total space, the biggest top-level items, and the latest free-up
   runs with the files each one deleted. Below a warning level of free space

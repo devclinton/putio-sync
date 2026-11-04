@@ -13,6 +13,7 @@ members = [
     "putio-sync-arr",
     "putio-sync-precheck",
     "putio-sync-storage",
+    "putio-sync-tailscale",
 ]
 resolver = "2"
 

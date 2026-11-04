@@ -30,6 +30,7 @@ pub mod server;
 pub mod setup;
 pub mod storage;
 pub mod sync;
+pub mod tailscale;
 pub mod transfers;
 pub mod watch;
 
@@ -119,6 +120,8 @@ pub struct Telemetry {
     pub(crate) storage_free_runs: IntCounterVec,
     pub(crate) storage_freed_files: IntCounter,
     pub(crate) storage_freed_bytes: IntCounter,
+    // Feature 036
+    pub(crate) tailscale_identity: IntCounterVec,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -532,6 +535,14 @@ impl Telemetry {
                 "Bytes deleted from Put.io to free space.",
             ))
             .unwrap(),
+            tailscale_identity: IntCounterVec::new(
+                opts(
+                    "tailscale_identity_total",
+                    "Requests that claimed a Tailscale identity, by how it was found and whether it was let in.",
+                ),
+                &["via", "result"],
+            )
+            .unwrap(),
 
             db_errors: IntCounterVec::new(
                 opts("db_errors_total", "Database errors."),
@@ -629,6 +640,7 @@ impl Telemetry {
             Box::new(self.storage_free_runs.clone()),
             Box::new(self.storage_freed_files.clone()),
             Box::new(self.storage_freed_bytes.clone()),
+            Box::new(self.tailscale_identity.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
             Box::new(self.disk_total.clone()),
@@ -675,6 +687,11 @@ impl Telemetry {
                     .with_label_values(&[t.as_str(), r.as_str()]);
                 self.storage_free_runs
                     .with_label_values(&[t.as_str(), r.as_str()]);
+            }
+        }
+        for via in tailscale::VIAS {
+            for result in tailscale::RESULTS {
+                self.tailscale_identity.with_label_values(&[via, result]);
             }
         }
         for m in ArrMethod::ALL {

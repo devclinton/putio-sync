@@ -690,6 +690,7 @@ H = histogram.
 | `putio_sync_storage_free_runs_total` | counter | `trigger`, `result` | Finished Put.io free-up runs; previews not counted |
 | `putio_sync_storage_freed_files_total` | counter | — | Files deleted from Put.io to free space |
 | `putio_sync_storage_freed_bytes_total` | counter | — | Bytes deleted from Put.io to free space |
+| `putio_sync_tailscale_identity_total` | counter | `via` (serve, whois), `result` (allowed, refused) | Requests that claimed a Tailscale identity (feature 036) |
 | `putio_sync_db_errors_total` | counter | `operation` | Database errors |
 | `putio_sync_disk_free_bytes` | gauge | — | Free space for the download folder; absent if unreadable |
 | `putio_sync_disk_total_bytes` | gauge | — | Size of the download folder's filesystem; absent if unreadable |
