@@ -33,7 +33,7 @@ Tests come first in each task where behaviour changes (Constitution III).
 ## Phase 4: User Story 3 - A broken plugin never breaks the sync (P1)
 
 - [X] T011 [US3] Tests in `putio-sync-plugins/tests/limits.rs`: a looping `on_event` ends as a timeout within limit + 1 s and the next event runs; a memory hog fails and the state is rebuilt; an `error()` is a failure and later events run; a slow plugin's queue drops oldest and a second plugin is not delayed; `emit` never blocks; a load failure leaves the service running
-- [ ] T012 [US3] Wiring: `putio-sync-api/src/lib.rs` `AppState.plugins: Arc<PluginsService>` (unstarted from config in `new`) and `with_plugins`; `putio-sync-cli/src/commands/{daemon,server}.rs` build one service (dir from config path), `start()` it, pass to `AppState` and the doctor; server ticker polls transfers when `plugins.wants` a `transfer.*`; add the crate to api, cli, doctor `Cargo.toml`
+- [X] T012 [US3] Wiring: `putio-sync-api/src/lib.rs` `AppState.plugins: Arc<PluginsService>` (unstarted from config in `new`) and `with_plugins`; `putio-sync-cli/src/commands/{daemon,server}.rs` build one service (dir from config path), `start()` it, pass to `AppState` and the doctor; server ticker polls transfers when `plugins.wants` a `transfer.*`; add the crate to api, cli, doctor `Cargo.toml`
 
 ## Phase 5: User Story 1 - Phone notification when a download lands (P1)
 

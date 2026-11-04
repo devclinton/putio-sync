@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+use putio_sync_core::config::Config;
 use putio_sync_core::events::{self, Event, EventType, Payload, PluginTest};
-use putio_sync_core::plugins::PluginSettings;
+use putio_sync_core::plugins::{dir_for, PluginSettings};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::oneshot;
@@ -436,6 +437,17 @@ impl PluginsService {
         config_path
             .and_then(|p| p.parent())
             .map(|d| d.join("plugin-data"))
+    }
+
+    /// A service for `config` loaded from `config_path`: its `plugins_dir` (default
+    /// `<config dir>/plugins`), stores in `<config dir>/plugin-data`, its `[[plugins]]`
+    pub fn from_config(config: &Config, config_path: Option<&Path>) -> PluginsService {
+        PluginsService::new(PluginsOptions {
+            dir: dir_for(config.plugins_dir.as_deref(), config_path),
+            data_dir: PluginsService::data_dir_for(config_path),
+            settings: config.plugins.clone(),
+            clock: None,
+        })
     }
 }
 

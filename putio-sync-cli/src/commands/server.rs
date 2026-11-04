@@ -148,6 +148,8 @@ pub async fn execute_server(
     .with_listen_flags(flags.then(|| entries.clone()));
     // Hooks run off the event bus from here on (feature 027)
     state.hooks.start();
+    // and so do plugins (feature 028)
+    state.plugins.start();
     // This mode has no daemon loops, so poll for `transfer.*` and `storage.low` here
     // (feature 027, R6 and R7)
     tokio::spawn(hook_events_ticker(state.clone()));
@@ -574,8 +576,8 @@ fn spawn_download_daemon(
     })
 }
 
-/// Every 30 s, the shared transfer list (which sends `transfer.*`) while a hook wants a
-/// transfer event; every 15 minutes, Put.io storage (which sends `storage.low`)
+/// Every 30 s, the shared transfer list (which sends `transfer.*`) while a hook or a
+/// plugin wants a transfer event; every 15 minutes, Put.io storage (which sends `storage.low`)
 async fn hook_events_ticker(state: putio_sync_api::AppState) {
     use putio_sync_core::events::EventType;
     const TRANSFERS: Duration = Duration::from_secs(30);
@@ -590,7 +592,10 @@ async fn hook_events_ticker(state: putio_sync_api::AppState) {
             EventType::TransferFinished,
             EventType::TransferFailed,
         ];
-        if transfers.into_iter().any(|t| state.hooks.wants(t)) {
+        if transfers
+            .into_iter()
+            .any(|t| state.hooks.wants(t) || state.plugins.wants(t))
+        {
             if let Err(e) = state.download_manager.transfers_snapshot(TRANSFERS).await {
                 debug!("Could not list Put.io transfers: {}", e);
             }

@@ -48,6 +48,7 @@ use putio_sync_doctor::Doctor;
 use putio_sync_download::{DownloadConfig, DownloadManager};
 use putio_sync_file_manager::TorrentWatcher;
 use putio_sync_hooks::HooksService;
+use putio_sync_plugins::PluginsService;
 use putio_sync_storage::StorageService;
 use putio_sync_tailscale::TailscaleService;
 use std::path::PathBuf;
@@ -113,6 +114,9 @@ pub struct AppState {
     /// Event hooks (feature 027); unstarted unless the caller's started service is
     /// swapped in with [`AppState::with_hooks`]
     pub hooks: Arc<HooksService>,
+    /// Lua plugins (feature 028); unstarted unless the caller's started service is
+    /// swapped in with [`AppState::with_plugins`]
+    pub plugins: Arc<PluginsService>,
     /// The addresses the API listens on now (feature 037); empty until a listener set
     /// is attached with [`AppState::with_listening`]
     pub listening: listen::Bound,
@@ -156,6 +160,7 @@ impl AppState {
             putio_sync_tailscale::Cli::Auto,
         ));
         let hooks = Arc::new(HooksService::new(config.hooks.clone()));
+        let plugins = Arc::new(PluginsService::from_config(&config, config_path.as_deref()));
         let doctor = Arc::new(
             Doctor::new(
                 config.clone(),
@@ -166,6 +171,7 @@ impl AppState {
             .with_config_path(config_path.clone())
             .with_tailscale(tailscale.clone())
             .with_hooks(hooks.clone())
+            .with_plugins(plugins.clone())
             .with_metrics(),
         );
         let arr = build_arr(&config, &client, database.as_ref(), &download_manager);
@@ -173,6 +179,7 @@ impl AppState {
             arr,
             tailscale,
             hooks,
+            plugins,
             listening: listen::Bound::default(),
             listen_flags: None,
             cleanup,
@@ -261,6 +268,13 @@ impl AppState {
     /// reach the hooks that run
     pub fn with_hooks(mut self, hooks: Arc<HooksService>) -> AppState {
         self.hooks = hooks;
+        self
+    }
+
+    /// Use the caller's started plugins service, so a test, a reload and a settings save
+    /// reach the plugins that run
+    pub fn with_plugins(mut self, plugins: Arc<PluginsService>) -> AppState {
+        self.plugins = plugins;
         self
     }
 }
