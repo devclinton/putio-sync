@@ -115,7 +115,15 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
             ("blocked_extensions", "File types that never download"),
             (
                 "bandwidth_limit_bytes_per_sec",
-                "Caps total download speed; empty is no cap",
+                "Caps total download speed outside the schedule; empty is no cap",
+            ),
+            (
+                "bandwidth_schedule",
+                "Speed limits by time and day, in the daemon's local time; first match wins",
+            ),
+            (
+                "slow_limit_bytes_per_sec",
+                "The speed \"Slow for 1 hour\" uses",
             ),
             ("max_retries", "How often a failed download is tried again"),
             (

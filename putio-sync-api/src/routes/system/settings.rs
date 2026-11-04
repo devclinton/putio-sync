@@ -342,6 +342,13 @@ pub struct DownloadSettings {
     #[serde(default = "putio_sync_core::config::default_blocked_extensions")]
     pub blocked_extensions: Vec<String>,
     pub bandwidth_limit_bytes_per_sec: Option<u64>,
+    /// Limits by time of day and day of week (feature 032). Missing in a PUT body leaves
+    /// it unchanged.
+    #[serde(default)]
+    pub bandwidth_schedule: Option<Vec<putio_sync_core::bandwidth::ScheduleEntry>>,
+    /// The "Slow" limit. Missing in a PUT body leaves it unchanged.
+    #[serde(default)]
+    pub slow_limit_bytes_per_sec: Option<u64>,
     pub max_retries: u32,
     pub retry_initial_delay_secs: u64,
     pub delete_empty_folders: bool,
@@ -630,6 +637,8 @@ async fn preview_precheck(
 const DOWNLOAD_LIVE: &[&str] = &[
     "workers",
     "bandwidth_limit_bytes_per_sec",
+    "bandwidth_schedule",
+    "slow_limit_bytes_per_sec",
     "buffer_size_mb",
     "max_retries",
     "retry_initial_delay_secs",
@@ -666,6 +675,8 @@ fn download_view(config: &Config) -> DownloadSettings {
         blacklist_patterns: config.download.blacklist_patterns.clone(),
         blocked_extensions: config.download.blocked_extensions.clone(),
         bandwidth_limit_bytes_per_sec: config.download.bandwidth_limit_bytes_per_sec,
+        bandwidth_schedule: Some(config.download.bandwidth_schedule.clone()),
+        slow_limit_bytes_per_sec: Some(config.download.slow_limit_bytes_per_sec),
         max_retries: config.download.max_retries,
         retry_initial_delay_secs: config.download.retry_initial_delay_secs,
         delete_empty_folders: config.download.delete_empty_folders,
@@ -871,6 +882,12 @@ fn apply_download(settings: DownloadSettings, config: &mut Config) -> Result<(),
     config.download.blacklist_patterns = settings.blacklist_patterns;
     config.download.blocked_extensions = settings.blocked_extensions;
     config.download.bandwidth_limit_bytes_per_sec = settings.bandwidth_limit_bytes_per_sec;
+    if let Some(schedule) = settings.bandwidth_schedule {
+        config.download.bandwidth_schedule = schedule;
+    }
+    if let Some(slow) = settings.slow_limit_bytes_per_sec {
+        config.download.slow_limit_bytes_per_sec = slow;
+    }
     config.download.max_retries = settings.max_retries;
     config.download.retry_initial_delay_secs = settings.retry_initial_delay_secs;
     config.download.delete_empty_folders = settings.delete_empty_folders;

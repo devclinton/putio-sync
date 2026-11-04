@@ -30,6 +30,7 @@ pub struct WorkerStatsResponse {
 pub struct WorkersResponse {
     pub workers: Vec<WorkerStatsResponse>,
     pub total: usize,
+    /// The shared limit in force: null when unlimited, 0 while paused
     pub total_bandwidth_limit_bps: Option<u64>,
     pub total_avg_bandwidth_bps: f64,
 }
@@ -51,7 +52,6 @@ async fn list_workers(State(state): State<AppState>) -> Result<Json<WorkersRespo
 
     let mut workers = Vec::new();
     let mut total_avg_bps = 0.0;
-    let mut total_limit: Option<u64> = None;
 
     for stat in worker_stats {
         let bytes = *stat.bytes_downloaded.read().await;
@@ -59,10 +59,6 @@ async fn list_workers(State(state): State<AppState>) -> Result<Json<WorkersRespo
         let uptime = stat.started_at.elapsed().as_secs();
 
         total_avg_bps += avg_bps;
-
-        if let Some(limit) = stat.bandwidth_limit {
-            total_limit = Some(total_limit.unwrap_or(0) + limit);
-        }
 
         workers.push(WorkerStatsResponse {
             worker_id: stat.worker_id,
@@ -76,7 +72,12 @@ async fn list_workers(State(state): State<AppState>) -> Result<Json<WorkersRespo
     Ok(Json(WorkersResponse {
         total: workers.len(),
         workers,
-        total_bandwidth_limit_bps: total_limit,
+        total_bandwidth_limit_bps: state
+            .download_manager
+            .bandwidth()
+            .current()
+            .limit
+            .bytes_per_sec(),
         total_avg_bandwidth_bps: total_avg_bps,
     }))
 }

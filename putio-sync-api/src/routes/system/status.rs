@@ -30,6 +30,8 @@ pub struct StatusResponse {
     /// The Active transfers card (feature 039), from the last Put.io list fetched
     pub active: Option<Summary>,
     pub workers: WorkersSection,
+    /// The download limit in force (feature 032), the `GET /bandwidth` body
+    pub bandwidth: putio_sync_core::bandwidth::Status,
     pub watcher: WatcherSection,
     pub disk: Option<DiskSection>,
     pub reachability: Reachability,
@@ -293,6 +295,7 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
         downloads,
         active,
         workers,
+        bandwidth: state.download_manager.bandwidth().status(),
         watcher,
         disk,
         reachability: Reachability { database, putio },
