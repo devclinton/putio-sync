@@ -226,8 +226,8 @@ and failures per hook.
   and the sync are not slowed.
 - **Order**: events reach one hook in the order they were emitted; a hook runs one event
   at a time. Different hooks run independently of each other.
-- **Shutdown**: on a clean stop the daemon waits up to 10 seconds for running hooks, then
-  stops them; queued events that were not sent are logged as dropped.
+- **Shutdown**: when the daemon stops, running hook processes are killed with it and
+  queued events are not sent; events are not kept across restarts.
 - **Hook output**: stdout and stderr are each kept to the first 4 KiB for the log and the
   test result; anything longer is cut with a note of how much was cut.
 - **Command that ignores stdin**: allowed; a closed pipe is not an error.
@@ -243,8 +243,9 @@ and failures per hook.
 - **Setup mode**: the hooks routes answer 503 like every other route.
 - **Downloads by the `--download` thread**: events from the background download thread
   reach the same hooks as events from the API process.
-- **Settings import**: a settings file with hooks is validated like a save; masked header
-  values from an export are refused, since the real value is not in the file.
+- **Settings import**: a settings file with hooks is validated like a save; a masked
+  header or env value from an export keeps the current value for the same hook and key,
+  and is refused when there is none, since the real value is not in the file.
 
 ## Requirements *(mandatory)*
 
