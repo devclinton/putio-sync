@@ -39,6 +39,13 @@ pub async fn execute_daemon(
         .or_else(|| Config::default_path().ok())
         .ok_or_else(|| anyhow!("Could not determine config file path"))?;
 
+    // Without a usable config, wait in setup mode instead of exiting (feature 013)
+    while let Some((base, reasons)) = super::setup_mode::needs_setup(&config_file_path).await {
+        if !super::setup_mode::run(&config_file_path, base, reasons).await? {
+            return Ok(());
+        }
+    }
+
     info!("Loading configuration from: {}", config_file_path.display());
     let config = Config::load(&config_file_path)
         .context("Failed to load configuration. Have you run 'putio-sync login'?")?;

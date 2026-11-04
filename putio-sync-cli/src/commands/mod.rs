@@ -11,6 +11,7 @@ pub mod list;
 pub mod login;
 pub mod queue;
 pub mod server;
+pub mod setup_mode;
 pub mod stat;
 pub mod status;
 pub mod transfers;
