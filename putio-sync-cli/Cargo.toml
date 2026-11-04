@@ -22,6 +22,7 @@ putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 # Core library (for Config and utilities)
 putio-sync-core = { path = "../putio-sync-core" }
 putio-sync-api = { path = "../putio-sync-api" }
+putio-sync-tailscale = { path = "../putio-sync-tailscale" }
 
 # Specialized crates
 putio-sync-client = { path = "../putio-sync-client" }

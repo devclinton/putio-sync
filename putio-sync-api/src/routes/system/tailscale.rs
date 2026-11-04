@@ -3,6 +3,9 @@
 //! - GET /tailscale - What Tailscale says about this machine, the addresses that open
 //!   putio-sync over the tailnet, hints, the `[tailscale]` settings, and the Tailscale
 //!   identity of this request
+//!
+//! Also the Radarr/Sonarr host candidates, which put the tailnet address first when
+//! putio-sync listens on the tailnet only.
 
 use axum::{extract::State, routing::get, Extension, Json, Router};
 use putio_sync_core::config::{Config, TailscaleConfig};
@@ -40,6 +43,32 @@ struct SettingsView {
     tailnet_only: bool,
     identity_sign_in: bool,
     allowed_users: Vec<String>,
+}
+
+/// Where Radarr/Sonarr might reach putio-sync, best first: `candidate_hosts`, with the
+/// tailnet IPv4 address first when `tailnet_only` is on (nothing else answers then)
+pub async fn tailnet_first_hosts(
+    state: &AppState,
+    browser_host: Option<&str>,
+    host_override: Option<&str>,
+) -> Vec<String> {
+    let hosts = putio_sync_arr::setup::candidate_hosts(browser_host, host_override);
+    let overridden = host_override.is_some_and(|h| !h.trim().is_empty());
+    if overridden || !state.config.read().await.tailscale.tailnet_only {
+        return hosts;
+    }
+    tailnet_first(hosts, state.tailscale.status().await.ipv4())
+}
+
+/// `hosts` with `ip` first, at most `MAX_HOSTS` long
+pub(crate) fn tailnet_first(mut hosts: Vec<String>, ip: Option<IpAddr>) -> Vec<String> {
+    if let Some(ip) = ip {
+        let ip = ip.to_string();
+        hosts.retain(|h| *h != ip);
+        hosts.insert(0, ip);
+        hosts.truncate(putio_sync_arr::setup::MAX_HOSTS);
+    }
+    hosts
 }
 
 /// The listener address the daemon uses (or would use) for the API
@@ -149,4 +178,39 @@ fn hints(
         );
     }
     hints
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tailnet_address_goes_first() {
+        let hosts: Vec<String> = [
+            "putio-sync",
+            "nas",
+            "192.168.1.2",
+            "172.17.0.1",
+            "100.101.102.103",
+        ]
+        .map(String::from)
+        .to_vec();
+        let ip = Some(IpAddr::from([100, 101, 102, 103]));
+        assert_eq!(
+            tailnet_first(hosts.clone(), ip),
+            [
+                "100.101.102.103",
+                "putio-sync",
+                "nas",
+                "192.168.1.2",
+                "172.17.0.1"
+            ]
+        );
+        assert_eq!(tailnet_first(hosts.clone(), None), hosts);
+        let ip = Some(IpAddr::from([100, 64, 0, 1]));
+        assert_eq!(
+            tailnet_first(hosts, ip).len(),
+            putio_sync_arr::setup::MAX_HOSTS
+        );
+    }
 }

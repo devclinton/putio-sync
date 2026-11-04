@@ -51,10 +51,10 @@ is the only way to exercise this feature.
 
 **Independent Test**: fake status with `100.101.102.103` → resolved bind is `100.101.102.103:<port>`; without an address the listener waits and never binds `[api] bind`.
 
-- [ ] T019 [US3] Listener in `putio-sync-cli/src/api_listener.rs`: when `tailnet_only`, resolve with `tailnet_bind`; if not ready, retry every 5 s for 5 minutes in the background with a log each minute, then an error log; never fall back; unit test of the resolution and the no-fallback path
+- [X] T019 [US3] Listener in `putio-sync-cli/src/api_listener.rs`: when `tailnet_only`, resolve with `tailnet_bind`; if not ready, retry every 5 s for 5 minutes in the background with a log each minute, then an error log; never fall back; unit test of the resolution and the no-fallback path
 - [X] T020 [US3] PUT `/settings/tailscale` refuses `tailnet_only` turning on without a tailnet bind (400 with the reason); save message says a restart is needed; tests
 - [X] T021 [US3] UI confirm before saving `tailnet_only` on, naming the addresses the UI moves to (`ui/tailscale.js` + a `beforeSave` hook in `pages/settings.js`)
-- [ ] T022 [US3] Radarr/Sonarr candidate hosts put the tailnet address first when `tailnet_only` is on (`putio-sync-api/src/routes/arr.rs`, `lib.rs` refresh); test
+- [X] T022 [US3] Radarr/Sonarr candidate hosts put the tailnet address first when `tailnet_only` is on (`putio-sync-api/src/routes/arr.rs`, `lib.rs` refresh); test
 
 ## Phase 6: User Story 4 - Tailscale details for other clients (P3)
 

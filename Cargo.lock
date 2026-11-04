@@ -2187,6 +2187,7 @@ dependencies = [
  "putio-sync-download",
  "putio-sync-file-manager",
  "putio-sync-storage",
+ "putio-sync-tailscale",
  "putio-sync-telemetry",
  "reqwest 0.12.28",
  "serde",

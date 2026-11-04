@@ -472,7 +472,7 @@ pub async fn spawn_arr_refresh(state: &AppState) {
         .resolve_api()
         .map(|r| r.value.bind.port())
         .unwrap_or(15432);
-    let hosts = putio_sync_arr::setup::candidate_hosts(None, None);
+    let hosts = routes::system::tailscale::tailnet_first_hosts(state, None, None).await;
     arr.service.spawn_category_refresh(port, hosts);
 }
 

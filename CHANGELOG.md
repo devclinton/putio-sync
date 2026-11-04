@@ -25,7 +25,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   they are; everybody else still needs the token, and tagged
   devices and Funnel never get in this way. Opt-in `tailnet_only` makes the
   daemon listen on the tailnet IPv4 address instead of `[api] bind`, waiting
-  for Tailscale when it starts later, and never falling back to the LAN. Works
+  for Tailscale when it starts later, and never falling back to the LAN;
+  Radarr/Sonarr setup then offers the tailnet address first. Works
   with Tailscale in a sidecar container when its socket is mounted. Also
   `GET /tailscale`, a `tailscale` doctor check, and
   `putio_sync_tailscale_identity_total` in `/metrics` (feature 036).
