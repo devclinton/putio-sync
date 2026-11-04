@@ -136,6 +136,10 @@ async fn other_paths_answer_503() {
         "/settings/network",
         // And the bandwidth limit (feature 032)
         "/bandwidth",
+        // And event hooks (feature 027)
+        "/hooks",
+        "/settings/hooks",
+        "/events/schema",
     ] {
         let (status, _) = s.call(Method::GET, path, Some(&code), None).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");

@@ -146,6 +146,8 @@ pub async fn execute_server(
     .map_err(|e| anyhow!("Failed to create API app: {}", e))?
     .with_listening(bound.clone())
     .with_listen_flags(flags.then(|| entries.clone()));
+    // Hooks run off the event bus from here on (feature 027)
+    state.hooks.start();
 
     // Every address through the supervisor: one that can't be had now is retried, and
     // nothing falls back to another address

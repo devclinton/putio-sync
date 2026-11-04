@@ -31,6 +31,7 @@ putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-file-manager = { path = "../putio-sync-file-manager" }
 putio-sync-daemon = { path = "../putio-sync-daemon" }
 putio-sync-doctor = { path = "../putio-sync-doctor" }
+putio-sync-hooks = { path = "../putio-sync-hooks" }
 putio-sync-storage = { path = "../putio-sync-storage" }
 
 # Async runtime
