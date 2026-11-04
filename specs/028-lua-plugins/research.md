@@ -4,7 +4,7 @@
 
 - **Decision**: `mlua` 0.11, features `lua54`, `vendored`, `serialize`.
 - **Rationale**: a spike (2026-11-04, scratchpad) confirmed on macOS: `Lua::new_with`
-  with `STRING | TABLE | MATH | UTF8 | COROUTINE` leaves `os`, `io`, `require` and
+  with `STRING | TABLE | MATH | UTF8` leaves `os`, `io`, `require` and
   `package` out; `set_memory_limit` turns a runaway allocation into a catchable "not
   enough memory" error; `set_hook(every_nth_instruction(1000))` returning an error stops
   `while true do end` within the deadline (300 ms target, 299.7 ms measured); `to_value`
@@ -23,9 +23,11 @@
   `"t"` (text only; the spike showed binary chunks are otherwise accepted by the parser);
   replace `print` with `putio.log.info`. No `debug`, so `debug.sethook` cannot undo the
   limit. Each plugin has its own `Lua`, so globals and the string metatable are not shared.
-- **Note**: `pcall` can catch the time-limit error, but the hook fires again 1 000
-  instructions later outside it, so a loop around `pcall` still ends; the worker also checks
-  the deadline after the call returns and records a timeout either way.
+- **Note** (found in T007): a loop around `pcall` kept catching the time-limit error, so
+  `pcall` and `xpcall` are wrapped to re-raise any error once the deadline has passed. The
+  coroutine library is left out: a coroutine does not inherit the instruction hook, so a
+  loop inside one never stopped. The worker also checks the deadline after the call
+  returns and records a timeout either way.
 
 ## R3 Threads and the deadline
 

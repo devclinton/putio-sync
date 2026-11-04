@@ -32,7 +32,7 @@ and returning JSON.
 - Errors never contain the URL path or query, only the host and what failed.
 
 Limits per call: the plugin's `timeout_secs` (wall clock, host calls included) and
-`memory_mb` (the whole Lua state). Absent: `os`, `io`, `debug`, `package`, `require`,
+`memory_mb` (the whole Lua state). Absent: `os`, `io`, `debug`, `coroutine`, `package`, `require`,
 `dofile`, `loadfile`, `collectgarbage`, `string.dump`; `load` accepts text only; `print`
 logs at info.
 

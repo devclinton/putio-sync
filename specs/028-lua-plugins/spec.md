@@ -267,9 +267,9 @@ check and the metrics endpoint counts plugin runs, failures, timeouts and droppe
   that moment as approved; requests to other hosts MUST be refused, and a plugin needing
   an unapproved host MUST show "needs approval".
 - **FR-007**: Lua MUST run embedded, built from source into the program (no system
-  library), with only the safe standard libraries (`string`, `table`, `math`, `utf8` and
-  `coroutine`) and without `os`, `io`, `debug`, `package`, `require`, `dofile`,
-  `loadfile`, or loading binary chunks.
+  library), with only the safe standard libraries (`string`, `table`, `math` and `utf8`)
+  and without `os`, `io`, `debug`, `coroutine` (a coroutine escapes the time limit),
+  `package`, `require`, `dofile`, `loadfile`, or loading binary chunks.
 - **FR-008**: Each call into a plugin MUST stop at the plugin's time limit (default 10 s,
   1 s to 60 s), counting time spent in host calls, and be recorded as a timeout.
 - **FR-009**: Each plugin MUST have a memory limit (default 32 MiB, 4 MiB to 256 MiB);
