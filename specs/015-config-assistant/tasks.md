@@ -76,7 +76,7 @@ names the test files.
 - [X] T024 [P] Document the assistant (preview, warnings, Defaults, Backup and restore) in `README.md` under the settings section
 - [X] T025 [P] Add a `CHANGELOG.md` entry for 015 and remove the 015 entry from `ROADMAP.md`
 - [X] T026 Check the UI size with `cargo test -p putio-sync-api --test ui_assets` (cap 300 KB) and `node --check` on changed modules
-- [ ] T027 Merge `origin/main`, run `TMPDIR=<scratchpad> make ci`, fix findings, commit and push
+- [X] T027 Merge `origin/main`, run `TMPDIR=<scratchpad> make ci`, fix findings, commit and push
 
 ## Dependencies
 
