@@ -112,6 +112,8 @@ pub struct AppState {
     /// The addresses the API listens on now (feature 037); empty until a listener set
     /// is attached with [`AppState::with_listening`]
     pub listening: listen::Bound,
+    /// The API list `server --bind/--port` gave instead of the configured one
+    pub listen_flags: Option<Vec<putio_sync_core::listen::ListenAddr>>,
 }
 
 /// The engine behind the API (FR-018: a save says what applies now)
@@ -165,6 +167,7 @@ impl AppState {
             arr,
             tailscale,
             listening: listen::Bound::default(),
+            listen_flags: None,
             cleanup,
             storage,
             doctor,
@@ -200,6 +203,15 @@ impl AppState {
     /// Report this listener set's addresses (the supervisor serving this state fills it)
     pub fn with_listening(mut self, bound: listen::Bound) -> AppState {
         self.listening = bound;
+        self
+    }
+
+    /// Record the API list `server` flags gave (reported by `GET /listen`)
+    pub fn with_listen_flags(
+        mut self,
+        entries: Option<Vec<putio_sync_core::listen::ListenAddr>>,
+    ) -> AppState {
+        self.listen_flags = entries;
         self
     }
 
@@ -337,6 +349,10 @@ pub fn router(state: AppState) -> Router {
         .nest("/releases", routes::releases::router())
         .nest("/whats-new", routes::system::whats_new::router())
         .nest("/tailscale", routes::system::tailscale::router())
+        .route(
+            "/listen",
+            axum::routing::get(routes::system::network::get_listen),
+        )
         .route(
             "/status",
             axum::routing::get(routes::system::status::get_status),

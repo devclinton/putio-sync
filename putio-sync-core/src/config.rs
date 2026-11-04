@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::logging::LevelSource;
 use crate::listen::{BindList, ListenAddr};
+use crate::logging::LevelSource;
 use putio_sync_telemetry::server::MetricsSettings;
 use putio_sync_telemetry::Detail;
 
@@ -1997,9 +1997,24 @@ impl Config {
     /// The addresses the API listens on: `[api] bind` after env, with `tailnet_only`
     /// turning it into `tailnet:<port>` for each distinct port (feature 037)
     pub fn api_listen(&self) -> CoreResult<Vec<ListenAddr>> {
-        let bind = self.resolve_api()?.value.bind;
+        Ok(self.with_tailnet_only(self.resolve_api()?.value.bind))
+    }
+
+    /// The saved `[api] bind` list (no env), parsed and checked
+    pub fn api_bind_saved(&self) -> CoreResult<Vec<ListenAddr>> {
+        self.api
+            .bind
+            .clone()
+            .unwrap_or_else(|| BindList::from(DEFAULT_API_BIND))
+            .parse("api.bind")
+            .map_err(CoreError::ConfigError)
+    }
+
+    /// `bind` as the API listens on it: with `tailnet_only`, one `tailnet:<port>` per
+    /// distinct port
+    pub fn with_tailnet_only(&self, bind: Vec<ListenAddr>) -> Vec<ListenAddr> {
         if !self.tailscale.tailnet_only {
-            return Ok(bind);
+            return bind;
         }
         let mut out: Vec<ListenAddr> = Vec::new();
         for entry in bind {
@@ -2008,7 +2023,7 @@ impl Config {
                 out.push(t);
             }
         }
-        Ok(out)
+        out
     }
 
     /// The first API entry's port (after env and tailnet-only), else 15432: what other
@@ -2022,13 +2037,7 @@ impl Config {
 
     /// Check both bind lists as written in the file, and that they stay apart
     fn validate_binds(&self) -> CoreResult<()> {
-        let api = self
-            .api
-            .bind
-            .clone()
-            .unwrap_or_else(|| BindList::from(DEFAULT_API_BIND))
-            .parse("api.bind")
-            .map_err(CoreError::ConfigError)?;
+        let api = self.api_bind_saved()?;
         let metrics = self
             .metrics
             .bind
@@ -3240,10 +3249,9 @@ mod metrics_tests {
         let m = with_env(&[], || config.resolve_metrics().unwrap()).value;
         assert_eq!(m.bind.len(), 2);
 
-        let env = with_env(
-            &[("PUTIO_SYNC_API_BIND", "127.0.0.1:1, [::1]:1")],
-            || Config::default().resolve_api().unwrap(),
-        );
+        let env = with_env(&[("PUTIO_SYNC_API_BIND", "127.0.0.1:1, [::1]:1")], || {
+            Config::default().resolve_api().unwrap()
+        });
         assert_eq!(env.value.bind.len(), 2);
         assert_eq!(env.source, LevelSource::Env);
 
@@ -3273,11 +3281,19 @@ mod metrics_tests {
 
     #[test]
     fn validate_refuses_bad_or_overlapping_binds() {
-        let config: Config = toml::from_str("[api]\nbind = [\"0.0.0.0:1\", \"10.0.0.1:1\"]\n").unwrap();
-        assert!(config.validate_binds().unwrap_err().to_string().contains("overlap"));
         let config: Config =
-            toml::from_str("[api]\nbind = \"0.0.0.0:9742\"\n").unwrap();
-        assert!(config.validate_binds().unwrap_err().to_string().contains("metrics.bind"));
+            toml::from_str("[api]\nbind = [\"0.0.0.0:1\", \"10.0.0.1:1\"]\n").unwrap();
+        assert!(config
+            .validate_binds()
+            .unwrap_err()
+            .to_string()
+            .contains("overlap"));
+        let config: Config = toml::from_str("[api]\nbind = \"0.0.0.0:9742\"\n").unwrap();
+        assert!(config
+            .validate_binds()
+            .unwrap_err()
+            .to_string()
+            .contains("metrics.bind"));
         let mut config = config;
         config.metrics.enabled = false;
         assert!(config.validate_binds().is_ok());

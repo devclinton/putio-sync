@@ -7,8 +7,8 @@ use putio_sync_api::listen::{Bound, Supervisor};
 use putio_sync_api::{setup_router, SetupState};
 use putio_sync_client::{PutioApiClient, DEFAULT_BASE_URL};
 use putio_sync_core::config::Config;
-use putio_sync_core::setup::{check_local, SetupReason};
 use putio_sync_core::listen::ListenAddr;
+use putio_sync_core::setup::{check_local, SetupReason};
 use putio_sync_tailscale::{Cli, TailscaleService};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -62,9 +62,9 @@ pub async fn run(path: &Path, base: Option<Config>, reasons: Vec<SetupReason>) -
         .cloned()
         .unwrap_or_default();
     let listen = usable.resolve_api().map_or(true, |r| r.value.listen);
-    let entries = usable.api_listen().unwrap_or_else(|_| {
-        vec![ListenAddr::Ip(SocketAddr::from(([0, 0, 0, 0], 15432)))]
-    });
+    let entries = usable
+        .api_listen()
+        .unwrap_or_else(|_| vec![ListenAddr::Ip(SocketAddr::from(([0, 0, 0, 0], 15432)))]);
     let tailscale = Arc::new(TailscaleService::new(
         usable.tailscale.socket_path(),
         Cli::Auto,

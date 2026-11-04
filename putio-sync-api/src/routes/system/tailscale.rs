@@ -72,7 +72,6 @@ pub(crate) fn tailnet_first(mut hosts: Vec<String>, ip: Option<IpAddr>) -> Vec<S
     hosts
 }
 
-
 async fn details(
     State(state): State<AppState>,
     identity: Option<Extension<Identity>>,

@@ -71,8 +71,7 @@ pub async fn resolve_all(entries: &[ListenAddr], tailscale: &TailscaleService) -
     entries
         .iter()
         .map(|entry| match entry {
-            ListenAddr::Tailnet { port } => match status.as_ref().map(|s| tailnet_bind(s, *port))
-            {
+            ListenAddr::Tailnet { port } => match status.as_ref().map(|s| tailnet_bind(s, *port)) {
                 Some(Ok(addr)) => Gives::Addrs(vec![addr]),
                 Some(Err(why)) => Gives::Waiting(why),
                 None => Gives::Waiting("needs Tailscale".to_string()),
@@ -442,7 +441,14 @@ mod tests {
         if v6 {
             entries.push(entry("[::1]:0"));
         }
-        let h = Supervisor::spawn_with("Test", entries, local_resolver(), app(), Bound::default(), fast());
+        let h = Supervisor::spawn_with(
+            "Test",
+            entries,
+            local_resolver(),
+            app(),
+            Bound::default(),
+            fast(),
+        );
         h.first_bound(Duration::from_secs(2)).await.unwrap();
         until(|| h.bound.get().len() == if v6 { 2 } else { 1 }).await;
         for addr in h.bound.get() {
@@ -498,11 +504,15 @@ mod tests {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(h.bound.get().is_empty());
-        assert!(get_on(SocketAddr::from(([127, 0, 0, 1], port))).await.is_none());
+        assert!(get_on(SocketAddr::from(([127, 0, 0, 1], port)))
+            .await
+            .is_none());
 
         up.store(true, Ordering::SeqCst);
         until(|| h.bound.get().len() == 1).await;
-        assert!(get_on(SocketAddr::from(([127, 0, 0, 1], port))).await.is_some());
+        assert!(get_on(SocketAddr::from(([127, 0, 0, 1], port)))
+            .await
+            .is_some());
 
         up.store(false, Ordering::SeqCst);
         until(|| h.bound.get().is_empty()).await;
@@ -526,14 +536,24 @@ mod tests {
         let port = free_port();
         let h = Supervisor::spawn_with(
             "Test",
-            vec![entry(&format!("{lo}:{port}")), entry(&format!("nope-037:{port}"))],
+            vec![
+                entry(&format!("{lo}:{port}")),
+                entry(&format!("nope-037:{port}")),
+            ],
             local_resolver(),
             app(),
             Bound::default(),
             fast(),
         );
-        until(|| h.bound.get().contains(&SocketAddr::from(([127, 0, 0, 1], port)))).await;
-        assert!(get_on(SocketAddr::from(([127, 0, 0, 1], port))).await.is_some());
+        until(|| {
+            h.bound
+                .get()
+                .contains(&SocketAddr::from(([127, 0, 0, 1], port)))
+        })
+        .await;
+        assert!(get_on(SocketAddr::from(([127, 0, 0, 1], port)))
+            .await
+            .is_some());
         h.stop(Duration::from_secs(1)).await;
     }
 

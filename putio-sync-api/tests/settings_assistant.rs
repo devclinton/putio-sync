@@ -18,6 +18,7 @@ const GROUPS: &[&str] = &[
     "storage",
     "precheck",
     "tailscale",
+    "network",
 ];
 
 async fn get_ok(app: &TestApp, path: &str) -> Value {

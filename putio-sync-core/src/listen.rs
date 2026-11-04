@@ -79,7 +79,10 @@ impl ListenAddr {
                 if ips.is_empty() {
                     Err(format!("no interface {name} with an address"))
                 } else {
-                    Ok(ips.into_iter().map(|ip| SocketAddr::new(ip, *port)).collect())
+                    Ok(ips
+                        .into_iter()
+                        .map(|ip| SocketAddr::new(ip, *port))
+                        .collect())
                 }
             }
             ListenAddr::Tailnet { .. } => Err("needs Tailscale".to_string()),
@@ -326,7 +329,10 @@ mod tests {
             assert_eq!(a.to_string(), s);
         }
         assert_eq!(p("TailNet:80").unwrap(), ListenAddr::Tailnet { port: 80 });
-        assert!(matches!(p("eth0:80").unwrap(), ListenAddr::Interface { .. }));
+        assert!(matches!(
+            p("eth0:80").unwrap(),
+            ListenAddr::Interface { .. }
+        ));
         assert_eq!(p(" 127.0.0.1:5 ").unwrap().port(), 5);
     }
 
@@ -377,8 +383,14 @@ mod tests {
     #[test]
     fn list_rules() {
         let list = |v: &[&str]| BindList::Many(v.iter().map(|s| s.to_string()).collect());
-        assert!(list(&[]).parse("api.bind").unwrap_err().contains("at least one"));
-        assert!(list(&["eth0:1", "eth0:1"]).parse("api.bind").unwrap_err().contains("twice"));
+        assert!(list(&[])
+            .parse("api.bind")
+            .unwrap_err()
+            .contains("at least one"));
+        assert!(list(&["eth0:1", "eth0:1"])
+            .parse("api.bind")
+            .unwrap_err()
+            .contains("twice"));
         assert!(list(&["0.0.0.0:1", "10.0.0.1:1"])
             .parse("api.bind")
             .unwrap_err()
@@ -390,8 +402,13 @@ mod tests {
             .parse("api.bind")
             .is_ok());
         let many: Vec<String> = (1..=17).map(|p| format!("127.0.0.1:{p}")).collect();
-        assert!(BindList::Many(many).parse("api.bind").unwrap_err().contains("at most 16"));
-        let err = list(&["0.0.0.0:1", "x y:2"]).parse("metrics.bind").unwrap_err();
+        assert!(BindList::Many(many)
+            .parse("api.bind")
+            .unwrap_err()
+            .contains("at most 16"));
+        let err = list(&["0.0.0.0:1", "x y:2"])
+            .parse("metrics.bind")
+            .unwrap_err();
         assert!(err.contains("metrics.bind 'x y:2'"), "{err}");
     }
 
@@ -414,7 +431,10 @@ mod tests {
             port: 8,
         };
         let addrs = entry.resolve_local().unwrap();
-        assert!(addrs.contains(&SocketAddr::from(([127, 0, 0, 1], 8))), "{addrs:?}");
+        assert!(
+            addrs.contains(&SocketAddr::from(([127, 0, 0, 1], 8))),
+            "{addrs:?}"
+        );
         assert!(addrs.iter().all(|a| a.port() == 8));
         let missing = ListenAddr::Interface {
             name: "nope-037".into(),

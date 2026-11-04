@@ -21,7 +21,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   address waits and is checked again; nothing ever falls back to all
   addresses. `PUTIO_SYNC_API_BIND` and `PUTIO_SYNC_METRICS_BIND` take a
   comma-separated list. `tailnet_only` now means `tailnet:<port>` and keeps
-  waiting for Tailscale instead of giving up after 5 minutes (feature 037).
+  waiting for Tailscale instead of giving up after 5 minutes. `GET /listen`
+  shows each entry and what it listens on now; `/settings/network` saves both
+  lists, refusing a list with nothing to listen on, and
+  `/settings/network/check` says whether the page you are on would still reach
+  putio-sync (feature 037).
 - Tailscale awareness. Settings has a Tailscale card: whether Tailscale is on
   this machine (through tailscaled's socket, or the `tailscale` CLI), the
   MagicDNS name, the tailnet addresses, the HTTPS address from

@@ -13,6 +13,7 @@
 //! - PUT  /settings/precheck - Update the release check settings
 //! - GET  /settings/tailscale - Get the Tailscale settings (feature 036)
 //! - PUT  /settings/tailscale - Update the Tailscale settings
+//! - GET/PUT /settings/network - The listen addresses (feature 037, in `network.rs`)
 //! - POST /settings/{group}/preview - What a PUT of that body would do, without saving
 //!   (feature 015; the assistant, export and import routes are in `assistant.rs`)
 
@@ -113,7 +114,7 @@ fn field_changes<V: Serialize>(before: &V, after: &V, live: &[&str]) -> Vec<Chan
 
 /// What a save of `change` would do (feature 015): the same apply and validation as
 /// [`update`] on a copy, without writing anything
-async fn preview<V: Serialize>(
+pub(crate) async fn preview<V: Serialize>(
     state: &AppState,
     view: fn(&Config) -> V,
     (live, when): (&[&str], &'static str),
@@ -141,7 +142,7 @@ pub(crate) struct GroupInfo {
     pub when: &'static str,
 }
 
-/// The seven groups. Defaults are the default config's, with the current download
+/// The nine groups. Defaults are the default config's, with the current download
 /// folder kept: resetting it is almost never what a user means.
 pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
     let mut defaults = Config::default();
@@ -179,6 +180,13 @@ pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
             "tailscale",
             json(serde_json::to_value(tailscale_view(&defaults))),
             live_tailscale(state),
+        ),
+        group(
+            "network",
+            json(serde_json::to_value(super::network::network_view(
+                &defaults,
+            ))),
+            (&[], ""),
         ),
         group(
             "logging",
@@ -222,7 +230,7 @@ pub(crate) async fn push_watcher(state: &AppState) {
 /// `live` lists the fields this engine applies without a restart and `when` says when
 /// they take effect; every other changed field needs a restart. Fields a note explains
 /// are taken out of `changed` by the caller.
-fn saved_message(
+pub(crate) fn saved_message(
     group: &str,
     changed: &[String],
     live: &[&str],
@@ -524,6 +532,7 @@ pub fn router() -> Router<AppState> {
         .route("/storage/preview", post(preview_storage))
         .route("/precheck/preview", post(preview_precheck))
         .route("/tailscale/preview", post(preview_tailscale))
+        .merge(super::network::settings_router())
         .merge(assistant::router())
 }
 
