@@ -45,9 +45,44 @@ pub fn url(raw: &str) -> String {
     out
 }
 
+/// `text` with every `http://` or `https://` URL in it shortened by [`url`], for error
+/// messages that may quote one (such as `reqwest::Error`'s).
+pub fn text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = ["http://", "https://"]
+        .iter()
+        .filter_map(|scheme| rest.find(scheme))
+        .min()
+    {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        let end = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, ')' | '"' | '\'' | '>'))
+            .unwrap_or(tail.len());
+        out.push_str(&url(&tail[..end]));
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::url;
+    use super::{text, url};
+
+    #[test]
+    fn urls_inside_text_are_shortened() {
+        assert_eq!(
+            text("error sending request for url (https://cdn.put.io/a/b?sig=xyz): timed out"),
+            "error sending request for url (https://cdn.put.io/a/…): timed out"
+        );
+        assert_eq!(text("no urls here"), "no urls here");
+        assert_eq!(
+            text("http://h/x?t=1 and https://g/y"),
+            "http://h/x… and https://g/y"
+        );
+    }
 
     #[test]
     fn keeps_scheme_host_port_and_first_segment() {

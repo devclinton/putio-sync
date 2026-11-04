@@ -16,6 +16,8 @@ use putio_sync_core::bandwidth::{
     Override, OverrideMode, Policy, ScheduleEntry, Status as BandwidthStatus, DEFAULT_SLOW_LIMIT,
 };
 use putio_sync_core::config::{ExistingFile, ExistingOutcome};
+use putio_sync_core::events::{self, Payload};
+use putio_sync_core::redact;
 use putio_sync_core::rules::{extension, Decision, Effective, RuleSet};
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::models::{DownloadSource, DownloadStatus, Origin, QueueStatus, SourceType};
@@ -1256,6 +1258,21 @@ impl DownloadManager {
                     file.file_size,
                     duration.as_secs_f64()
                 );
+                let saved_as = target_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| name.clone());
+                events::emit(Payload::DownloadFinished(events::DownloadFinished {
+                    file_id,
+                    relative_path: event_path(&file.relative_path, &saved_as),
+                    name: saved_as,
+                    local_path: target_path.display().to_string(),
+                    size_bytes: file.file_size,
+                    duration_seconds: duration.as_secs_f64(),
+                    average_bytes_per_second: (fetched as f64 / duration.as_secs_f64().max(0.001))
+                        as u64,
+                    resumed: resumed_from.is_some_and(|from| from > 0),
+                }));
                 if let Some(ref callback) = progress_callback {
                     callback.on_file_complete(file_id, &filename, true);
                 }
@@ -1281,6 +1298,15 @@ impl DownloadManager {
             Err(e) => {
                 telemetry::download::failed(e.fail_reason());
                 error!("Download failed for {}: {}", filename, e);
+                events::emit(Payload::DownloadFailed(events::DownloadFailed {
+                    file_id,
+                    relative_path: event_path(&file.relative_path, &name),
+                    name: name.clone(),
+                    size_bytes: file.file_size,
+                    error: redact::text(&e.to_string()),
+                    reason: e.fail_reason().as_str().to_string(),
+                    attempts: config.max_retries + 1,
+                }));
                 if let DownloadError::ApiError(ref msg) = e {
                     if msg.contains("404") {
                         warn!("File no longer available (404): {}", filename);
@@ -2785,6 +2811,17 @@ async fn download_source(
         origin: created.as_ref().map_or(Origin::Putio, |c| c.origin),
         watch_folder: created.and_then(|c| c.watch_folder),
         putio_folder: Some(putio_folder),
+    }
+}
+
+/// A file's path under the download folder for events, `/`-separated
+fn event_path(relative_dir: &str, name: &str) -> String {
+    let dir = relative_dir.replace('\\', "/");
+    let dir = dir.trim_matches('/');
+    if dir.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}/{}", dir, name)
     }
 }
 

@@ -28,6 +28,10 @@ tracing = { workspace = true }
 # Run timestamps
 chrono = { version = "0.4", features = ["serde"] }
 
+# Killing a command's whole process group on timeout
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 mockito = "1.2"
 tempfile = "3.8"
