@@ -136,6 +136,7 @@ async fn detect(ctx: &Ctx, id: CheckId) -> Finding {
         DeadQueueRows => sync::dead_queue_rows(ctx).await,
         FailingDownloads => sync::failing_downloads(ctx).await,
         OrphanPartials => sync::orphan_partials(ctx).await,
+        Bandwidth => sync::bandwidth(ctx).await,
         DownloadDir => local::download_dir(ctx).await,
         DiskSpace => local::disk_space(ctx).await,
         Database => local::database(ctx).await,

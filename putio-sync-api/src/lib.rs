@@ -344,6 +344,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/stats", create_stats_router())
         .nest("/history", create_history_router())
         .nest("/doctor", routes::system::doctor::router())
+        .nest("/bandwidth", routes::system::bandwidth::router())
         .nest("/arr", routes::arr::router())
         .route("/active", axum::routing::get(routes::active::get_active))
         .nest("/releases", routes::releases::router())
@@ -496,6 +497,10 @@ pub async fn create_app_state(
     // Before anything can claim a row: a crash leaves rows in `downloading`
     if let Err(e) = download_manager.recover_interrupted().await {
         warn!("{}", e);
+    }
+    // A pause or slow-down set before a restart keeps its end time
+    if let Err(e) = download_manager.restore_bandwidth_override().await {
+        warn!("Failed to restore the bandwidth override: {}", e);
     }
 
     let state = AppState::new(

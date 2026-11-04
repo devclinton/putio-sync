@@ -16,6 +16,9 @@
 /// Put.io empty-folder cleanup service
 pub mod cleanup;
 
+/// Bandwidth schedules, limits and timed overrides (feature 032)
+pub mod bandwidth;
+
 /// Configuration management
 pub mod config;
 

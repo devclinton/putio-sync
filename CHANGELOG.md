@@ -14,6 +14,21 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Bandwidth schedules: `[[download.bandwidth_schedule]]` entries set the
+  download limit by time of day and day of week (`days`, `start`, `end`,
+  `limit` as bytes per second, `"unlimited"` or `"paused"`), in the daemon's
+  local time; the first matching entry wins and an end before the start runs
+  past midnight. The Status page has a Bandwidth card with the limit in force,
+  why, the next change and the daemon's time, and **Pause 1 h**, **Slow 1 h**
+  (`slow_limit_bytes_per_sec`, default 1 MiB/s) and **Resume schedule**, which
+  survive a restart (`GET /bandwidth`, `PUT`/`DELETE /bandwidth/override`).
+  Settings › Download has a schedule editor. Mistakes are refused with the
+  entry and field named; overlaps, a schedule paused all week and limits under
+  64 KiB/s are warned about. New gauges
+  `putio_sync_download_bandwidth_limit_bytes_per_second` and
+  `putio_sync_download_bandwidth_override`, and a doctor check, Bandwidth
+  limit (feature 032).
+
 - Only download and Never download patterns in folder rules (`include` and
   `exclude`), with AND, OR and NOT: `*.mkv OR *.mp4 -sample`, `*.{mkv,mp4}`,
   `*.mkv,*.mp4`, and `Sample/*` matched against the path from the Put.io root.
@@ -212,6 +227,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- `GET /local/workers` reported each worker's share of the bandwidth limit;
+  `total_bandwidth_limit_bps` is now the limit in force (null when unlimited,
+  0 while paused) and the per-worker value is null (feature 032).
+
 - `[download] whitelist_patterns` and `blacklist_patterns` (Only download and
   Never download in Settings) were saved but never applied.
 - A fake release rejected right after Radarr or Sonarr grabbed it is now
@@ -239,6 +258,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - The Docker image builds again with the Radarr/Sonarr and doctor crates.
 
 ### Changed
+
+- `bandwidth_limit_bytes_per_sec` is now the total for all downloads, shared
+  by the workers, and a change applies to running downloads within about a
+  second instead of from the next file. `bandwidth_limit_bytes_per_sec = 0` is
+  refused; leave it out for unlimited. `download --bandwidth-limit` holds its
+  limit for the run and ignores the schedule (feature 032).
 
 - Only download and Never download now apply: files that don't match
   `whitelist_patterns`, or match `blacklist_patterns`, are blocked like a

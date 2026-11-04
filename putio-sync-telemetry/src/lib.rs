@@ -67,6 +67,9 @@ pub struct Telemetry {
     pub(crate) queue_items: IntGaugeVec,
     pub(crate) downloads_active: IntGauge,
     pub(crate) download_workers: IntGauge,
+    // Feature 032
+    pub(crate) bandwidth_limit: Gauge,
+    pub(crate) bandwidth_override: IntGauge,
     pub(crate) downloads_completed: IntCounter,
     pub(crate) downloads_failed: IntCounterVec,
     pub(crate) existing_files: IntCounterVec,
@@ -309,6 +312,16 @@ impl Telemetry {
             download_workers: IntGauge::with_opts(opts(
                 "download_workers",
                 "Configured download worker count.",
+            ))
+            .unwrap(),
+            bandwidth_limit: Gauge::with_opts(opts(
+                "download_bandwidth_limit_bytes_per_second",
+                "Download limit in force for all downloads together; +Inf unlimited, 0 paused.",
+            ))
+            .unwrap(),
+            bandwidth_override: IntGauge::with_opts(opts(
+                "download_bandwidth_override",
+                "1 while a timed bandwidth pause or slow-down is in force.",
             ))
             .unwrap(),
             downloads_completed: IntCounter::with_opts(opts(
@@ -596,6 +609,8 @@ impl Telemetry {
             Box::new(self.queue_items.clone()),
             Box::new(self.downloads_active.clone()),
             Box::new(self.download_workers.clone()),
+            Box::new(self.bandwidth_limit.clone()),
+            Box::new(self.bandwidth_override.clone()),
             Box::new(self.downloads_completed.clone()),
             Box::new(self.downloads_failed.clone()),
             Box::new(self.existing_files.clone()),
@@ -654,6 +669,7 @@ impl Telemetry {
     }
 
     fn zero_init(&self) {
+        self.bandwidth_limit.set(f64::INFINITY);
         for op in ApiOp::ALL {
             for outcome in ApiOutcome::ALL {
                 self.api_requests

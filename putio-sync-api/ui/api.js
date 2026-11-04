@@ -114,6 +114,10 @@ export const exportSettings = () => get("/settings/export");
 export const importSettings = (toml, apply) => post("/settings/import", { toml, apply });
 export const del = (path) => request("DELETE", path);
 
+// Bandwidth (feature 032): pause or slow downloads for `minutes`, or follow the schedule again
+export const setBandwidthOverride = (mode, minutes = 60) => put("/bandwidth/override", { mode, minutes });
+export const clearBandwidthOverride = () => del("/bandwidth/override");
+
 /** Check `token` with the daemon and keep it only when accepted (204). */
 export async function login(token) {
   await request("POST", "/auth/login", { token });

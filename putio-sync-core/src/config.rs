@@ -17,6 +17,10 @@ use putio_sync_telemetry::server::MetricsSettings;
 use putio_sync_telemetry::Detail;
 
 /// Default value for delete_empty_folders
+fn default_slow_limit() -> u64 {
+    crate::bandwidth::DEFAULT_SLOW_LIMIT
+}
+
 fn default_delete_empty_folders() -> bool {
     true
 }
@@ -791,6 +795,14 @@ pub struct DownloadConfig {
     /// Bandwidth limit in bytes per second (None for unlimited)
     /// Example: Some(1048576) for 1 MB/s limit
     pub bandwidth_limit_bytes_per_sec: Option<u64>,
+    /// Limits by time of day and day of week (`[[download.bandwidth_schedule]]`, feature
+    /// 032); the first matching entry wins, `bandwidth_limit_bytes_per_sec` applies outside
+    /// them. Times are the daemon's local time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bandwidth_schedule: Vec<crate::bandwidth::ScheduleEntry>,
+    /// The limit while "Slow" is on, or the schedule's if lower (default 1 MiB/s)
+    #[serde(default = "default_slow_limit")]
+    pub slow_limit_bytes_per_sec: u64,
     /// Maximum number of retry attempts for failed downloads (default: 3)
     pub max_retries: u32,
     /// Initial retry delay in seconds (doubles with each retry)
@@ -989,9 +1001,11 @@ impl Default for DownloadConfig {
             whitelist_patterns: None,
             blacklist_patterns: None,
             bandwidth_limit_bytes_per_sec: None, // Unlimited by default
-            max_retries: 3,                      // 3 retries by default
-            retry_initial_delay_secs: 1,         // Start with 1 second delay
-            delete_empty_folders: true,          // Delete empty folders by default
+            bandwidth_schedule: Vec::new(),
+            slow_limit_bytes_per_sec: default_slow_limit(),
+            max_retries: 3,              // 3 retries by default
+            retry_initial_delay_secs: 1, // Start with 1 second delay
+            delete_empty_folders: true,  // Delete empty folders by default
             blocked_extensions: default_blocked_extensions(),
             preset: None,
             rules: Vec::new(),
@@ -1310,6 +1324,8 @@ impl Config {
     ///
     /// ```no_run
     pub fn validate(&self) -> CoreResult<()> {
+        crate::bandwidth::validate(&self.download).map_err(CoreError::ConfigError)?;
+
         // Validate workers is at least 1
         if self.download.workers == 0 {
             return Err(CoreError::ConfigError(
@@ -2578,6 +2594,8 @@ mod tests {
                 whitelist_patterns: Some("*.mkv".to_string()),
                 blacklist_patterns: Some("*.exe".to_string()),
                 bandwidth_limit_bytes_per_sec: None,
+                bandwidth_schedule: Vec::new(),
+                slow_limit_bytes_per_sec: crate::bandwidth::DEFAULT_SLOW_LIMIT,
                 max_retries: 3,
                 retry_initial_delay_secs: 1,
                 delete_empty_folders: true,

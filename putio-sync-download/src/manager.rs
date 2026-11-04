@@ -6,11 +6,15 @@ use crate::files::{
     next_free_name, plan_existing, ExistingAction, LocalState,
 };
 use crate::progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
+use crate::rate_limiter::RateLimiter;
 use crate::stream::{finish_download, stream_to_temp, StopSignal};
 use crate::sync_status::{SyncOutcome, SyncRequestError, SyncStatus};
 use crate::utils::retry_with_stall_detection;
 use putio_sync_client::models::Transfer;
 use putio_sync_client::{error_chain, FileEntry, PutioApiClient};
+use putio_sync_core::bandwidth::{
+    Override, OverrideMode, Policy, ScheduleEntry, Status as BandwidthStatus, DEFAULT_SLOW_LIMIT,
+};
 use putio_sync_core::config::{ExistingFile, ExistingOutcome};
 use putio_sync_core::rules::{extension, Decision, Effective, RuleSet};
 use putio_sync_core::stall::StallTracker;
@@ -38,8 +42,13 @@ pub struct DownloadConfig {
     pub resume_enabled: bool,
     /// Buffer size in megabytes
     pub buffer_size_mb: usize,
-    /// Bandwidth limit in bytes per second (None = unlimited)
+    /// Bandwidth limit in bytes per second for all downloads together, outside every
+    /// schedule entry (None = unlimited)
     pub bandwidth_limit_bytes_per_sec: Option<u64>,
+    /// Limits by time of day and day of week (feature 032)
+    pub bandwidth_schedule: Vec<ScheduleEntry>,
+    /// The limit while "Slow" is on, or the schedule's if lower
+    pub slow_limit_bytes_per_sec: u64,
     /// Maximum number of retry attempts
     pub max_retries: u32,
     /// Initial delay for retries in seconds
@@ -53,6 +62,15 @@ pub struct DownloadConfig {
 }
 
 impl DownloadConfig {
+    /// The default limit, the schedule and the slow limit
+    pub fn bandwidth_policy(&self) -> Policy {
+        Policy::new(
+            self.bandwidth_limit_bytes_per_sec,
+            &self.bandwidth_schedule,
+            self.slow_limit_bytes_per_sec,
+        )
+    }
+
     /// The rules in force in `folder_path` (relative to the Put.io root). Settings no
     /// folder rule sets take this config's `delete_after_download` and `on_existing`.
     pub fn effective(&self, folder_path: &str) -> Effective {
@@ -75,6 +93,8 @@ impl Default for DownloadConfig {
             resume_enabled: true,
             buffer_size_mb: 64,
             bandwidth_limit_bytes_per_sec: None,
+            bandwidth_schedule: Vec::new(),
+            slow_limit_bytes_per_sec: DEFAULT_SLOW_LIMIT,
             max_retries: 3,
             retry_initial_delay_secs: 2,
             workers: 1,
@@ -95,6 +115,8 @@ impl From<&putio_sync_core::config::DownloadConfig> for DownloadConfig {
             resume_enabled: settings.resume_enabled,
             buffer_size_mb: settings.buffer_size_mb,
             bandwidth_limit_bytes_per_sec: settings.bandwidth_limit_bytes_per_sec,
+            bandwidth_schedule: settings.bandwidth_schedule.clone(),
+            slow_limit_bytes_per_sec: settings.slow_limit_bytes_per_sec,
             max_retries: settings.max_retries,
             retry_initial_delay_secs: settings.retry_initial_delay_secs,
             workers: settings.workers,
@@ -363,7 +385,7 @@ pub struct WorkerStats {
     pub worker_id: usize,
     /// Total bytes downloaded by this worker
     pub bytes_downloaded: Arc<RwLock<u64>>,
-    /// Bandwidth limit for this worker (bytes/sec)
+    /// Always `None`: the bandwidth limit is shared by all workers (feature 032)
     pub bandwidth_limit: Option<u64>,
     /// Worker start time
     pub started_at: Instant,
@@ -512,6 +534,8 @@ pub struct DownloadManager {
     /// The last Put.io transfer list, shared by the Active page, Status and the daemon
     /// loop (feature 039, R3). The async lock makes concurrent callers share one fetch.
     transfers_cache: Arc<tokio::sync::Mutex<Option<CachedTransfers>>>,
+    /// The one bandwidth limiter every download shares (feature 032)
+    bandwidth: RateLimiter,
 }
 
 /// The cached transfer list, when it was fetched, and the last attempt
@@ -562,6 +586,7 @@ impl DownloadManager {
         Self {
             client,
             database: Some(database),
+            bandwidth: RateLimiter::from_policy(config.bandwidth_policy()),
             config: Arc::new(RwLock::new(config)),
             progress_trackers: Arc::new(RwLock::new(HashMap::new())),
             overall_progress,
@@ -593,6 +618,7 @@ impl DownloadManager {
         Self {
             client,
             database: None,
+            bandwidth: RateLimiter::from_policy(config.bandwidth_policy()),
             config: Arc::new(RwLock::new(config)),
             progress_trackers: Arc::new(RwLock::new(HashMap::new())),
             overall_progress,
@@ -642,6 +668,8 @@ impl DownloadManager {
         };
         let new_worker_count = new_config.workers;
 
+        self.bandwidth.set_policy(new_config.bandwidth_policy());
+
         // Update configuration
         {
             let mut config = self.config.write().await;
@@ -649,8 +677,9 @@ impl DownloadManager {
             info!("Download configuration updated via hot reload");
             info!("  Workers: {}", config.workers);
             info!(
-                "  Bandwidth limit: {:?}",
-                config.bandwidth_limit_bytes_per_sec
+                "  Bandwidth limit: {:?}, {} schedule entries",
+                config.bandwidth_limit_bytes_per_sec,
+                config.bandwidth_schedule.len()
             );
             info!("  Buffer size: {} MB", config.buffer_size_mb);
         }
@@ -668,6 +697,74 @@ impl DownloadManager {
     /// Get current configuration (read-only snapshot)
     pub async fn get_config(&self) -> DownloadConfig {
         self.config.read().await.clone()
+    }
+
+    /// The bandwidth limiter every download shares
+    pub fn bandwidth(&self) -> &RateLimiter {
+        &self.bandwidth
+    }
+
+    /// Pause or slow downloads for `minutes` (1 to 1440), replacing any pause or
+    /// slow-down; stored so a restart keeps the same end time
+    pub async fn set_bandwidth_override(
+        &self,
+        mode: OverrideMode,
+        minutes: u32,
+    ) -> DownloadResult<BandwidthStatus> {
+        let ov = Override::for_minutes(mode, minutes, chrono::Utc::now())
+            .map_err(DownloadError::InvalidInput)?;
+        if let Some(db) = &self.database {
+            let json = serde_json::to_string(&ov)
+                .map_err(|e| DownloadError::InternalError(e.to_string()))?;
+            db.flags()
+                .set_text(putio_sync_db::pipeline::BANDWIDTH_OVERRIDE, &json)
+                .await?;
+        }
+        self.bandwidth.set_override(Some(ov));
+        info!(mode = ?mode, minutes, until = %ov.until, "Bandwidth override set");
+        Ok(self.bandwidth.status())
+    }
+
+    /// End a pause or slow-down; the schedule applies again
+    pub async fn clear_bandwidth_override(&self) -> DownloadResult<BandwidthStatus> {
+        if let Some(db) = &self.database {
+            db.flags()
+                .remove(putio_sync_db::pipeline::BANDWIDTH_OVERRIDE)
+                .await?;
+        }
+        if self.bandwidth.override_().is_some() {
+            info!("Bandwidth override ended");
+        }
+        self.bandwidth.set_override(None);
+        Ok(self.bandwidth.status())
+    }
+
+    /// Bring back a stored pause or slow-down that has not ended yet, at start-up.
+    /// An expired or unreadable one is deleted.
+    pub async fn restore_bandwidth_override(&self) -> DownloadResult<Option<Override>> {
+        let Some(db) = &self.database else {
+            return Ok(None);
+        };
+        let key = putio_sync_db::pipeline::BANDWIDTH_OVERRIDE;
+        let Some(text) = db.flags().get_text(key).await? else {
+            return Ok(None);
+        };
+        match serde_json::from_str::<Override>(&text) {
+            Ok(ov) if ov.active(chrono::Utc::now()) => {
+                info!(mode = ?ov.mode, until = %ov.until, "Bandwidth override restored");
+                self.bandwidth.set_override(Some(ov));
+                Ok(Some(ov))
+            }
+            Ok(_) => {
+                db.flags().remove(key).await?;
+                Ok(None)
+            }
+            Err(e) => {
+                warn!("Ignoring the stored bandwidth override: {e}");
+                db.flags().remove(key).await?;
+                Ok(None)
+            }
+        }
     }
 
     /// Scale workers to target count (for hot reload)
@@ -722,19 +819,8 @@ impl DownloadManager {
 
         info!("Spawning worker {}", worker_id);
 
-        // Calculate per-worker bandwidth limit
-        let per_worker_limit = {
-            let config = self.config.read().await;
-            let target_workers = config.workers;
-
-            config.bandwidth_limit_bytes_per_sec.map(|global_limit| {
-                // Divide global limit by number of workers
-                global_limit / target_workers.max(1) as u64
-            })
-        };
-
-        // Create worker stats
-        let stats = WorkerStats::new(worker_id, per_worker_limit);
+        // The bandwidth limit is shared, not split per worker
+        let stats = WorkerStats::new(worker_id, None);
 
         // Create shutdown channel for this worker
         let (shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
@@ -790,10 +876,9 @@ impl DownloadManager {
             },
         );
         info!(
-            "Worker {} spawned successfully (total workers: {}, per-worker limit: {:?} bytes/sec)",
+            "Worker {} spawned successfully (total workers: {})",
             worker_id,
-            workers.len(),
-            per_worker_limit
+            workers.len()
         );
     }
 
@@ -1305,7 +1390,7 @@ impl DownloadManager {
                     filename,
                     Some(file.file_size),
                     config.buffer_size_mb,
-                    config.bandwidth_limit_bytes_per_sec,
+                    Some(&self.bandwidth),
                     from,
                     stop.as_deref(),
                 )
@@ -1869,6 +1954,11 @@ impl DownloadManager {
     ///
     /// true if an item was processed, false if queue is empty
     pub async fn process_queue(&self) -> DownloadResult<bool> {
+        // Paused by the schedule or a pause: claim nothing (running files wait in place)
+        if self.bandwidth.is_paused() {
+            return Ok(false);
+        }
+
         // Get config snapshot
         let config = self.config.read().await;
 

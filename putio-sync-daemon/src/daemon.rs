@@ -256,6 +256,10 @@ impl PutioDaemon {
             if let Err(e) = download_manager.recover_interrupted().await {
                 warn!("{}", e);
             }
+            // A pause or slow-down set before a restart keeps its end time
+            if let Err(e) = download_manager.restore_bandwidth_override().await {
+                warn!("Failed to restore the bandwidth override: {}", e);
+            }
 
             // Wrap in Arc for sharing with API (hot reload support via internal config RwLock)
             self.download_mode = Some(DownloadMode::Local(Arc::new(download_manager)));
@@ -1045,6 +1049,8 @@ mod tests {
             resume_enabled: false,
             buffer_size_mb: 48,
             bandwidth_limit_bytes_per_sec: Some(1_048_576),
+            bandwidth_schedule: Vec::new(),
+            slow_limit_bytes_per_sec: 300_000,
             max_retries: 9,
             retry_initial_delay_secs: 11,
             workers: 3,

@@ -23,6 +23,17 @@ impl Telemetry {
         ActiveGuard { telemetry: self }
     }
 
+    /// Set the download limit in force: `None` unlimited, `Some(0)` paused.
+    pub fn set_bandwidth_limit(&self, bytes_per_sec: Option<u64>) {
+        self.bandwidth_limit
+            .set(bytes_per_sec.map_or(f64::INFINITY, |n| n as f64));
+    }
+
+    /// Set whether a timed bandwidth pause or slow-down is in force.
+    pub fn set_bandwidth_override(&self, active: bool) {
+        self.bandwidth_override.set(i64::from(active));
+    }
+
     /// Add bytes written to disk.
     pub fn download_bytes(&self, n: u64) {
         self.downloaded_bytes.inc_by(n);
@@ -99,4 +110,14 @@ pub fn worker_busy(id: usize, busy: bool) {
 /// Set a worker's in-flight bytes on the global instance.
 pub fn worker_inflight(id: usize, bytes: u64) {
     global().worker_inflight(id, bytes);
+}
+
+/// Set the download limit gauge on the global instance.
+pub fn bandwidth_limit(bytes_per_sec: Option<u64>) {
+    global().set_bandwidth_limit(bytes_per_sec);
+}
+
+/// Set the bandwidth override gauge on the global instance.
+pub fn bandwidth_override(active: bool) {
+    global().set_bandwidth_override(active);
 }

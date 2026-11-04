@@ -7,6 +7,7 @@ What changed in each build is in [CHANGELOG.md](CHANGELOG.md); planned work is i
 ## Features
 
 - **Fast Downloads**: Concurrent downloads with configurable workers
+- **Bandwidth Schedules**: download limits by time of day and day of week, plus Pause or Slow for an hour from the Status page ([details](#bandwidth-schedules))
 - **Resumable Downloads**: Automatic resume for interrupted downloads using range requests
 - **Streaming Downloads**: Efficient buffered streaming with minimal memory usage
 - **Smart Progress Logging**: Size-based progress intervals with single-threshold logging (every 50% for 500MB+, 33% for 1GB+, 20% for 5GB+, 10% for 10GB+, 7% for 15GB+, 5% for 20GB+, 1% for 50GB+)
@@ -566,6 +567,63 @@ done, `[download] on_existing` decides what happens:
   restarted, overwritten and saved-as files; `putio_sync_existing_files_total` counts each
   outcome.
 
+### Bandwidth schedules
+
+`bandwidth_limit_bytes_per_sec` caps all downloads together, not each worker. A schedule
+changes the cap by time of day and day of week; the first entry that contains the
+current time wins, and outside every entry the default limit applies:
+
+```toml
+[download]
+bandwidth_limit_bytes_per_sec = 5242880   # 5 MiB/s; leave out for unlimited
+slow_limit_bytes_per_sec = 1048576        # used by "Slow 1 h" (default 1 MiB/s)
+
+[[download.bandwidth_schedule]]
+days = "daily"
+start = "01:00"
+end = "07:00"
+limit = "unlimited"
+
+[[download.bandwidth_schedule]]
+days = "mon-fri"
+start = "18:00"
+end = "23:00"
+limit = "paused"
+
+[[download.bandwidth_schedule]]
+days = "fri,sat"
+start = "22:00"
+end = "02:00"     # past midnight: Friday 22:00 to Saturday 02:00, and Saturday to Sunday
+limit = 2097152   # 2 MiB/s
+```
+
+- `days`: `daily`, `weekdays`, `weekends`, a day (`mon` or `monday`), a range
+  (`mon-fri`, `fri-mon`) or a comma list (`sat,sun`), in any case.
+- `start` is `00:00` to `23:59` and `end` is `00:01` to `24:00`; an end before the start
+  runs past midnight and belongs to the start day. `00:00` to `24:00` is a whole day.
+- `limit` is `"unlimited"`, `"paused"` or bytes per second (above 0). At most 50 entries.
+
+Times are the daemon's **local time**. In Docker set `TZ` (for example
+`TZ=Europe/London`), otherwise it is UTC; the Status page and the doctor show the
+daemon's time and UTC offset so you can check. Daylight-saving changes follow the
+clock: a 01:00–07:00 entry is six hours most nights and five or seven on the change night.
+
+A new limit, from the schedule or a save in Settings, applies to running downloads
+within about a second. While paused, running downloads wait and nothing new starts.
+
+The **Bandwidth** card on the Status page shows the limit in force, why (the default,
+schedule entry N, or a pause), when it next changes, and the daemon's time. **Pause 1 h**
+stops downloads and **Slow 1 h** drops to `slow_limit_bytes_per_sec` (or the schedule's
+limit, if lower) for an hour; **Resume schedule** ends either early. These survive a
+restart until they end. The API is `PUT /bandwidth/override` (`{"mode": "pause" | "slow",
+"minutes": 60}`) and `DELETE /bandwidth/override`.
+
+Mistakes are refused with the entry and field named, for example `download.bandwidth_schedule
+entry 1: start '25:00': expected HH:MM between 00:00 and 23:59`. Overlapping entries, a
+schedule that pauses the whole week, and limits under 64 KiB/s are allowed but warned
+about in Settings and by the doctor. The one-off `download --bandwidth-limit` holds that
+limit for the whole run and ignores the schedule.
+
 ### Basic Configuration
 
 ```toml
@@ -669,6 +727,8 @@ H = histogram.
 | `putio_sync_queue_items` | gauge | `state` | Queue rows by state, refreshed every 15 s and at startup |
 | `putio_sync_downloads_active` | gauge | — | Downloads in progress |
 | `putio_sync_download_workers` | gauge | — | Configured worker count |
+| `putio_sync_download_bandwidth_limit_bytes_per_second` | gauge | — | The download limit in force: `+Inf` unlimited, 0 paused |
+| `putio_sync_download_bandwidth_override` | gauge | — | 1 while **Pause 1 h** or **Slow 1 h** is in force, else 0 |
 | `putio_sync_downloads_completed_total` | counter | — | Downloads verified and renamed into place |
 | `putio_sync_downloads_failed_total` | counter | `reason` | Downloads that ended in failure |
 | `putio_sync_downloaded_bytes_total` | counter | — | Bytes written to disk; `rate()` gives throughput |
@@ -912,7 +972,7 @@ daemon's download manager and watcher:
 | Group | Applies live | Needs a restart |
 |---|---|---|
 | Logging | `level`, `module_filters`, within 10 s (ignored while `RUST_LOG` is set) | `console_format`, `console_enabled`, `file_*` |
-| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, for the next download | `target_directory` (new downloads go there at once, but the queue database and disk figures stay on the startup folder), and the rest of the group |
+| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`, `slow_limit_bytes_per_sec` (running downloads too), `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, for the next download | `target_directory` (new downloads go there at once, but the queue database and disk figures stay on the startup folder), and the rest of the group |
 | Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Release check | — | everything |
@@ -1011,6 +1071,9 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /releases/flags` | `{"target": {"file_id": 1}, "kind": "fake" \| "not_fake", "note", "blocklist"}`: flag a release. With `blocklist` on a Radarr/Sonarr item, it fails, its Put.io files are deleted and it's blocklisted (not under `dry_run`) |
 | `DELETE /releases/flags/{id}` | Undo a flag. A blocklist already sent isn't undone |
 | `GET /local/watcher/status`, `GET /local/workers` | Watcher and worker state |
+| `GET /bandwidth` | The download limit in force: `limit`, `bytes_per_sec`, `source` (`default`, `schedule`, `pause`, `slow`), `entry`, `override`, `next_change`, `local_time`, `utc_offset`, `slow_limit_bytes_per_sec`. Also the `bandwidth` section of `GET /status` |
+| `PUT /bandwidth/override` | `{"mode": "pause" \| "slow", "minutes": 60}` (1 to 1440, default 60) → the `GET /bandwidth` body; 400 for anything else |
+| `DELETE /bandwidth/override` | Back to the schedule now; fine when nothing is in force |
 | `GET /doctor` | The latest doctor report; 404 before the first run |
 | `POST /doctor/run` | Run every check now and answer with the report (a run already going is joined, not repeated) |
 | `POST /doctor/fixes/{fix}/preview` | Check again and list the items the fix would act on; changes nothing |
@@ -1407,6 +1470,7 @@ daemon also runs it 2 minutes after it starts and then every `interval_minutes`.
 | Sync | Queue entries for deleted files | A queue row points at a file Put.io no longer has |
 | | Failing downloads | A download failed 3 or more times |
 | | Leftover partial downloads | A `.downloading` file older than an hour that no download owns |
+| | Bandwidth limit | Shows the download limit in force, its source and the daemon's time; a pause from the Status page is a warning until it ends |
 | This machine | Download folder | The folder is missing or not writable (problem) |
 | | Disk space | Under 10% free, or less than the queue needs (warning); under 2% (problem) |
 | | Database | SQLite's integrity check fails (problem) |
@@ -1615,8 +1679,8 @@ applies live and what needs a restart.
 
 At startup, `daemon` and `server` (its API and its `--download` thread) give the download
 manager every `[download]` setting it has: `target_directory`, `workers`,
-`buffer_size_mb`, `bandwidth_limit_bytes_per_sec`, `max_retries`,
-`retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download` and
+`buffer_size_mb`, `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`,
+`slow_limit_bytes_per_sec`, `max_retries`, `retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download` and
 `blocked_extensions`. The other `[download]` keys (`chunk_size_mb`,
 `progress_style`, sorting, glob patterns, `delete_empty_folders`) are read by the
 one-off `download` command only. Before this, `daemon` ignored the bandwidth limit and

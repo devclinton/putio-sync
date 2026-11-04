@@ -459,6 +459,9 @@ fn spawn_download_daemon(
                 ))
             };
 
+            if let Err(e) = download_manager.restore_bandwidth_override().await {
+                warn!("Failed to restore the bandwidth override: {}", e);
+            }
             info!("Download daemon: Manager initialized");
 
             // Run download daemon loop

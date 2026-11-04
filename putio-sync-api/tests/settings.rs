@@ -118,6 +118,8 @@ async fn download_settings_round_trip() {
             "max_retries",
             "retry_initial_delay_secs",
             "delete_empty_folders",
+            "bandwidth_schedule",
+            "slow_limit_bytes_per_sec",
         ],
     );
 
@@ -148,6 +150,41 @@ async fn download_settings_round_trip() {
     assert_eq!(status, StatusCode::OK, "{response}");
     assert_eq!(saved(&app).download.on_existing(), ExistingFile::Overwrite);
     assert_eq!(get_ok(&app, path).await["on_existing"], "overwrite");
+}
+
+#[tokio::test]
+async fn bandwidth_schedule_is_checked_saved_and_live() {
+    let app = test_app().await;
+    let path = "/settings/download";
+    let body = get_ok(&app, path).await;
+    assert_eq!(body["bandwidth_schedule"], json!([]));
+    assert_eq!(body["slow_limit_bytes_per_sec"], 1_048_576);
+
+    // A bad entry names the entry and the field
+    let mut bad = body.clone();
+    bad["bandwidth_schedule"] =
+        json!([{"days": "daily", "start": "25:00", "end": "07:00", "limit": "unlimited"}]);
+    let (status, response) = put(&app, path, bad).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    let error = response["error"].as_str().unwrap_or_default();
+    assert!(error.contains("entry 1: start '25:00'"), "{error}");
+    assert!(saved(&app).download.bandwidth_schedule.is_empty());
+    put_invalid(
+        &app,
+        path,
+        body.clone(),
+        "slow_limit_bytes_per_sec",
+        json!(0),
+    )
+    .await;
+
+    // A good one is saved and reaches the running limiter
+    let all_day = json!([{"days": "daily", "start": "00:00", "end": "24:00", "limit": 2000}]);
+    put_changed(&app, path, body.clone(), "bandwidth_schedule", all_day).await;
+    assert_eq!(saved(&app).download.bandwidth_schedule.len(), 1);
+    let current = app.state.download_manager.bandwidth().current();
+    assert_eq!(current.limit.bytes_per_sec(), Some(2000));
+    assert_eq!(current.entry, Some(1));
 }
 
 #[tokio::test]

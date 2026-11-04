@@ -164,6 +164,11 @@ pub fn risks_in(config: &Config, host: &Host) -> Vec<Risk> {
         );
     }
 
+    // Bandwidth schedule mistakes (feature 032)
+    for warning in crate::bandwidth::warnings(download) {
+        add(warning.id, Level::Warning, &[warning.key], warning.message);
+    }
+
     let level = config.logging.level.to_ascii_lowercase();
     if config.logging.file_enabled && (level == "trace" || level == "debug") {
         add(
@@ -572,6 +577,29 @@ mod tests {
         config.cleanup.min_age_hours = 1;
         config.download.workers = 10;
         config.logging.file_enabled = false;
+        assert!(ids(&config, &h).is_empty());
+    }
+
+    #[test]
+    fn bandwidth_schedule_mistakes() {
+        use crate::bandwidth::{Limit, ScheduleEntry};
+        let mut config = Config::default();
+        config.download.target_directory = PathBuf::from("/srv/dl");
+        let h = host(Path::new("/scratch"));
+        let entry = |start: &str, end: &str, limit| ScheduleEntry {
+            days: "daily".into(),
+            start: start.into(),
+            end: end.into(),
+            limit,
+        };
+        config.download.bandwidth_schedule = vec![
+            entry("01:00", "07:00", Limit::Unlimited),
+            entry("06:00", "08:00", Limit::Rate(1000)),
+        ];
+        assert_eq!(ids(&config, &h), ["bandwidth_low", "bandwidth_overlap"]);
+        config.download.bandwidth_schedule = vec![entry("00:00", "24:00", Limit::Paused)];
+        assert_eq!(ids(&config, &h), ["bandwidth_paused_week"]);
+        config.download.bandwidth_schedule.clear();
         assert!(ids(&config, &h).is_empty());
     }
 

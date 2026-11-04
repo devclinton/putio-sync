@@ -28,6 +28,7 @@ async fn a_healthy_setup_reports_no_problems() {
         CheckId::DeadQueueRows,
         CheckId::FailingDownloads,
         CheckId::OrphanPartials,
+        CheckId::Bandwidth,
         CheckId::DownloadDir,
         CheckId::Database,
         CheckId::Reachability,
@@ -44,6 +45,47 @@ async fn a_healthy_setup_reports_no_problems() {
     assert_eq!(status(&report, CheckId::Config), Status::Skipped);
     assert_eq!(status(&report, CheckId::StuckWatchFiles), Status::Skipped);
     assert_eq!(env.doctor.latest(), Some(report));
+}
+
+#[tokio::test]
+async fn a_stored_pause_is_a_warning() {
+    let mut env = Env::new().await;
+    env.healthy().await;
+    let report = env.doctor.run().await;
+    let check = report.check(CheckId::Bandwidth).unwrap();
+    assert!(
+        check
+            .summary
+            .starts_with("Downloads are unlimited by the default limit."),
+        "{}",
+        check.summary
+    );
+    assert!(check.summary.contains("Daemon time"), "{}", check.summary);
+
+    let until = chrono::Utc::now() + chrono::Duration::minutes(30);
+    env.db
+        .flags()
+        .set_text(
+            putio_sync_db::pipeline::BANDWIDTH_OVERRIDE,
+            &format!(r#"{{"mode":"pause","until":"{}"}}"#, until.to_rfc3339()),
+        )
+        .await
+        .unwrap();
+    let report = env.doctor.run().await;
+    let check = report.check(CheckId::Bandwidth).unwrap();
+    assert_eq!(check.status, Status::Warning);
+    assert!(
+        check
+            .summary
+            .starts_with("Downloads are paused by a pause until "),
+        "{}",
+        check.summary
+    );
+    assert!(check
+        .suggestion
+        .as_deref()
+        .unwrap()
+        .contains("Resume schedule"));
 }
 
 #[tokio::test]

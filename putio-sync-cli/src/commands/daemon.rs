@@ -381,6 +381,8 @@ mod tests {
                 resume_enabled: false,
                 buffer_size_mb: 48,
                 bandwidth_limit_bytes_per_sec: Some(2_097_152),
+                bandwidth_schedule: Vec::new(),
+                slow_limit_bytes_per_sec: putio_sync_core::bandwidth::DEFAULT_SLOW_LIMIT,
                 max_retries: 8,
                 retry_initial_delay_secs: 6,
                 workers: 5,
