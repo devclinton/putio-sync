@@ -84,6 +84,8 @@ COPY putio-sync-telemetry ./putio-sync-telemetry
 COPY putio-sync-arr ./putio-sync-arr
 COPY putio-sync-doctor ./putio-sync-doctor
 COPY putio-sync-precheck ./putio-sync-precheck
+# Built into the binary for the web UI's What's new (feature 017)
+COPY CHANGELOG.md ./
 
 # Commit SHA for putio_sync_build_info (read by option_env! at compile time)
 ARG PUTIO_SYNC_GIT_SHA=unknown

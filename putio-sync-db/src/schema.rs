@@ -279,6 +279,15 @@ CREATE TABLE IF NOT EXISTS hold_ends (
 )
 "#;
 
+/// SQL to create the whats_new_seen table (feature 017): the ids of the changelog entries
+/// this install has shown. Rows are only added.
+pub const CREATE_WHATS_NEW_SEEN_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS whats_new_seen (
+    id TEXT PRIMARY KEY,
+    seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"#;
+
 /// SQL to create performance indexes
 /// These indexes optimize common query patterns
 pub const CREATE_INDEXES: &str = r#"

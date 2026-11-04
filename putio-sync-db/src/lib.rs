@@ -45,6 +45,7 @@ pub mod schema;
 pub mod sources;
 pub mod stats;
 pub mod torrents;
+pub mod whats_new;
 
 pub use arr::{ArrItem, ArrRepository, ArrState, BlocklistState, NewArrItem, PutioProgress};
 pub use decisions::{RuleDecisionRecord, RuleDecisionsRepository};
@@ -54,6 +55,7 @@ pub use held::{Held, HeldRepository, HoldStats, NewHeld};
 pub use history::HistoryRepository;
 pub use pipeline::{FinishedRepository, FlagsRepository, HoldsRepository};
 pub use queue::{QueueRepository, QueueStats};
+pub use whats_new::WhatsNewRepository;
 pub use releases::{
     CheckState, FlagUndo, HeldSettle, NewCheck, NewReport, PendingCheck, ReleaseStats,
     ReleasesRepository, ReportKind, ReportRow,
@@ -224,6 +226,11 @@ impl Database {
         FlagsRepository::new(&self.pool)
     }
 
+    /// Get the What's new seen-entries repository (feature 017)
+    pub fn whats_new(&self) -> WhatsNewRepository<'_> {
+        WhatsNewRepository::new(&self.pool)
+    }
+
     /// Get the Recently finished repository (feature 039)
     pub fn finished(&self) -> FinishedRepository<'_> {
         FinishedRepository::new(&self.pool)
@@ -377,6 +384,11 @@ impl Database {
             (
                 schema::CREATE_HOLD_ENDS_TABLE,
                 "Failed to create hold_ends table",
+            ),
+            // What's new (feature 017)
+            (
+                schema::CREATE_WHATS_NEW_SEEN_TABLE,
+                "Failed to create whats_new_seen table",
             ),
         ] {
             sqlx::query(sql)
@@ -600,6 +612,7 @@ mod tests {
             "release_reports",
             "held_magnets",
             "hold_ends",
+            "whats_new_seen",
         ];
 
         let db = Database::new(&db_path).await.unwrap();
