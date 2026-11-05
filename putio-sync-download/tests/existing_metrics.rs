@@ -118,6 +118,7 @@ async fn every_outcome_is_counted_once_and_kept_on_its_history_row() {
                     crc32: Some(crc32),
                     save_as: None,
                     fixed_path: false,
+                    overwrite: false,
                 },
                 None,
             )

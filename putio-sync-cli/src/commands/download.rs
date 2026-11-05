@@ -326,6 +326,7 @@ async fn run_single_download(
             crc32: file.crc32.clone(),
             save_as: None,
             fixed_path: false,
+            overwrite: false,
         };
 
         match download_manager.download_file(download_file, None).await {

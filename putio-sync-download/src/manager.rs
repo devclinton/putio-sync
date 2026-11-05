@@ -2,8 +2,9 @@
 
 use crate::error::{DownloadError, DownloadResult};
 use crate::files::{
-    check_resume, cleanup_partial, crc32_file, crc_equal, create_temp_path, needs_checksum,
-    next_free_name, plan_existing, ExistingAction, LocalState,
+    check_resume, cleanup_partial, crc32_file, crc32_prefix, crc_equal, create_temp_path,
+    needs_checksum, next_free_name, plan_existing, valid_crc32, Crc32, ExistingAction,
+    LocalState,
 };
 use crate::progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 use crate::rate_limiter::RateLimiter;
@@ -259,6 +260,24 @@ pub struct DownloadFile {
     pub save_as: Option<String>,
     /// The file must keep its path (Radarr/Sonarr): overwrite, never a numbered name
     pub fixed_path: bool,
+    /// Queued again after it failed a verify run (feature 034): download from the start
+    /// over whatever is there, with no checksum read first
+    pub overwrite: bool,
+}
+
+/// What [`DownloadManager::transfer`] got: the retry count and, when hashed, the
+/// CRC32 of the whole hidden file
+struct Transferred {
+    attempts: u32,
+    crc32: Option<String>,
+}
+
+/// How a finished download was checked (feature 034)
+struct Verified {
+    /// `crc32`, `size` or `none` (verification off)
+    method: &'static str,
+    crc32: Option<String>,
+    redownloads: u32,
 }
 
 /// Result of a download operation
@@ -295,8 +314,9 @@ pub struct ActiveDownload {
     pub eta_seconds: Option<u64>,
     /// Elapsed time in seconds since download started
     pub elapsed_seconds: u64,
-    /// "downloading", or "checking" while a checksum is computed; then the bytes and
-    /// speed measure the checksum read
+    /// "downloading", "checking" while an existing file's checksum is computed, or
+    /// "verifying" while a resumed file's part on disk is hashed; then the bytes and
+    /// speed measure that read
     pub phase: &'static str,
 }
 
@@ -565,8 +585,9 @@ pub struct DownloadManager {
     manual_sync: Arc<std::sync::atomic::AtomicBool>,
     /// Target paths a worker is writing (R7)
     paths_in_use: Arc<Mutex<HashSet<PathBuf>>>,
-    /// Files whose checksum is being computed: bytes read and when it started
-    checking: Arc<Mutex<HashMap<i64, (u64, Instant)>>>,
+    /// Files whose checksum is being computed: bytes read, when it started, and the
+    /// phase shown ("checking", or "verifying" for a resumed file's prefix)
+    checking: Arc<Mutex<HashMap<i64, (u64, Instant, &'static str)>>>,
     /// Stop signals of running downloads, by file id (feature 039)
     stop_signals: Arc<Mutex<HashMap<i64, Arc<StopSignal>>>>,
     /// Files stopped with bytes on disk, to notice a restart from 0
@@ -1089,7 +1110,11 @@ impl DownloadManager {
             std::fs::create_dir_all(&dir).map_err(DownloadError::IoError)?;
         }
 
-        let choice = config.effective(&file.relative_path).on_existing.value;
+        let choice = if file.overwrite {
+            ExistingFile::Overwrite
+        } else {
+            config.effective(&file.relative_path).on_existing.value
+        };
         // A numbered name chosen on an earlier attempt is kept (FR-010)
         let name = file
             .save_as
@@ -1131,7 +1156,7 @@ impl DownloadManager {
             ExistingAction::Fresh => None,
             ExistingAction::Skip => {
                 existing.record(&target_path, ExistingOutcome::Skipped, None);
-                self.record_download(&file, &filename, &target_path, 0)
+                self.record_download(&file, &filename, &target_path, 0, None)
                     .await;
                 self.record_history(
                     &file,
@@ -1139,6 +1164,7 @@ impl DownloadManager {
                     &target_path,
                     None,
                     Some(ExistingOutcome::Skipped),
+                    None,
                 )
                 .await;
                 if let Some(ref callback) = progress_callback {
@@ -1209,6 +1235,10 @@ impl DownloadManager {
         let _active = telemetry::download::active();
         let started = Instant::now();
 
+        if file.overwrite {
+            // A re-download after a failed verify starts from byte 0 (R5)
+            let _ = tokio::fs::remove_file(&temp_path).await;
+        }
         let resumed_from = if config.resume_enabled {
             check_resume(&temp_path, file.file_size).await?
         } else {
@@ -1229,44 +1259,116 @@ impl DownloadManager {
             );
         }
 
+        // Put.io's CRC32, when it is a real one (R1)
+        let remote = valid_crc32(file.crc32.as_deref());
+        let verify = config.verify.enabled;
+        // With verification off, 040's rule stays: only a resumed file is compared, and
+        // it is downloaded again once (R3)
+        let max_redownloads = if verify {
+            config.verify.max_redownloads
+        } else {
+            u32::from(resumed_from.is_some())
+        };
+        let hash = remote.is_some() && (verify || resumed_from.is_some());
+        let mut redownloads = 0u32;
         let mut result = self
-            .transfer(&file, &filename, &target_path, &config, resumed_from)
+            .transfer(&file, &filename, &target_path, &config, resumed_from, hash)
             .await;
-
-        // A resumed file is checked as a whole against Put.io's CRC32 (R3)
-        if let (Ok(_), Some(_), Some(remote)) = (&result, resumed_from, file.crc32.as_deref()) {
-            match self.checksum_matches(file_id, &temp_path, remote).await {
-                Ok(true) => {}
-                Ok(false) => {
-                    warn!(
-                        "Resumed file {} does not match Put.io's checksum; downloading it again",
-                        filename
-                    );
-                    let _ = tokio::fs::remove_file(&temp_path).await;
-                    if matches!(outcome, Some((ExistingOutcome::Resumed, _))) {
-                        outcome =
-                            Some((ExistingOutcome::Restarted, Some(Detail::Reason("checksum"))));
-                    }
-                    result = self
-                        .transfer(&file, &filename, &target_path, &config, None)
-                        .await;
-                    if result.is_ok() && !self.checksum_matches(file_id, &temp_path, remote).await?
-                    {
-                        let _ = tokio::fs::remove_file(&temp_path).await;
-                        result = Err(DownloadError::ApiError(format!(
-                            "Checksum mismatch: {} does not match Put.io's CRC32 {}",
-                            filename, remote
-                        )));
-                    }
-                }
-                Err(e) => result = Err(e),
+        loop {
+            let (true, Ok(done), Some(expected)) = (hash, &result, remote.as_deref()) else {
+                break;
+            };
+            let actual = done.crc32.clone().unwrap_or_default();
+            let passed = crc_equal(&actual, expected);
+            if verify {
+                telemetry::verify::record_check("download", "crc32", passed);
             }
+            if passed {
+                break;
+            }
+            let attempt = redownloads + 1;
+            let will_redownload = redownloads < max_redownloads;
+            warn!(
+                file_id,
+                name = %filename,
+                method = "crc32",
+                expected,
+                actual = %actual,
+                attempt,
+                "Download does not match Put.io's CRC32"
+            );
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            if verify {
+                events::emit(Payload::VerifyFailed(events::VerifyFailed {
+                    file_id,
+                    name: name.clone(),
+                    relative_path: event_path(&file.relative_path, &name),
+                    local_path: target_path.display().to_string(),
+                    size_bytes: file.file_size,
+                    expected_crc32: Some(expected.to_string()),
+                    actual_crc32: Some(actual.clone()),
+                    attempt,
+                    will_redownload,
+                    trigger: "download".to_string(),
+                }));
+            }
+            if !will_redownload {
+                let message = format!(
+                    "Checksum mismatch: {} did not match Put.io's CRC32 {} (got {}) after {} downloads",
+                    filename, expected, actual, attempt
+                );
+                if verify {
+                    self.record_problem(&file, &name, &target_path, &message).await;
+                }
+                result = Err(DownloadError::ApiError(message));
+                break;
+            }
+            redownloads += 1;
+            if verify {
+                telemetry::verify::record_redownload("download");
+                events::emit(Payload::VerifyRedownload(events::VerifyRedownload {
+                    file_id,
+                    name: name.clone(),
+                    relative_path: event_path(&file.relative_path, &name),
+                    size_bytes: file.file_size,
+                    attempt: redownloads,
+                    max_redownloads,
+                    trigger: "download".to_string(),
+                }));
+            }
+            if matches!(outcome, Some((ExistingOutcome::Resumed, _))) {
+                outcome = Some((ExistingOutcome::Restarted, Some(Detail::Reason("checksum"))));
+            }
+            let previous = match &result {
+                Ok(done) => done.attempts,
+                Err(_) => 0,
+            };
+            result = self
+                .transfer(&file, &filename, &target_path, &config, None, hash)
+                .await
+                .map(|done| Transferred {
+                    attempts: previous + done.attempts,
+                    ..done
+                });
         }
+        if verify && remote.is_none() && result.is_ok() {
+            // stream_to_temp already refused a file of the wrong size
+            telemetry::verify::record_check("download", "size", true);
+        }
+        let verified = Verified {
+            method: match (verify, &remote) {
+                (false, _) => "none",
+                (true, Some(_)) => "crc32",
+                (true, None) => "size",
+            },
+            crc32: remote.clone(),
+            redownloads,
+        };
 
         let result = match result {
-            Ok(attempts) => finish_download(&temp_path, &target_path)
+            Ok(done) => finish_download(&temp_path, &target_path)
                 .await
-                .map(|_| attempts),
+                .map(|_| done.attempts),
             Err(e) => Err(e),
         };
 
@@ -1287,7 +1389,7 @@ impl DownloadManager {
                     progress.complete = true;
                     callback.on_file_progress(&progress);
                 }
-                self.record_download(&file, &filename, &target_path, attempts)
+                self.record_download(&file, &filename, &target_path, attempts, Some(&verified))
                     .await;
                 let avg_speed =
                     (duration.as_secs() > 0).then(|| (fetched / duration.as_secs()) as i64);
@@ -1297,6 +1399,7 @@ impl DownloadManager {
                     &target_path,
                     Some((duration.as_secs() as i64, avg_speed)),
                     outcome.map(|(kind, _)| kind),
+                    Some(&verified),
                 )
                 .await;
                 info!(
@@ -1309,6 +1412,29 @@ impl DownloadManager {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| name.clone());
+                if verify {
+                    info!(
+                        file_id,
+                        name = %saved_as,
+                        method = verified.method,
+                        crc32 = verified.crc32.as_deref().unwrap_or(""),
+                        redownloads,
+                        "Download verified"
+                    );
+                    self.mark_problems_fixed(file_id).await;
+                    // Before download.finished, so 031's refresh only sees checked files (R4)
+                    events::emit(Payload::VerifyPassed(events::VerifyPassed {
+                        file_id,
+                        relative_path: event_path(&file.relative_path, &saved_as),
+                        name: saved_as.clone(),
+                        local_path: target_path.display().to_string(),
+                        size_bytes: file.file_size,
+                        method: verified.method.to_string(),
+                        crc32: verified.crc32.clone(),
+                        redownloads,
+                        trigger: "download".to_string(),
+                    }));
+                }
                 events::emit(Payload::DownloadFinished(events::DownloadFinished {
                     file_id,
                     relative_path: event_path(&file.relative_path, &saved_as),
@@ -1399,26 +1525,11 @@ impl DownloadManager {
         remote: &str,
     ) -> DownloadResult<bool> {
         let started = Instant::now();
-        self.checking
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(file_id, (0, started));
-        let checking = self.checking.clone();
-        let local = crc32_file(path, move |read| {
-            if let Some(entry) = checking
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get_mut(&file_id)
-            {
-                entry.0 = read;
-            }
-        })
-        .await;
-        self.checking
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&file_id);
-        let local = local?;
+        let local = self
+            .with_read_progress(file_id, "checking", |progress| {
+                crc32_file(path, progress)
+            })
+            .await?;
         debug!(
             "Checksum of {}: {} (Put.io {}) in {:.2}s",
             path.display(),
@@ -1429,9 +1540,43 @@ impl DownloadManager {
         Ok(crc_equal(&local, remote))
     }
 
+    /// Run a file read with its progress shown on the Queue page as `phase`
+    async fn with_read_progress<T, Fut>(
+        &self,
+        file_id: i64,
+        phase: &'static str,
+        read: impl FnOnce(Box<dyn Fn(u64) + Send + 'static>) -> Fut,
+    ) -> T
+    where
+        Fut: std::future::Future<Output = T>,
+    {
+        self.checking
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(file_id, (0, Instant::now(), phase));
+        let checking = self.checking.clone();
+        let result = read(Box::new(move |bytes| {
+            if let Some(entry) = checking
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(&file_id)
+            {
+                entry.0 = bytes;
+            }
+        }))
+        .await;
+        self.checking
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&file_id);
+        result
+    }
+
     /// Stream `file` into the hidden file of `target_path`, with retries. Each attempt
     /// continues from what the hidden file holds, so a retry after a failed attempt
-    /// never asks for a range the file lacks. Returns the retry count.
+    /// never asks for a range the file lacks. With `hash`, each attempt's CRC32 starts
+    /// from the part already on disk (read back, shown as "verifying") and goes on over
+    /// the bytes written (feature 034).
     async fn transfer(
         &self,
         file: &DownloadFile,
@@ -1439,7 +1584,8 @@ impl DownloadManager {
         target_path: &std::path::Path,
         config: &DownloadConfig,
         resume_from: Option<u64>,
-    ) -> DownloadResult<u32> {
+        hash: bool,
+    ) -> DownloadResult<Transferred> {
         self.progress_trackers
             .write()
             .await
@@ -1456,6 +1602,19 @@ impl DownloadManager {
                 } else {
                     None
                 };
+                let digest = match from {
+                    _ if !hash => None,
+                    Some(len) if len > 0 => {
+                        let digest = self
+                            .with_read_progress(file.file_id, "verifying", |progress| {
+                                crc32_prefix(&temp_path, len, progress)
+                            })
+                            .await?;
+                        telemetry::verify::record_read(len);
+                        Some(digest)
+                    }
+                    _ => Some(Crc32::new()),
+                };
                 stream_to_temp(
                     client,
                     &file.download_url,
@@ -1466,6 +1625,7 @@ impl DownloadManager {
                     Some(&self.bandwidth),
                     from,
                     stop.as_deref(),
+                    digest,
                 )
                 .await
             },
@@ -1474,7 +1634,10 @@ impl DownloadManager {
             &format!("Download {}", filename),
         )
         .await;
-        result.map(|r| r.attempts)
+        result.map(|r| Transferred {
+            attempts: r.attempts,
+            crc32: r.value.crc32,
+        })
     }
 
     /// Record a `completed` downloads row, so the file counts as downloaded
@@ -1484,6 +1647,7 @@ impl DownloadManager {
         filename: &str,
         path: &std::path::Path,
         retry_count: u32,
+        verified: Option<&Verified>,
     ) {
         let Some(database) = &self.database else {
             debug!(
@@ -1492,7 +1656,7 @@ impl DownloadManager {
             );
             return;
         };
-        if let Err(e) = database
+        let id = match database
             .downloads()
             .insert_with_retry_count(
                 file.file_id,
@@ -1504,7 +1668,55 @@ impl DownloadManager {
             )
             .await
         {
-            warn!("Database error (non-fatal): Failed to record download completion for {}: {}. Download succeeded.", filename, e);
+            Ok(id) => id,
+            Err(e) => {
+                warn!("Database error (non-fatal): Failed to record download completion for {}: {}. Download succeeded.", filename, e);
+                return;
+            }
+        };
+        if let Some(v) = verified {
+            if let Err(e) = database
+                .downloads()
+                .set_verified(id, v.crc32.as_deref(), v.method)
+                .await
+            {
+                warn!("Failed to record how {} was verified: {}", filename, e);
+            }
+        }
+    }
+
+    /// Keep a download that failed verification for History and the doctor
+    async fn record_problem(
+        &self,
+        file: &DownloadFile,
+        name: &str,
+        path: &std::path::Path,
+        message: &str,
+    ) {
+        let Some(database) = &self.database else {
+            return;
+        };
+        let problem = putio_sync_db::NewProblem {
+            run_id: None,
+            source: "download".to_string(),
+            file_id: file.file_id,
+            name: name.to_string(),
+            local_path: Some(path.display().to_string()),
+            result: "failed".to_string(),
+            detail: Some(redact::text(message)),
+            queued: false,
+        };
+        if let Err(e) = database.verify().add_problem(&problem).await {
+            warn!("Failed to record the verification problem for {}: {}", name, e);
+        }
+    }
+
+    /// A file that now matches no longer counts as a problem
+    async fn mark_problems_fixed(&self, file_id: i64) {
+        if let Some(database) = &self.database {
+            if let Err(e) = database.verify().mark_fixed(file_id).await {
+                warn!("Failed to mark verification problems of {} fixed: {}", file_id, e);
+            }
         }
     }
 
@@ -1516,6 +1728,7 @@ impl DownloadManager {
         path: &std::path::Path,
         timing: Option<(i64, Option<i64>)>,
         outcome: Option<ExistingOutcome>,
+        verified: Option<&Verified>,
     ) {
         let Some(database) = &self.database else {
             return;
@@ -1543,6 +1756,11 @@ impl DownloadManager {
             .await
         {
             warn!("Failed to record the outcome for {}: {}", filename, e);
+        }
+        if let Some(v) = verified {
+            if let Err(e) = history.set_verify(id, v.method, v.redownloads).await {
+                warn!("Failed to record how {} was verified: {}", filename, e);
+            }
         }
     }
 
@@ -2110,6 +2328,7 @@ impl DownloadManager {
                     crc32: file_info.crc32.clone(),
                     save_as: queue_item.save_as.clone(),
                     fixed_path: queue_item.fixed_path,
+                    overwrite: queue_item.redownload,
                 };
 
                 match self.download_file(download_file, None).await {
@@ -2514,7 +2733,7 @@ impl DownloadManager {
             .clone();
         for item in downloading_items {
             // A checksum read shows its own progress (R4)
-            if let Some((read, started)) = checking.get(&item.file_id) {
+            if let Some((read, started, phase)) = checking.get(&item.file_id) {
                 let elapsed = started.elapsed();
                 let speed_bps = if elapsed.as_secs_f64() > 0.0 {
                     *read as f64 / elapsed.as_secs_f64()
@@ -2536,7 +2755,7 @@ impl DownloadManager {
                     eta_seconds: (speed_bps > 0.0)
                         .then(|| (size.saturating_sub(*read) as f64 / speed_bps) as u64),
                     elapsed_seconds: elapsed.as_secs(),
-                    phase: "checking",
+                    phase,
                 });
                 continue;
             }
@@ -2974,6 +3193,7 @@ mod tests {
             crc32: None,
             save_as: None,
             fixed_path: false,
+            overwrite: false,
         };
 
         assert_eq!(file.file_id, 123);

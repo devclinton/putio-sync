@@ -357,6 +357,7 @@ async fn two_files_for_one_path_are_written_one_after_the_other() {
         crc32: Some(crc(&[id as u8; SIZE])),
         save_as: None,
         fixed_path: false,
+        overwrite: false,
     };
 
     let (a, b) = tokio::join!(

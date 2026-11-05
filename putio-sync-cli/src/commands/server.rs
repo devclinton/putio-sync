@@ -527,6 +527,7 @@ fn spawn_download_daemon(
                                     crc32: file_info.crc32.clone(),
                                     save_as: None,
                                     fixed_path: false,
+                                    overwrite: false,
                                 };
 
                                 // Spawn download task
