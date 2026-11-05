@@ -191,7 +191,7 @@ off and ask for a token (from put.io → Settings → API). To turn it on:
    Any name, website and callback URL will do; the device link doesn't use
    the callback.
 2. Enter the app's ID (a number) in the web wizard's **Connect Put.io** step
-   or in **Settings › Put.io**; either turns the device link on at once,
+   or in **Settings › Put.io › Put.io**; either turns the device link on at once,
    without a restart. It is saved as `[putio] app_id`, so you can also put it
    in the config yourself. `PUTIO_SYNC_APP_ID` overrides the config, and
    Settings then shows the field as set by environment. A build can carry
@@ -1008,7 +1008,7 @@ bind = ["127.0.0.1:15432", "eth0:15432", "[::1]:15432", "tailnet:15432"]
 An entry with no address now (the interface is down, Tailscale is signed out) waits and
 is checked again (every second for 5 minutes, then every 30 seconds); putio-sync never falls back to all
 addresses. `PUTIO_SYNC_API_BIND` and `PUTIO_SYNC_METRICS_BIND` take a comma-separated
-list. `GET /listen` and Settings → Network show each entry and what it listens on now,
+list. `GET /listen` and Settings › Network and access › Network show each entry and what it listens on now,
 and the doctor's "Listening addresses" check warns about an entry with no address.
 
 `server` listens on the same list (tailnet-only included) when no flag is given:
@@ -1030,6 +1030,16 @@ headers on a loopback connection, and a proxy could pass them on. The doctor and
 Network settings warn about this combination.
 
 ### Settings from the UI
+
+Settings has seven sections: General, Put.io, Downloads, Rules and filters, Integrations,
+Network and access, and Advanced; the docs name a card as "Settings › Section › Card".
+Each section has its own address, `#/settings/<section>`, and `?field=download.verify`
+(a config key) opens it at that setting. The search box finds a setting by its label or
+help. A section shows *unsaved* while a card in it has unsaved changes, and a count of
+its problems (a warning about one of its settings, a card that failed to load, a refused
+save); the browser asks before closing the tab with unsaved changes. Rarely changed
+fields (buffer and chunk sizes, retry delays, scan intervals and the like) are hidden
+until **Show advanced** is on for that section; the choice is kept in this browser.
 
 A save edits only the settings that changed in `config.toml`; comments, blank lines,
 ordering and keys it doesn't know stay as they are. The credentials are never written:
@@ -1094,7 +1104,7 @@ Each settings card helps before you save:
 ### Logs page
 
 `#/logs` shows the most recent log lines the daemon kept in memory: 2,000 by default,
-set with `[logging] buffer_lines` (100 to 50,000) or **Settings › Logging › Lines kept for
+set with `[logging] buffer_lines` (100 to 50,000) or **Settings › Advanced › Logging › Lines kept for
 the Logs page**, which applies at once. Only lines the level in effect lets through are
 kept, so debug and trace lines appear only while turned on.
 
@@ -1214,7 +1224,7 @@ UI is served from the same origin, and non-browser clients are unaffected.
 putio-sync reads Tailscale's state from tailscaled's socket
 (`/var/run/tailscale/tailscaled.sock`, or `[tailscale] socket`, or
 `PUTIO_SYNC_TAILSCALE_SOCKET`), or from the `tailscale` CLI when there is no socket. It
-never changes your Tailscale setup. Settings → Tailscale shows the state, the MagicDNS
+never changes your Tailscale setup. Settings › Network and access › Tailscale shows the state, the MagicDNS
 name, the tailnet addresses, the addresses that open putio-sync over the tailnet, and
 hints when something is missing; the mobile app and scripts get the same from
 `GET /tailscale`. The doctor's Tailscale check warns when a Tailscale feature is on but
@@ -1396,7 +1406,7 @@ Some releases are fakes: a "movie" that is only an `.exe`, or a password-protect
 asks you to visit a site for the key. putio-sync reads a release's file list before it
 reaches Put.io and rejects it when no file is a wanted type of at least `min_size_mb`
 (50 MB by default). It is on by default; configure it under `[precheck]` (see
-`config.example.toml`) or in Settings → Release check.
+`config.example.toml`) or in Settings › Rules and filters › Release check.
 
 ### What is checked, and where
 
@@ -1468,7 +1478,7 @@ enabled = true                          # false keeps it without running it
 ```
 
 [examples/hooks/on-download.py](examples/hooks/on-download.py) is a small command hook.
-Settings › Event hooks edits the same list and applies it at once; **Send test event**
+Settings › Integrations › Event hooks edits the same list and applies it at once; **Send test event**
 sends one `hook.test` event to a hook and shows how it went. Mistakes are refused with
 the hook and field named. Up to 32 hooks.
 
@@ -1499,7 +1509,7 @@ executable, and a hook whose last run failed in the last day.
 Plugins are small Lua scripts that run inside putio-sync on the same events as hooks,
 with no other program to install. Seven come with it, all off until turned on. Four are
 **ntfy**, **Discord**, **Telegram** and **Pushover** notifications, which group repeats so a busy
-night sends a summary instead of a hundred messages. Settings › Plugins turns them on,
+night sends a summary instead of a hundred messages. Settings › Integrations › Plugins turns them on,
 edits their settings, shows the hosts each one contacts and sends a test event.
 
 **Plex**, **Jellyfin** and **Emby** plugins rescan just the folder of each finished
@@ -1610,7 +1620,7 @@ auto_free = false          # daemon: free up once a day when below the warning l
 run_at = "02:30"           # time of day for the automatic run, 24-hour local time
 ```
 
-The same settings are in the web UI under Settings → Put.io storage, and the CLI has
+The same settings are in the web UI under Settings › Put.io › Put.io storage, and the CLI has
 [`files free-space`](#files-free-space). The API is `GET /putio/storage`,
 `POST /putio/storage/plan`, `POST /putio/storage/free` (`{plan_id, file_ids}`) and
 `GET /putio/storage/runs`.
@@ -1632,7 +1642,7 @@ them; their parents then go on later runs. It never removes:
 A folder that is kept for any reason keeps its parents too. Run it by hand with
 `putio-sync files clean-empty` (`--dry-run` to preview), `POST /putio/cleanup/empty-folders`,
 or **Remove empty folders** on the web UI's Put.io page, which previews the list and asks
-before deleting. Turn on the daily run in `[cleanup]` or on the Settings page:
+before deleting. Turn on the daily run in `[cleanup]` or in Settings › Put.io › Put.io cleanup:
 
 ```toml
 [cleanup]
@@ -1755,7 +1765,7 @@ not `Sample` (use `*sample*`). A pattern with an unclosed quote or brace is refu
 when saved and when the config loads; a stray `OR` or brackets give a warning in
 Settings and in the doctor's Config check. A blocked file is logged with the pattern
 that blocked it, recorded under Recently blocked and counted in the `blocked` metric.
-**Preview patterns** in Settings › Download shows what the typed patterns would do
+**Preview patterns** in Settings › Rules and filters › File filters shows what the typed patterns would do
 across the whole account.
 
 The CLI's `--filter` option (`list`, `download`, `delete`, `queue add`) takes the same

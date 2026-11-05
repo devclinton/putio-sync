@@ -5,6 +5,9 @@
 
 import { get, post } from "../api.js";
 import { empty, h } from "../app.js";
+import { linkParts } from "../settings/sections.js";
+
+const linked = (text) => linkParts(text).map((p) => (typeof p === "string" ? p : h("a", { href: p.href, text: p.text })));
 
 const PANEL_MAX = 20;
 const REPO = "https://github.com/devclinton/putio-sync/blob/main/";
@@ -15,15 +18,17 @@ function inline(text) {
   const out = [];
   let at = 0;
   for (const m of text.matchAll(INLINE)) {
-    out.push(text.slice(at, m.index));
+    out.push(...linked(text.slice(at, m.index)));
     at = m.index + m[0].length;
     if (m[1]) out.push(h("code", { text: m[1] }));
     else if (m[4]) out.push(h("strong", { text: m[4] }));
+    // A page of this app (#/settings/…) opens here
+    else if (m[3].startsWith("#/")) out.push(h("a", { href: m[3], text: m[2] }));
     else if (/^https?:\/\//.test(m[3])) out.push(h("a", { href: m[3], target: "_blank", rel: "noopener", text: m[2] }));
     else if (/^[\w.-][\w./-]*$/.test(m[3])) out.push(h("a", { href: REPO + m[3], target: "_blank", rel: "noopener", text: m[2] }));
     else out.push(m[0]);
   }
-  out.push(text.slice(at));
+  out.push(...linked(text.slice(at)));
   return out;
 }
 

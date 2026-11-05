@@ -10,6 +10,7 @@ import { controlVerify, get, startVerify, verifyStatus } from "../api.js";
 import { empty, fill, h, toastError } from "../app.js";
 import { flagControl, loadFlags } from "../flags.js";
 import { bytes, dateTime, speed, utc } from "../format.js";
+import { settingsHref } from "../settings/sections.js";
 import { controls, methodLabel, progressPercent, resultLabel, stateLabel, summaryLine } from "../verify.js";
 
 const PAGE = 50;
@@ -182,7 +183,9 @@ function renderVerify(v) {
   fill(
     els.verify,
     h("h2", { text: "Verification" }),
-    v.enabled ? null : h("p", { class: "warn-text", text: "New downloads are not checked: download verification is off in Settings › Download." }),
+    v.enabled
+      ? null
+      : h("p", { class: "warn-text" }, "New downloads are not checked: download verification is off in ", h("a", { href: settingsHref("downloads", "download.verify"), text: "Settings › Downloads › Verification" }), "."),
     going
       ? h(
           "div",

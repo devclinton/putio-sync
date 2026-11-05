@@ -22,8 +22,8 @@ const LINKS = {
   folder_id: [DIGITS, (v) => `#/putio/${v}`],
   parent_id: [DIGITS, (v) => `#/putio/${v}`],
   transfer_id: [DIGITS, () => "#/transfers"],
-  hook: [NAME, () => "#/settings"],
-  plugin: [NAME, () => "#/settings"],
+  hook: [NAME, () => "#/settings/integrations?field=card-hooks"],
+  plugin: [NAME, () => "#/settings/integrations?field=card-plugins"],
   run_id: [DIGITS, () => "#/history"],
 };
 

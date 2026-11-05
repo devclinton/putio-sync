@@ -34,7 +34,7 @@ token = "YOUR_OAUTH_TOKEN_HERE"
 # The setup wizard and `putio-sync setup` link to Put.io with the device link
 # (enter a code at https://put.io/link) when an app ID is known. Releases don't
 # carry one yet: register an app at https://app.put.io/oauth (account menu →
-# API → Create App) and enter its ID in the web wizard or Settings › Put.io,
+# API → Create App) and enter its ID in the web wizard or Settings › Put.io › Put.io,
 # which save it here, or set it here yourself. PUTIO_SYNC_APP_ID overrides this
 # setting. Without one, setup says so and asks for an app ID or a pasted token.
 # [putio]
@@ -364,7 +364,7 @@ run_at = "02:30"
 # Sandboxed Lua scripts run on the same events as hooks. ntfy, discord,
 # telegram and pushover notifiers and plex, jellyfin and emby library refresh
 # (feature 031) are bundled; your own go in a folder each under
-# plugins_dir. Settings > Plugins edits these and approves hosts. PLUGINS.md
+# plugins_dir. Settings › Integrations › Plugins edits these and approves hosts. PLUGINS.md
 # has the details.
 # A top-level key: set it above the first [section] of this file.
 # plugins_dir = "/config/plugins"       # Default: "plugins" next to this file
@@ -399,7 +399,7 @@ run_at = "02:30"
 # putio-sync reads Tailscale's state through tailscaled's local socket (or the
 # `tailscale` CLI) and never changes the Tailscale setup. In Docker, mount the
 # socket: -v /var/run/tailscale:/var/run/tailscale:ro (host Tailscale or a
-# sidecar's socket volume). Settings > Tailscale shows what was found.
+# sidecar's socket volume). Settings › Network and access › Tailscale shows what was found.
 [tailscale]
 # Listen only on this node's tailnet IPv4 address instead of [api] bind: the
 # same as bind = "tailnet:<port>" for each port in [api] bind. Applies at the
@@ -527,7 +527,7 @@ enabled = true
 # Where to listen: one address or a list, in the same forms as [api] bind
 # (ip:port, [ipv6]:port, interface:port, tailnet:port). 0.0.0.0 means all
 # IPv4 addresses; in Docker, exposure is decided by which port the container
-# publishes. Settings > Network can change it.
+# publishes. Settings › Network and access › Network can change it.
 # Env: PUTIO_SYNC_METRICS_BIND (a comma-separated list). Default: "0.0.0.0:9742"
 bind = "0.0.0.0:9742"
 # bind = ["127.0.0.1:9742", "tailnet:9742"]
@@ -604,7 +604,7 @@ listen = true
 #   "tailnet:15432"        this machine's Tailscale IPv4 address
 # An entry with no address now (interface down, Tailscale signed out) waits and
 # is checked again; putio-sync never falls back to all addresses. In Docker,
-# exposure is decided by which port the container publishes. Settings > Network
+# exposure is decided by which port the container publishes. Settings › Network and access › Network
 # can change it and warns before a list that would cut the page off.
 # Env: PUTIO_SYNC_API_BIND (a comma-separated list). Default: "0.0.0.0:15432"
 bind = "0.0.0.0:15432"
@@ -688,7 +688,7 @@ enabled = false
 # name, trackers or your passkey. A magnet that isn't found goes to Put.io, and
 # its files are checked there before any reach the NAS.
 #
-# Settings > Release check in the web UI edits this section and shows what the
+# Settings › Rules and filters › Release check in the web UI edits this section and shows what the
 # check does for each category and watch folder. Restart to apply changes.
 [precheck]
 # Check releases at all. Env: PUTIO_SYNC_PRECHECK_ENABLED. Default: true

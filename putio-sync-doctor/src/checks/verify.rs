@@ -14,7 +14,7 @@ pub(crate) async fn verification(ctx: &Ctx) -> Finding {
             Status::Warning,
             "New downloads are not checked against Put.io's CRC32.",
         )
-        .suggest("Turn on download.verify (Settings › Download) to catch corrupted downloads.");
+        .suggest("Turn on download.verify (Settings › Downloads › Verification) to catch corrupted downloads.");
     }
     let Some(db) = &ctx.db else {
         return Finding::skipped("Needs the database.");

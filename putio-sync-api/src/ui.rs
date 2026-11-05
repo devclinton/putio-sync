@@ -80,6 +80,51 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
         JS,
         include_bytes!("../ui/pages/settings.js"),
     ),
+    (
+        "settings/sections.js",
+        JS,
+        include_bytes!("../ui/settings/sections.js"),
+    ),
+    (
+        "settings/form.js",
+        JS,
+        include_bytes!("../ui/settings/form.js"),
+    ),
+    (
+        "settings/general.js",
+        JS,
+        include_bytes!("../ui/settings/general.js"),
+    ),
+    (
+        "settings/putio.js",
+        JS,
+        include_bytes!("../ui/settings/putio.js"),
+    ),
+    (
+        "settings/downloads.js",
+        JS,
+        include_bytes!("../ui/settings/downloads.js"),
+    ),
+    (
+        "settings/filters.js",
+        JS,
+        include_bytes!("../ui/settings/filters.js"),
+    ),
+    (
+        "settings/integrations.js",
+        JS,
+        include_bytes!("../ui/settings/integrations.js"),
+    ),
+    (
+        "settings/arr.js",
+        JS,
+        include_bytes!("../ui/settings/arr.js"),
+    ),
+    (
+        "settings/advanced.js",
+        JS,
+        include_bytes!("../ui/settings/advanced.js"),
+    ),
 ];
 
 /// `"<16 hex digits>"`: a hash of `bytes`, so the ETag changes whenever the embedded

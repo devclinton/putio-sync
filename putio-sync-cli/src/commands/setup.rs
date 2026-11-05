@@ -381,7 +381,7 @@ pub async fn run_setup(
     }
     say!(
         out,
-        "Radarr and Sonarr can be connected later in the web UI: Settings → Radarr/Sonarr."
+        "Radarr and Sonarr can be connected later in the web UI: Settings › Integrations › Radarr / Sonarr."
     );
     say!(
         out,

@@ -319,7 +319,7 @@ function arrCard(a) {
   if (!a.enabled) {
     return card(
       title,
-      h("p", { class: "muted" }, "The download client is off. ", h("a", { href: "#/settings", text: "Turn it on in Settings" })),
+      h("p", { class: "muted" }, "The download client is off. ", h("a", { href: "#/settings/integrations?field=arr-enabled", text: "Turn it on in Settings" })),
     );
   }
   const seen = a.clients_seen.length

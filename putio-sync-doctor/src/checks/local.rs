@@ -242,7 +242,7 @@ fn level_finding(s: &LevelStatus) -> Finding {
         summary.push_str(&format!(" Set on the Logs page: {}.", page.join(", ")));
     }
     Finding::new(Status::Warning, summary).suggest(
-        "Debug and trace slow the daemon and fill the log file. Revert on the Logs page, or lower `logging.level`.",
+        "Debug and trace slow the daemon and fill the log file. Revert on the Logs page, or lower the level in Settings › Advanced › Logging.",
     )
 }
 
