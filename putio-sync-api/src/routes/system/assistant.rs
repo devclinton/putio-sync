@@ -134,6 +134,22 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
                 "delete_empty_folders",
                 "Removes Put.io folders left empty after a delete",
             ),
+            (
+                "verify",
+                "Checks each download against Put.io's CRC32 or size before it is finished",
+            ),
+            (
+                "verify_max_redownloads",
+                "How often a file that does not match is downloaded again before it fails",
+            ),
+            (
+                "verify_read_limit_mb_per_sec",
+                "How fast a verify run reads files from disk",
+            ),
+            (
+                "verify_follow_bandwidth_pause",
+                "Makes a verify run wait while downloads are paused",
+            ),
         ],
     ),
     (
