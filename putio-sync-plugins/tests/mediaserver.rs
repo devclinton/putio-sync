@@ -191,7 +191,10 @@ async fn plex_groups_files_per_folder_and_skips_folders_outside_libraries() {
 
     // 20 files, then one outside any library; history keeps the last 20 runs
     for i in 0..20 {
-        events::emit(finished(&format!("/downloads/tv/Show/Season 01/e{:02}.mkv", i)));
+        events::emit(finished(&format!(
+            "/downloads/tv/Show/Season 01/e{:02}.mkv",
+            i
+        )));
         clock.advance(0.5);
     }
     events::emit(finished("/downloads/other/x.mkv"));
@@ -214,7 +217,9 @@ async fn plex_groups_files_per_folder_and_skips_folders_outside_libraries() {
     leaked.assert_async().await;
     assert_eq!(counter("skipped", "plex") - skipped, 1.0);
     assert_eq!(counter("folders_grouped", "plex") - grouped, 19.0);
-    assert!(!serde_json::to_string(&plugins.status()).unwrap().contains(TOKEN));
+    assert!(!serde_json::to_string(&plugins.status())
+        .unwrap()
+        .contains(TOKEN));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -231,14 +236,20 @@ async fn plex_refreshes_after_the_longest_wait_and_on_a_completed_sync() {
         .await;
     let movie = server
         .mock("GET", "/library/sections/2/refresh")
-        .match_query(Matcher::UrlEncoded("path".into(), "/data/movies/Film (2026)".into()))
+        .match_query(Matcher::UrlEncoded(
+            "path".into(),
+            "/data/movies/Film (2026)".into(),
+        ))
         .with_status(200)
         .expect(1)
         .create_async()
         .await;
     let clock = Clock::new(1_793_784_600.0);
     let plugins = service(
-        vec![plex(&server, json!({"delay_seconds": 20, "max_wait_seconds": 60}))],
+        vec![plex(
+            &server,
+            json!({"delay_seconds": 20, "max_wait_seconds": 60}),
+        )],
         &clock,
     );
     plugins.start();
@@ -246,7 +257,10 @@ async fn plex_refreshes_after_the_longest_wait_and_on_a_completed_sync() {
     // A file every 15 s keeps the delay from passing; the longest wait still does
     for i in 0..4 {
         events::emit(finished(&format!("/downloads/tv/Busy/e{}.mkv", i)));
-        wait_for("the event", || runs_of(&plugins, "plex", "download.finished") == i + 1).await;
+        wait_for("the event", || {
+            runs_of(&plugins, "plex", "download.finished") == i + 1
+        })
+        .await;
         plugins.tick();
         settle(&plugins, "plex").await;
         assert!(!busy.matched_async().await, "refreshed early at file {}", i);
@@ -280,7 +294,10 @@ async fn a_failed_refresh_is_tried_once_more_then_dropped() {
     let plugins = service(vec![plex(&server, json!({}))], &clock);
     plugins.start();
     events::emit(finished("/downloads/tv/Show/e1.mkv"));
-    wait_for("the event", || runs_of(&plugins, "plex", "download.finished") == 1).await;
+    wait_for("the event", || {
+        runs_of(&plugins, "plex", "download.finished") == 1
+    })
+    .await;
     for _ in 0..3 {
         clock.advance(21.0);
         plugins.tick();
@@ -313,12 +330,7 @@ async fn plex_sign_in_saves_the_token_and_shows_it_nowhere() {
         .create_async()
         .await;
     let clock = Clock::new(1_793_784_600.0);
-    let settings = plugin(
-        "plex",
-        false,
-        json!({"plex_tv_url": server.url()}),
-        &[],
-    );
+    let settings = plugin("plex", false, json!({"plex_tv_url": server.url()}), &[]);
     let plugins = service(vec![settings], &clock);
 
     let first = plugins
@@ -328,7 +340,11 @@ async fn plex_sign_in_saves_the_token_and_shows_it_nowhere() {
     pin.assert_async().await;
     assert_eq!(first.result.code.as_deref(), Some("AB12"));
     let link = first.result.open_url.clone().unwrap();
-    assert!(link.starts_with("https://app.plex.tv/auth#?clientID=putio-sync-"), "{}", link);
+    assert!(
+        link.starts_with("https://app.plex.tv/auth#?clientID=putio-sync-"),
+        "{}",
+        link
+    );
     assert!(link.contains("&code=AB12"), "{}", link);
     let next = first.result.next.clone().unwrap();
     assert_eq!(next.action, "sign_in_poll");
@@ -357,7 +373,12 @@ async fn plex_sign_in_saves_the_token_and_shows_it_nowhere() {
         .create_async()
         .await;
     let done = plugins
-        .action("plex", "sign_in_poll", again.result.next.unwrap().input, Map::new())
+        .action(
+            "plex",
+            "sign_in_poll",
+            again.result.next.unwrap().input,
+            Map::new(),
+        )
         .await
         .unwrap();
     user.assert_async().await;
@@ -418,7 +439,10 @@ async fn plex_lists_servers_and_libraries_to_pick_from() {
         .unwrap();
     let choices = servers.result.choices.unwrap();
     assert_eq!(choices.len(), 2);
-    assert_eq!(choices[0].value, "https://192-168-1-10.abc.plex.direct:32400");
+    assert_eq!(
+        choices[0].value,
+        "https://192-168-1-10.abc.plex.direct:32400"
+    );
     assert_eq!(
         choices[0].label,
         "NAS (local) https://192-168-1-10.abc.plex.direct:32400"
@@ -493,13 +517,14 @@ async fn plex_health_and_test_event() {
     );
 
     // No path rule: /downloads is in no library
-    let plugins = service(
-        vec![plex(&server, json!({"path_map": []}))],
-        &clock,
-    );
+    let plugins = service(vec![plex(&server, json!({"path_map": []}))], &clock);
     let items = plugins.health("plex").await.unwrap().unwrap();
     assert_eq!(items[2].status, HealthStatus::Warn);
-    assert!(items[2].message.contains("/downloads"), "{}", items[2].message);
+    assert!(
+        items[2].message.contains("/downloads"),
+        "{}",
+        items[2].message
+    );
 
     // A refused token fails, and the test event fails with it
     let mut refused = mockito::Server::new_async().await;
@@ -535,7 +560,11 @@ async fn plex_health_and_test_event() {
     let items = plugins.health("plex").await.unwrap().unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].status, HealthStatus::Fail);
-    assert!(items[0].message.starts_with("Server not reachable"), "{}", items[0].message);
+    assert!(
+        items[0].message.starts_with("Server not reachable"),
+        "{}",
+        items[0].message
+    );
 }
 
 async fn embyfin(name: &str, prefix: &str, auth: (&str, Matcher)) {
@@ -591,7 +620,10 @@ async fn embyfin(name: &str, prefix: &str, auth: (&str, Matcher)) {
     events::emit(finished("/downloads/tv/Show/S01/e1.mkv"));
     events::emit(finished("/downloads/tv/Show/S02/e1.mkv"));
     events::emit(finished("/downloads/films/Film/film.mkv"));
-    wait_for("the events", || runs_of(&plugins, name, "download.finished") == 3).await;
+    wait_for("the events", || {
+        runs_of(&plugins, name, "download.finished") == 3
+    })
+    .await;
     clock.advance(21.0);
     plugins.tick();
     wait_matched("the refresh", &updated).await;
@@ -615,7 +647,9 @@ async fn embyfin(name: &str, prefix: &str, auth: (&str, Matcher)) {
         items
     );
     updated.assert_async().await;
-    assert!(!serde_json::to_string(&plugins.status()).unwrap().contains(KEY));
+    assert!(!serde_json::to_string(&plugins.status())
+        .unwrap()
+        .contains(KEY));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -638,5 +672,10 @@ async fn jellyfin_sends_due_folders_in_one_request() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn emby_sends_due_folders_in_one_request() {
     let _turn = SERIAL.lock().await;
-    embyfin("emby", "/emby", ("x-emby-token", Matcher::Exact(KEY.to_string()))).await;
+    embyfin(
+        "emby",
+        "/emby",
+        ("x-emby-token", Matcher::Exact(KEY.to_string())),
+    )
+    .await;
 }

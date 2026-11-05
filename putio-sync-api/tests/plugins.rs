@@ -274,7 +274,10 @@ async fn an_action_saves_its_values_and_never_shows_a_secret() {
 
     // A failed action is 422 and its error is scrubbed
     let response = app
-        .post_json("/plugins/action", json!({"name": "signin", "action": "fail"}))
+        .post_json(
+            "/plugins/action",
+            json!({"name": "signin", "action": "fail"}),
+        )
         .await;
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let text = body_text(response).await;
@@ -294,6 +297,8 @@ async fn an_unknown_plugin_or_action_is_404() {
         let response = app.post_json("/plugins/action", body.clone()).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{body}");
     }
-    let response = app.post_json("/plugins/action", json!({"name": "signin"})).await;
+    let response = app
+        .post_json("/plugins/action", json!({"name": "signin"}))
+        .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }

@@ -774,8 +774,11 @@ async fn no_plex_token_in_responses_or_logs() {
 
     let mut texts = Vec::new();
     let first = body_json(
-        app.post_json("/plugins/action", json!({"name": "plex", "action": "sign_in"}))
-            .await,
+        app.post_json(
+            "/plugins/action",
+            json!({"name": "plex", "action": "sign_in"}),
+        )
+        .await,
     )
     .await;
     let next = first["next"].clone();
@@ -794,9 +797,21 @@ async fn no_plex_token_in_responses_or_logs() {
     let saved = app.state.config.read().await.plugins[0].clone();
     assert_eq!(saved.secrets["token"], TOKEN);
 
-    texts.push(body_text(app.post_json("/plugins/test", json!({"name": "plex"})).await).await);
+    texts.push(
+        body_text(
+            app.post_json("/plugins/test", json!({"name": "plex"}))
+                .await,
+        )
+        .await,
+    );
     texts.push(body_text(app.post_json("/doctor/run", json!({})).await).await);
-    for path in ["/plugins", "/settings/plugins", "/settings/export", "/doctor", "/metrics"] {
+    for path in [
+        "/plugins",
+        "/settings/plugins",
+        "/settings/export",
+        "/doctor",
+        "/metrics",
+    ] {
         texts.push(body_text(app.get(path).await).await);
     }
     sections.assert_async().await;

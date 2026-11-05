@@ -137,10 +137,9 @@ async fn action(
                 "plugin {:?} has no action {:?}",
                 name, request.action
             )),
-            CallError::Busy => ApiError::Conflict(format!(
-                "a call to plugin {:?} is still running",
-                name
-            )),
+            CallError::Busy => {
+                ApiError::Conflict(format!("a call to plugin {:?} is still running", name))
+            }
             CallError::Broken(error) => {
                 ApiError::Unprocessable(format!("plugin {:?} cannot run: {}", name, error))
             }
