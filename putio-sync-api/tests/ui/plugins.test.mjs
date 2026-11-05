@@ -1,5 +1,5 @@
 // Features 028, 031: the Settings plugin editor's rows, hosts, labels, path rules and
-// settings actions in ui/plugins.js.
+// settings actions in ui/plugins.js; feature 048's tabs, list and Enable wording.
 // Run with `node --test`; tests/ui_js.rs runs it in cargo test.
 
 import assert from "node:assert/strict";
@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   FLOW_LIMIT_MS, MASK, applyAnswer, choiceFields, fromStatus, hostsFor, nextWait, overrides,
   parsePathMap, pathMapText, runLabel, stateLabel, tick, ticked, toSettings,
+  approvalText, split, summary, withEnabled, carryFlow, linkLabel,
 } from "../../ui/plugins.js";
 
 const ntfy = {
@@ -130,4 +131,75 @@ test("the next step waits as asked and the flow stops after 10 minutes", () => {
   assert.equal(nextWait({ after_seconds: 99 }, 0, 0), 30000);
   assert.equal(nextWait({ after_seconds: 2 }, 0, FLOW_LIMIT_MS - 2000), 2000);
   assert.equal(nextWait({ after_seconds: 2 }, 0, FLOW_LIMIT_MS - 1000), null);
+});
+
+test("enabled plugins are tabs, the rest the list, each by name", () => {
+  const found = [{ name: "telegram" }, { name: "ntfy" }, { name: "discord" }, { name: "plex" }];
+  const stored = [{ name: "ntfy", enabled: true }, { name: "discord", enabled: true }, { name: "plex", enabled: false }];
+  const { tabs, available } = split(found, stored);
+  assert.deepEqual(tabs.map((p) => p.name), ["discord", "ntfy"]);
+  assert.deepEqual(available.map((p) => p.name), ["plex", "telegram"]);
+  assert.deepEqual(split(found, undefined).tabs, []);
+});
+
+test("a description is cut to its first sentence or line", () => {
+  assert.equal(summary("Messages to a Discord channel through a webhook. Repeats of one kind are grouped."), "Messages to a Discord channel through a webhook.");
+  assert.equal(summary("Refresh Plex v1.2 libraries\nMore here"), "Refresh Plex v1.2 libraries");
+  assert.equal(summary(""), "");
+  assert.equal(summary(undefined), "");
+});
+
+test("Enable names the hosts, or none, or the server still to enter", () => {
+  const row = fromStatus(ntfy, null);
+  assert.equal(approvalText({ ...ntfy, hosts_needed: ["ntfy.sh"] }, row), "ntfy will contact ntfy.sh. Turning it on approves this host.");
+  const quiet = { name: "log", permissions: { http: {} }, config_fields: [], hosts_needed: [] };
+  assert.equal(approvalText(quiet, fromStatus(quiet, null)), "log makes no network calls.");
+  const plex = {
+    name: "plex",
+    permissions: { http: { hosts: ["plex.tv"], host_from_config: ["server"] } },
+    config_fields: [{ key: "server", type: "url", label: "Server address", default: null, secret: false }],
+    hosts_needed: ["plex.tv"],
+  };
+  assert.equal(approvalText(plex, fromStatus(plex, null)), "plex will contact plex.tv. Turning it on approves this host. It will also contact the server you enter in Server address; saving that setting approves it.");
+  const discord = {
+    name: "discord",
+    permissions: { http: { host_from_config: ["webhook_url"] } },
+    config_fields: [{ key: "webhook_url", type: "url", label: "Webhook URL", secret: true }],
+    hosts_needed: [],
+  };
+  assert.equal(approvalText(discord, fromStatus(discord, null)), "It will also contact the server you enter in Webhook URL; saving that setting approves it.");
+  const saved = { ...discord, hosts_needed: ["discord.com"] };
+  assert.equal(approvalText(saved, fromStatus(saved, { name: "discord", secrets: { webhook_url: MASK } })), "discord will contact discord.com. Turning it on approves this host.");
+});
+
+test("Enable and Disable change one entry and keep the rest as saved", () => {
+  const stored = [
+    { name: "ntfy", enabled: false, config: { topic: "nas" }, secrets: { token: MASK } },
+    { name: "plex", enabled: true },
+  ];
+  const on = withEnabled(stored, ntfy, true);
+  assert.deepEqual(on[0], { ...stored[0], enabled: true });
+  assert.equal(on[1], stored[1]);
+  assert.equal(stored[0].enabled, false);
+  assert.deepEqual(withEnabled(on, ntfy, false)[0], stored[0]);
+  const added = withEnabled([{ name: "plex", enabled: true }], ntfy, true);
+  assert.equal(added.length, 2);
+  assert.deepEqual(added[1], { name: "ntfy", enabled: true, timeout_secs: 10, memory_mb: 32 });
+});
+
+test("carryFlow keeps an earlier code and link while the flow runs", () => {
+  const first = carryFlow(null, { message: "Enter this code", code: "AB12", open_url: "https://plex.tv/link" }, true);
+  assert.deepEqual(first, { message: "Enter this code", code: "AB12", open_url: "https://plex.tv/link", manual: false, busy: true });
+  const poll = carryFlow({ ...first, manual: true }, { message: "Waiting", code: "AB12" }, true);
+  assert.equal(poll.open_url, "https://plex.tv/link");
+  assert.equal(poll.manual, true);
+  const done = carryFlow(poll, { message: "Signed in as me", done: true }, false);
+  assert.equal(done.code, null);
+  assert.equal(done.open_url, null);
+});
+
+test("linkLabel is host and path", () => {
+  assert.equal(linkLabel("https://plex.tv/link"), "plex.tv/link");
+  assert.equal(linkLabel("https://example.com/"), "example.com");
+  assert.equal(linkLabel("not a url"), "not a url");
 });

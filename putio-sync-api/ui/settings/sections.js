@@ -30,8 +30,14 @@ export const SECTIONS = [
   {
     id: "integrations",
     title: "Integrations",
-    help: "Other programs putio-sync works with: Radarr and Sonarr, plugins such as Plex or Jellyfin, and hooks that run a command or call a webhook on each event.",
-    cards: [["arr", "Radarr / Sonarr"], ["plugins", "Plugins"], ["hooks", "Event hooks"]],
+    help: "Other programs putio-sync works with: Radarr and Sonarr, and hooks that run a command or call a webhook on each event.",
+    cards: [["arr", "Radarr / Sonarr"], ["hooks", "Event hooks"]],
+  },
+  {
+    id: "plugins",
+    title: "Plugins",
+    help: "Lua plugins that send notifications or tell Plex, Jellyfin or Emby to refresh. Each plugin that is on has a tab; turn others on from the list.",
+    cards: [["plugins", "Plugins"]],
   },
   {
     id: "network",
@@ -74,7 +80,7 @@ const KEY_SECTION = {
   storage: "putio",
   putio: "putio",
   hooks: "integrations",
-  plugins: "integrations",
+  plugins: "plugins",
   arr: "integrations",
   network: "network",
   tailscale: "network",
@@ -92,10 +98,13 @@ export function sectionOfKey(key) {
 }
 
 // "Settings › Section › Card" and "Settings › Section", longest first so a card wins
-const NAMES = SECTIONS.flatMap((s) => [
-  ...s.cards.map(([id, title]) => [`Settings › ${s.title} › ${title}`, settingsHref(s.id, `card-${id}`)]),
-  [`Settings › ${s.title}`, settingsHref(s.id)],
-]).sort((a, b) => b[0].length - a[0].length);
+const NAMES = [
+  ...SECTIONS.flatMap((s) => [
+    ...s.cards.map(([id, title]) => [`Settings › ${s.title} › ${title}`, settingsHref(s.id, `card-${id}`)]),
+    [`Settings › ${s.title}`, settingsHref(s.id)],
+  ]),
+  ["Settings › Integrations › Plugins", settingsHref("plugins", "card-plugins")],
+].sort((a, b) => b[0].length - a[0].length);
 const NAME_RE = new RegExp(NAMES.map(([n]) => n.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")).join("|"), "g");
 
 /** Text → strings and `{text, href}` for each Settings name in it */

@@ -21,7 +21,9 @@ enabled plugin (`check_at`), so the daemon and API stay as they are. Disable doe
 with `enabled = false`. After either, the card re-reads `/settings/plugins` and `/plugins`
 and draws again, keeping unsaved edits on other tabs; `form.js` gives the card a way to keep
 its "unsaved" state right after such a save. Pure helpers (split, one-line summary, approval
-text, toggled entry list) go in `ui/plugins.js` with node tests. Decisions are in
+text, toggled entry list) go in `ui/plugins.js` with node tests. Story 5 (added the same day): an action
+answer's code gets Copy and, with a link, "Copy and open"; a code or link stays across `next`
+steps (`carryFlow`); the Plex plugin links to plex.tv/link. Decisions are in
 [research.md](research.md).
 
 ## Technical Context
@@ -45,7 +47,7 @@ text, toggled entry list) go in `ui/plugins.js` with node tests. Decisions are i
 **Performance Goals**: none beyond today's; the page makes the same two GETs plus one PUT and
 two GETs per Enable or Disable.
 
-**Constraints**: UI bundle about 401 KiB of 416 KiB; this feature adds at most 5 KiB (SC-005).
+**Constraints**: UI bundle about 401 KiB of 416 KiB; this feature adds at most 11 KiB (SC-005; measured 10,902 bytes, leaving about 4 KiB under the cap).
 Reuse the confirm dialog, the 046 pill style and the existing card code.
 
 **Scale/Scope**: up to a few dozen plugins.
@@ -92,6 +94,7 @@ putio-sync-api/ui/
 └── app.css                  # tab bar, list rows
 putio-sync-api/tests/ui/     # plugins.test.mjs, settings_sections.test.mjs
 putio-sync-doctor/src/checks/plugins.rs  # "Settings › Plugins"
+putio-sync-plugins/bundled/plex/  # sign-in links to plex.tv/link (story 5); tests/mediaserver.rs
 PLUGINS.md, README.md, EVENTS.md, config.example.toml, example-config.toml, CHANGELOG.md
 ```
 

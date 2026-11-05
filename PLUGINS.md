@@ -4,17 +4,21 @@ A plugin is a small Lua script that putio-sync runs on its events: a download fi
 failed, a Put.io transfer was added, finished or failed, a sync run ended, or Put.io storage
 runs low. The events are the same as for [event hooks](EVENTS.md), but a plugin runs inside
 putio-sync. It needs no other program, it is limited in what it may do, and it is set up
-from Settings › Integrations › Plugins.
+from Settings › Plugins.
 
 putio-sync comes with four plugins that send notifications: **ntfy**, **Discord**,
 **Telegram** and **Pushover**. They are off until you turn them on.
 
 ## Turning a plugin on
 
-Open Settings › Integrations › Plugins. Each plugin shows its state, version, events and the hosts it will
-contact. Tick **Enabled**, fill in its settings and save. Saving approves the hosts shown
-under "Contacts". **Send test event** sends one `plugin.test` event and shows the result,
-with any lines the plugin logged.
+Open Settings › Plugins. Plugins that are off are listed under **Available plugins**, one
+line each: name, version and what it does. Press **Enable**: putio-sync names the hosts the
+plugin will contact and turns it on when you approve them. The plugin then has its own tab
+with its state, events, the hosts it contacts ("Contacts"), its settings, its buttons and
+**Send test event**, which sends one `plugin.test` event and shows the result with any lines
+the plugin logged. Fill in its settings and save; saving approves the hosts of any address
+you entered. **Disable** on the tab turns it off and puts it back in the list; its settings
+are kept for next time. A tab marked **!** is broken, waits for approval or needs settings.
 
 The same settings in `config.toml`:
 
@@ -70,7 +74,7 @@ library scan. They are off until turned on.
 
 | Plugin | Sign-in | Contacts |
 |--------|---------|----------|
-| `plex` | **Sign in with Plex**: shows a code for plex.tv/link and a link to the Plex sign-in page; the token is saved for you | `plex.tv` and your server's host |
+| `plex` | **Sign in with Plex**: shows a code with **Copy** and **Copy and open plex.tv/link**; the token is saved for you once you enter it | `plex.tv` and your server's host |
 | `jellyfin` | An API key (Dashboard › API Keys), pasted as a secret | Your server's host |
 | `emby` | An API key (Settings › Advanced › API Keys), pasted as a secret | Your server's host |
 
@@ -213,8 +217,8 @@ Two more functions are optional:
 function plugin.on_action(id, input)
   return {
     message = "Enter this code at example.com/link",   -- up to 500 characters
-    code = "AB12",                                      -- shown large; up to 32
-    open_url = "https://example.com/link",              -- shown as a link
+    code = "AB12",                                      -- shown large with Copy; up to 32
+    open_url = "https://example.com/link",              -- a link, and with a code "Copy and open"
     choices = { {value = "1", label = "TV Shows"} },    -- for fields with this choices action
     next = { action = "poll", input = {id = 7}, after_seconds = 2 },   -- 1 to 30 s
     done = false,
@@ -228,7 +232,11 @@ function plugin.health()
 end
 ```
 
-Settings runs `next` steps on its own for up to 10 minutes. `on_action` and `health` run
+Settings runs `next` steps on its own for up to 10 minutes. While they run, a `code` or
+`open_url` from an earlier step stays on screen when a later step leaves it out. A code gets a
+**Copy** button, and with `open_url` also **Copy and open**, which copies the code and opens the
+link in a new tab. Copying needs HTTPS or localhost; over plain http the page asks you to select
+the code (one click selects all of it) and press Ctrl+C. `on_action` and `health` run
 on a worker of their own, with the same sandbox and limits, and may call every host the
 plugin's settings need (approved or not, since the person is setting it up). One action or
 health check per plugin runs at a time. Values in `save` must be the plugin's own settings;

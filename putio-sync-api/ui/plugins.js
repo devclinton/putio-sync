@@ -1,6 +1,7 @@
-// Lua plugins (feature 028): the rows of the Settings › Integrations › Plugins editor, from `GET /plugins`
+// Lua plugins (feature 028): the rows of the Settings › Plugins editor, from `GET /plugins`
 // and `GET /settings/plugins` and back to `[[plugins]]` entries, and states and runs for
-// people. Feature 031 adds settings actions (sign-in steps, loaded choices) and path rules.
+// people. Feature 031 adds settings actions (sign-in steps, loaded choices) and path rules;
+// feature 048 splits plugins into tabs (enabled) and a list (the rest) and words Enable.
 // No DOM here, so tests/ui/plugins.test.mjs runs it in node.
 
 export const MASK = "********";
@@ -200,4 +201,66 @@ export const FLOW_LIMIT_MS = 10 * 60 * 1000;
 export function nextWait(next, startedAt, now) {
   const wait = Math.min(Math.max(Number(next.after_seconds) || 2, 1), 30) * 1000;
   return now + wait - startedAt > FLOW_LIMIT_MS ? null : wait;
+}
+
+const byName = (a, b) => a.name.localeCompare(b.name);
+
+/** Found plugins as tabs (saved as enabled) and the rest, each in name order */
+export function split(found, stored) {
+  const on = (p) => (stored || []).some((s) => s.name === p.name && s.enabled === true);
+  return { tabs: found.filter(on).sort(byName), available: found.filter((p) => !on(p)).sort(byName) };
+}
+
+/** The first sentence or line of a description */
+export function summary(text) {
+  const s = String(text || "").trim();
+  const line = s.split("\n")[0];
+  const at = line.search(/\.\s/);
+  return at < 0 ? line : line.slice(0, at + 1);
+}
+
+/** What Enable asks: the hosts the plugin will contact with its saved values (`hosts_needed`
+ *  from `GET /plugins`, which knows saved secrets), and the URL fields still empty, whose
+ *  host is approved when they are saved */
+export function approvalText(plugin, row) {
+  const hosts = plugin.hosts_needed || hostsFor(plugin, row.values);
+  const http = (plugin.permissions && plugin.permissions.http) || {};
+  const unset = (http.host_from_config || [])
+    .filter((key) => {
+      if (row.secrets[key]) return !row.secrets[key].set;
+      const field = (plugin.config_fields || []).find((f) => f.key === key);
+      return !urlHost(String(row.values[key] ?? "").trim() || (field && field.default) || "");
+    })
+    .map((key) => (plugin.config_fields || []).find((f) => f.key === key)?.label || key);
+  const parts = [];
+  if (hosts.length) parts.push(`${plugin.name} will contact ${hosts.join(", ")}. Turning it on approves ${hosts.length === 1 ? "this host" : "these hosts"}.`);
+  else if (!unset.length) parts.push(`${plugin.name} makes no network calls.`);
+  if (unset.length) parts.push(`It will also contact the server you enter in ${unset.join(", ")}; saving that setting approves it.`);
+  return parts.join(" ");
+}
+
+/** The `[[plugins]]` list with one plugin turned on or off and every other entry as saved;
+ *  a plugin with no entry gets one from its defaults */
+export function withEnabled(stored, plugin, on) {
+  const list = stored || [];
+  const entry = list.find((s) => s.name === plugin.name) || toSettings(fromStatus(plugin));
+  const next = { ...entry, enabled: on };
+  return list.some((s) => s.name === plugin.name) ? list.map((s) => (s.name === plugin.name ? next : s)) : [...list, next];
+}
+
+/** An action answer as shown: while the flow runs, a code or link from an earlier step stays
+ *  when a later step (a poll) leaves it out; the last step shows only what it gives */
+export function carryFlow(prev, answer, busy) {
+  const keep = (key) => answer[key] || (answer.done ? null : (prev && prev[key]) || null);
+  return { message: answer.message, code: keep("code"), open_url: keep("open_url"), manual: !!(prev && prev.manual), busy };
+}
+
+/** A link's short label: host and path, e.g. "plex.tv/link" */
+export function linkLabel(url) {
+  try {
+    const u = new URL(url);
+    return (u.host + u.pathname).replace(/\/$/, "");
+  } catch {
+    return url;
+  }
 }

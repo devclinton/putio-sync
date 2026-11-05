@@ -8,6 +8,9 @@
 
 **Input**: User description: "plugins settings should have it own page, and then maybe tabs for each enabled plugin and ways to enable disabled plugins(without having to see all the settings for it)"
 
+Added the same day: "the plex plugin should let you copy code easily and also open the plex.tv/link
+page after generating and copying code when signing into plex."
+
 ## Context
 
 - Lua plugins (features 028 and 031) are folders with `plugin.toml` and `main.lua`. Four
@@ -44,6 +47,9 @@ each is the recommended option.
 - Q: What does the tab mark mean for a plugin that is enabled but waiting for host approval
   (for example after the config file was edited by hand)? → A: The same mark as broken or
   missing settings, and the tab shows the reason; saving the tab approves the hosts, as today.
+- Q: Does the combined button open the link itself or the page that action returns? → A: The
+  link the action returns; the Plex plugin returns https://plex.tv/link (it returned an
+  app.plex.tv sign-in link before, which the request does not mention).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -151,6 +157,31 @@ webhook still reads "set" and its other values are as before.
 
 ---
 
+---
+
+### User Story 5 - Copy a sign-in code and open its page (Priority: P2)
+
+As the operator signing in to Plex, I want to copy the code and open plex.tv/link in one
+click, so I don't retype the code or look for the page.
+
+**Why this priority**: Added to the request the same day; it makes the one sign-in flow
+faster but the page works without it.
+
+**Independent Test**: On the Plex tab press Sign in with Plex; the code shows large with Copy
+and "Copy and open plex.tv/link". The second copies the code and opens plex.tv/link in a new
+tab; the page keeps waiting and saves the token once the code is entered.
+
+**Acceptance Scenarios**:
+
+1. **Given** a plugin action answers with a code, **When** it is shown, **Then** the code is
+   large and has a Copy button.
+2. **Given** the answer also has a link, **When** I press "Copy and open <link>", **Then** the
+   code is copied and the link opens in a new tab; the plain link is still shown.
+3. **Given** the page is served over plain http (not localhost), **When** I press either
+   button, **Then** the code is selected and the page says to copy it by hand.
+4. **Given** the action keeps waiting (a `next` step), **When** a later step leaves out the
+   code or link, **Then** the earlier ones stay until the flow ends.
+
 ### Edge Cases
 
 - No plugins found: the page says so, and still offers Reload plugins and the Plugins folder
@@ -204,6 +235,13 @@ webhook still reads "set" and its other values are as before.
 - **FR-012**: Docs and in-app text that say "Settings › Integrations › Plugins" MUST say
   "Settings › Plugins".
 - **FR-013**: The UI MUST stay under the 416 KiB bundle limit.
+- **FR-014**: A plugin action answer with a code MUST show the code large with a Copy button;
+  with a link as well, a button MUST copy the code and open the link in a new tab, and the
+  plain link MUST stay.
+- **FR-015**: Where the browser can't copy (plain http other than localhost), the code MUST be
+  selected and the page MUST say to copy it by hand.
+- **FR-016**: While an action flow runs, a code or link from an earlier step MUST stay when a
+  later step leaves it out. The bundled Plex sign-in MUST link to https://plex.tv/link.
 
 ### Key Entities
 
@@ -224,7 +262,7 @@ webhook still reads "set" and its other values are as before.
 - **SC-003**: Every link that opened the plugins card before this feature opens the Plugins
   page.
 - **SC-004**: A plugin turned off and on again has the same saved settings and secrets.
-- **SC-005**: The UI grows by no more than 5 KiB.
+- **SC-005**: The UI grows by no more than 11 KiB and stays under the 416 KiB limit (first set at 5 KiB; stories 1–4 came to 8.6 KiB and story 5 to about 2 KiB: 10,902 bytes in all, leaving about 4 KiB under the cap).
 
 ## Assumptions
 

@@ -8,7 +8,7 @@ import { SECTIONS, fieldId, linkParts, sectionOf, sectionOfKey, settingsHref } f
 test("every card is in exactly one section", () => {
   const ids = SECTIONS.flatMap((s) => s.cards.map(([id]) => id));
   assert.equal(new Set(ids).size, ids.length);
-  assert.deepEqual(SECTIONS.map((s) => s.id), ["general", "putio", "downloads", "rules", "integrations", "network", "advanced"]);
+  assert.deepEqual(SECTIONS.map((s) => s.id), ["general", "putio", "downloads", "rules", "integrations", "plugins", "network", "advanced"]);
   assert.ok(SECTIONS.every((s) => s.help.length > 20));
 });
 
@@ -35,6 +35,7 @@ test("config keys map to sections", () => {
   assert.equal(sectionOfKey("watch.paths"), "putio");
   assert.equal(sectionOfKey("cleanup.enabled"), "putio");
   assert.equal(sectionOfKey("hooks"), "integrations");
+  assert.equal(sectionOfKey("plugins"), "plugins");
   assert.equal(sectionOfKey("logging.level"), "advanced");
   assert.equal(sectionOfKey("notifications.enabled"), "general");
   assert.equal(sectionOfKey("tailscale.socket"), "network");
@@ -46,9 +47,10 @@ test("Settings names in text become links", () => {
   assert.deepEqual(linkParts("nothing here"), ["nothing here"]);
   assert.deepEqual(linkParts("Open Settings › Integrations › Plugins: check it."), [
     "Open ",
-    { text: "Settings › Integrations › Plugins", href: "#/settings/integrations?field=card-plugins" },
+    { text: "Settings › Integrations › Plugins", href: "#/settings/plugins?field=card-plugins" },
     ": check it.",
   ]);
+  assert.deepEqual(linkParts("Turn it off in Settings › Plugins."), ["Turn it off in ", { text: "Settings › Plugins", href: "#/settings/plugins" }, "."]);
   assert.deepEqual(linkParts("Use Send test event in Settings › Integrations › Event hooks."), [
     "Use Send test event in ",
     { text: "Settings › Integrations › Event hooks", href: "#/settings/integrations?field=card-hooks" },

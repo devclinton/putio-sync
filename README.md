@@ -1031,8 +1031,8 @@ Network settings warn about this combination.
 
 ### Settings from the UI
 
-Settings has seven sections: General, Put.io, Downloads, Rules and filters, Integrations,
-Network and access, and Advanced; the docs name a card as "Settings › Section › Card".
+Settings has eight sections: General, Put.io, Downloads, Rules and filters, Integrations,
+Plugins, Network and access, and Advanced; the docs name a card as "Settings › Section › Card".
 Each section has its own address, `#/settings/<section>`, and `?field=download.verify`
 (a config key) opens it at that setting. The search box finds a setting by its label or
 help. A section shows *unsaved* while a card in it has unsaved changes, and a count of
@@ -1509,8 +1509,9 @@ executable, and a hook whose last run failed in the last day.
 Plugins are small Lua scripts that run inside putio-sync on the same events as hooks,
 with no other program to install. Seven come with it, all off until turned on. Four are
 **ntfy**, **Discord**, **Telegram** and **Pushover** notifications, which group repeats so a busy
-night sends a summary instead of a hundred messages. Settings › Integrations › Plugins turns them on,
-edits their settings, shows the hosts each one contacts and sends a test event.
+night sends a summary instead of a hundred messages. Settings › Plugins lists the ones that
+are off, one line each with **Enable**, and gives each one that is on a tab of its own that
+edits its settings, shows the hosts it contacts and sends a test event.
 
 **Plex**, **Jellyfin** and **Emby** plugins rescan just the folder of each finished
 download, so new episodes show up within seconds. Files landing in the same folder are

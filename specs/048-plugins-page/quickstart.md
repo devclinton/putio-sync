@@ -15,3 +15,7 @@
    page's plugin link and the doctor's plugin hint go there too.
 9. Search "topic": the hit opens the ntfy tab and focuses the field.
 10. Phone width (375 px): tabs scroll sideways; the list rows fit.
+11. Enable plex, press **Sign in with Plex**: the code shows large with **Copy** and **Copy and
+    open plex.tv/link**, plus the plain link. The second copies the code and opens plex.tv/link
+    in a new tab; the link stays while the page waits. Over plain http to another host, the
+    page selects the code and says to copy it by hand.

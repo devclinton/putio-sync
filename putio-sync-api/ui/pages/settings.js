@@ -1,4 +1,4 @@
-// Settings (features 015, 046): every settings card, in seven sections shown one at a time.
+// Settings (features 015, 046, 048): every settings card, in sections shown one at a time.
 // `#/settings/<section>?field=<address>` opens a section and jumps to a field. All sections
 // load at once, so search covers every field and the section list marks unsaved changes and
 // problems anywhere. Advanced fields are hidden per section until Show advanced is on.
@@ -11,9 +11,10 @@ import * as putio from "../settings/putio.js";
 import * as downloads from "../settings/downloads.js";
 import * as filters from "../settings/filters.js";
 import * as integrations from "../settings/integrations.js";
+import * as plugins from "../settings/plugins.js";
 import { advancedCards, networkCards } from "../settings/advanced.js";
 
-const BUILD = { general: general.cards, putio: putio.cards, downloads: downloads.cards, rules: filters.cards, integrations: integrations.cards, network: networkCards, advanced: advancedCards };
+const BUILD = { general: general.cards, putio: putio.cards, downloads: downloads.cards, rules: filters.cards, integrations: integrations.cards, plugins: plugins.cards, network: networkCards, advanced: advancedCards };
 const ADV_KEY = "putio-sync.settings.advanced";
 
 let seq = 0;
@@ -173,7 +174,10 @@ export function mount(el, params) {
   // Open a section, then wait up to 5 s for the field's card to load and jump to it
   const show = ({ path, query }) => {
     const field = query.get("field");
-    const s = sectionOf(path[0] || (field && field.includes(".") ? sectionOfKey(field) : ""));
+    // A card's address opens the section that holds the card (048: plugins moved out of
+    // Integrations, and old links name that section)
+    const card = field && fieldId(field).startsWith("card-") ? cardSection[fieldId(field).slice(5)] : null;
+    const s = sectionOf(card || path[0] || (field && field.includes(".") ? sectionOfKey(field) : ""));
     for (const x of SECTIONS) {
       const p = panels[x.id];
       p.node.hidden = x.id !== s.id;
@@ -195,6 +199,9 @@ export function mount(el, params) {
       const target = document.getElementById(id) || (late ? document.getElementById(fallback) : null);
       if (!target) return void (late || (jumpTimer = setTimeout(jump, 100)));
       if (target.closest(".adv")) panels[s.id].showAdv(true);
+      // A field on a tab that is not shown (048: plugin tabs): show its tab first
+      const tab = target.closest("[role=tabpanel][hidden]");
+      if (tab) document.getElementById(tab.getAttribute("aria-labelledby"))?.click();
       target.scrollIntoView({ block: "center" });
       if (target.matches("input, select, textarea")) target.focus({ preventScroll: true });
       const mark = target.closest("label.field") || target;

@@ -364,7 +364,7 @@ run_at = "02:30"
 # Sandboxed Lua scripts run on the same events as hooks. ntfy, discord,
 # telegram and pushover notifiers and plex, jellyfin and emby library refresh
 # (feature 031) are bundled; your own go in a folder each under
-# plugins_dir. Settings › Integrations › Plugins edits these and approves hosts. PLUGINS.md
+# plugins_dir. Settings › Plugins edits these and approves hosts. PLUGINS.md
 # has the details.
 # A top-level key: set it above the first [section] of this file.
 # plugins_dir = "/config/plugins"       # Default: "plugins" next to this file
