@@ -60,6 +60,7 @@ fn every_manager_field_comes_from_settings() {
             workers: 7,
             delete_after_download: true,
             rules: RuleSet::from_config(&settings),
+            verify: putio_sync_download::manager::VerifySettings::default(),
         }
     );
     assert!(config.rules.decide("", "a.iso") != putio_sync_core::rules::Decision::Download);

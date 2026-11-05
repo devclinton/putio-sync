@@ -9,7 +9,7 @@ against local mocks.
 
 ## Phase 1: Setup
 
-- [ ] T001 Add the four `[download]` keys to `DownloadConfig` in `putio-sync-core/src/config.rs`: `verify` (bool, default `true`), `verify_max_redownloads` (u32, default `2`, "0..=5"), `verify_read_limit_mb_per_sec` (u64, default `50`, "1..=10000"), `verify_follow_bandwidth_pause` (bool, default `true`), each with a serde default; validation errors name the key (`download.verify_max_redownloads must be 0..=5 (got 9)`); update every `DownloadConfig { .. }` literal in the workspace; add parse/validate tests
+- [X] T001 Add the four `[download]` keys to `DownloadConfig` in `putio-sync-core/src/config.rs`: `verify` (bool, default `true`), `verify_max_redownloads` (u32, default `2`, "0..=5"), `verify_read_limit_mb_per_sec` (u64, default `50`, "1..=10000"), `verify_follow_bandwidth_pause` (bool, default `true`), each with a serde default; validation errors name the key (`download.verify_max_redownloads must be 0..=5 (got 9)`); update every `DownloadConfig { .. }` literal in the workspace; add parse/validate tests
 
 ## Phase 2: Foundational
 

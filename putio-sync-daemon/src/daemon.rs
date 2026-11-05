@@ -1061,6 +1061,7 @@ mod tests {
                     ..Default::default()
                 },
             ),
+            verify: putio_sync_download::manager::VerifySettings::default(),
         };
         let config = DaemonConfig {
             database_path: Some(dir.path().join(".putiosync.db")),

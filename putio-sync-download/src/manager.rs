@@ -63,6 +63,40 @@ pub struct DownloadConfig {
     pub delete_after_download: bool,
     /// Folder rules with the global `blocked_extensions` as the root filter
     pub rules: RuleSet,
+    /// Download verification (feature 034)
+    pub verify: VerifySettings,
+}
+
+/// The `[download]` `verify_*` keys as the manager uses them (feature 034)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifySettings {
+    /// Compare each download with Put.io's CRC32 (or size) before it is renamed
+    pub enabled: bool,
+    /// Downloads again after a mismatch before the file fails
+    pub max_redownloads: u32,
+    /// "Verify everything" read limit in bytes per second
+    pub read_limit_bytes_per_sec: u64,
+    /// "Verify everything" waits while the bandwidth limiter says paused
+    pub follow_bandwidth_pause: bool,
+}
+
+impl Default for VerifySettings {
+    fn default() -> Self {
+        Self::from(&putio_sync_core::config::DownloadConfig::default())
+    }
+}
+
+impl From<&putio_sync_core::config::DownloadConfig> for VerifySettings {
+    fn from(settings: &putio_sync_core::config::DownloadConfig) -> Self {
+        Self {
+            enabled: settings.verify,
+            max_redownloads: settings
+                .verify_max_redownloads
+                .min(putio_sync_core::config::DownloadConfig::MAX_VERIFY_REDOWNLOADS),
+            read_limit_bytes_per_sec: settings.verify_read_limit_bytes(),
+            follow_bandwidth_pause: settings.verify_follow_bandwidth_pause,
+        }
+    }
 }
 
 impl DownloadConfig {
@@ -104,6 +138,7 @@ impl Default for DownloadConfig {
             workers: 1,
             delete_after_download: false,
             rules: RuleSet::default(),
+            verify: VerifySettings::default(),
         }
     }
 }
@@ -126,6 +161,7 @@ impl From<&putio_sync_core::config::DownloadConfig> for DownloadConfig {
             workers: settings.workers,
             delete_after_download: settings.delete_after_download,
             rules: RuleSet::from_config(settings),
+            verify: VerifySettings::from(settings),
         }
     }
 }

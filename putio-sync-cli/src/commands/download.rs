@@ -117,6 +117,7 @@ pub async fn execute_download(
         workers: workers_count,
         delete_after_download,
         rules: putio_sync_core::rules::RuleSet::from_config(&old_config),
+        verify: putio_sync_download::manager::VerifySettings::from(&old_config),
     };
     let delete_empty_folders_flag = delete_empty_folders.unwrap_or(old_config.delete_empty_folders);
     let sort_order = if let Some(s) = sort {
