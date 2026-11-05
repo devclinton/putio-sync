@@ -63,8 +63,8 @@ Body: `{"target": null | "putio_sync_hooks", "level": "debug", "minutes": 30 | n
 
 ## DELETE /logs/level
 
-Query: `target` (optional). With it, that module's override is cleared; without it, every
-override is cleared.
+Query: `target` (optional). With a module, that module's override is cleared; with
+`target=` (empty), the overall override; without it, every override is cleared.
 
 200: the new `LevelStatus`.
 

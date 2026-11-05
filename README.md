@@ -838,6 +838,7 @@ H = histogram.
 | `putio_sync_plugin_run_duration_seconds` | H | `plugin` | Duration of each plugin call |
 | `putio_sync_plugin_events_dropped_total` | counter | `plugin` | Events dropped because the plugin's queue was full |
 | `putio_sync_plugin_counter_total` | counter | `plugin`, `name` | A plugin's own counts, such as the media plugins' `refreshes`, `folders_grouped`, `skipped` and `refresh_failures` |
+| `putio_sync_log_lines_dropped_total` | counter | `reason` | Log lines the Logs page never showed: `evicted` (pushed out of memory), `lagged` (a live view fell behind) |
 | `putio_sync_start_time_seconds` | gauge | — | Process start, Unix seconds |
 | `putio_sync_build_info` | gauge (=1) | `version`, `commit` | Build identity |
 | `putio_sync_process_cpu_seconds_total` | counter | — | CPU time used (user + system); `rate()` gives cores in use |
@@ -1090,6 +1091,32 @@ Each settings card helps before you save:
   listed, and you see the changes before Apply. Apply saves the same way as a card,
   so comments and the file's credentials stay.
 
+### Logs page
+
+`#/logs` shows the most recent log lines the daemon kept in memory: 2,000 by default,
+set with `[logging] buffer_lines` (100 to 50,000) or **Settings › Logging › Lines kept for
+the Logs page**, which applies at once. Only lines the level in effect lets through are
+kept, so debug and trace lines appear only while turned on.
+
+- Filter by level (that level and above), module (`putio_sync_download`, a prefix
+  matches its submodules) and text. Filters are kept in the page address.
+- New lines arrive live. **Pause** holds them with a count; **Resume** shows them. If the
+  connection drops, the page reconnects and carries on from the last line it had; lines
+  that left memory in the meantime show as skipped.
+- **Copy** and **Download** take exactly the lines shown, as text. **Clear view** empties
+  the list in this browser only.
+- A `file_id` opens the file on Put.io, a `folder_id` or `parent_id` the Put.io page, a
+  `transfer_id` the Transfers page, a `hook` or `plugin` Settings and a `run_id` History.
+- **Log level** sets the level for everything or for one module, for 30 minutes or until
+  restart, and lists what is set with a **Revert** for each. Nothing is written to the
+  config file; a config change replaces the base level and keeps these. Each change logs
+  one `Log level changed` line. The doctor warns while anything is at debug or trace.
+
+Secrets are masked before a line is kept: configured tokens and passwords, the Put.io app
+secret, the notification webhook URL, hook URLs and headers, plugin secrets, any
+`token=`/`password=`/`api_key=` style value and `Authorization` or `Bearer` values. URLs
+lose their query and user info. The page needs the same sign-in as the rest of the UI.
+
 ### What's new
 
 The release notes (`CHANGELOG.md`) are built into the binary. After an upgrade, the first
@@ -1129,6 +1156,9 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /putio/transfers/{id}/readd` | Cancel a transfer and add its magnet again to the same folder; answers `{"cancelled_id", "transfer"}`. 400 without a magnet link (nothing cancelled); 500 with the magnet in `details` if the add fails after the cancel |
 | `GET /history?action=&name=&limit=&offset=` | History; `name` is a case-insensitive substring |
 | `GET /history/stats`, `GET /stats/{downloads,transfers,disk}` | Totals |
+| `GET /logs` | Kept log lines, oldest first: `?after=<seq>`, `level`, `target` (module prefix), `q` (text), `limit` (newest n). Adds `last_seq`, `oldest_seq`, `capacity`, `evicted` and `targets` |
+| `GET /logs/stream` | The same lines as server-sent events from `after` (default: now): `event: line` with a line, `event: skipped` with `{"count"}` for lines gone before they were sent |
+| `GET`/`PUT`/`DELETE /logs/level` | The level in effect and the Logs page's overrides; `PUT {"target"?, "level", "minutes"?}` sets one (no `minutes` keeps it until restart; 400 when invalid, 409 when this process can't change level); `DELETE ?target=<module>` reverts one, `?target=` the overall one, no query all |
 | `GET /tailscale` | What Tailscale says about this machine: `state` (`running`, `needs_login`, `stopped`, `starting`, `unreachable`, `not_found`), `via`, `version`, `dns_name`, `tailnet`, `magic_dns`, `addresses`, `https`, `userspace`, `owner_login`, `serve`; plus `urls` (the addresses that open putio-sync over the tailnet, HTTPS `serve` first), `hints`, `tailnet_bind` or `tailnet_bind_error`, `settings` and this request's `identity`. Never fails: a missing Tailscale is a state |
 | `GET /listen` | What this process listens on: `api` (`configured`, `effective`, `listening`, each entry with its `addresses` or why it is `waiting`, `port`, `tailnet_only`, `env_override`), `metrics` (the same, plus `enabled`), `engine` and `server_flags` (whether `server --bind/--port` replaced the list) |
 | `POST /settings/network/check` | The `network` PUT body → what each entry would listen on, `this_page` (`kept`, `cut_off` or `unknown`: whether the page you're on would still reach putio-sync), `listened_on`, `ui_at` and `warnings`; saves nothing |
@@ -1840,7 +1870,7 @@ INFO Removed already-uploaded watch file path=/watch/Series.magnet
 
 #### Live configuration changes
 
-Only `[logging] level` and `module_filters` are re-read from `config.toml` while running
+Only `[logging] level`, `module_filters` and `buffer_lines` are re-read from `config.toml` while running
 (see [Verbosity](#verbosity)). Everything else in the file needs a restart. Some download
 and watcher settings can also be changed at runtime from the web UI or the API
 (`PUT /settings/download`, `PUT /settings/watcher`); a new `workers` value there scales

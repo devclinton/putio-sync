@@ -57,7 +57,7 @@ API behaviour.
 - [X] T011 [US1] Create `putio-sync-api/src/routes/system/logs.rs` with `GET /logs`, following contracts/logs-api.md (query: after, level, target, q, limit; response: lines, last_seq, oldest_seq, capacity, evicted, targets; 400 for a bad level). Register it in `routes/system/mod.rs` and nest it at `/logs` in the protected router in `putio-sync-api/src/lib.rs`
 - [X] T012 [US1] Refresh redaction secrets in `AppState::new` and after every settings save and import in `putio-sync-api/src/routes/system/settings.rs` (the shared `update` helper), using `Config::secret_values`
 - [X] T013 [US1] Create `putio-sync-api/tests/logs.rs`: 401 without a token, lines returned after logging, level, target and q filters, a bad level → 400, and 503 from the setup router (FR-012)
-- [ ] T014 [US1] Create `putio-sync-api/ui/pages/logs.js`:
+- [X] T014 [US1] Create `putio-sync-api/ui/pages/logs.js`:
   - a list of lines (time, level, target, message, fields);
   - level select, module input with a datalist of `targets`, and search, all kept in the hash query;
   - an initial load from `GET /logs`.
@@ -77,7 +77,7 @@ API behaviour.
   - on `Lagged`, backfill from the buffer, send `event: skipped` for lines gone, and count `lagged`;
   - same filters as `GET /logs`; keep-alive every 15 s.
 - [X] T016 [US2] Tests in `putio-sync-api/tests/logs.rs`: the stream sends the backlog after `after` and then a newly logged line; a stream from an evicted seq sends `skipped`
-- [ ] T017 [US2] Live tail in `putio-sync-api/ui/pages/logs.js`:
+- [X] T017 [US2] Live tail in `putio-sync-api/ui/pages/logs.js`:
   - `fetch` the stream with an auth header and parse `event:`/`data:` lines;
   - Pause/Resume with a waiting count, and auto-scroll unless scrolled up;
   - reconnect with `after=<last seq>` and a status note;
@@ -106,7 +106,7 @@ API behaviour.
   - `verbose` detection.
 - [X] T020 [US3] Add `GET /logs/level`, `PUT /logs/level` and `DELETE /logs/level?target=` to `putio-sync-api/src/routes/system/logs.rs`, following the contract (400 on validation, 409 when unavailable)
 - [X] T021 [US3] Tests in `putio-sync-api/tests/logs.rs`: an invalid target or level → 400; set, then GET shows it; clear → back to none
-- [ ] T022 [US3] Level controls in `putio-sync-api/ui/pages/logs.js`:
+- [X] T022 [US3] Level controls in `putio-sync-api/ui/pages/logs.js`:
   - the effective level and its source;
   - module (empty = everything), level, and "30 minutes" / "Keep (until restart)";
   - Apply, plus a list of overrides with their end time and a Revert button for each, and Revert all.
@@ -128,7 +128,7 @@ API behaviour.
 
 ## Phase 7: User Story 5 - Copy, download and follow links (P2)
 
-- [ ] T024 [US5] In `putio-sync-api/ui/pages/logs.js`:
+- [X] T024 [US5] In `putio-sync-api/ui/pages/logs.js`:
   - Copy (the shown lines as text via `navigator.clipboard`, then a toast with the count);
   - Download (a Blob `putio-sync-logs-YYYYMMDD-HHMMSS.txt`) and Clear view;
   - links for `file_id` (app.put.io, new tab), `folder_id`/`parent_id` (`#/putio/<id>`),
@@ -150,8 +150,8 @@ API behaviour.
 ## Phase 9: Polish
 
 - [X] T027 Settings › Logging: add `buffer_lines` to `LoggingSettings` (view and apply, 400 outside 100..=50000) in `putio-sync-api/src/models` / `routes/system/settings.rs`, and apply `set_capacity` on save. Add one field `["buffer_lines", "Lines kept for the Logs page", "100 to 50,000", "n", 100, 50000]` in `putio-sync-api/ui/pages/settings.js` (the only change to that file)
-- [ ] T028 [P] Document the Logs page, `buffer_lines`, the `/logs` API and the metric in `README.md`, and add a `CHANGELOG.md` entry under Unreleased › Added
-- [ ] T029 Run `cargo test -p putio-sync-api --test ui_assets` (384 KB cap), then check the page in the built-in browser against a local daemon (quickstart.md)
+- [X] T028 [P] Document the Logs page, `buffer_lines`, the `/logs` API and the metric in `README.md`, and add a `CHANGELOG.md` entry under Unreleased › Added
+- [X] T029 Run `cargo test -p putio-sync-api --test ui_assets` (384 KB cap), then check the page in the built-in browser against a local daemon (quickstart.md)
 - [ ] T030 Merge `origin/main`, then run `TMPDIR=<scratch> CARGO_PROFILE_RELEASE_STRIP=none make ci`, push, and write the hand-over note
 
 ## Dependencies & Execution Order
