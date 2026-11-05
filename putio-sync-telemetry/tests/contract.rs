@@ -59,6 +59,7 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_arr_items",
     "putio_sync_arr_blocklist_total",
     "putio_sync_arr_setup_total",
+    "putio_sync_arr_path_mapping_total",
     "putio_sync_precheck_total",
     "putio_sync_precheck_avoided_bytes_total",
     "putio_sync_precheck_cache_lookups_total",

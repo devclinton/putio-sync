@@ -168,6 +168,21 @@ export function runArrSetup(req) {
   return post("/arr/setup", req);
 }
 
+/** The folder and recommendation steps (049). Resolves with `{ok, app, host, folder, recommendations, …}`. */
+export function checkArrSetup(req) {
+  return post("/arr/setup/check", req);
+}
+
+/** Make the confirmed mapping `req.proposal`; `{ok: false, reason: "changed", proposal}` when it moved on. */
+export function applyArrMapping(req) {
+  return post("/arr/setup/mapping", req);
+}
+
+/** Turn on the recommended setting `req.name`. Resolves with `{ok, recommendations}`. */
+export function applyArrRecommendation(req) {
+  return post("/arr/setup/recommendation", req);
+}
+
 /**
  * Test the saved application at `index` and re-read its categories. Resolves with
  * `{ok, app, version, categories, client_present}` or `{ok: false, reason, detail}`.

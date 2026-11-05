@@ -1,9 +1,12 @@
-// Radarr / Sonarr card (features 011, 018): the download client form, auto-setup, and the
-// Applications list with Add, Edit, Delete and Test.
+// Radarr / Sonarr card (features 011, 018, 049): the download client form, auto-setup with
+// its folder and recommendation steps, and the Applications list with Add, Edit, Delete and Test.
 
 import {
   addArrApplication,
+  applyArrMapping,
+  applyArrRecommendation,
   arrStatus,
+  checkArrSetup,
   deleteArrApplication,
   discoverArr,
   previewArrSetup,
@@ -31,6 +34,8 @@ const ARR_HELP = {
   arr_refused: ["Radarr/Sonarr refused the download client", "The app's own message is above. Nothing was left behind."],
   config_write_failed: ["Could not write the config file", "Check the config file isn't read-only. Nothing was changed."],
   no_api_key: ["No API key", "Edit the application and enter its API key."],
+  no_client: ["No putio-sync download client", "Set up the download client first."],
+  marker_failed: ["Could not write to the download folder", "Check putio-sync can write to its download folder."],
 };
 const arrReason = (r) => (ARR_HELP[r] || [r])[0];
 const arrNext = (r) => (ARR_HELP[r] || [])[1];
@@ -286,14 +291,10 @@ function setupView(reload, ctx) {
           busy(false);
           return;
         }
-        const verb = r.outcome === "updated" ? "Updated" : r.outcome === "unchanged" ? "Already set up:" : "Created";
-        toast(`${verb} ${r.client_name} in ${r.app} ${r.version}, host ${r.host}`);
         if (r.blackhole_disabled) toast("Torrent Blackhole disabled");
         if (r.warning) toast(r.warning);
-        if (r.path_check && r.path_check.status === "not_visible") {
-          toast(`${r.app} cannot see ${r.path_check.arr_path}: mount the download folder there or add a Remote Path Mapping`);
-        }
-        await reload();
+        busy(false);
+        guided({ target: { url: r.url }, api_key: key.value.trim(), host: r.host }, out, r, reload);
       } catch (e) {
         if (live(view)) {
           fail(e);
@@ -473,6 +474,99 @@ function pathLines(check, app) {
   ];
 }
 
+const MAP_VERB = { create: "Create mapping", update: "Change mapping", remove: "Remove mapping" };
+const RECOMMEND = {
+  completed_download_handling: "Completed Download Handling, so finished downloads are imported",
+  import_extra_files: "Import Extra Files with srt, so subtitles come too",
+};
+
+/**
+ * After a setup `r`: one line per step (client, folder, recommended settings), with the
+ * mapping to confirm and the settings to turn on (049). Done reloads the card.
+ */
+function guided(base, box, r, reload) {
+  const okLine = (t) => h("p", {}, h("span", { class: "dot ok" }), t);
+  const bad = (f) => h("p", { class: "error-text", text: `${arrReason(f.reason)}${f.detail ? `: ${f.detail}` : ""}. ${arrNext(f.reason) || ""}`.trim() });
+  const caught = (el) => (e) => {
+    if (e.status !== 401 && e.status !== 429) el.append(h("p", { class: "error-text", text: reason(e) }));
+  };
+  const verb = r.outcome === "updated" ? "Updated" : r.outcome === "unchanged" ? "Already set up:" : "Created";
+  const client = okLine(`${verb} ${r.client_name} in ${r.app}${r.category ? `, category ${r.category}` : ""}, host ${r.host}`);
+  const folder = h("div", { role: "status" });
+  const recs = h("div", { role: "status" });
+  const app = r.app;
+  box.replaceChildren(client, folder, recs, h("div", { class: "form-foot" }, h("button", { type: "button", class: "btn", onclick: () => reload() }, "Done")));
+
+  const showRecs = (list) =>
+    recs.replaceChildren(
+      ...list.map((x) => {
+        if (x.on) return okLine(`${RECOMMEND[x.name]}: on`);
+        const on = h("button", { type: "button", class: "btn" }, "Turn on");
+        on.onclick = async () => {
+          on.disabled = true;
+          try {
+            const t = await applyArrRecommendation({ ...base, name: x.name });
+            if (!t.ok) return recs.append(bad(t));
+            showRecs(t.recommendations);
+          } catch (e) {
+            caught(recs)(e);
+          } finally {
+            on.disabled = false;
+          }
+        };
+        return h("p", { class: "muted" }, `Recommended: ${RECOMMEND[x.name]} `, on);
+      }),
+    );
+
+  const check = async () => {
+    folder.replaceChildren(h("p", { class: "muted", text: "Checking the download folder… this can take up to 30 s." }));
+    let c;
+    try {
+      c = await checkArrSetup(base);
+    } catch (e) {
+      folder.replaceChildren();
+      return caught(folder)(e);
+    }
+    if (!box.isConnected) return;
+    if (!c.ok) return folder.replaceChildren(bad(c));
+    showRecs(c.recommendations);
+    if (c.recommendations_error) recs.append(bad(c.recommendations_error));
+    const f = c.folder;
+    if (!f) return folder.replaceChildren(bad(c.folder_error));
+    const p = f.proposal;
+    if (p.action === "none") return folder.replaceChildren(...pathLines(f.path_check, app));
+    if (p.action === "not_found") {
+      return folder.replaceChildren(
+        ...pathLines(f.path_check, app),
+        h("p", { class: "muted", text: `Not found in the ${f.looked.length} folders ${app} lists. Mount the download folder in ${app}, then Set up again.` }),
+      );
+    }
+    const what =
+      p.action === "remove"
+        ? `${app} sees ${p.remote_path} as is, but a mapping for host ${p.host} hides it: remove that mapping`
+        : `${app} sees the folder at ${f.found}: map ${p.remote_path} → ${p.local_path} for host ${p.host}`;
+    const btn = h("button", { type: "button", class: "btn btn-primary" }, MAP_VERB[p.action]);
+    btn.onclick = async () => {
+      if (!(await confirm({ title: MAP_VERB[p.action], text: `${what}?`, verb: MAP_VERB[p.action].split(" ")[0] }))) return;
+      btn.disabled = true;
+      try {
+        const m = await applyArrMapping({ ...base, host: c.host, proposal: p });
+        if (m.ok) {
+          toast(`${MAP_VERB[p.action]}: done`);
+          return folder.replaceChildren(...pathLines(m.path_check, app));
+        }
+        if (m.reason === "changed") return check();
+        folder.append(bad(m));
+      } catch (e) {
+        caught(folder)(e);
+      }
+      btn.disabled = false;
+    };
+    folder.replaceChildren(h("p", { class: "warn-text", text: what }), h("div", { class: "form-foot" }, btn));
+  };
+  check();
+}
+
 /** What putio-sync knows about an application's categories (R4) */
 function categoriesLine(s) {
   if (!s.api_key_set) return null;
@@ -498,8 +592,8 @@ function testResult(r) {
 function applicationRow(s, list, reload) {
   const result = h("div", { role: "status" });
   const test = h("button", { type: "button", class: "btn" }, "Test");
-  // Only when the last read found no putio-sync client there
-  const setUp = s.client_present === false ? h("button", { type: "button", class: "btn", disabled: !s.api_key_set }, "Set up") : null;
+  // The client, the folder mapping and the recommendations; safe to run again (049)
+  const setUp = s.api_key_set ? h("button", { type: "button", class: "btn" }, "Set up") : null;
   const edit = h("button", { type: "button", class: "btn" }, "Edit");
   const remove = h("button", { type: "button", class: "btn" }, "Delete");
   const legacy = s.legacy_category && s.read_at && !s.categories.includes(normalCategory(s.legacy_category));
@@ -535,8 +629,7 @@ function applicationRow(s, list, reload) {
         setUp.disabled = false;
         return;
       }
-      toast(`${r.outcome === "updated" ? "Updated" : r.outcome === "unchanged" ? "Already set up:" : "Created"} ${r.client_name} in ${r.app}`);
-      await reload();
+      guided({ target: { application: s.index }, host: r.host }, result, r, reload);
     } catch (e) {
       if (e.status === 401 || e.status === 429) return;
       result.replaceChildren(h("p", { class: "error-text", text: reason(e) }));

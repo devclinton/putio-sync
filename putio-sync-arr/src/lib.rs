@@ -8,6 +8,8 @@ pub mod contact;
 pub mod discovery;
 pub mod infohash;
 pub mod path_check;
+pub mod path_mapping;
+pub mod recommend;
 pub mod rpc;
 pub mod service;
 pub mod setup;
