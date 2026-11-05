@@ -94,12 +94,6 @@ events, has a test button, and groups repeats). Still to do: email (SMTP),
 which cannot be a plugin, stuck-download and doctor-problem events, and a
 simpler Notifications page over the bundled channels.
 
-### 034 Download verification
-
-Check each finished download against Put.io's CRC32 (or size where there is
-none), re-download files that do not match, and offer a "verify everything"
-run for files already downloaded. Results show in History and in the doctor.
-
 ### 035 Mobile app
 
 The web UI wrapped with Capacitor as an iOS and Android app: connect to a

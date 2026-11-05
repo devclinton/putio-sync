@@ -59,9 +59,9 @@ against local mocks.
 
 ## Phase 7: Polish
 
-- [ ] T025 [P] README (Download verification section; HTTP API, metrics, settings and doctor tables), `config.example.toml`, `example-config.toml`
-- [ ] T026 [P] `CHANGELOG.md` Unreleased › Added (and Changed: a resumed file's check reads only its prefix)
-- [ ] T027 Remove 034 from `ROADMAP.md`
+- [X] T025 [P] README (Download verification section; HTTP API, metrics, settings and doctor tables), `config.example.toml`, `example-config.toml`
+- [X] T026 [P] `CHANGELOG.md` Unreleased › Added (and Changed: a resumed file's check reads only its prefix)
+- [X] T027 Remove 034 from `ROADMAP.md`
 - [ ] T028 Merge `origin/main`, then `TMPDIR=<scratch> CARGO_PROFILE_RELEASE_STRIP=none make ci`; UI bundle under 384 KB
 
 ## Dependencies

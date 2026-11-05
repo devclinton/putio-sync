@@ -223,6 +223,19 @@ blocked_extensions = ["exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs",
 # end = "23:00"
 # limit = "paused"
 
+# Download verification (each new download is checked before it gets its real name)
+# verify: compare with Put.io's CRC32, or the size where Put.io has none. Default: true
+# verify = true
+# verify_max_redownloads: downloads again after a mismatch, 0 to 5; then the download
+# fails with reason "integrity". Default: 2
+# verify_max_redownloads = 2
+# verify_read_limit_mb_per_sec: how fast "Verify everything" reads files from disk,
+# 1 to 10000 (MB is 1 000 000 bytes). Default: 50
+# verify_read_limit_mb_per_sec = 50
+# verify_follow_bandwidth_pause: a verify run waits while the bandwidth schedule or
+# "Pause 1 h" pauses downloads. Default: true
+# verify_follow_bandwidth_pause = true
+
 # Maximum number of retry attempts for failed downloads
 # When a download fails, it will be retried with exponential backoff
 # Example: 3 retries with 1s initial delay = 1s, 2s, 4s delays

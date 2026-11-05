@@ -14,6 +14,20 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Download verification: each download is checked against Put.io's CRC32 (or
+  its size where Put.io has none) before it gets its real name. The CRC32 is
+  worked out while the file streams, so it is not read twice. A file that does
+  not match is downloaded again up to `verify_max_redownloads` times (default 2),
+  then fails with reason `integrity` and is never deleted from Put.io.
+  **Verify everything** on the History page checks files already downloaded at
+  `verify_read_limit_mb_per_sec`, can be paused and stopped, waits while the
+  bandwidth schedule pauses downloads, and queues mismatches to be downloaded
+  over (or only reports them). Local files can verify ticked files and folders.
+  History shows how each download was checked, the Queue and Active pages show
+  **Verifying**, the doctor gains a **Download verification** check, and there
+  are new events (`verify.passed`, `verify.failed`, `verify.redownload`; the
+  schema version stays 1), `putio_sync_verify_*` metrics, `/verify` routes and
+  four settings under Settings › Download.
 - Media server refresh: bundled Plex, Jellyfin and Emby plugins (off until
   turned on) ask the server to rescan just the folder of each finished download,
   grouped per folder over a short window, so new episodes and movies show up
@@ -299,6 +313,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- A resumed download is checked by reading back only the part already on disk,
+  then hashing the rest as it streams, instead of reading the whole file again
+  after the download; `verify.passed` now comes just before `download.finished`.
 - `bandwidth_limit_bytes_per_sec` is now the total for all downloads, shared
   by the workers, and a change applies to running downloads within about a
   second instead of from the next file. `bandwidth_limit_bytes_per_sec = 0` is
