@@ -1,31 +1,57 @@
 //! Lua plugins (feature 028): no enabled plugin is broken, waits for approval or a value,
-//! settings name only plugins that exist, and no plugin's last run failed in the last day
+//! settings name only plugins that exist, and no plugin's last run failed in the last day.
+//! Feature 031: each enabled plugin with a `health()` says how it stands (server reachable,
+//! token accepted, folders mapped); a failed item is a problem, a warning a warning.
 
 use super::{count, Ctx};
 use crate::report::{Finding, Item, Status};
 use chrono::{DateTime, Duration, Utc};
-use putio_sync_core::plugins::dir_for;
-use putio_sync_plugins::{PluginState, PluginStatus, PluginsOptions, PluginsService, RunResult};
+use putio_sync_plugins::action::{HealthItem, HealthStatus};
+use putio_sync_plugins::{CallError, PluginState, PluginStatus, PluginsService, RunResult};
+use std::sync::Arc;
 
 /// A failed last run older than this is not reported
 const RECENT: Duration = Duration::hours(24);
 
-/// The running service's view, or an unstarted one built from the config
-fn status(ctx: &Ctx) -> Vec<PluginStatus> {
+/// The running service, or an unstarted one built from the config
+fn service(ctx: &Ctx) -> Arc<PluginsService> {
     match &ctx.plugins {
-        Some(service) => service.status(),
-        None => PluginsService::new(PluginsOptions {
-            dir: dir_for(
-                ctx.config.plugins_dir.as_deref(),
-                ctx.config_path.as_deref(),
-            ),
-            data_dir: None,
-            settings: ctx.config.plugins.clone(),
-            clock: None,
-            download_dir: None,
-        })
-        .status(),
+        Some(service) => service.clone(),
+        None => Arc::new(PluginsService::from_config(
+            &ctx.config,
+            ctx.config_path.as_deref(),
+        )),
     }
+}
+
+/// What each enabled plugin's `health()` says, as problems and warnings; a plugin busy
+/// with a settings action is skipped
+async fn health(service: &PluginsService, plugins: &[PluginStatus]) -> (Vec<Item>, Vec<Item>) {
+    let mut problems = Vec::new();
+    let mut warnings = Vec::new();
+    for p in plugins.iter().filter(|p| p.state == PluginState::Enabled) {
+        let items: Vec<HealthItem> = match service.health(&p.name).await {
+            Ok(Some(items)) => items,
+            Ok(None) => continue,
+            Err(CallError::Busy) => {
+                warnings.push(Item::new(&p.name, p.name.clone()).detail("busy, skipped"));
+                continue;
+            }
+            Err(e) => vec![HealthItem {
+                status: HealthStatus::Fail,
+                message: e.to_string(),
+            }],
+        };
+        for item in items {
+            let found = Item::new(&p.name, p.name.clone()).detail(item.message);
+            match item.status {
+                HealthStatus::Ok => {}
+                HealthStatus::Warn => warnings.push(found),
+                HealthStatus::Fail => problems.push(found),
+            }
+        }
+    }
+    (problems, warnings)
 }
 
 /// The last run, when it failed in the last day
@@ -47,7 +73,8 @@ fn recent_failure(p: &PluginStatus, since: DateTime<Utc>) -> Option<Item> {
 }
 
 pub(crate) async fn plugins(ctx: &Ctx) -> Finding {
-    let plugins = status(ctx);
+    let service = service(ctx);
+    let plugins = service.status();
     let enabled = |name: &str| {
         ctx.config
             .plugins
@@ -67,6 +94,15 @@ pub(crate) async fn plugins(ctx: &Ctx) -> Finding {
         .filter(|p| p.state == PluginState::Broken && enabled(&p.name))
         .map(item)
         .collect();
+    let (unhealthy, unsure) = health(&service, &plugins).await;
+    if broken.is_empty() && !unhealthy.is_empty() {
+        return Finding::new(
+            Status::Problem,
+            format!("{} failed.", count(unhealthy.len(), "plugin check")),
+        )
+        .suggest("Open Settings › Plugins: check the server address, sign in again, or fix the path rules.")
+        .items(unhealthy);
+    }
     if !broken.is_empty() {
         return Finding::new(
             Status::Problem,
@@ -100,6 +136,7 @@ pub(crate) async fn plugins(ctx: &Ctx) -> Finding {
             .filter(|p| enabled(&p.name))
             .filter_map(|p| recent_failure(p, since)),
     );
+    warnings.extend(unsure);
     if !warnings.is_empty() {
         return Finding::new(
             Status::Warning,
