@@ -17,7 +17,7 @@ against local mocks.
 - [X] T003 [P] Database: columns `downloads.crc32 TEXT`, `downloads.verify TEXT`, `downloads.verified_at TIMESTAMP`, `download_history.verify TEXT`, `download_history.redownloads INTEGER`, `download_queue.redownload INTEGER NOT NULL DEFAULT 0`; tables `verify_runs` and `verify_problems` per `data-model.md`, in `putio-sync-db/src/schema.rs` and `putio-sync-db/src/lib.rs` migrate; models in `putio-sync-db/src/models.rs`
 - [X] T004 Add `VerifyRepository` in `putio-sync-db/src/verify.rs` (start/update/finish run, prune to the latest 10 runs, stop rows left `running`, add problem, mark fixed by file id, list problems for the UI and doctor) plus `downloads().set_verified`, `history().set_verify`, queue `redownload` read/write; repository tests
 - [X] T005 [P] Metrics in `putio-sync-telemetry/src/verify.rs` and the registry in `putio-sync-telemetry/src/lib.rs`: `putio_sync_verify_total{trigger,method,result}`, `putio_sync_verify_redownloads_total{trigger}`, `putio_sync_verify_run_files_total{result}`, `putio_sync_verify_read_bytes_total`, `putio_sync_verify_run_active`
-- [ ] T006 `Crc32` digest newtype, `crc32_prefix(path, len, on_progress)` and `valid_crc32` (8 hex digits after trim) in `putio-sync-download/src/files.rs`, with tests (known value, prefix + rest equals whole)
+- [X] T006 `Crc32` digest newtype, `crc32_prefix(path, len, on_progress)` and `valid_crc32` (8 hex digits after trim) in `putio-sync-download/src/files.rs`, with tests (known value, prefix + rest equals whole)
 
 ## Phase 3: User Story 1 - Every new download is checked (P1) 🎯 MVP
 
