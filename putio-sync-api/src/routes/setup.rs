@@ -17,7 +17,7 @@ use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{ArrConfig, ArrServer, ArrSettings, Config};
 use putio_sync_core::setup::{
     check_folder, check_preset, in_container, preset_choices, resolve_app_id, suggest_download_dir,
-    suggest_watch_dir, FolderCheck, FolderChoice,
+    suggest_watch_dir, FolderCheck, FolderChoice, APP_ID_HELP, APP_REGISTER_URL,
 };
 use putio_sync_download::{dry_run as run_dry_run, DRY_RUN_LIMIT};
 use serde::{Deserialize, Deserializer};
@@ -67,6 +67,7 @@ pub async fn session(State(state): State<SetupState>) -> Json<Value> {
         "metrics_bind": choices.metrics_bind.clone().unwrap_or_else(|| base.metrics.bind.entries().join(", ")),
         "arr_enabled": arr_enabled,
         "app_id_available": resolve_app_id(base).is_some(),
+        "app_register_url": APP_REGISTER_URL,
         "in_container": in_container(),
         "suggestions": {
             "download_dir": suggest_download_dir(Some(base)),
@@ -83,9 +84,7 @@ pub async fn link_start(State(state): State<SetupState>) -> Result<Json<Value>, 
         resolve_app_id(&session.base)
     };
     let Some(app_id) = app_id else {
-        return Err(ApiError::Conflict(
-            "No Put.io app ID is set, so paste a token instead".into(),
-        ));
+        return Err(ApiError::Conflict(APP_ID_HELP.into()));
     };
     let code = DeviceLink::with_base_url(&state.inner.putio_base_url)
         .request_code(&app_id)

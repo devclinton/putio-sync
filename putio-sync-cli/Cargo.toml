@@ -86,13 +86,13 @@ ctrlc = "3.4"
 # Date/time handling
 chrono = "0.4"
 
-# Glob patterns
-glob = "0.3"
-
 # Filesystem watching
 
 # System information
 sysinfo = { workspace = true }
+
+# Reading the Put.io token without echo
+rpassword = "7.5"
 
 [dev-dependencies]
 tempfile = "3.8"

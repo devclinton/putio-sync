@@ -281,6 +281,25 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- The word "null" showed on the page in History › Verification, Settings ›
+  Tailscale › This machine and the Put.io storage card, and could show in the
+  Settings › Network list, the Radarr/Sonarr setup plan and test result, and
+  the setup wizard's dry run. These parts now leave out what isn't there.
+- A test now covers a **Verify everything** run waiting while the bandwidth
+  schedule pauses downloads, and carrying on when it resumes (feature 034).
+- A hooks test that timed the first run against 2 s failed now and then under
+  a full CI run; it now allows 4 s (feature 027).
+- Without a Put.io app ID, the setup wizard and `putio-sync setup` used to
+  drop the put.io/link option with no word why. They now say the device link
+  is off and how to turn it on (register an app at app.put.io/oauth and set
+  `[putio] app_id` or `PUTIO_SYNC_APP_ID`), and so does the doctor when the
+  sign-in fails. Its sign-in hint now points at `putio-sync setup`, since
+  `putio-sync login` needs an app of your own too.
+- `putio-sync setup` no longer shows the Put.io token as you type or paste it
+  in a terminal. `putio-sync login` no longer writes the token exchange
+  response (which holds the access token) to the debug log or to an error, and
+  a failed request no longer shows the URL carrying the client secret.
+
 - `GET /local/workers` reported each worker's share of the bandwidth limit;
   `total_bandwidth_limit_bps` is now the limit in force (null when unlimited,
   0 while paused) and the per-worker value is null (feature 032).
@@ -313,6 +332,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- The CLI's `--filter` (`list`, `download`, `delete`, `queue add`) now takes
+  the folder-rule pattern language instead of a single glob, so
+  `--filter "*.mkv,*.mp4"` (the README's own example) matches either, case
+  never matters, `-*sample*` leaves files out, and a word without `*` matches
+  anywhere in the name. An unclosed quote or brace now stops the command
+  instead of matching nothing (feature 020).
 - A resumed download is checked by reading back only the part already on disk,
   then hashing the rest as it streams, instead of reading the whole file again
   after the download; `verify.passed` now comes just before `download.finished`.

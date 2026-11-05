@@ -179,6 +179,24 @@ PUTIO_SYNC_PUTIO_TOKEN=... putio-sync setup --download-dir /srv/putio --preset v
 A daemon in setup mode notices the new config within seconds. Exit codes: 0
 written, 1 error, 2 cancelled.
 
+#### Linking with a code (Put.io app ID)
+
+The wizard and `putio-sync setup` can link to Put.io with a code you enter at
+put.io/link instead of a pasted token, but only when they know a Put.io app ID.
+Releases don't carry one yet, so until you set one both say the device link is
+off and ask for a token (from put.io → Settings → API). To turn it on:
+
+1. Sign in at put.io, open **API** from the account menu
+   ([app.put.io/oauth](https://app.put.io/oauth)) and choose **Create App**.
+   Any name, website and callback URL will do; the device link doesn't use
+   the callback.
+2. Copy the app's ID (a number) into `[putio] app_id` in the config, or set
+   `PUTIO_SYNC_APP_ID`. A build can carry one with
+   `PUTIO_SYNC_BUILTIN_APP_ID=<id> cargo build --release`.
+
+`putio-sync login` uses the same kind of app, with its ID, secret and callback
+URL in `PUTIO_CLIENT_ID`, `PUTIO_CLIENT_SECRET` and `PUTIO_REDIRECT_URI`.
+
 ### Authentication
 
 To authenticate with Put.io without the wizard:
@@ -273,7 +291,7 @@ Arguments:
 
 Options:
   -a, --all                 Download all files
-  -f, --filter <PATTERN>    Filter files with glob pattern (e.g., "*.mkv")
+  -f, --filter <PATTERN>    Filter by name pattern, as in folder rules (e.g., "*.mkv,*.mp4")
   -d, --dir <PATH>          Download directory [default: from config]
   -w, --workers <N>         Number of concurrent workers [default: from config]
   --buffer-size <SIZE>      Buffer size for streaming (e.g., 16MB) [default: from config]
@@ -1706,7 +1724,9 @@ that blocked it, recorded under Recently blocked and counted in the `blocked` me
 **Preview patterns** in Settings › Download shows what the typed patterns would do
 across the whole account.
 
-The CLI's `--filter` option of `list` and `delete` still takes a single glob.
+The CLI's `--filter` option (`list`, `download`, `delete`, `queue add`) takes the same
+language, matched against the file name. Text that can't mean what was typed, such as an
+unclosed quote, stops the command.
 
 #### Executable guard
 

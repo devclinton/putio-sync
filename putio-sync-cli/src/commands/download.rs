@@ -271,6 +271,7 @@ async fn run_single_download(
 
     // Apply filter if specified
     if let Some(filter_pattern) = filter {
+        super::check_filter(&filter_pattern)?;
         let file_filter = FileFilter::new().with_name_pattern(filter_pattern);
         files_to_download = file_filter.filter(files_to_download);
     }

@@ -32,9 +32,10 @@ token = "YOUR_OAUTH_TOKEN_HERE"
 # Put.io app (feature 013)
 # ============================================================================
 # The setup wizard and `putio-sync setup` link to Put.io with the device link
-# (enter a code at https://put.io/link) when an app ID is known. Builds carry
-# one; set your own Put.io app's ID here or in PUTIO_SYNC_APP_ID (which wins).
-# Without one, setup asks you to paste a token instead.
+# (enter a code at https://put.io/link) when an app ID is known. Releases don't
+# carry one yet: register an app at https://app.put.io/oauth (account menu →
+# API → Create App) and set its ID here, or in PUTIO_SYNC_APP_ID (this setting
+# wins). Without one, setup says so and asks you to paste a token instead.
 # [putio]
 # app_id = "1234"
 

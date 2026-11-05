@@ -10,7 +10,7 @@ use putio_sync_client::{PutioApiClient, DEFAULT_BASE_URL};
 use putio_sync_core::config::Config;
 use putio_sync_core::setup::{
     check_folder, check_local, check_preset, preset_choices, putio_token, resolve_app_id,
-    suggest_download_dir, FolderWarning, SetupChoices,
+    suggest_download_dir, FolderWarning, SetupChoices, APP_ID_HELP,
 };
 use putio_sync_download::{dry_run, DRY_RUN_LIMIT};
 use std::io::{self, BufRead, IsTerminal, Write};
@@ -89,12 +89,23 @@ impl Prompter for TerminalPrompter {
             .map(|a| if a.is_empty() { default.to_string() } else { a }))
     }
 
+    /// On a terminal the token is read with echo off, so it never shows on screen
     fn token_line(&mut self, prompt: &str) -> Result<Option<String>> {
-        if self.tty {
-            eprint!("{prompt}: ");
-            io::stderr().flush()?;
+        if !self.tty {
+            return self.line();
         }
-        self.line()
+        match rpassword::prompt_password(format!("{prompt} (hidden): ")) {
+            Ok(token) => Ok(Some(token.trim().to_string())),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::UnexpectedEof | io::ErrorKind::Interrupted
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(e).context("could not read the token from the terminal"),
+        }
     }
 }
 
@@ -442,6 +453,7 @@ async fn connect_putio(
             }
             bail!("the link code expired; run setup again");
         }
+        say!(out, "{APP_ID_HELP}");
     }
     let prompt = "Put.io OAuth token (from put.io → Settings → API)";
     loop {

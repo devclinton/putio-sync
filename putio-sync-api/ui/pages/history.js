@@ -7,7 +7,7 @@
 // run is going.
 
 import { controlVerify, get, startVerify, verifyStatus } from "../api.js";
-import { empty, h, toastError } from "../app.js";
+import { empty, fill, h, toastError } from "../app.js";
 import { flagControl, loadFlags } from "../flags.js";
 import { bytes, dateTime, speed, utc } from "../format.js";
 import { controls, methodLabel, progressPercent, resultLabel, stateLabel, summaryLine } from "../verify.js";
@@ -155,7 +155,7 @@ async function loadVerify() {
   try {
     v = await verifyStatus();
   } catch {
-    if (els) els.verify.replaceChildren(h("h2", { text: "Verification" }), h("p", { class: "muted", text: "Verification status is not available." }));
+    if (els) fill(els.verify, h("h2", { text: "Verification" }), h("p", { class: "muted", text: "Verification status is not available." }));
     return;
   }
   if (!els) return;
@@ -179,7 +179,8 @@ function renderVerify(v) {
   const button = (label, show, fn, cls = "btn btn-small") => (show ? h("button", { type: "button", class: cls, onclick: () => verifyAction(fn) }, label) : null);
   const going = s.state !== "idle";
   const pct = progressPercent(s);
-  els.verify.replaceChildren(
+  fill(
+    els.verify,
     h("h2", { text: "Verification" }),
     v.enabled ? null : h("p", { class: "warn-text", text: "New downloads are not checked: download verification is off in Settings › Download." }),
     going

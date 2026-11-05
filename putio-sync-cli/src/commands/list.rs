@@ -158,6 +158,7 @@ fn apply_filters(
     let mut file_filter = FileFilter::new();
 
     if let Some(pattern) = filter {
+        super::check_filter(&pattern)?;
         debug!("Applying name filter: {}", pattern);
         file_filter = file_filter.with_name_pattern(pattern);
     }

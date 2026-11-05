@@ -127,7 +127,7 @@ pub enum Commands {
             short = 'f',
             long = "filter",
             value_name = "PATTERN",
-            help = "Filter files by name pattern (glob)"
+            help = "Filter files by name pattern, as in folder rules (e.g., \"*.mkv,*.mp4 -*sample*\")"
         )]
         filter: Option<String>,
 
@@ -203,12 +203,12 @@ pub enum Commands {
         )]
         all: bool,
 
-        /// Filter files with glob pattern
+        /// Filter files by name pattern
         #[arg(
             short = 'f',
             long = "filter",
             value_name = "PATTERN",
-            help = "Filter files with glob pattern (e.g., \"*.mkv\")"
+            help = "Filter files by name pattern, as in folder rules (e.g., \"*.mkv\")"
         )]
         filter: Option<String>,
 
@@ -327,12 +327,12 @@ pub enum Commands {
         )]
         all: bool,
 
-        /// Filter files with glob pattern
+        /// Filter files by name pattern
         #[arg(
             short = 'f',
             long = "filter",
             value_name = "PATTERN",
-            help = "Filter files with glob pattern (e.g., \"*.txt\")"
+            help = "Filter files by name pattern, as in folder rules (e.g., \"*.txt\")"
         )]
         filter: Option<String>,
 
@@ -535,12 +535,12 @@ pub enum Commands {
         )]
         watch: Vec<PathBuf>,
 
-        /// Filter files for download with glob pattern
+        /// Filter files for download by name pattern
         #[arg(
             short = 'f',
             long = "filter",
             value_name = "PATTERN",
-            help = "Filter files for download with glob pattern (e.g., \"*.mkv\")"
+            help = "Filter files for download by name pattern, as in folder rules (e.g., \"*.mkv\")"
         )]
         filter: Option<String>,
 
@@ -802,7 +802,7 @@ pub enum FilesCommands {
             short = 'f',
             long = "filter",
             value_name = "PATTERN",
-            help = "Filter files by name pattern (glob)"
+            help = "Filter files by name pattern, as in folder rules (e.g., \"*.mkv,*.mp4 -*sample*\")"
         )]
         filter: Option<String>,
 
@@ -878,12 +878,12 @@ pub enum FilesCommands {
         )]
         all: bool,
 
-        /// Filter files with glob pattern
+        /// Filter files by name pattern
         #[arg(
             short = 'f',
             long = "filter",
             value_name = "PATTERN",
-            help = "Filter files with glob pattern (e.g., \"*.txt\")"
+            help = "Filter files by name pattern, as in folder rules (e.g., \"*.txt\")"
         )]
         filter: Option<String>,
 
@@ -1027,12 +1027,12 @@ pub enum QueueCommands {
         )]
         all: bool,
 
-        /// Filter files with glob pattern
+        /// Filter files by name pattern
         #[arg(
             short = 'f',
             long = "filter",
             value_name = "PATTERN",
-            help = "Filter files with glob pattern (e.g., \"*.mkv\")"
+            help = "Filter files by name pattern, as in folder rules (e.g., \"*.mkv\")"
         )]
         filter: Option<String>,
     },

@@ -3,7 +3,7 @@
 //! This module provides client-side filtering and sorting capabilities
 //! for file listings from the Put.io API.
 
-use glob::Pattern;
+use crate::pattern::Pattern;
 use putio_sync_client::FileEntry;
 use std::cmp::Ordering;
 use std::str::FromStr;
@@ -95,8 +95,8 @@ impl FileTypeFilter {
 /// File filter builder
 #[derive(Debug, Clone, Default)]
 pub struct FileFilter {
-    /// Name pattern (glob)
-    name_pattern: Option<String>,
+    /// Name pattern, in the folder-rule language of [`crate::pattern`]
+    name_pattern: Option<Pattern>,
     /// File type filter
     file_type: Option<FileTypeFilter>,
     /// Minimum file size in bytes
@@ -111,9 +111,10 @@ impl FileFilter {
         Self::default()
     }
 
-    /// Set name pattern filter (glob pattern)
+    /// Set name pattern filter, parsed leniently like a folder rule's (feature 020);
+    /// check the text first with [`crate::pattern::check`]
     pub fn with_name_pattern(mut self, pattern: String) -> Self {
-        self.name_pattern = Some(pattern);
+        self.name_pattern = Some(Pattern::parse(&pattern));
         self
     }
 
@@ -138,11 +139,10 @@ impl FileFilter {
     /// Check if a file matches all filters
     pub fn matches(&self, file: &FileEntry) -> bool {
         // Check name pattern
+        // A listing has no path from the root, so the name stands in for it
         if let Some(pattern) = &self.name_pattern {
-            if let Ok(glob_pattern) = Pattern::new(pattern) {
-                if !glob_pattern.matches(&file.name) {
-                    return false;
-                }
+            if !pattern.matches(&file.name, &file.name) {
+                return false;
             }
         }
 
@@ -337,6 +337,20 @@ mod tests {
         let other = create_test_file("document.pdf", 100, "FILE", Some("pdf"));
 
         assert!(filter.matches(&video));
+        assert!(!filter.matches(&other));
+    }
+
+    /// `--filter` takes the folder-rule language: a comma is OR, case never matters
+    #[test]
+    fn test_file_filter_name_pattern_language() {
+        let filter = FileFilter::new().with_name_pattern("*.mkv,*.MP4 -*sample*".to_string());
+        let mkv = create_test_file("Film.mkv", 1000, "VIDEO", Some("mkv"));
+        let mp4 = create_test_file("film.mp4", 1000, "VIDEO", Some("mp4"));
+        let sample = create_test_file("film-sample.mkv", 10, "VIDEO", Some("mkv"));
+        let other = create_test_file("film.avi", 1000, "VIDEO", Some("avi"));
+        assert!(filter.matches(&mkv));
+        assert!(filter.matches(&mp4));
+        assert!(!filter.matches(&sample));
         assert!(!filter.matches(&other));
     }
 

@@ -5,7 +5,7 @@
 // with their files. `storageNotice()` is the Status page's one-line warning.
 
 import { get, post } from "./api.js";
-import { confirm, h, toast } from "./app.js";
+import { confirm, fill, h, toast } from "./app.js";
 import { bytes, dateTime, percent, utc } from "./format.js";
 
 const BASE = "/putio/storage";
@@ -41,7 +41,8 @@ export function storageCard(onFreed = () => {}) {
   function render() {
     const s = summary;
     const free = h("button", { type: "button", class: `btn btn-small${s.low ? " btn-primary" : ""}`, onclick: (ev) => onPlan(ev.currentTarget) }, "Free up space");
-    els.body.replaceChildren(
+    fill(
+      els.body,
       h("p", { class: "big" }, bytes(s.free), h("span", { class: "unit" }, " free")),
       h("p", { class: "muted" }, `${bytes(s.used)} used of ${bytes(s.size)} · ${percent(s.used_percent)} used`),
       h("div", { class: `bar ${tone(s)}` }, h("span", { style: `width:${clamp(s.used_percent)}%` })),

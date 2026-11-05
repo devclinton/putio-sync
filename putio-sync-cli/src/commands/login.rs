@@ -154,6 +154,8 @@ pub async fn execute_login(
         .get(&token_url)
         .send()
         .await
+        // The URL carries the client secret and the code
+        .map_err(|e| e.without_url())
         .context("Failed to send token exchange request")?;
 
     let status = response.status();
@@ -162,10 +164,8 @@ pub async fn execute_login(
         .await
         .context("Failed to read response body")?;
 
-    debug!(
-        "Token exchange response (status {}): {}",
-        status, response_text
-    );
+    // A successful body holds the access token, so only its status is logged
+    debug!("Token exchange response status {}", status);
 
     if !status.is_success() {
         tracing::error!(
@@ -180,11 +180,8 @@ pub async fn execute_login(
         ));
     }
 
-    let token_response: PutioTokenResponse =
-        serde_json::from_str(&response_text).context(format!(
-            "Failed to parse token response. Response was: {}",
-            response_text
-        ))?;
+    let token_response: PutioTokenResponse = serde_json::from_str(&response_text)
+        .map_err(|_| anyhow!("Failed to parse the token response from Put.io"))?;
 
     let access_token = token_response.access_token;
 
@@ -240,10 +237,7 @@ pub async fn execute_login(
         println!("Your access token is:");
         println!("{}", access_token);
         println!();
-        println!("To save the token, run:");
-        println!("  putio-sync login --token {}", &access_token[..20]);
-        println!("Or re-run with --save flag:");
-        println!("  putio-sync get-token --save");
+        println!("To save it, run `putio-sync login` without --no-save.");
     }
 
     // Shutdown server

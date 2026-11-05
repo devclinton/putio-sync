@@ -13,8 +13,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// The Put.io app ID built into this binary, set at build time with
-/// `PUTIO_SYNC_BUILTIN_APP_ID`. Without one, the wizard offers pasting a token only.
+/// `PUTIO_SYNC_BUILTIN_APP_ID`. No release sets one yet, so without `[putio] app_id`
+/// or `PUTIO_SYNC_APP_ID` the wizard offers pasting a token only.
 pub const BUILTIN_APP_ID: Option<&str> = option_env!("PUTIO_SYNC_BUILTIN_APP_ID");
+
+/// Where to register a Put.io app, whose ID turns on the device link
+pub const APP_REGISTER_URL: &str = "https://app.put.io/oauth";
+
+/// Why the device link is off and how to turn it on, for the wizards and the doctor
+pub const APP_ID_HELP: &str = "Linking with a code at put.io/link needs a Put.io app ID, and none is set. Register an app at https://app.put.io/oauth (account menu → API → Create App; any website and callback URL will do), then set its ID as `[putio] app_id` in the config or in PUTIO_SYNC_APP_ID. Until then, paste a token from put.io → Settings → API.";
 
 /// Free space below this always warns (10 GiB)
 pub const LOW_SPACE_BYTES: u64 = 10 * 1024 * 1024 * 1024;

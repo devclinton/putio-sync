@@ -199,8 +199,13 @@ async fn device_link_without_an_app_id_is_409() {
         return;
     }
     let s = setup();
-    let (status, _) = s.gated(Method::POST, "/setup/putio/link", None).await;
+    let (status, body) = s.gated(Method::POST, "/setup/putio/link", None).await;
     assert_eq!(status, StatusCode::CONFLICT);
+    // The refusal says how to get an app ID
+    assert!(
+        body.to_string().contains("https://app.put.io/oauth"),
+        "{body}"
+    );
 }
 
 #[tokio::test]

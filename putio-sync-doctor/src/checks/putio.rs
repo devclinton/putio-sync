@@ -4,6 +4,8 @@ use super::{age, bytes, count, verb, Ctx, STALE_AGE};
 use crate::report::{Finding, FixId, Item, Status};
 use putio_sync_client::{ClientError, Transfer};
 use putio_sync_core::cleanup::{CleanupError, CleanupTrigger};
+use putio_sync_core::config::Config;
+use putio_sync_core::setup::{resolve_app_id, APP_ID_HELP};
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
@@ -15,7 +17,15 @@ const STORAGE_PROBLEM_FREE: f64 = 2.0;
 const DUPLICATE_MIN_SIZE: i64 = 1024 * 1024;
 
 const SIGN_IN_HINT: &str =
-    "Sign in again with `putio-sync login`, or put a new token in the config file.";
+    "Sign in again with `putio-sync setup`, or put a new token in the config file.";
+
+/// The sign-in hint, plus how to turn on the device link when no app ID is set
+fn sign_in_hint(config: &Config) -> String {
+    match resolve_app_id(config) {
+        Some(_) => SIGN_IN_HINT.to_string(),
+        None => format!("{SIGN_IN_HINT} {APP_ID_HELP}"),
+    }
+}
 
 pub(crate) fn is_errored(transfer: &Transfer) -> bool {
     matches!(transfer.status.as_str(), "ERROR" | "FAILED")
@@ -26,13 +36,14 @@ pub(crate) async fn auth(ctx: &Ctx) -> Finding {
     match &probe.result {
         Ok(info) => Finding::ok(format!("Signed in as {}.", info.username)),
         Err(ClientError::AuthError(_)) => {
-            Finding::new(Status::Problem, "No Put.io token is configured.").suggest(SIGN_IN_HINT)
+            Finding::new(Status::Problem, "No Put.io token is configured.")
+                .suggest(sign_in_hint(&ctx.config))
         }
         Err(_) if probe.unauthorized() => Finding::new(
             Status::Problem,
             "Put.io rejected the token; it may have expired or been revoked.",
         )
-        .suggest(SIGN_IN_HINT),
+        .suggest(sign_in_hint(&ctx.config)),
         Err(_) if probe.rate_limited() => Finding::skipped(
             "Put.io is limiting requests right now, so the sign-in could not be checked.",
         ),
@@ -384,7 +395,21 @@ mod tests {
             .await;
         let f = auth(&ctx(&server.url(), dir.path(), None)).await;
         assert_eq!(f.status, Status::Problem);
-        assert!(f.suggestion.unwrap().contains("login"));
+        assert!(f.suggestion.unwrap().contains("putio-sync setup"));
+    }
+
+    /// Without an app ID the hint says how to turn on the device link (feature 013)
+    #[test]
+    fn sign_in_hint_explains_a_missing_app_id() {
+        let mut config = Config::default();
+        config.putio.app_id = Some("4242".to_string());
+        assert_eq!(sign_in_hint(&config), SIGN_IN_HINT);
+        if std::env::var("PUTIO_SYNC_APP_ID").is_err()
+            && putio_sync_core::setup::BUILTIN_APP_ID.is_none()
+        {
+            config.putio.app_id = None;
+            assert!(sign_in_hint(&config).contains("https://app.put.io/oauth"));
+        }
     }
 
     async fn storage_at(used: i64) -> Status {

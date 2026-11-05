@@ -71,6 +71,13 @@ export function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+// Replace an element's children like `h` adds them: null and false are skipped and
+// arrays are flattened. The DOM's own `replaceChildren` shows null as the text "null".
+export function fill(el, ...children) {
+  el.replaceChildren();
+  append(el, children);
+}
+
 function append(el, children) {
   for (const child of children) {
     if (child == null || child === false) continue;

@@ -4,7 +4,7 @@
 // where the UI will be.
 
 import { get, post } from "./api.js";
-import { confirm, h } from "./app.js";
+import { confirm, fill, h } from "./app.js";
 
 const reason = (e) => (e && (e.error || e.message)) || String(e);
 
@@ -28,7 +28,8 @@ export function networkExtra() {
     if (l.api.env_override) notes.push("PUTIO_SYNC_API_BIND is set and takes the place of the API list.");
     if (l.api.tailnet_only) notes.push("Tailnet only is on (Tailscale settings): the API listens on the tailnet address at these ports.");
     if (l.metrics.env_override) notes.push("PUTIO_SYNC_METRICS_BIND is set and takes the place of the metrics list.");
-    box.replaceChildren(
+    fill(
+      box,
       h("h3", { text: "Listening now" }),
       h("p", { class: "muted small", text: l.api.listening.length ? `API: ${l.api.listening.join(", ")}` : "API: no address held by this process" }),
       list(l.api.entries),

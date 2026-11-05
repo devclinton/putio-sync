@@ -40,7 +40,7 @@ import { tailscaleBeforeSave, tailscaleExtra } from "../tailscale.js";
 import { describeEntry, entryFromRow, move, rowFromEntry } from "../bandwidth.js";
 import { blankHook, eventChoices, fromSettings, runLabel, targetLabel, toSettings } from "../hooks.js";
 import * as plugins from "../plugins.js";
-import { confirm, h, toast } from "../app.js";
+import { confirm, fill, h, toast } from "../app.js";
 import { relative } from "../format.js";
 import { previewView, settingsCards } from "../rules.js";
 
@@ -1398,7 +1398,8 @@ function setupView(reload, mine) {
         const notes = [];
         if (plan.download_client.will_enable) notes.push("The download client will be turned on.");
         if (plan.download_client.will_generate_password) notes.push("A password will be generated for it.");
-        out.replaceChildren(
+        fill(
+          out,
           kv([
             ["App", `${plan.name} ${plan.version}`],
             ["Address", h("span", { class: "name", text: plan.url })],
@@ -1671,7 +1672,8 @@ function applicationRow(s, list, reload) {
       const r = await runArrSetup({ target: { application: s.index } });
       if (!row.isConnected) return;
       if (r.outcome === "failed") {
-        result.replaceChildren(
+        fill(
+          result,
           h("p", { class: "error-text", text: `${arrReason(r.reason)}${r.detail ? `: ${r.detail}` : ""}` }),
           arrNext(r.reason) ? h("p", { class: "muted", text: arrNext(r.reason) }) : null,
         );
