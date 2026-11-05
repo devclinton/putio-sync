@@ -376,6 +376,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/events", routes::system::hooks::events_router())
         .nest("/plugins", routes::system::plugins::router())
         .nest("/bandwidth", routes::system::bandwidth::router())
+        .nest("/verify", routes::system::verify::router())
         .nest("/arr", routes::arr::router())
         .route("/active", axum::routing::get(routes::active::get_active))
         .nest("/releases", routes::releases::router())

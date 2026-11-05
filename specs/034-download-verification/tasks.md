@@ -40,7 +40,7 @@ against local mocks.
 - [X] T012 [US2] `VerifyRunner` in `putio-sync-download/src/verify.rs` per research R5: scope everything or paths, report only, one walk plus `get_file_details` fallback, result classes, read limiter (`verify_read_limit_mb_per_sec` × 1 000 000 B/s), waits while the shared limiter `is_paused()` and `verify_follow_bandwidth_pause`, pause/resume/stop via `watch`, run row updates at most once a second, events with `trigger = "run"` (no `verify.passed`), metrics; owned by `DownloadManager` with `verify()` accessor; startup marks stale `running` rows `stopped`
 - [X] T013 [US2] Re-queue a mismatch in `putio-sync-download/src/verify.rs`: queue row with the relative folder from `local_path`, `save_as` when the saved name differs, `redownload = 1`
 - [X] T014 [US2] Tests in `putio-sync-download/tests/verify_run.rs`: the three classes, report only, not on Put.io, busy, pause holds reads, stop ends `stopped`, a second start is refused, paths scope, read rate within 10% of a small limit (SC-003)
-- [ ] T015 [US2] Routes `GET /verify`, `POST /verify`, `POST /verify/pause|resume|stop` per `contracts/api.md` in `putio-sync-api/src/routes/system/verify.rs`, registered in the router and the API route list; setup mode 503; API tests
+- [X] T015 [US2] Routes `GET /verify`, `POST /verify`, `POST /verify/pause|resume|stop` per `contracts/api.md` in `putio-sync-api/src/routes/system/verify.rs`, registered in the router and the API route list; setup mode 503; API tests
 
 ## Phase 5: User Story 3 - See what verification found (P2)
 
