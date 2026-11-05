@@ -1295,6 +1295,34 @@ async fn update_plugins_settings(
     }))
 }
 
+/// Save one plugin's settings (a plugin action saved values, 031): replaces the entry of
+/// the same name or adds it, checks every plugin as a Settings save does, then applies
+pub(crate) async fn save_plugin(
+    state: &AppState,
+    settings: putio_sync_core::plugins::PluginSettings,
+) -> Result<(), ApiError> {
+    update(state, plugins_view, |config| {
+        let mut plugins = config.plugins.clone();
+        match plugins.iter_mut().find(|p| p.name == settings.name) {
+            Some(entry) => {
+                entry.config = settings.config;
+                entry.secrets = settings.secrets;
+            }
+            None => plugins.push(settings),
+        }
+        let dir = plugins_dir(state, config);
+        config.plugins = state
+            .plugins
+            .check_at(dir.as_deref(), &plugins)
+            .map_err(ApiError::BadRequest)?;
+        Ok(())
+    })
+    .await?;
+    let config = state.config.read().await;
+    state.plugins.configure(config.plugins.clone());
+    Ok(())
+}
+
 /// The folder a config's plugins come from
 fn plugins_dir(state: &AppState, config: &Config) -> Option<PathBuf> {
     putio_sync_core::plugins::dir_for(
