@@ -1,7 +1,9 @@
-//! Local checks: the download folder, its disk, the database and the config file
+//! Local checks: the download folder, its disk, the database, the config file and the
+//! log level
 
 use super::{bytes, count, Ctx};
 use crate::report::{Finding, Item, Status};
+use putio_sync_core::logging::{self, LevelStatus};
 use putio_sync_core::{assistant, config_lint};
 use putio_sync_telemetry::gauges::disk_usage;
 
@@ -176,10 +178,136 @@ fn lint_items(text: &str) -> Result<Vec<Item>, Finding> {
     }
 }
 
+/// Warn when anything logs at debug or trace (feature 047)
+pub(crate) async fn log_level(ctx: &Ctx) -> Finding {
+    let mut status = logging::level_status();
+    // A process that didn't set up logging itself (`putio-sync doctor`): read the config
+    if !status.available && status.base.is_empty() {
+        let (base, source) = match std::env::var("RUST_LOG") {
+            Ok(v) if !v.trim().is_empty() => (v, "env"),
+            _ => {
+                let l = &ctx.config.logging;
+                let items = std::iter::once(l.level.clone()).chain(l.module_filters.clone());
+                (items.collect::<Vec<_>>().join(","), "config")
+            }
+        };
+        status.verbose = logging::is_verbose(&base);
+        status.effective = base.clone();
+        status.base = base;
+        status.source = source;
+    }
+    level_finding(&status)
+}
+
+fn level_finding(s: &LevelStatus) -> Finding {
+    if !s.verbose {
+        return Finding::ok(format!("Logging at {}.", s.effective));
+    }
+    let loud: Vec<&str> = s
+        .effective
+        .split(',')
+        .map(str::trim)
+        .filter(|i| logging::is_verbose(i))
+        .collect();
+    let mut summary = format!(
+        "{} is on: {}.",
+        if loud.iter().any(|i| i.ends_with("trace")) {
+            "Trace logging"
+        } else {
+            "Debug logging"
+        },
+        loud.join(", ")
+    );
+    let page: Vec<String> = s
+        .global
+        .iter()
+        .chain(&s.modules)
+        .filter(|o| logging::is_verbose(&o.level))
+        .map(|o| {
+            let what = o.target.as_deref().unwrap_or("everything");
+            match &o.until {
+                Some(until) => format!("{what} until {until}"),
+                None => format!("{what} until restart"),
+            }
+        })
+        .collect();
+    if page.is_empty() {
+        let from = if s.source == "env" {
+            "RUST_LOG"
+        } else {
+            "the config file"
+        };
+        summary.push_str(&format!(" Set in {from}."));
+    } else {
+        summary.push_str(&format!(" Set on the Logs page: {}.", page.join(", ")));
+    }
+    Finding::new(Status::Warning, summary).suggest(
+        "Debug and trace slow the daemon and fill the log file. Revert on the Logs page, or lower the level in Settings › Advanced › Logging.",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_support::*;
     use super::*;
+
+    fn level(effective: &str, modules: Vec<logging::OverrideStatus>) -> LevelStatus {
+        LevelStatus {
+            base: "info".into(),
+            source: "config",
+            effective: effective.into(),
+            global: None,
+            modules,
+            verbose: logging::is_verbose(effective),
+            available: true,
+        }
+    }
+
+    #[test]
+    fn log_level_warns_on_debug_and_trace() {
+        let ok = level_finding(&level("info", vec![]));
+        assert_eq!(ok.status, Status::Ok);
+
+        let config = level_finding(&level("info,putio_sync_hooks=debug", vec![]));
+        assert_eq!(config.status, Status::Warning);
+        assert!(
+            config.summary.contains("putio_sync_hooks=debug"),
+            "{}",
+            config.summary
+        );
+        assert!(config.summary.contains("config file"), "{}", config.summary);
+
+        let page = level_finding(&level(
+            "info,putio_sync_download=trace",
+            vec![logging::OverrideStatus {
+                target: Some("putio_sync_download".into()),
+                level: "trace".into(),
+                until: Some("2026-11-05T10:30:00Z".into()),
+            }],
+        ));
+        assert_eq!(page.status, Status::Warning);
+        assert!(
+            page.summary.starts_with("Trace logging"),
+            "{}",
+            page.summary
+        );
+        assert!(
+            page.summary
+                .contains("Logs page: putio_sync_download until 2026-11-05T10:30:00Z"),
+            "{}",
+            page.summary
+        );
+    }
+
+    #[tokio::test]
+    async fn the_log_level_check_reads_the_config_without_logging() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = ctx("http://127.0.0.1:9", dir.path(), None);
+        if std::env::var_os("RUST_LOG").is_none() {
+            c.config.logging.level = "debug".into();
+            assert_eq!(log_level(&c).await.status, Status::Warning);
+        }
+    }
 
     #[tokio::test]
     async fn download_dir_missing_is_a_problem() {

@@ -24,6 +24,7 @@ pub mod download;
 pub mod gauges;
 pub mod hooks;
 pub mod labels;
+pub mod logs;
 pub mod pipeline;
 pub mod plugins;
 pub mod precheck;
@@ -148,6 +149,8 @@ pub struct Telemetry {
     pub(crate) plugin_duration: HistogramVec,
     pub(crate) plugin_dropped: IntCounterVec,
     pub(crate) plugin_counter: IntCounterVec,
+    // Feature 047
+    pub(crate) log_lines_dropped: IntCounterVec,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -643,6 +646,14 @@ impl Telemetry {
                 &["hook"],
             )
             .unwrap(),
+            log_lines_dropped: IntCounterVec::new(
+                opts(
+                    "log_lines_dropped_total",
+                    "Log lines the Logs page lost: evicted from the full buffer, or skipped by a live tail that fell behind.",
+                ),
+                &["reason"],
+            )
+            .unwrap(),
             plugin_runs: IntCounterVec::new(
                 opts(
                     "plugin_runs_total",
@@ -789,6 +800,7 @@ impl Telemetry {
             Box::new(self.plugin_duration.clone()),
             Box::new(self.plugin_dropped.clone()),
             Box::new(self.plugin_counter.clone()),
+            Box::new(self.log_lines_dropped.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
             Box::new(self.disk_total.clone()),
@@ -846,6 +858,9 @@ impl Telemetry {
         }
         for t in hooks::EVENT_TYPES {
             self.events.with_label_values(&[t]);
+        }
+        for r in logs::DROP_REASONS {
+            self.log_lines_dropped.with_label_values(&[r]);
         }
         for m in ArrMethod::ALL {
             for o in ArrOutcome::ALL {

@@ -43,10 +43,11 @@ const LOGGING = {
     ["console_format", "Console format", "", ["Compact", "Pretty", "Json"]],
     ["file_path", "Log file", "", "s"],
     ["module_filters", "Module filters", "One per line, e.g. putio_sync_download=debug", "l"],
+    ["buffer_lines", "Lines kept for the Logs page", "100 to 50,000", "n", 100, 50000],
     ["console_enabled", "Console", "Log to the console", "b"],
     ["file_enabled", "File", "Log to the file", "b"],
   ],
-  advanced: ["console_format", "module_filters"],
+  advanced: ["console_format", "module_filters", "buffer_lines"],
 };
 
 export const networkCards = (ctx) => [groupCard(NETWORK, ctx), groupCard(TAILSCALE, ctx)];

@@ -137,6 +137,7 @@ ids!(
         Listen => "listen",
         Hooks => "hooks",
         Plugins => "plugins",
+        LogLevel => "log_level",
     }
 );
 
@@ -149,7 +150,7 @@ impl CheckId {
             DeadQueueRows | FailingDownloads | OrphanPartials | Bandwidth | Verification => {
                 Area::Sync
             }
-            DownloadDir | DiskSpace | Database | Config | Hooks | Plugins => Area::Local,
+            DownloadDir | DiskSpace | Database | Config | Hooks | Plugins | LogLevel => Area::Local,
             Reachability | RateLimit | ClockSkew | Tailscale | Listen => Area::Connectivity,
         }
     }
@@ -180,6 +181,7 @@ impl CheckId {
             Listen => "Listening addresses",
             Hooks => "Event hooks",
             Plugins => "Plugins",
+            LogLevel => "Log level",
         }
     }
 
@@ -566,7 +568,7 @@ mod tests {
                 format!("\"{}\"", fix.as_str())
             );
         }
-        assert_eq!(CheckId::ALL.len(), 23);
+        assert_eq!(CheckId::ALL.len(), 24);
         assert!("nope".parse::<FixId>().is_err());
     }
 

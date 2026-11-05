@@ -858,3 +858,12 @@ button.brow:hover { background: var(--surface-2); }
 .setup-review dd { margin: 0; overflow-wrap: anywhere; }
 .setup-samples { margin: 0 0 12px; padding-left: 18px; font-size: var(--fs-sm); }
 .setup-samples small { margin-left: 8px; color: var(--muted); }
+
+/* Logs page (feature 047) */
+.log { max-height: 65vh; margin: 0; padding: 0; overflow: auto; list-style: none; font-family: var(--mono); font-size: var(--fs-sm); }
+.log-line { display: flex; flex-wrap: wrap; gap: 0 10px; padding: 3px 0; border-bottom: 1px solid var(--surface-2); }
+.log-line .badge { padding: 0 6px; }
+.log-msg { flex: 1 1 24em; min-width: 0; overflow-wrap: anywhere; }
+.log-skip { padding: 6px 0; color: var(--warn); }
+.log-overrides { margin: 10px 0; padding: 0; list-style: none; }
+.log-overrides li { display: flex; align-items: center; gap: 8px; }

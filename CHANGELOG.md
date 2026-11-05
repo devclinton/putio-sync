@@ -14,6 +14,16 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- A **Logs** page in the web UI shows the daemon's recent log lines, kept in memory
+  (`[logging] buffer_lines`, 2,000 by default, also under **Settings › Advanced › Logging**).
+  Filter by level, module and text; follow new lines live with Pause and Resume; copy
+  or download what is shown; and follow a `file_id`, transfer, hook, plugin or verify
+  run to its page. The page can also turn up the level, for everything or one module,
+  for 30 minutes or until restart, without touching the config file. Tokens, the
+  Put.io app secret, webhook and hook URLs, hook headers, plugin secrets and
+  `Authorization` values are masked before a line is kept. The doctor warns while
+  debug or trace is on, and `putio_sync_log_lines_dropped_total` counts lines that
+  left memory unseen.
 - The Put.io app ID that turns on linking with a code at put.io/link can be
   entered in the web wizard's **Connect Put.io** step and in a new
   **Settings › Put.io › Put.io** card, with the register link beside it. Saving it turns

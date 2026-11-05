@@ -110,6 +110,9 @@ async fn main() {
         };
     }
 
+    // Secrets to mask in the lines kept for the web UI's Logs page (feature 047)
+    putio_sync_core::log_redact::set_secrets(config.secret_values());
+
     // Initialize logging system. The doctor's stdout is its report, so its logs go to stderr.
     if matches!(
         args.command,

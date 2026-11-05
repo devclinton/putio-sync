@@ -42,7 +42,7 @@ export const SECTIONS = [
   {
     id: "advanced",
     title: "Advanced",
-    help: "Logging, and saving or restoring every setting as one file.",
+    help: "Logging and how many lines the Logs page keeps, and saving or restoring every setting as one file.",
     cards: [["logging", "Logging"], ["backup", "Backup and restore"]],
   },
 ];

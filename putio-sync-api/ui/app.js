@@ -13,11 +13,12 @@ import * as history from "./pages/history.js";
 import * as stats from "./pages/stats.js";
 import * as settings from "./pages/settings.js";
 import * as doctor from "./pages/doctor.js";
+import * as logs from "./pages/logs.js";
 import * as login from "./pages/login.js";
 import * as setup from "./pages/setup.js";
 import * as news from "./pages/news.js";
 
-const PAGES = { status, active, queue, putio, files, transfers, history, stats, doctor, settings, login, setup, news };
+const PAGES = { status, active, queue, putio, files, transfers, history, stats, doctor, logs, settings, login, setup, news };
 const TITLES = {
   status: "Status",
   active: "Active",
@@ -28,6 +29,7 @@ const TITLES = {
   history: "History",
   stats: "Stats",
   doctor: "Doctor",
+  logs: "Logs",
   settings: "Settings",
   login: "Sign in",
   setup: "Set up",

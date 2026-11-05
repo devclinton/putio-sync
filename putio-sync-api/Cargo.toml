@@ -35,6 +35,9 @@ tokio = { workspace = true }
 # IPV6_V6ONLY on listeners, so `[::]` and `0.0.0.0` can share a port (feature 037)
 socket2 = { version = "0.6", features = ["all"] }
 
+# The Stream behind the Logs page's live tail (SSE, feature 047)
+futures-util = "0.3"
+
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -49,6 +49,12 @@ pub mod listen;
 /// Structured logging infrastructure
 pub mod logging;
 
+/// Masking secrets in captured log lines (feature 047)
+pub mod log_redact;
+
+/// Recent log lines kept for the web UI's Logs page (feature 047)
+pub mod log_capture;
+
 /// Notification system for download events
 pub mod notification;
 

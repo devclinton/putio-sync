@@ -284,6 +284,10 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
                 "module_filters",
                 "Per-module log levels, such as putio_sync_client=debug",
             ),
+            (
+                "buffer_lines",
+                "How many recent lines the Logs page keeps in memory",
+            ),
         ],
     ),
     (
@@ -472,6 +476,7 @@ async fn import_settings(
                 .map_err(|e| ApiError::InternalError(format!("Failed to persist config: {}", e)))?;
         }
         state.doctor.configure(&candidate);
+        putio_sync_core::log_redact::set_secrets(candidate.secret_values());
         state.cleanup.configure(&candidate);
         state.storage.configure(&candidate);
         state.hooks.configure(candidate.hooks.clone());
