@@ -92,19 +92,27 @@ fn runs_of(plugins: &PluginsService, name: &str, event: &str) -> usize {
 fn every_bundled_plugin_loads() {
     let found = discover(None);
     let names: Vec<&str> = found.iter().map(|f| f.name.as_str()).collect();
-    assert_eq!(names, vec!["discord", "ntfy", "pushover", "telegram"]);
+    assert_eq!(
+        names,
+        vec!["discord", "emby", "jellyfin", "ntfy", "plex", "pushover", "telegram"]
+    );
     for f in &found {
         assert_eq!(f.source, Source::Bundled);
         let m = f
             .loadable()
             .unwrap_or_else(|| panic!("{}: {:?}", f.name, f.error));
-        assert!(f.script.contains("notifier.new"), "{}", f.name);
-        assert!(m.permissions.http.any() && !m.permissions.store);
+        let media = ["emby", "jellyfin", "plex"].contains(&f.name.as_str());
+        let shared = if media { "media.new" } else { "notifier.new" };
+        assert!(f.script.contains(shared), "{}", f.name);
+        assert!(m.permissions.http.any());
+        assert_eq!(m.permissions.store, media, "{}", f.name);
     }
     let disabled = PluginsService::new(PluginsOptions::default()).status();
     assert!(disabled.iter().all(|p| p.state == PluginState::Disabled));
     let ntfy = disabled.iter().find(|p| p.name == "ntfy").unwrap();
     assert_eq!(ntfy.hosts_needed, vec!["ntfy.sh"]);
+    let plex = disabled.iter().find(|p| p.name == "plex").unwrap();
+    assert_eq!(plex.hosts_needed, vec!["plex.tv"]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -899,6 +899,14 @@ async fn update_download_settings(
     }
 
     let mut notes = Vec::new();
+    if changed.iter().any(|c| c == "target_directory") {
+        // Plugins see the folder as putio.download_dir (031); rebuild them with it
+        let config = state.config.read().await;
+        state
+            .plugins
+            .set_download_dir(Some(config.download.target_directory.clone()));
+        state.plugins.configure(config.plugins.clone());
+    }
     if take(&mut changed, "target_directory") {
         notes.push(
             "New downloads go to the new target_directory now; the queue database and disk figures stay on the startup folder until a restart."
@@ -1285,6 +1293,34 @@ async fn update_plugins_settings(
     Ok(Json(SuccessResponse {
         message: saved_message("Plugins", &changed, live, when, &[]),
     }))
+}
+
+/// Save one plugin's settings (a plugin action saved values, 031): replaces the entry of
+/// the same name or adds it, checks every plugin as a Settings save does, then applies
+pub(crate) async fn save_plugin(
+    state: &AppState,
+    settings: putio_sync_core::plugins::PluginSettings,
+) -> Result<(), ApiError> {
+    update(state, plugins_view, |config| {
+        let mut plugins = config.plugins.clone();
+        match plugins.iter_mut().find(|p| p.name == settings.name) {
+            Some(entry) => {
+                entry.config = settings.config;
+                entry.secrets = settings.secrets;
+            }
+            None => plugins.push(settings),
+        }
+        let dir = plugins_dir(state, config);
+        config.plugins = state
+            .plugins
+            .check_at(dir.as_deref(), &plugins)
+            .map_err(ApiError::BadRequest)?;
+        Ok(())
+    })
+    .await?;
+    let config = state.config.read().await;
+    state.plugins.configure(config.plugins.clone());
+    Ok(())
 }
 
 /// The folder a config's plugins come from

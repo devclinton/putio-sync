@@ -1,25 +1,30 @@
 //! The plugins service: finds plugins, keeps one worker per running plugin, feeds them
-//! events from the bus and a tick every 60 s, and answers the API (status, test, reload).
+//! events from the bus and their ticks, and answers the API (status, test, reload, and
+//! since 031 settings actions and health checks).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use putio_sync_core::config::Config;
 use putio_sync_core::events::{self, Event, EventType, Payload, PluginTest};
 use putio_sync_core::plugins::{dir_for, PluginSettings};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::oneshot;
 
+use crate::action::{self, ActionResult, HealthItem};
 use crate::discover::{discover, Found};
 use crate::host::{system_clock, Clock};
-use crate::manifest::{ConfigField, Permissions};
-use crate::worker::{Env, History, Job, PluginRun, Slot, Spec};
+use crate::manifest::{Action, ConfigField, Permissions};
+use crate::worker::{CallReply, Env, History, Job, PluginRun, RunResult, Slot, Spec};
 
-/// How often `on_tick` runs
+/// How often `on_tick` runs when the manifest sets no `tick_seconds`
 pub const TICK: Duration = Duration::from_secs(60);
+/// How often the ticker looks for plugins whose tick is due
+pub const BASE_TICK: Duration = Duration::from_secs(5);
 /// The message in a test event
 pub const TEST_MESSAGE: &str = "Test event from putio-sync";
 
@@ -62,6 +67,8 @@ pub struct PluginStatus {
     pub permissions: Permissions,
     /// Its settings form
     pub config_fields: Vec<ConfigField>,
+    /// Its settings buttons, hidden ones included (031)
+    pub actions: Vec<Action>,
     /// The hosts it would call with the current settings
     pub hosts_needed: Vec<String>,
     /// The hosts approved in its settings
@@ -98,6 +105,56 @@ impl std::fmt::Display for TestError {
     }
 }
 
+/// Why an action or health check could not give an answer
+#[derive(Debug, Clone, PartialEq)]
+pub enum CallError {
+    /// No plugin of that name
+    NotFound,
+    /// The plugin has no such action
+    NoAction,
+    /// An action or health check of this plugin is running
+    Busy,
+    /// It cannot load, or a value is wrong; the error says why
+    Broken(String),
+    /// The function failed; the run says why
+    Failed(Box<PluginRun>),
+    /// It returned something the host refuses
+    Invalid(String),
+    /// The worker went away
+    Unavailable,
+}
+
+impl std::fmt::Display for CallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CallError::NotFound => write!(f, "no such plugin"),
+            CallError::NoAction => write!(f, "no such action"),
+            CallError::Busy => write!(f, "an action or check of this plugin is running"),
+            CallError::Broken(e) | CallError::Invalid(e) => write!(f, "{}", e),
+            CallError::Failed(run) => write!(
+                f,
+                "{}",
+                run.error
+                    .clone()
+                    .unwrap_or_else(|| run.result.as_str().to_string())
+            ),
+            CallError::Unavailable => write!(f, "the plugin stopped during the call"),
+        }
+    }
+}
+
+/// What an action gave back
+#[derive(Debug, Clone)]
+pub struct ActionAnswer {
+    /// The checked result, secrets replaced
+    pub result: ActionResult,
+    /// The run, logs included
+    pub run: PluginRun,
+    /// The plugin's settings with the saved values, already checked; `None` when
+    /// nothing was saved
+    pub settings: Option<PluginSettings>,
+}
+
 /// What the service starts from
 #[derive(Clone, Default)]
 pub struct PluginsOptions {
@@ -109,6 +166,8 @@ pub struct PluginsOptions {
     pub settings: Vec<PluginSettings>,
     /// `putio.time.now()`; the system clock when `None`
     pub clock: Option<Clock>,
+    /// `putio.download_dir`
+    pub download_dir: Option<PathBuf>,
 }
 
 struct State {
@@ -124,6 +183,22 @@ struct Inner {
     data_dir: Option<PathBuf>,
     clock: Clock,
     history: History,
+    stores: crate::worker::Stores,
+    counters: crate::worker::CounterNames,
+    download_dir: crate::worker::DownloadDir,
+    busy: Mutex<HashSet<String>>,
+}
+
+/// Holds a plugin's place in the busy set until dropped
+struct BusyGuard<'a> {
+    inner: &'a Inner,
+    name: String,
+}
+
+impl Drop for BusyGuard<'_> {
+    fn drop(&mut self) {
+        self.inner.busy.lock().unwrap().remove(&self.name);
+    }
 }
 
 impl Drop for Inner {
@@ -211,6 +286,10 @@ impl PluginsService {
                 data_dir: options.data_dir,
                 clock: options.clock.unwrap_or_else(system_clock),
                 history: History::default(),
+                stores: Default::default(),
+                counters: Default::default(),
+                download_dir: Arc::new(Mutex::new(options.download_dir)),
+                busy: Mutex::new(HashSet::new()),
             }),
         }
     }
@@ -227,6 +306,9 @@ impl PluginsService {
             handle,
             clock: self.inner.clock.clone(),
             history: self.inner.history.clone(),
+            stores: self.inner.stores.clone(),
+            counters: self.inner.counters.clone(),
+            download_dir: self.inner.download_dir.clone(),
         }
     }
 
@@ -263,24 +345,40 @@ impl PluginsService {
         });
         let weak: Weak<Inner> = Arc::downgrade(&self.inner);
         handle.spawn(async move {
-            let mut every = tokio::time::interval(TICK);
+            let mut every = tokio::time::interval(BASE_TICK);
             every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             every.tick().await;
             loop {
                 every.tick().await;
                 let Some(inner) = weak.upgrade() else { break };
-                PluginsService { inner }.tick();
+                PluginsService { inner }.tick_due();
             }
         });
     }
 
-    /// Queue `on_tick` for each running plugin that has one (the ticker calls this
-    /// every [`TICK`])
+    /// Queue `on_tick` for each running plugin that has one
     pub fn tick(&self) {
         let state = self.inner.state.lock().unwrap();
         for slot in state.slots.values().filter(|s| s.has_tick()) {
             slot.push(Job::Tick);
         }
+    }
+
+    /// Queue `on_tick` for each running plugin whose `tick_seconds` have passed (the
+    /// ticker calls this every [`BASE_TICK`])
+    pub fn tick_due(&self) {
+        let now = Instant::now();
+        let state = self.inner.state.lock().unwrap();
+        for slot in state.slots.values().filter(|s| s.has_tick()) {
+            if slot.tick_due(now) {
+                slot.push(Job::Tick);
+            }
+        }
+    }
+
+    /// Set `putio.download_dir`; running plugins see it after their next rebuild
+    pub fn set_download_dir(&self, dir: Option<PathBuf>) {
+        *self.inner.download_dir.lock().unwrap() = dir;
     }
 
     /// Use new settings now; running plugins rebuild their state
@@ -341,6 +439,7 @@ impl PluginsService {
                     events: manifest.map(|m| m.events.clone()).unwrap_or_default(),
                     permissions: manifest.map(|m| m.permissions.clone()).unwrap_or_default(),
                     config_fields: manifest.map(|m| m.config.clone()).unwrap_or_default(),
+                    actions: manifest.map(|m| m.actions.clone()).unwrap_or_default(),
                     hosts_needed: match (manifest, settings) {
                         (Some(m), Some(s)) => m.hosts_needed(s),
                         (Some(m), None) => m.hosts_needed(&PluginSettings::default()),
@@ -470,7 +569,196 @@ impl PluginsService {
             data_dir: PluginsService::data_dir_for(config_path),
             settings: config.plugins.clone(),
             clock: None,
+            download_dir: Some(config.download.target_directory.clone()),
         })
+    }
+
+    fn begin(&self, name: &str) -> Result<BusyGuard<'_>, CallError> {
+        if !self.inner.busy.lock().unwrap().insert(name.to_string()) {
+            return Err(CallError::Busy);
+        }
+        Ok(BusyGuard {
+            inner: &self.inner,
+            name: name.to_string(),
+        })
+    }
+
+    /// Run `job` for `spec` on a worker of its own and wait for the answer
+    async fn call_once(
+        &self,
+        spec: Spec,
+        function: &str,
+        kind: &str,
+        args: Vec<Value>,
+    ) -> Result<CallReply, CallError> {
+        let (reply, answer) = oneshot::channel();
+        let env = {
+            let state = self.inner.state.lock().unwrap();
+            match &state.env {
+                Some(env) => env.clone(),
+                None => self.env(tokio::runtime::Handle::current()),
+            }
+        };
+        let slot = Slot::new(spec);
+        slot.push(Job::Call {
+            function: function.to_string(),
+            kind: kind.to_string(),
+            args,
+            reply,
+        });
+        slot.finish();
+        slot.spawn(env).map_err(|_| CallError::Unavailable)?;
+        answer.await.map_err(|_| CallError::Unavailable)
+    }
+
+    /// The loadable plugin `name` and its saved settings (disabled defaults when none)
+    fn lookup(&self, name: &str) -> Result<(Found, PluginSettings), CallError> {
+        let state = self.inner.state.lock().unwrap();
+        let found = state
+            .found
+            .iter()
+            .find(|f| f.name == name)
+            .ok_or(CallError::NotFound)?;
+        if found.loadable().is_none() {
+            return Err(CallError::Broken(
+                found
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "cannot load".to_string()),
+            ));
+        }
+        let settings = state
+            .settings
+            .iter()
+            .find(|s| s.name == name)
+            .cloned()
+            .unwrap_or_else(|| PluginSettings {
+                name: name.to_string(),
+                ..PluginSettings::default()
+            });
+        Ok((found.clone(), settings))
+    }
+
+    /// Run settings action `id` of `name` (031) with `input`. `overrides` are unsaved
+    /// form values that are not secret (`null` clears one) and count for this call only.
+    /// The plugin may call every host its settings need, approved or not: the person is
+    /// setting it up. One action or health check per plugin at a time.
+    pub async fn action(
+        &self,
+        name: &str,
+        id: &str,
+        input: Value,
+        overrides: serde_json::Map<String, Value>,
+    ) -> Result<ActionAnswer, CallError> {
+        let (found, saved) = self.lookup(name)?;
+        let manifest = found.loadable().cloned().ok_or(CallError::NotFound)?;
+        if !manifest.has_action(id) {
+            return Err(CallError::NoAction);
+        }
+        let mut merged = saved.clone();
+        for (key, value) in overrides {
+            if manifest.config.iter().any(|f| f.key == key && f.secret) {
+                continue;
+            }
+            if value.is_null() {
+                merged.config.remove(&key);
+            } else {
+                merged.config.insert(key, value);
+            }
+        }
+        manifest.check_values(&merged).map_err(CallError::Broken)?;
+        let _busy = self.begin(name)?;
+        let spec = Spec {
+            allowed: manifest.hosts_needed(&merged).into_iter().collect(),
+            manifest: manifest.clone(),
+            script: found.script.clone(),
+            settings: merged.clone(),
+        };
+        let reply = self
+            .call_once(spec, "on_action", "action", vec![Value::from(id), input])
+            .await?;
+        if !reply.defined {
+            return Err(CallError::Invalid(format!(
+                "{} declares actions but has no on_action function",
+                name
+            )));
+        }
+        let secrets: Vec<String> = merged.secrets.values().cloned().collect();
+        let Some(value) = reply
+            .value
+            .filter(|_| reply.run.result == RunResult::Success)
+        else {
+            return Err(CallError::Failed(Box::new(reply.run)));
+        };
+        let result = action::parse(&manifest, value, &secrets).map_err(CallError::Invalid)?;
+        let settings = match &result.save {
+            None => None,
+            Some(save) => {
+                let mut next = saved;
+                for (key, value) in &save.config {
+                    if value.is_null() {
+                        next.config.remove(key);
+                    } else {
+                        next.config.insert(key.clone(), value.clone());
+                    }
+                }
+                for (key, value) in &save.secrets {
+                    match value {
+                        Some(v) => next.secrets.insert(key.clone(), v.clone()),
+                        None => next.secrets.remove(key),
+                    };
+                }
+                manifest
+                    .check_values(&next)
+                    .map_err(|e| CallError::Invalid(format!("save refused: {}", e)))?;
+                Some(next)
+            }
+        };
+        let mut run = reply.run;
+        let mut all = secrets;
+        if let Some(save) = &result.save {
+            all.extend(save.secrets.values().flatten().cloned());
+        }
+        run.error = run.error.map(|e| crate::host::scrub(&e, &all));
+        for line in &mut run.logs {
+            line.message = crate::host::scrub(&line.message, &all);
+        }
+        Ok(ActionAnswer {
+            result,
+            run,
+            settings,
+        })
+    }
+
+    /// Ask `name`'s `health()` how it stands (031), with its saved settings and approved
+    /// hosts. `Ok(None)` when the plugin has no `health` function.
+    pub async fn health(&self, name: &str) -> Result<Option<Vec<HealthItem>>, CallError> {
+        let (found, settings) = self.lookup(name)?;
+        let spec = spec_of(&found, Some(&settings)).ok_or(CallError::NotFound)?;
+        spec.manifest
+            .check_values(&settings)
+            .map_err(CallError::Broken)?;
+        let secrets: Vec<String> = settings.secrets.values().cloned().collect();
+        let _busy = self.begin(name)?;
+        let reply = self.call_once(spec, "health", "health", Vec::new()).await?;
+        if !reply.defined {
+            return Ok(None);
+        }
+        match reply.value {
+            Some(value) if reply.run.result == RunResult::Success => {
+                Ok(Some(action::parse_health(value, &secrets)))
+            }
+            _ => Ok(Some(vec![HealthItem {
+                status: action::HealthStatus::Fail,
+                message: format!(
+                    "health check failed: {}",
+                    reply
+                        .run
+                        .error
+                        .unwrap_or_else(|| reply.run.result.as_str().to_string())
+                ),
+            }])),
+        }
     }
 }
 

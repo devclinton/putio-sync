@@ -347,7 +347,8 @@ run_at = "02:30"
 # Lua plugins (feature 028)
 # ============================================================================
 # Sandboxed Lua scripts run on the same events as hooks. ntfy, discord,
-# telegram and pushover are bundled; your own go in a folder each under
+# telegram and pushover notifiers and plex, jellyfin and emby library refresh
+# (feature 031) are bundled; your own go in a folder each under
 # plugins_dir. Settings > Plugins edits these and approves hosts. PLUGINS.md
 # has the details.
 # A top-level key: set it above the first [section] of this file.
@@ -363,6 +364,19 @@ run_at = "02:30"
 # group_minutes = 5                     # repeats within this time are summed up
 # [plugins.secrets]                     # masked in Settings and the export
 # token = "tk_..."
+#
+# Plex: rescan the folder of each finished download (feature 031). Sign in
+# with Plex in Settings saves the token; Jellyfin and Emby take an api_key.
+# [[plugins]]
+# name = "plex"
+# enabled = true
+# approved_hosts = ["plex.tv", "192.168.1.10"]
+# [plugins.config]
+# server = "http://192.168.1.10:32400"
+# libraries = ["1", "2"]                # section keys (Jellyfin/Emby: names); none = any
+# path_map = [{ from = "/downloads", to = "/data/media" }]   # this machine => server
+# delay_seconds = 20                    # wait for more files, 0 to 600. Default: 20
+# max_wait_seconds = 300                # longest wait, 10 to 3600. Default: 300
 
 # ============================================================================
 # Tailscale (feature 036)

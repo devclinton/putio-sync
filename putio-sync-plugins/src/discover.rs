@@ -23,11 +23,37 @@ const BUNDLED: &[(&str, &str, &str)] = &[
         ),
     ),
     (
+        "emby",
+        include_str!("../bundled/emby/plugin.toml"),
+        concat!(
+            include_str!("../bundled/mediaserver.lua"),
+            include_str!("../bundled/embyfin.lua"),
+            include_str!("../bundled/emby/main.lua")
+        ),
+    ),
+    (
+        "jellyfin",
+        include_str!("../bundled/jellyfin/plugin.toml"),
+        concat!(
+            include_str!("../bundled/mediaserver.lua"),
+            include_str!("../bundled/embyfin.lua"),
+            include_str!("../bundled/jellyfin/main.lua")
+        ),
+    ),
+    (
         "ntfy",
         include_str!("../bundled/ntfy/plugin.toml"),
         concat!(
             include_str!("../bundled/notifier.lua"),
             include_str!("../bundled/ntfy/main.lua")
+        ),
+    ),
+    (
+        "plex",
+        include_str!("../bundled/plex/plugin.toml"),
+        concat!(
+            include_str!("../bundled/mediaserver.lua"),
+            include_str!("../bundled/plex/main.lua")
         ),
     ),
     (

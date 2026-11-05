@@ -5,9 +5,9 @@
 //! `********`. HTTP errors name only the host and what failed, never the URL.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use mlua::{Lua, LuaSerdeExt, SerializeOptions, Table, Value as LuaValue};
@@ -17,7 +17,7 @@ use serde_json::Value;
 
 use crate::manifest::url_host;
 use crate::sandbox::Deadline;
-use crate::store::Store;
+use crate::store::SharedStore;
 
 /// The host API version; additive changes keep it
 pub const API_VERSION: i64 = 1;
@@ -25,6 +25,8 @@ pub const API_VERSION: i64 = 1;
 pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// Redirects followed, same host only
 pub const MAX_REDIRECTS: usize = 3;
+/// Most counter names per plugin (`putio.metrics.count`)
+pub const MAX_COUNTERS: usize = 16;
 /// Log lines kept per run
 pub const MAX_LOG_LINES: usize = 20;
 /// Longest log line kept
@@ -57,6 +59,9 @@ pub struct LogLine {
 /// Lines logged during the current run
 pub type Logs = Rc<RefCell<Vec<LogLine>>>;
 
+/// The counter names a plugin has used, shared by its workers
+pub type Counters = Arc<Mutex<BTreeSet<String>>>;
+
 /// HTTP access: the hosts both needed and approved
 pub struct Http {
     /// Lowercase host names the plugin may call
@@ -80,7 +85,11 @@ pub struct Host {
     /// Absent without the `http` permission
     pub http: Option<Http>,
     /// Absent without the `store` permission
-    pub store: Option<Rc<RefCell<Store>>>,
+    pub store: Option<SharedStore>,
+    /// `putio.download_dir`; empty when unknown
+    pub download_dir: String,
+    /// Names used with `putio.metrics.count`
+    pub counters: Counters,
     /// The current call's deadline
     pub deadline: Deadline,
     /// Where log lines of the current run go
@@ -108,7 +117,8 @@ pub fn to_lua(lua: &Lua, value: &Value) -> mlua::Result<LuaValue> {
     lua.to_value_with(value, opts)
 }
 
-fn from_lua(lua: &Lua, value: LuaValue) -> Result<Value, String> {
+/// Conversion from Lua; an empty table becomes `{}`
+pub fn from_lua(lua: &Lua, value: LuaValue) -> Result<Value, String> {
     lua.from_value::<Value>(value)
         .map_err(|e| crate::sandbox::error_text(&e))
 }
@@ -133,6 +143,12 @@ pub fn install(lua: &Lua, host: Host) -> mlua::Result<()> {
     }
     putio.set("time", time_table(lua, host.clock.clone())?)?;
     putio.set("json", json_table(lua)?)?;
+    putio.set("path", path_table(lua)?)?;
+    putio.set(
+        "metrics",
+        metrics_table(lua, host.name.clone(), host.counters.clone())?,
+    )?;
+    putio.set("download_dir", host.download_dir.clone())?;
     let plugin = lua.create_table()?;
     plugin.set("name", host.name.clone())?;
     plugin.set("version", host.version.clone())?;
@@ -368,12 +384,12 @@ fn http_table(
     Ok(table)
 }
 
-fn store_table(lua: &Lua, store: Rc<RefCell<Store>>) -> mlua::Result<Table> {
+fn store_table(lua: &Lua, store: SharedStore) -> mlua::Result<Table> {
     let table = lua.create_table()?;
     let s = store.clone();
     table.set(
         "get",
-        lua.create_function(move |lua, key: String| match s.borrow().get(&key) {
+        lua.create_function(move |lua, key: String| match s.lock().unwrap().get(&key) {
             Some(v) => to_lua(lua, v),
             None => Ok(LuaValue::Nil),
         })?,
@@ -386,7 +402,8 @@ fn store_table(lua: &Lua, store: Rc<RefCell<Store>>) -> mlua::Result<Table> {
                 Ok(v) => v,
                 Err(e) => return fail(lua, format!("store value: {}", e)),
             };
-            match s.borrow_mut().set(&key, value) {
+            let set = s.lock().unwrap().set(&key, value);
+            match set {
                 Ok(()) => Ok((LuaValue::Boolean(true), LuaValue::Nil)),
                 Err(e) => fail(lua, e),
             }
@@ -395,14 +412,93 @@ fn store_table(lua: &Lua, store: Rc<RefCell<Store>>) -> mlua::Result<Table> {
     let s = store.clone();
     table.set(
         "delete",
-        lua.create_function(move |lua, key: String| match s.borrow_mut().delete(&key) {
-            Ok(()) => Ok((LuaValue::Boolean(true), LuaValue::Nil)),
-            Err(e) => fail(lua, e),
-        })?,
+        lua.create_function(
+            move |lua, key: String| match s.lock().unwrap().delete(&key) {
+                Ok(()) => Ok((LuaValue::Boolean(true), LuaValue::Nil)),
+                Err(e) => fail(lua, e),
+            },
+        )?,
     )?;
     table.set(
         "keys",
-        lua.create_function(move |_, ()| Ok(store.borrow().keys()))?,
+        lua.create_function(move |_, ()| Ok(store.lock().unwrap().keys()))?,
+    )?;
+    Ok(table)
+}
+
+/// `putio.path` (031): path rules for a media server that sees other paths
+fn path_table(lua: &Lua) -> mlua::Result<Table> {
+    let table = lua.create_table()?;
+    table.set(
+        "map",
+        lua.create_function(|lua, (path, rules): (String, LuaValue)| {
+            let rules = match rules {
+                LuaValue::Nil => Vec::new(),
+                v => {
+                    let v = from_lua(lua, v).map_err(mlua::Error::runtime)?;
+                    // An empty Lua table converts to an object
+                    let v = match v {
+                        Value::Object(o) if o.is_empty() => Value::Array(Vec::new()),
+                        v => v,
+                    };
+                    crate::paths::rules(&v)
+                        .map_err(|e| mlua::Error::runtime(format!("path rules: {}", e)))?
+                }
+            };
+            Ok(crate::paths::map(&path, &rules))
+        })?,
+    )?;
+    table.set(
+        "parent",
+        lua.create_function(|_, path: String| Ok(crate::paths::parent(&path)))?,
+    )?;
+    table.set(
+        "within",
+        lua.create_function(|_, (path, folder): (String, String)| {
+            Ok(crate::paths::within(&path, &folder))
+        })?,
+    )?;
+    Ok(table)
+}
+
+/// `putio.metrics` (031): `count(name, n)` adds to
+/// `putio_sync_plugin_counter_total{plugin, name}`
+fn metrics_table(lua: &Lua, plugin: String, counters: Counters) -> mlua::Result<Table> {
+    let table = lua.create_table()?;
+    table.set(
+        "count",
+        lua.create_function(move |_, (name, n): (String, Option<f64>)| {
+            let name_ok = !name.is_empty()
+                && name.len() <= 40
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+            if !name_ok {
+                return Err(mlua::Error::runtime(
+                    "metrics.count: name may only use a-z, 0-9 and _ (1 to 40)",
+                ));
+            }
+            let n = n.unwrap_or(1.0);
+            if !(n.is_finite() && n >= 0.0 && n.fract() == 0.0) {
+                return Err(mlua::Error::runtime(
+                    "metrics.count: n must be a whole number, 0 or more",
+                ));
+            }
+            {
+                let mut used = counters.lock().unwrap();
+                if !used.contains(&name) {
+                    if used.len() >= MAX_COUNTERS {
+                        return Err(mlua::Error::runtime(format!(
+                            "metrics.count: at most {} names per plugin",
+                            MAX_COUNTERS
+                        )));
+                    }
+                    used.insert(name.clone());
+                }
+            }
+            putio_sync_telemetry::plugins::record_counter(&plugin, &name, n as u64);
+            Ok(())
+        })?,
     )?;
     Ok(table)
 }
@@ -488,7 +584,9 @@ mod tests {
                     .unwrap(),
                 handle: rt.as_ref().unwrap().handle().clone(),
             }),
-            store: store.then(|| Rc::new(RefCell::new(Store::open(None, "t")))),
+            store: store.then(|| Arc::new(Mutex::new(crate::store::Store::open(None, "t")))),
+            download_dir: "/downloads".to_string(),
+            counters: Counters::default(),
             deadline: deadline.clone(),
             logs: logs.clone(),
             clock: Arc::new(|| 1_793_784_600.5),
@@ -522,6 +620,37 @@ mod tests {
                 local bad, err = putio.json.decode("{")
                 assert(bad == nil and err:find("invalid JSON"))
                 return true
+                "#,
+            )
+            .eval()
+            .unwrap();
+        assert!(ok);
+    }
+
+    #[test]
+    fn path_and_metrics_calls() {
+        let f = fixture(None, false);
+        let ok: bool = f
+            .lua
+            .load(
+                r#"
+                assert(putio.download_dir == "/downloads")
+                local rules = {{from = "/downloads", to = "/data"}, {from = "/downloads/TV", to = "D:\\TV"}}
+                assert(putio.path.map("/downloads/Movies/x", rules) == "/data/Movies/x")
+                assert(putio.path.map("/downloads/TV/S/e.mkv", rules) == "D:\\TV\\S\\e.mkv")
+                assert(putio.path.map("/other", {}) == "/other")
+                assert(putio.path.map("/other", nil) == "/other")
+                assert(putio.path.parent("/a/b/c.mkv") == "/a/b")
+                assert(putio.path.within("/a/b", "/a") and not putio.path.within("/ab", "/a"))
+                local ok, err = pcall(putio.path.map, "/x", {{from = "x", to = "/y"}})
+                assert(not ok and tostring(err):find("rule 1: from"))
+                for i = 1, 16 do putio.metrics.count("c" .. i) end
+                putio.metrics.count("c1", 3)
+                local ok2, err2 = pcall(putio.metrics.count, "c17")
+                assert(not ok2 and tostring(err2):find("at most 16"))
+                local ok3 = pcall(putio.metrics.count, "Bad Name")
+                local ok4 = pcall(putio.metrics.count, "c2", -1)
+                return not ok3 and not ok4
                 "#,
             )
             .eval()

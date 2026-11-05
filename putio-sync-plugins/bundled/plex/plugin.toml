@@ -1,0 +1,81 @@
+name = "plex"
+version = "1.0.0"
+description = "Asks Plex to rescan just the folder of each finished download, so new episodes and movies show up within seconds."
+events = ["download.finished", "sync.completed"]
+tick_seconds = 5
+
+[permissions]
+store = true
+
+[permissions.http]
+host_from_config = ["server", "plex_tv_url"]
+
+[[actions]]
+id = "sign_in"
+label = "Sign in with Plex"
+help = "Shows a code to enter at plex.tv/link, or opens the Plex sign-in page; the token is saved for you"
+
+[[actions]]
+id = "sign_in_poll"
+label = "Check sign-in"
+hidden = true
+
+[[actions]]
+id = "load_servers"
+label = "Load servers"
+hidden = true
+
+[[actions]]
+id = "load_libraries"
+label = "Load libraries"
+hidden = true
+
+[[config]]
+key = "token"
+type = "string"
+label = "Plex token"
+help = "Filled in by Sign in with Plex"
+required = true
+secret = true
+
+[[config]]
+key = "server"
+type = "url"
+label = "Server"
+help = "Your Plex server, such as http://192.168.1.10:32400; Load lists the servers of your account"
+required = true
+choices = "load_servers"
+
+[[config]]
+key = "libraries"
+type = "string_list"
+label = "Libraries"
+help = "The libraries to refresh; none ticked refreshes any library that holds the folder"
+choices = "load_libraries"
+
+[[config]]
+key = "path_map"
+type = "path_map"
+label = "Path rules"
+help = "When Plex sees the download folder under another path: this machine's folder => Plex's folder"
+
+[[config]]
+key = "delay_seconds"
+type = "integer"
+label = "Wait for more files (seconds)"
+help = "A folder is refreshed once no file has landed in it for this long (0 to 600)"
+default = 20
+
+[[config]]
+key = "max_wait_seconds"
+type = "integer"
+label = "Longest wait (seconds)"
+help = "A folder that keeps getting files is refreshed after this long anyway"
+default = 300
+
+[[config]]
+key = "plex_tv_url"
+type = "url"
+label = "plex.tv address"
+help = "Leave as is"
+default = "https://plex.tv"

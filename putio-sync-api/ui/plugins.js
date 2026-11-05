@@ -1,6 +1,7 @@
 // Lua plugins (feature 028): the rows of the Settings › Plugins editor, from `GET /plugins`
 // and `GET /settings/plugins` and back to `[[plugins]]` entries, and states and runs for
-// people. No DOM here, so tests/ui/plugins.test.mjs runs it in node.
+// people. Feature 031 adds settings actions (sign-in steps, loaded choices) and path rules.
+// No DOM here, so tests/ui/plugins.test.mjs runs it in node.
 
 export const MASK = "********";
 
@@ -27,11 +28,29 @@ export function runLabel(run) {
   return `Failed in ${seconds(run.duration_ms)}` + (run.error ? `: ${run.error}` : "");
 }
 
+/** Path rules as the editor shows them: one `from => to` per line */
+export function pathMapText(value) {
+  if (!Array.isArray(value)) return value == null ? "" : String(value);
+  return value.map((r) => `${r.from ?? ""} => ${r.to ?? ""}`).join("\n");
+}
+
+/** `from => to` lines as path rules; a line without `=>` goes as typed, so the save names
+ *  the field */
+export function parsePathMap(text) {
+  const rules = [];
+  for (const line of String(text).split("\n").map((s) => s.trim()).filter(Boolean)) {
+    const at = line.indexOf("=>");
+    rules.push(at < 0 ? { from: line, to: "" } : { from: line.slice(0, at).trim(), to: line.slice(at + 2).trim() });
+  }
+  return rules.length ? rules : undefined;
+}
+
 /** A field's value as the editor shows it: text, a checkbox, or one item per line */
 function toText(field, value) {
   if (field.type === "boolean") return value === true;
   if (value == null) return "";
   if (field.type === "string_list") return Array.isArray(value) ? value.join("\n") : String(value);
+  if (field.type === "path_map") return pathMapText(value);
   return String(value);
 }
 
@@ -42,6 +61,7 @@ function fromText(field, text) {
     const items = String(text).split("\n").map((s) => s.trim()).filter(Boolean);
     return items.length ? items : undefined;
   }
+  if (field.type === "path_map") return parsePathMap(text);
   const trimmed = String(text).trim();
   if (!trimmed) return undefined;
   if (field.type === "integer" || field.type === "number") {
@@ -100,6 +120,8 @@ export function fromStatus(plugin, settings) {
     fields,
     values,
     secrets,
+    // Values loaded by an action, by field key
+    choices: {},
   };
 }
 
@@ -129,4 +151,53 @@ export function toSettings(row) {
   if (Object.keys(config).length) out.config = config;
   if (Object.keys(secrets).length) out.secrets = secrets;
   return out;
+}
+
+/** The editor's values that are not secret, as `POST /plugins/action` takes them: what is
+ *  typed counts for the call, and an empty field is `null` (no value) */
+export function overrides(row) {
+  const config = {};
+  for (const f of row.fields) {
+    if (f.secret) continue;
+    const value = fromText(f, row.values[f.key]);
+    config[f.key] = value === undefined ? null : value;
+  }
+  return config;
+}
+
+/** Take what an action saved into the row: new values show, saved secrets read "set" */
+export function applyAnswer(row, answer) {
+  for (const f of row.fields) {
+    if (f.secret) {
+      if ((answer.saved || []).includes(f.key)) row.secrets[f.key] = { set: true, value: "" };
+    } else if (answer.config && f.key in answer.config) {
+      row.values[f.key] = toText(f, answer.config[f.key]);
+    }
+  }
+}
+
+/** The fields whose choices `action` loads */
+export function choiceFields(row, action) {
+  return row.fields.filter((f) => f.choices === action).map((f) => f.key);
+}
+
+/** The ticked items of a list field: its lines */
+export function ticked(row, key) {
+  return String(row.values[key] || "").split("\n").map((s) => s.trim()).filter(Boolean);
+}
+
+/** Tick or untick `value` in a list field, keeping the order of the lines */
+export function tick(row, key, value, on) {
+  const items = ticked(row, key).filter((v) => v !== value);
+  if (on) items.push(value);
+  row.values[key] = items.join("\n");
+}
+
+/** A sign-in or other flow stops asking after this long */
+export const FLOW_LIMIT_MS = 10 * 60 * 1000;
+
+/** How long to wait before the `next` step, or null when the flow has run too long */
+export function nextWait(next, startedAt, now) {
+  const wait = Math.min(Math.max(Number(next.after_seconds) || 2, 1), 30) * 1000;
+  return now + wait - startedAt > FLOW_LIMIT_MS ? null : wait;
 }

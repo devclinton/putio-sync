@@ -151,6 +151,7 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         get("/plugins"),
         post("/plugins/test"),
         post("/plugins/reload"),
+        post("/plugins/action"),
         get("/settings/plugins"),
         (Method::PUT, "/settings/plugins", Some(json!({}))),
         post("/settings/plugins/preview"),
@@ -718,4 +719,108 @@ async fn no_plugin_secret_in_responses_or_logs() {
     assert!(all.contains("HTTP 401"), "{all}");
     assert!(all.contains("refused "), "{all}");
     assert!(all.contains("token "), "{all}");
+}
+
+/// A Plex token from the sign-in never comes back from an action answer, the API, the
+/// doctor's health check, the metrics or a log line (feature 031)
+#[tokio::test]
+async fn no_plex_token_in_responses_or_logs() {
+    const TOKEN: &str = "PLEXTOKEN0123secret";
+    let logs = captured_logs();
+    let mut plex = mockito::Server::new_async().await;
+    plex.mock("POST", "/api/v2/pins")
+        .with_status(201)
+        .with_body(json!({"id": 9, "code": "AB12"}).to_string())
+        .create_async()
+        .await;
+    plex.mock("GET", "/api/v2/pins/9")
+        .with_status(200)
+        .with_body(json!({"id": 9, "authToken": TOKEN}).to_string())
+        .create_async()
+        .await;
+    plex.mock("GET", "/api/v2/user")
+        .with_status(200)
+        .with_body(json!({"username": "someone"}).to_string())
+        .create_async()
+        .await;
+    plex.mock("GET", "/identity")
+        .with_status(200)
+        .create_async()
+        .await;
+    // The server refuses it, so the health check fails and says why
+    let sections = plex
+        .mock("GET", "/library/sections")
+        .match_header("x-plex-token", TOKEN)
+        .with_status(401)
+        .with_body(format!("bad token {TOKEN}"))
+        .expect_at_least(1)
+        .create_async()
+        .await;
+    let url = plex.url();
+    let app = common::test_app_with(move |config| {
+        config.plugins = vec![putio_sync_core::plugins::PluginSettings {
+            name: "plex".to_string(),
+            enabled: true,
+            config: [
+                ("server".to_string(), json!(url)),
+                ("plex_tv_url".to_string(), json!(url)),
+            ]
+            .into(),
+            ..Default::default()
+        }];
+    })
+    .await;
+    app.state.plugins.start();
+
+    let mut texts = Vec::new();
+    let first = body_json(
+        app.post_json(
+            "/plugins/action",
+            json!({"name": "plex", "action": "sign_in"}),
+        )
+        .await,
+    )
+    .await;
+    let next = first["next"].clone();
+    assert_eq!(next["action"], "sign_in_poll", "{first}");
+    let response = app
+        .post_json(
+            "/plugins/action",
+            json!({"name": "plex", "action": "sign_in_poll", "input": next["input"]}),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let done = body_text(response).await;
+    assert!(done.contains("\"saved\":[\"token\"]"), "{done}");
+    texts.push(first.to_string());
+    texts.push(done);
+    let saved = app.state.config.read().await.plugins[0].clone();
+    assert_eq!(saved.secrets["token"], TOKEN);
+
+    texts.push(
+        body_text(
+            app.post_json("/plugins/test", json!({"name": "plex"}))
+                .await,
+        )
+        .await,
+    );
+    texts.push(body_text(app.post_json("/doctor/run", json!({})).await).await);
+    for path in [
+        "/plugins",
+        "/settings/plugins",
+        "/settings/export",
+        "/doctor",
+        "/metrics",
+    ] {
+        texts.push(body_text(app.get(path).await).await);
+    }
+    sections.assert_async().await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let logs = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
+    for text in texts.iter().chain([&logs]) {
+        assert!(!text.contains(TOKEN), "token in {text}");
+    }
+    let all = texts.join("\n");
+    assert!(all.contains("Token refused"), "{all}");
 }
