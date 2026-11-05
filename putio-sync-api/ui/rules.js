@@ -106,7 +106,7 @@ export function ruleCard(id, onChange) {
     const own = data.rule;
     const tools =
       id === 0
-        ? h("p", { class: "muted spaced" }, "The root uses the ", h("a", { href: "#/settings", text: "Download settings" }), ".")
+        ? h("p", { class: "muted spaced" }, "The root uses the ", h("a", { href: "#/settings/rules?field=card-filters", text: "File filters" }), ".")
         : h(
             "div",
             { class: "toolbar spaced" },
@@ -325,9 +325,9 @@ export function previewView(p) {
 
 /** Folder rules, Presets and Recently blocked; `alive()` is false once the page is left */
 export function settingsCards(alive) {
-  const rules = h("section", { class: "card" });
-  const presets = h("section", { class: "card" });
-  const decisions = h("section", { class: "card" });
+  const rules = h("section", { class: "card", id: "card-folder-rules" });
+  const presets = h("section", { class: "card", id: "card-presets" });
+  const decisions = h("section", { class: "card", id: "card-blocked" });
 
   const loadRules = async () => {
     let all;

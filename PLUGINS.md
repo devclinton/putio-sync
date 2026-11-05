@@ -4,14 +4,14 @@ A plugin is a small Lua script that putio-sync runs on its events: a download fi
 failed, a Put.io transfer was added, finished or failed, a sync run ended, or Put.io storage
 runs low. The events are the same as for [event hooks](EVENTS.md), but a plugin runs inside
 putio-sync. It needs no other program, it is limited in what it may do, and it is set up
-from Settings › Plugins.
+from Settings › Integrations › Plugins.
 
 putio-sync comes with four plugins that send notifications: **ntfy**, **Discord**,
 **Telegram** and **Pushover**. They are off until you turn them on.
 
 ## Turning a plugin on
 
-Open Settings › Plugins. Each plugin shows its state, version, events and the hosts it will
+Open Settings › Integrations › Plugins. Each plugin shows its state, version, events and the hosts it will
 contact. Tick **Enabled**, fill in its settings and save. Saving approves the hosts shown
 under "Contacts". **Send test event** sends one `plugin.test` event and shows the result,
 with any lines the plugin logged.

@@ -398,7 +398,7 @@ A file is being downloaded again after a mismatch: a new download starting over,
 
 ### `hook.test`
 
-Sent only to one hook, by the **Send test event** button in Settings › Hooks or
+Sent only to one hook, by the **Send test event** button in Settings › Integrations › Event hooks or
 `POST /hooks/test`. A hook gets it whatever its `events` say, and `"*"` does not include
 it. Nothing else receives it.
 
@@ -423,7 +423,7 @@ it. Nothing else receives it.
 
 ### `plugin.test`
 
-Sent only to one plugin, by the **Send test event** button in Settings › Plugins or
+Sent only to one plugin, by the **Send test event** button in Settings › Integrations › Plugins or
 `POST /plugins/test`. A plugin gets it whatever its `events` say, and `"*"` does not
 include it. Nothing else receives it, hooks included.
 

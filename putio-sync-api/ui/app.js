@@ -137,6 +137,8 @@ function route() {
     return;
   }
   remember(window.location.hash || "#/status");
+  // A page with `update` shows another address of itself in place (Settings sections, 046)
+  if (current === PAGES[name] && current.update) return void current.update({ path, query });
   mount(name, { path, query });
   if (!newsChecked) {
     newsChecked = true;

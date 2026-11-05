@@ -431,7 +431,7 @@ fn flatten(table: &toml::Table) -> BTreeMap<String, toml::Value> {
 const EXPORT_HEADER: &str = "# putio-sync settings export\n\
 # Credentials ([auth], api.auth_token) and the Radarr/Sonarr section ([arr]) are left out.\n\
 # Hook header and env values and plugin secrets read \"********\"; an import keeps the stored ones.\n\
-# Import it from Settings > Backup and restore.\n\n";
+# Import it from Settings › Advanced › Backup and restore.\n\n";
 
 /// `config` with every hook header and env value (feature 027) and plugin secret
 /// (feature 028) replaced by [`MASK`](crate::hooks::MASK)

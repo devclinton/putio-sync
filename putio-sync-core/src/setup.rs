@@ -21,7 +21,7 @@ pub const BUILTIN_APP_ID: Option<&str> = option_env!("PUTIO_SYNC_BUILTIN_APP_ID"
 pub const APP_REGISTER_URL: &str = "https://app.put.io/oauth";
 
 /// Why the device link is off and how to turn it on, for the wizards and the doctor
-pub const APP_ID_HELP: &str = "Linking with a code at put.io/link needs a Put.io app ID, and none is set. Register an app at https://app.put.io/oauth (account menu → API → Create App; any website and callback URL will do), then enter its ID in the setup wizard or Settings → Put.io, or set `[putio] app_id` in the config or PUTIO_SYNC_APP_ID. Until then, paste a token from put.io → Settings → API.";
+pub const APP_ID_HELP: &str = "Linking with a code at put.io/link needs a Put.io app ID, and none is set. Register an app at https://app.put.io/oauth (account menu → API → Create App; any website and callback URL will do), then enter its ID in the setup wizard or Settings › Put.io › Put.io, or set `[putio] app_id` in the config or PUTIO_SYNC_APP_ID. Until then, paste a token from put.io → Settings → API.";
 
 /// Free space below this always warns (10 GiB)
 pub const LOW_SPACE_BYTES: u64 = 10 * 1024 * 1024 * 1024;

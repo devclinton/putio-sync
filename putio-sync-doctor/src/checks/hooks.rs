@@ -86,7 +86,7 @@ pub(crate) async fn hooks(ctx: &Ctx) -> Finding {
             ),
         )
         .suggest(
-            "See the hook's output in the log, then use Send test event in Settings › Event hooks.",
+            "See the hook's output in the log, then use Send test event in Settings › Integrations › Event hooks.",
         )
         .items(failed);
     }

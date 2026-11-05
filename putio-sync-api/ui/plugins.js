@@ -1,4 +1,4 @@
-// Lua plugins (feature 028): the rows of the Settings › Plugins editor, from `GET /plugins`
+// Lua plugins (feature 028): the rows of the Settings › Integrations › Plugins editor, from `GET /plugins`
 // and `GET /settings/plugins` and back to `[[plugins]]` entries, and states and runs for
 // people. Feature 031 adds settings actions (sign-in steps, loaded choices) and path rules.
 // No DOM here, so tests/ui/plugins.test.mjs runs it in node.
