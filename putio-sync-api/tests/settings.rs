@@ -120,6 +120,10 @@ async fn download_settings_round_trip() {
             "delete_empty_folders",
             "bandwidth_schedule",
             "slow_limit_bytes_per_sec",
+            "verify",
+            "verify_max_redownloads",
+            "verify_read_limit_mb_per_sec",
+            "verify_follow_bandwidth_pause",
         ],
     );
 
@@ -150,6 +154,44 @@ async fn download_settings_round_trip() {
     assert_eq!(status, StatusCode::OK, "{response}");
     assert_eq!(saved(&app).download.on_existing(), ExistingFile::Overwrite);
     assert_eq!(get_ok(&app, path).await["on_existing"], "overwrite");
+}
+
+/// Feature 034: the four verify keys are shown, checked and saved
+#[tokio::test]
+async fn verify_settings_are_checked_and_saved() {
+    let app = test_app().await;
+    let path = "/settings/download";
+    let body = get_ok(&app, path).await;
+    assert_eq!(body["verify"], true);
+    assert_eq!(body["verify_max_redownloads"], 2);
+
+    put_changed(&app, path, body.clone(), "verify_max_redownloads", json!(4)).await;
+    put_changed(&app, path, body.clone(), "verify", json!(false)).await;
+    let saved_config = saved(&app);
+    assert!(!saved_config.download.verify);
+    put_invalid(&app, path, body.clone(), "verify_max_redownloads", json!(9)).await;
+    put_invalid(
+        &app,
+        path,
+        body.clone(),
+        "verify_read_limit_mb_per_sec",
+        json!(0),
+    )
+    .await;
+
+    // A body from an older UI without the keys leaves them alone
+    let mut old = get_ok(&app, path).await;
+    for key in [
+        "verify",
+        "verify_max_redownloads",
+        "verify_read_limit_mb_per_sec",
+        "verify_follow_bandwidth_pause",
+    ] {
+        old.as_object_mut().unwrap().remove(key);
+    }
+    let (status, response) = put(&app, path, old).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert!(!saved(&app).download.verify);
 }
 
 #[tokio::test]

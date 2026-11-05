@@ -35,10 +35,15 @@ const RECHECK: Duration = Duration::from_millis(250);
 /// What a run covers
 #[derive(Debug, Clone, Default)]
 pub struct VerifyRequest {
-    /// Local paths to check; `None` checks every downloaded file
+    /// Local files or folders to check; `None` checks every downloaded file
     pub paths: Option<Vec<String>>,
     /// Only report mismatches, do not queue them
     pub report_only: bool,
+}
+
+/// Whether `path` is `file` or a folder holding it
+fn covers(path: &str, file: &str) -> bool {
+    std::path::Path::new(file).starts_with(path)
 }
 
 /// Why a run could not start
@@ -233,7 +238,7 @@ impl Verifier<'_> {
         }
         let mut files: Vec<_> = by_id.into_values().collect();
         if let Some(paths) = &request.paths {
-            files.retain(|row| paths.iter().any(|p| p == &row.local_path));
+            files.retain(|row| paths.iter().any(|p| covers(p, &row.local_path)));
             if files.is_empty() {
                 release(&runner);
                 return Err(VerifyStartError::NoFiles);

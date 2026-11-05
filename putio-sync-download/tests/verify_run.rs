@@ -275,6 +275,26 @@ async fn a_paths_run_asks_putio_per_file() {
 }
 
 #[tokio::test]
+async fn a_folder_path_covers_the_files_under_it() {
+    let mut s = setup(0).await;
+    let good = data(SIZE);
+    std::fs::create_dir(s.dir.path().join("show")).unwrap();
+    s.downloaded(7, "show/a.mkv", SIZE, Some(&good)).await;
+    s.downloaded(8, "b.mkv", SIZE, Some(&good)).await;
+    s.details(entry(7, "a.mkv", SIZE, &crc(&good))).await;
+    let folder = s.dir.path().join("show").to_string_lossy().into_owned();
+
+    s.start(VerifyRequest {
+        paths: Some(vec![folder]),
+        report_only: false,
+    })
+    .await;
+    let run = s.finished().await;
+
+    assert_eq!((run.files_total, run.counts.verified), (1, 1));
+}
+
+#[tokio::test]
 async fn paths_that_were_not_downloaded_are_refused() {
     let s = setup(0).await;
     let refused = s

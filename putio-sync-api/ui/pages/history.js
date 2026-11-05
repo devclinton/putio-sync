@@ -2,15 +2,19 @@
 // 50 per page, with totals from /history/stats. "Rejected releases" lists what the
 // release pre-check turned away, from /releases/reports (feature 042). Loads on filter
 // or page change only. Rows can be flagged fake, and rejected rows marked not fake, with
-// the flags for the page loaded in one request.
+// the flags for the page loaded in one request. The Verification panel (feature 034)
+// starts and steers a verify run and lists open problems; it polls every 2 s while a
+// run is going.
 
-import { get } from "../api.js";
-import { empty, h } from "../app.js";
+import { controlVerify, get, startVerify, verifyStatus } from "../api.js";
+import { empty, h, toastError } from "../app.js";
 import { flagControl, loadFlags } from "../flags.js";
 import { bytes, dateTime, speed, utc } from "../format.js";
+import { controls, methodLabel, progressPercent, resultLabel, stateLabel, summaryLine } from "../verify.js";
 
 const PAGE = 50;
 const DEBOUNCE_MS = 300;
+const VERIFY_POLL_MS = 2000;
 const BADGE = { downloaded: "ok", deleted: "warn" };
 const REJECTED = "rejected";
 const STAGES = { before: "Before Put.io", putio: "On Put.io" };
@@ -25,6 +29,7 @@ let offset = 0;
 let seq = 0;
 let typing = null;
 let flags = null;
+let verifyTimer = null;
 
 export function mount(el) {
   offset = 0;
@@ -41,17 +46,20 @@ export function mount(el) {
     totals: h("p", { class: "muted" }),
     list: h("section", { class: "card wide" }, h("p", { class: "muted", text: "Loading…" })),
     pager: h("div", { class: "toolbar pager" }),
+    verify: h("section", { class: "card wide" }),
   };
   el.append(
     h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "History" }), els.totals), h("div", { class: "toolbar" }, els.action, els.name)),
-    h("div", { class: "stack" }, els.list, els.pager),
+    h("div", { class: "stack" }, els.verify, els.list, els.pager),
   );
   loadStats();
+  loadVerify();
   refresh();
 }
 
 export function unmount() {
   clearTimeout(typing);
+  clearTimeout(verifyTimer);
   els = null;
   seq += 1;
 }
@@ -139,6 +147,83 @@ async function loadRejected(mine) {
   renderRejected(page, rows.length, Boolean(name));
 }
 
+// ---- Verification (feature 034) --------------------------------------------
+
+async function loadVerify() {
+  clearTimeout(verifyTimer);
+  let v;
+  try {
+    v = await verifyStatus();
+  } catch {
+    if (els) els.verify.replaceChildren(h("h2", { text: "Verification" }), h("p", { class: "muted", text: "Verification status is not available." }));
+    return;
+  }
+  if (!els) return;
+  renderVerify(v);
+  if (v.status.state !== "idle") verifyTimer = setTimeout(loadVerify, VERIFY_POLL_MS);
+}
+
+async function verifyAction(fn) {
+  try {
+    await fn();
+  } catch (e) {
+    toastError(e);
+  }
+  loadVerify();
+}
+
+function renderVerify(v) {
+  const s = v.status;
+  const can = controls(s.state);
+  const reportOnly = h("input", { type: "checkbox" });
+  const button = (label, show, fn, cls = "btn btn-small") => (show ? h("button", { type: "button", class: cls, onclick: () => verifyAction(fn) }, label) : null);
+  const going = s.state !== "idle";
+  const pct = progressPercent(s);
+  els.verify.replaceChildren(
+    h("h2", { text: "Verification" }),
+    v.enabled ? null : h("p", { class: "warn-text", text: "New downloads are not checked: download verification is off in Settings › Download." }),
+    going
+      ? h(
+          "div",
+          {},
+          h("p", {}, h("span", { class: "badge", text: stateLabel(s.state) }), " ", s.report_only ? "Report only. " : "", summaryLine(s)),
+          h("progress", { max: 100, value: pct, "aria-label": "Verify progress" }),
+          s.waiting_reason ? h("p", { class: "muted", text: `Waiting: ${s.waiting_reason}` }) : null,
+          s.current ? h("p", { class: "muted name", text: `Reading ${s.current}` }) : null,
+        )
+      : h("p", { class: "muted", text: v.last_run ? `Last run ${dateTime(utc(v.last_run.started_at))}, ${stateLabel(v.last_run.state).toLowerCase()}: ${summaryLine(v.last_run)}` : summaryLine(null) }),
+    h(
+      "div",
+      { class: "toolbar" },
+      can.start ? [button("Verify everything", true, () => startVerify(null, reportOnly.checked), "btn"), h("label", {}, reportOnly, " Report only")] : null,
+      button("Pause", can.pause, () => controlVerify("pause")),
+      button("Resume", can.resume, () => controlVerify("resume")),
+      button("Stop", can.stop, () => controlVerify("stop")),
+    ),
+    v.problems.length
+      ? h(
+          "table",
+          { class: "table" },
+          h("thead", {}, h("tr", {}, h("th", { text: "Time" }), h("th", { text: "Name" }), h("th", { text: "Result" }), h("th", { text: "Re-queued" }))),
+          h(
+            "tbody",
+            {},
+            v.problems.map((p) =>
+              h(
+                "tr",
+                {},
+                h("td", { class: "num", "data-label": "Time", text: dateTime(utc(p.at)) }),
+                h("td", { class: "name-cell name", "data-label": "Name" }, p.name, p.detail ? h("small", { class: "muted block", text: p.detail }) : null),
+                h("td", { "data-label": "Result" }, h("span", { class: "badge bad", text: resultLabel(p.result) })),
+                h("td", { "data-label": "Re-queued", text: p.queued ? "Yes" : "No" }),
+              ),
+            ),
+          ),
+        )
+      : null,
+  );
+}
+
 // ---- Rendering --------------------------------------------------------------
 
 function pager(shown, total) {
@@ -161,7 +246,7 @@ function render(entries, total, filtered) {
     h(
       "table",
       { class: "table" },
-      h("thead", {}, h("tr", {}, h("th", { text: "Time" }), h("th", { text: "Action" }), h("th", { text: "Name" }), h("th", { class: "right", text: "Size" }), h("th", { class: "right", text: "Speed" }), h("th", { class: "right", text: "Actions" }))),
+      h("thead", {}, h("tr", {}, h("th", { text: "Time" }), h("th", { text: "Action" }), h("th", { text: "Name" }), h("th", { class: "right", text: "Size" }), h("th", { class: "right", text: "Speed" }), h("th", { text: "Verified" }), h("th", { class: "right", text: "Actions" }))),
       h("tbody", {}, entries.map(row)),
     ),
   );
@@ -183,6 +268,7 @@ function row(e) {
     h("td", { class: "name-cell name", "data-label": "Name" }, e.filename, savedPath(e) ? h("small", { class: "muted block", text: savedPath(e) }) : null),
     h("td", { class: "num right", "data-label": "Size", text: bytes(e.file_size) }),
     h("td", { class: "num right", "data-label": "Speed", text: e.speed_bps ? speed(e.speed_bps) : "—" }),
+    h("td", { "data-label": "Verified", text: action === "downloaded" ? methodLabel(e.verify, e.redownloads || 0) : "—" }),
     actions(flagControl(flags, { target: { history_id: e.id }, name: e.filename, onChange: refresh })),
   );
 }
