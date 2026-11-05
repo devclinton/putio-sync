@@ -113,6 +113,7 @@ pub struct Telemetry {
     pub(crate) arr_items: IntGaugeVec,
     pub(crate) arr_blocklist: IntCounterVec,
     pub(crate) arr_setup: IntCounterVec,
+    pub(crate) arr_path_mapping: IntCounterVec,
     // Feature 042
     pub(crate) precheck: IntCounterVec,
     pub(crate) precheck_avoided_bytes: IntCounterVec,
@@ -475,6 +476,14 @@ impl Telemetry {
                 &["kind", "result"],
             )
             .unwrap(),
+            arr_path_mapping: IntCounterVec::new(
+                opts(
+                    "arr_path_mapping_total",
+                    "Remote Path Mapping changes made in Radarr/Sonarr by setup, by result.",
+                ),
+                &["result"],
+            )
+            .unwrap(),
             precheck: IntCounterVec::new(
                 opts(
                     "precheck_total",
@@ -771,6 +780,7 @@ impl Telemetry {
             Box::new(self.arr_items.clone()),
             Box::new(self.arr_blocklist.clone()),
             Box::new(self.arr_setup.clone()),
+            Box::new(self.arr_path_mapping.clone()),
             Box::new(self.precheck.clone()),
             Box::new(self.precheck_avoided_bytes.clone()),
             Box::new(self.precheck_cache_lookups.clone()),
@@ -887,6 +897,9 @@ impl Telemetry {
             for r in ArrSetupResult::ALL {
                 self.arr_setup.with_label_values(&[k.as_str(), r.as_str()]);
             }
+        }
+        for r in ArrMappingResult::ALL {
+            self.arr_path_mapping.with_label_values(&[r.as_str()]);
         }
         for source in PrecheckSource::ALL {
             for stage in PrecheckStage::ALL {

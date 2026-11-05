@@ -470,6 +470,9 @@ impl ArrApi {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all(deserialize = "camelCase"))]
 pub struct RemotePathMapping {
+    /// The *arr's id; `None` before it is created
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<i64>,
     /// The download client's host
     #[serde(default)]
     pub host: String,
@@ -484,13 +487,37 @@ pub struct RemotePathMapping {
 #[derive(Deserialize)]
 struct Listing {
     #[serde(default)]
-    directories: Vec<Entry>,
+    directories: Vec<Folder>,
+}
+
+/// One folder in a filesystem listing
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Folder {
+    /// Its name
+    #[serde(default)]
+    pub name: String,
+    /// Its full path, in the *arr's own style
+    #[serde(default)]
+    pub path: String,
 }
 
 #[derive(Deserialize)]
-struct Entry {
+struct RootFolder {
     #[serde(default)]
-    name: String,
+    path: String,
+}
+
+/// The body the *arr expects for a Remote Path Mapping
+fn mapping_body(m: &RemotePathMapping) -> Value {
+    let mut body = serde_json::json!({
+        "host": m.host,
+        "remotePath": m.remote_path,
+        "localPath": m.local_path,
+    });
+    if let Some(id) = m.id {
+        body["id"] = serde_json::json!(id);
+    }
+    body
 }
 
 impl ArrApi {
@@ -507,6 +534,16 @@ impl ArrApi {
 
     /// The folder names in `path`, as the *arr sees its own filesystem
     pub async fn filesystem(&self, path: &str) -> Result<Vec<String>, ArrApiError> {
+        Ok(self
+            .folders(path)
+            .await?
+            .into_iter()
+            .map(|d| d.name)
+            .collect())
+    }
+
+    /// The folders in `path`, with their full paths (feature 049)
+    pub async fn folders(&self, path: &str) -> Result<Vec<Folder>, ArrApiError> {
         let response = self
             .send(
                 self.request(reqwest::Method::GET, "/api/v3/filesystem")
@@ -520,7 +557,93 @@ impl ArrApi {
             .json()
             .await
             .map_err(|_| self.not_arr("unexpected filesystem response"))?;
-        Ok(listing.directories.into_iter().map(|d| d.name).collect())
+        Ok(listing.directories)
+    }
+
+    /// `GET /api/v3/rootfolder`: the paths of the *arr's library folders
+    pub async fn root_folders(&self) -> Result<Vec<String>, ArrApiError> {
+        let response = self
+            .send(self.request(reqwest::Method::GET, "/api/v3/rootfolder"))
+            .await?;
+        let list: Vec<RootFolder> = response
+            .json()
+            .await
+            .map_err(|_| self.not_arr("unexpected root folder response"))?;
+        Ok(list.into_iter().map(|r| r.path).collect())
+    }
+
+    /// `POST /api/v3/remotepathmapping`. Returns the saved mapping, with its id.
+    pub async fn create_remote_path_mapping(
+        &self,
+        mapping: &RemotePathMapping,
+    ) -> Result<RemotePathMapping, ArrApiError> {
+        let response = self
+            .send_validated(
+                self.request(reqwest::Method::POST, "/api/v3/remotepathmapping")
+                    .json(&mapping_body(mapping)),
+                |messages| ArrApiError::Refused { messages },
+            )
+            .await?;
+        response
+            .json()
+            .await
+            .map_err(|_| self.not_arr("unexpected remote path mapping response"))
+    }
+
+    /// `PUT /api/v3/remotepathmapping/{id}`
+    pub async fn update_remote_path_mapping(
+        &self,
+        id: i64,
+        mapping: &RemotePathMapping,
+    ) -> Result<(), ArrApiError> {
+        let mut body = mapping_body(mapping);
+        body["id"] = serde_json::json!(id);
+        self.send_validated(
+            self.request(
+                reqwest::Method::PUT,
+                &format!("/api/v3/remotepathmapping/{}", id),
+            )
+            .json(&body),
+            |messages| ArrApiError::Refused { messages },
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// `DELETE /api/v3/remotepathmapping/{id}`
+    pub async fn delete_remote_path_mapping(&self, id: i64) -> Result<(), ArrApiError> {
+        self.send(self.request(
+            reqwest::Method::DELETE,
+            &format!("/api/v3/remotepathmapping/{}", id),
+        ))
+        .await?;
+        Ok(())
+    }
+
+    /// `GET /api/v3/config/{section}`, the whole body (feature 049)
+    pub async fn config(&self, section: &str) -> Result<Value, ArrApiError> {
+        let response = self
+            .send(self.request(reqwest::Method::GET, &format!("/api/v3/config/{}", section)))
+            .await?;
+        response
+            .json()
+            .await
+            .map_err(|_| self.not_arr("unexpected config response"))
+    }
+
+    /// `PUT /api/v3/config/{section}/{id}` with the whole body
+    pub async fn put_config(&self, section: &str, body: &Value) -> Result<(), ArrApiError> {
+        let id = body.get("id").and_then(Value::as_i64).unwrap_or(1);
+        self.send_validated(
+            self.request(
+                reqwest::Method::PUT,
+                &format!("/api/v3/config/{}/{}", section, id),
+            )
+            .json(body),
+            |messages| ArrApiError::Refused { messages },
+        )
+        .await?;
+        Ok(())
     }
 }
 
@@ -564,6 +687,7 @@ mod tests {
         assert_eq!(
             api.remote_path_mappings().await.unwrap(),
             vec![RemotePathMapping {
+                id: Some(1),
                 host: "putio-sync".into(),
                 remote_path: "/downloads/".into(),
                 local_path: "/data/downloads/".into(),
@@ -576,6 +700,55 @@ mod tests {
     }
 
     const KEY: &str = "secret-api-key-123";
+
+    #[tokio::test]
+    async fn mappings_are_created_updated_and_deleted() {
+        let mut server = mockito::Server::new_async().await;
+        let create = server
+            .mock("POST", "/api/v3/remotepathmapping")
+            .match_header("x-api-key", KEY)
+            .match_body(mockito::Matcher::Json(json!({"host": "putio-sync",
+                "remotePath": "/downloads/", "localPath": "/data/downloads/"})))
+            .with_status(201)
+            .with_body(
+                r#"{"id": 5, "host": "putio-sync", "remotePath": "/downloads/",
+                "localPath": "/data/downloads/"}"#,
+            )
+            .create_async()
+            .await;
+        let update = server
+            .mock("PUT", "/api/v3/remotepathmapping/5")
+            .match_body(mockito::Matcher::PartialJson(
+                json!({"id": 5, "localPath": "/mnt/dl/"}),
+            ))
+            .create_async()
+            .await;
+        let delete = server
+            .mock("DELETE", "/api/v3/remotepathmapping/5")
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/api/v3/rootfolder")
+            .with_body(r#"[{"id": 1, "path": "/data/media/tv/"}]"#)
+            .create_async()
+            .await;
+        let api = api(&server);
+        let mut m = RemotePathMapping {
+            id: None,
+            host: "putio-sync".into(),
+            remote_path: "/downloads/".into(),
+            local_path: "/data/downloads/".into(),
+        };
+        let saved = api.create_remote_path_mapping(&m).await.unwrap();
+        assert_eq!(saved.id, Some(5));
+        m.local_path = "/mnt/dl/".into();
+        api.update_remote_path_mapping(5, &m).await.unwrap();
+        api.delete_remote_path_mapping(5).await.unwrap();
+        assert_eq!(api.root_folders().await.unwrap(), vec!["/data/media/tv/"]);
+        create.assert_async().await;
+        update.assert_async().await;
+        delete.assert_async().await;
+    }
 
     fn api(server: &mockito::Server) -> ArrApi {
         ArrApi::new(ArrKind::Radarr, &server.url(), KEY, reqwest::Client::new())

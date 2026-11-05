@@ -266,6 +266,9 @@ pub struct SetupResult {
     /// The client's name in the *arr
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_name: Option<String>,
+    /// The category the client was given (049)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
     /// The host the *arr accepted
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
@@ -294,6 +297,7 @@ impl SetupResult {
             url: status.map(|s| s.api.url().to_string()),
             version: status.map(|s| s.version.clone()),
             client_name: None,
+            category: None,
             host: None,
             hosts_tried: failure.hosts_tried,
             blackhole_disabled: false,
@@ -404,6 +408,18 @@ async fn detect_first(
             failure
         })
         .unwrap_or_else(|| SetupFailure::new("unreachable", "no address given")))
+}
+
+/// Find the Radarr or Sonarr at `address` (a URL or bare host, see [`base_urls`]) and check
+/// the key (feature 049)
+pub async fn connect(
+    address: &str,
+    api_key: &str,
+    http: reqwest::Client,
+) -> Result<ArrApi, SetupFailure> {
+    detect_first(&base_urls(address), api_key, http)
+        .await
+        .map(|(api, _)| api)
 }
 
 /// The saved client already has the settings setup would give it. The host was matched by
@@ -720,6 +736,7 @@ async fn finish(
         url: Some(found.api.url().to_string()),
         version: Some(found.version.clone()),
         client_name: Some(name),
+        category: Some(found.category.clone()),
         host: Some(host),
         hosts_tried: tried,
         blackhole_disabled,
