@@ -34,6 +34,7 @@ pub mod storage;
 pub mod sync;
 pub mod tailscale;
 pub mod transfers;
+pub mod verify;
 pub mod watch;
 
 pub use labels::*;
@@ -129,6 +130,12 @@ pub struct Telemetry {
     pub(crate) storage_free_runs: IntCounterVec,
     pub(crate) storage_freed_files: IntCounter,
     pub(crate) storage_freed_bytes: IntCounter,
+    // Feature 034
+    pub(crate) verify_checks: IntCounterVec,
+    pub(crate) verify_redownloads: IntCounterVec,
+    pub(crate) verify_run_files: IntCounterVec,
+    pub(crate) verify_read_bytes: IntCounter,
+    pub(crate) verify_run_active: IntGauge,
     // Feature 036
     pub(crate) tailscale_identity: IntCounterVec,
     // Feature 027
@@ -564,6 +571,40 @@ impl Telemetry {
                 "Bytes deleted from Put.io to free space.",
             ))
             .unwrap(),
+            verify_checks: IntCounterVec::new(
+                opts(
+                    "verify_total",
+                    "Files checked against Put.io, by what started the check, how and the result.",
+                ),
+                &["trigger", "method", "result"],
+            )
+            .unwrap(),
+            verify_redownloads: IntCounterVec::new(
+                opts(
+                    "verify_redownloads_total",
+                    "Files downloaded again after a mismatch, by what found it.",
+                ),
+                &["trigger"],
+            )
+            .unwrap(),
+            verify_run_files: IntCounterVec::new(
+                opts(
+                    "verify_run_files_total",
+                    "Files a verify run looked at, by result.",
+                ),
+                &["result"],
+            )
+            .unwrap(),
+            verify_read_bytes: IntCounter::with_opts(opts(
+                "verify_read_bytes_total",
+                "Bytes read back from disk to compute a CRC32 (resumed downloads and verify runs).",
+            ))
+            .unwrap(),
+            verify_run_active: IntGauge::with_opts(opts(
+                "verify_run_active",
+                "1 while a verify run is going.",
+            ))
+            .unwrap(),
             tailscale_identity: IntCounterVec::new(
                 opts(
                     "tailscale_identity_total",
@@ -734,6 +775,11 @@ impl Telemetry {
             Box::new(self.storage_free_runs.clone()),
             Box::new(self.storage_freed_files.clone()),
             Box::new(self.storage_freed_bytes.clone()),
+            Box::new(self.verify_checks.clone()),
+            Box::new(self.verify_redownloads.clone()),
+            Box::new(self.verify_run_files.clone()),
+            Box::new(self.verify_read_bytes.clone()),
+            Box::new(self.verify_run_active.clone()),
             Box::new(self.tailscale_identity.clone()),
             Box::new(self.events.clone()),
             Box::new(self.hook_runs.clone()),
@@ -792,6 +838,7 @@ impl Telemetry {
                     .with_label_values(&[t.as_str(), r.as_str()]);
             }
         }
+        verify::zero_init(self);
         for via in tailscale::VIAS {
             for result in tailscale::RESULTS {
                 self.tailscale_identity.with_label_values(&[via, result]);
