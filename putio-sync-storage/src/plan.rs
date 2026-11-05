@@ -160,6 +160,7 @@ mod tests {
             extension: None,
             created_at: created.map(str::to_string),
             is_shared: false,
+            crc32: None,
         }
     }
 

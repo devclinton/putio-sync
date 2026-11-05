@@ -3,8 +3,7 @@
 use crate::error::{DownloadError, DownloadResult};
 use crate::files::{
     check_resume, cleanup_partial, crc32_file, crc32_prefix, crc_equal, create_temp_path,
-    needs_checksum, next_free_name, plan_existing, valid_crc32, Crc32, ExistingAction,
-    LocalState,
+    needs_checksum, next_free_name, plan_existing, valid_crc32, Crc32, ExistingAction, LocalState,
 };
 use crate::progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 use crate::rate_limiter::RateLimiter;
@@ -27,7 +26,7 @@ use putio_sync_db::pipeline::TRANSFER_EVENTS_SEEN;
 use putio_sync_db::Database;
 use putio_sync_telemetry::{self as telemetry, RuleDecision, SyncKind, SyncResult};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{broadcast, Notify, RwLock};
@@ -222,7 +221,7 @@ impl Drop for StopGuard {
 const RESTARTED_NOTE: &str = "Started again: the partial download was gone";
 
 /// Sanitize a filename to remove invalid characters
-fn sanitize_filename(filename: &str) -> String {
+pub(crate) fn sanitize_filename(filename: &str) -> String {
     filename
         .chars()
         .map(|c| match c {
@@ -558,15 +557,18 @@ impl Existing<'_> {
     }
 }
 
+/// A checksum read in progress: bytes read, when it started, and the phase shown
+type Checking = (u64, Instant, &'static str);
+
 /// Download manager
 #[derive(Clone)]
 pub struct DownloadManager {
     /// Put.io API client
-    client: Arc<PutioApiClient>,
+    pub(crate) client: Arc<PutioApiClient>,
     /// Database (optional for fallback mode)
-    database: Option<Arc<Database>>,
+    pub(crate) database: Option<Arc<Database>>,
     /// Download configuration (shared and mutable for hot reload)
-    config: Arc<RwLock<DownloadConfig>>,
+    pub(crate) config: Arc<RwLock<DownloadConfig>>,
     /// Progress trackers for active downloads
     progress_trackers: Arc<RwLock<HashMap<i64, ProgressTracker>>>,
     /// Overall progress
@@ -587,7 +589,7 @@ pub struct DownloadManager {
     paths_in_use: Arc<Mutex<HashSet<PathBuf>>>,
     /// Files whose checksum is being computed: bytes read, when it started, and the
     /// phase shown ("checking", or "verifying" for a resumed file's prefix)
-    checking: Arc<Mutex<HashMap<i64, (u64, Instant, &'static str)>>>,
+    checking: Arc<Mutex<HashMap<i64, Checking>>>,
     /// Stop signals of running downloads, by file id (feature 039)
     stop_signals: Arc<Mutex<HashMap<i64, Arc<StopSignal>>>>,
     /// Files stopped with bytes on disk, to notice a restart from 0
@@ -601,7 +603,9 @@ pub struct DownloadManager {
     /// database (feature 027)
     transfer_events: Arc<tokio::sync::Mutex<Option<TransferEvents>>>,
     /// The one bandwidth limiter every download shares (feature 032)
-    bandwidth: RateLimiter,
+    pub(crate) bandwidth: RateLimiter,
+    /// The "verify everything" run (feature 034)
+    pub(crate) verifier: crate::verify::VerifyRunner,
 }
 
 /// The cached transfer list, when it was fetched, and the last attempt
@@ -669,6 +673,7 @@ impl DownloadManager {
             transfer_events: Arc::new(tokio::sync::Mutex::new(None)),
             paths_in_use: Arc::new(Mutex::new(HashSet::new())),
             checking: Arc::new(Mutex::new(HashMap::new())),
+            verifier: crate::verify::VerifyRunner::default(),
         }
     }
 
@@ -703,6 +708,7 @@ impl DownloadManager {
             transfer_events: Arc::new(tokio::sync::Mutex::new(None)),
             paths_in_use: Arc::new(Mutex::new(HashSet::new())),
             checking: Arc::new(Mutex::new(HashMap::new())),
+            verifier: crate::verify::VerifyRunner::default(),
         }
     }
 
@@ -1001,6 +1007,7 @@ impl DownloadManager {
     /// Call once at startup, before `start_workers`. Their partial `.<name>.downloading`
     /// files resume from where they stopped. Returns the count; 0 without a database.
     pub async fn recover_interrupted(&self) -> DownloadResult<usize> {
+        self.verify().recover().await;
         let Some(db) = self.database.as_ref() else {
             return Ok(0);
         };
@@ -1014,6 +1021,14 @@ impl DownloadManager {
             );
         }
         Ok(count)
+    }
+
+    /// A worker is writing `path` (feature 034)
+    pub(crate) fn path_in_use(&self, path: &Path) -> bool {
+        self.paths_in_use
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(path)
     }
 
     /// The `.downloading` paths workers are writing now: one per claimed target (044)
@@ -1274,10 +1289,7 @@ impl DownloadManager {
         let mut result = self
             .transfer(&file, &filename, &target_path, &config, resumed_from, hash)
             .await;
-        loop {
-            let (true, Ok(done), Some(expected)) = (hash, &result, remote.as_deref()) else {
-                break;
-            };
+        while let (true, Ok(done), Some(expected)) = (hash, &result, remote.as_deref()) {
             let actual = done.crc32.clone().unwrap_or_default();
             let passed = crc_equal(&actual, expected);
             if verify {
@@ -1318,7 +1330,8 @@ impl DownloadManager {
                     filename, expected, actual, attempt
                 );
                 if verify {
-                    self.record_problem(&file, &name, &target_path, &message).await;
+                    self.record_problem(&file, &name, &target_path, &message)
+                        .await;
                 }
                 result = Err(DownloadError::ApiError(message));
                 break;
@@ -1526,9 +1539,7 @@ impl DownloadManager {
     ) -> DownloadResult<bool> {
         let started = Instant::now();
         let local = self
-            .with_read_progress(file_id, "checking", |progress| {
-                crc32_file(path, progress)
-            })
+            .with_read_progress(file_id, "checking", |progress| crc32_file(path, progress))
             .await?;
         debug!(
             "Checksum of {}: {} (Put.io {}) in {:.2}s",
@@ -1707,7 +1718,10 @@ impl DownloadManager {
             queued: false,
         };
         if let Err(e) = database.verify().add_problem(&problem).await {
-            warn!("Failed to record the verification problem for {}: {}", name, e);
+            warn!(
+                "Failed to record the verification problem for {}: {}",
+                name, e
+            );
         }
     }
 
@@ -1715,7 +1729,10 @@ impl DownloadManager {
     async fn mark_problems_fixed(&self, file_id: i64) {
         if let Some(database) = &self.database {
             if let Err(e) = database.verify().mark_fixed(file_id).await {
-                warn!("Failed to mark verification problems of {} fixed: {}", file_id, e);
+                warn!(
+                    "Failed to mark verification problems of {} fixed: {}",
+                    file_id, e
+                );
             }
         }
     }

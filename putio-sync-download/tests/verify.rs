@@ -216,7 +216,12 @@ async fn mismatch_then_match_downloads_twice_and_finishes_after_verify_passed() 
     let history = s.db.history().query(None, 50, 0, None).await.unwrap();
     assert_eq!(history[0].verify.as_deref(), Some("crc32"));
     assert_eq!(history[0].redownloads, Some(1));
-    let row = s.db.downloads().find_by_file_id(3401).await.unwrap().unwrap();
+    let row =
+        s.db.downloads()
+            .find_by_file_id(3401)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(row.crc32.as_deref(), Some(crc(&good()).as_str()));
     assert_eq!(row.verify.as_deref(), Some("crc32"));
     assert!(row.verified_at.is_some());
@@ -301,7 +306,11 @@ async fn no_redownloads_fails_on_the_first_mismatch() {
     let Payload::DownloadFailed(failed) = &seen[1].payload else {
         unreachable!()
     };
-    assert!(failed.error.contains("after 1 downloads"), "{}", failed.error);
+    assert!(
+        failed.error.contains("after 1 downloads"),
+        "{}",
+        failed.error
+    );
 }
 
 #[tokio::test]
@@ -370,7 +379,7 @@ async fn only_a_resumed_file_reads_back_its_prefix() {
         .mock("GET", "/files/3407/download")
         .match_header("range", format!("bytes={half}-{}", SIZE - 1).as_str())
         .with_status(206)
-        .with_body(whole[half..].to_vec())
+        .with_body(&whole[half..])
         .expect(1)
         .create_async()
         .await;
