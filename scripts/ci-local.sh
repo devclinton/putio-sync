@@ -61,6 +61,15 @@ else
 fi
 echo ""
 
+print_step "Checking the Grafana resources dashboard..."
+if bash scripts/check-grafana-dashboard.sh; then
+    print_success "Grafana dashboard check passed"
+else
+    print_error "Grafana dashboard check failed"
+    exit 1
+fi
+echo ""
+
 # Check formatting
 print_step "Checking code formatting..."
 if cargo fmt --all -- --check; then
