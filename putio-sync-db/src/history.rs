@@ -85,6 +85,19 @@ impl<'a> HistoryRepository<'a> {
         Ok(())
     }
 
+    /// Record how a history row's download was checked and how many re-downloads it
+    /// took (feature 034)
+    pub async fn set_verify(&self, id: i64, verify: &str, redownloads: u32) -> DbResult<()> {
+        sqlx::query("UPDATE download_history SET verify = ?, redownloads = ? WHERE id = ?")
+            .bind(verify)
+            .bind(redownloads as i64)
+            .bind(id)
+            .execute(self.pool)
+            .await
+            .map_err(tracked(DbOp::History, "Failed to set history verify"))?;
+        Ok(())
+    }
+
     /// Insert a finished download with an explicit finish time (UTC). Used to seed
     /// tests and the mock UI with history spread over time (feature 006, R10).
     pub async fn insert_download_at(

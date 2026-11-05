@@ -42,6 +42,12 @@ pub enum EventType {
     SyncCompleted,
     /// Put.io storage fell below the warning level
     StorageLow,
+    /// A new download matched Put.io's CRC32 or size (feature 034)
+    VerifyPassed,
+    /// A file did not match Put.io's CRC32 or size
+    VerifyFailed,
+    /// A file is being downloaded again after a mismatch
+    VerifyRedownload,
     /// Sent by the "send test event" button only
     HookTest,
     /// Sent by a plugin's "send test event" button only
@@ -50,7 +56,7 @@ pub enum EventType {
 
 impl EventType {
     /// Every type, in documentation order.
-    pub const ALL: [EventType; 9] = [
+    pub const ALL: [EventType; 12] = [
         EventType::DownloadFinished,
         EventType::DownloadFailed,
         EventType::TransferAdded,
@@ -58,6 +64,9 @@ impl EventType {
         EventType::TransferFailed,
         EventType::SyncCompleted,
         EventType::StorageLow,
+        EventType::VerifyPassed,
+        EventType::VerifyFailed,
+        EventType::VerifyRedownload,
         EventType::HookTest,
         EventType::PluginTest,
     ];
@@ -72,6 +81,9 @@ impl EventType {
             EventType::TransferFailed => "transfer.failed",
             EventType::SyncCompleted => "sync.completed",
             EventType::StorageLow => "storage.low",
+            EventType::VerifyPassed => "verify.passed",
+            EventType::VerifyFailed => "verify.failed",
+            EventType::VerifyRedownload => "verify.redownload",
             EventType::HookTest => "hook.test",
             EventType::PluginTest => "plugin.test",
         }
@@ -211,6 +223,15 @@ pub enum Payload {
     /// `storage.low`
     #[serde(rename = "storage.low")]
     StorageLow(StorageLow),
+    /// `verify.passed`
+    #[serde(rename = "verify.passed")]
+    VerifyPassed(VerifyPassed),
+    /// `verify.failed`
+    #[serde(rename = "verify.failed")]
+    VerifyFailed(VerifyFailed),
+    /// `verify.redownload`
+    #[serde(rename = "verify.redownload")]
+    VerifyRedownload(VerifyRedownload),
     /// `hook.test`
     #[serde(rename = "hook.test")]
     HookTest(HookTest),
@@ -230,6 +251,9 @@ impl Payload {
             Payload::TransferFailed(_) => EventType::TransferFailed,
             Payload::SyncCompleted(_) => EventType::SyncCompleted,
             Payload::StorageLow(_) => EventType::StorageLow,
+            Payload::VerifyPassed(_) => EventType::VerifyPassed,
+            Payload::VerifyFailed(_) => EventType::VerifyFailed,
+            Payload::VerifyRedownload(_) => EventType::VerifyRedownload,
             Payload::HookTest(_) => EventType::HookTest,
             Payload::PluginTest(_) => EventType::PluginTest,
         }
@@ -368,6 +392,73 @@ pub struct StorageLow {
     pub warn_free_percent: u8,
 }
 
+/// `verify.passed`
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VerifyPassed {
+    /// Put.io file id
+    pub file_id: i64,
+    /// File name as saved
+    pub name: String,
+    /// Path under the download folder, `/`-separated
+    pub relative_path: String,
+    /// Absolute path on the daemon's disk
+    pub local_path: String,
+    /// Size in bytes
+    pub size_bytes: u64,
+    /// `crc32` or `size`
+    pub method: String,
+    /// Put.io's CRC32, lower case, when it has one
+    pub crc32: Option<String>,
+    /// Re-downloads it took
+    pub redownloads: u32,
+    /// Always `download`: a verify run does not send it
+    pub trigger: String,
+}
+
+/// `verify.failed`
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VerifyFailed {
+    /// Put.io file id
+    pub file_id: i64,
+    /// File name
+    pub name: String,
+    /// Path under the download folder, `/`-separated
+    pub relative_path: String,
+    /// Absolute path on the daemon's disk
+    pub local_path: String,
+    /// Size in bytes Put.io gives
+    pub size_bytes: u64,
+    /// Put.io's CRC32; null for a size mismatch
+    pub expected_crc32: Option<String>,
+    /// What the file hashed to; null for a size mismatch
+    pub actual_crc32: Option<String>,
+    /// 1 for the first download
+    pub attempt: u32,
+    /// Whether it will be downloaded again
+    pub will_redownload: bool,
+    /// `download` or `run`
+    pub trigger: String,
+}
+
+/// `verify.redownload`
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VerifyRedownload {
+    /// Put.io file id
+    pub file_id: i64,
+    /// File name
+    pub name: String,
+    /// Path under the download folder, `/`-separated
+    pub relative_path: String,
+    /// Size in bytes
+    pub size_bytes: u64,
+    /// The download about to start (2 = the first re-download); 1 for a run
+    pub attempt: u32,
+    /// `download.verify_max_redownloads`
+    pub max_redownloads: u32,
+    /// `download` or `run`
+    pub trigger: String,
+}
+
 /// `hook.test`
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HookTest {
@@ -466,6 +557,38 @@ pub fn samples() -> Vec<Payload> {
             free_bytes: 5_000_000_000,
             free_percent: 5.0,
             warn_free_percent: 10,
+        }),
+        Payload::VerifyPassed(VerifyPassed {
+            file_id: 123,
+            name: "episode.mkv".to_string(),
+            relative_path: "Shows/episode.mkv".to_string(),
+            local_path: "/data/Shows/episode.mkv".to_string(),
+            size_bytes: 1_400_000_000,
+            method: "crc32".to_string(),
+            crc32: Some("8f2c1a07".to_string()),
+            redownloads: 0,
+            trigger: "download".to_string(),
+        }),
+        Payload::VerifyFailed(VerifyFailed {
+            file_id: 123,
+            name: "episode.mkv".to_string(),
+            relative_path: "Shows/episode.mkv".to_string(),
+            local_path: "/data/Shows/episode.mkv".to_string(),
+            size_bytes: 1_400_000_000,
+            expected_crc32: Some("8f2c1a07".to_string()),
+            actual_crc32: Some("00a1b2c3".to_string()),
+            attempt: 1,
+            will_redownload: true,
+            trigger: "download".to_string(),
+        }),
+        Payload::VerifyRedownload(VerifyRedownload {
+            file_id: 123,
+            name: "episode.mkv".to_string(),
+            relative_path: "Shows/episode.mkv".to_string(),
+            size_bytes: 1_400_000_000,
+            attempt: 2,
+            max_redownloads: 2,
+            trigger: "download".to_string(),
         }),
         Payload::HookTest(HookTest {
             hook: "home-assistant".to_string(),

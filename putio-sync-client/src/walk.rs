@@ -29,6 +29,9 @@ pub struct WalkedFile {
     /// under them)
     #[serde(skip)]
     pub is_shared: bool,
+    /// Put.io's CRC32, when the listing gives one (feature 034)
+    #[serde(skip)]
+    pub crc32: Option<String>,
 }
 
 /// A folder that could not be listed
@@ -68,6 +71,7 @@ fn walked(entry: FileEntry, parent_id: i64, parent_path: &str) -> WalkedFile {
         is_folder: entry.is_folder,
         created_at: entry.created_at,
         is_shared: entry.is_shared,
+        crc32: entry.crc32,
         name: entry.name,
     }
 }

@@ -118,6 +118,11 @@ export const del = (path) => request("DELETE", path);
 export const setBandwidthOverride = (mode, minutes = 60) => put("/bandwidth/override", { mode, minutes });
 export const clearBandwidthOverride = () => del("/bandwidth/override");
 
+// Download verification (feature 034): `paths` limits a run to those files, none means everything
+export const verifyStatus = () => get("/verify");
+export const startVerify = (paths = null, reportOnly = false) => post("/verify", paths ? { paths, report_only: reportOnly } : { report_only: reportOnly });
+export const controlVerify = (action) => post(`/verify/${action}`);
+
 /** Check `token` with the daemon and keep it only when accepted (204). */
 export async function login(token) {
   await request("POST", "/auth/login", { token });

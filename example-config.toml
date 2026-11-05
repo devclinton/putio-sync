@@ -46,6 +46,12 @@ whitelist_patterns = "*.{mkv,mp4,avi,mov}"  # Only download video files
 # end = "07:00"             # an end before the start runs past midnight
 # limit = "unlimited"       # or "paused", or bytes per second
 
+# Download verification: check each download against Put.io's CRC32 (or size)
+# verify = true
+# verify_max_redownloads = 2            # 0 to 5; then the download fails
+# verify_read_limit_mb_per_sec = 50     # "Verify everything" read speed from disk
+# verify_follow_bandwidth_pause = true  # a run waits while downloads are paused
+
 # Maximum retry attempts for failed downloads
 max_retries = 3
 

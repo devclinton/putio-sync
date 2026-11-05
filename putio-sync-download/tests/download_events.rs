@@ -22,6 +22,7 @@ fn file(id: i64, name: &str, dir: &str, url: String) -> DownloadFile {
         crc32: None,
         save_as: None,
         fixed_path: false,
+        overwrite: false,
     }
 }
 

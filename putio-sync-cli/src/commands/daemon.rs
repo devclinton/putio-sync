@@ -407,6 +407,7 @@ mod tests {
                 workers: 5,
                 delete_after_download: true,
                 rules: putio_sync_core::rules::RuleSet::from_config(&config.download),
+                verify: putio_sync_download::manager::VerifySettings::default(),
             }
         );
         assert_eq!(

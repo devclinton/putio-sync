@@ -1,7 +1,7 @@
 //! Streaming download functionality with buffering
 
 use crate::error::{DownloadError, DownloadResult};
-use crate::files::create_temp_path;
+use crate::files::{create_temp_path, Crc32};
 use crate::rate_limiter::RateLimiter;
 use putio_sync_client::PutioApiClient;
 use std::future::Future;
@@ -197,6 +197,8 @@ pub struct StreamDownloadResult {
     pub final_path: PathBuf,
     /// Whether the download was successful
     pub success: bool,
+    /// CRC32 of the whole file when a digest was passed in, as 8 lower-case hex digits
+    pub crc32: Option<String>,
 }
 
 /// Download a file using streaming with buffering
@@ -252,6 +254,7 @@ pub async fn stream_download(
         limiter,
         resume_from_byte,
         stop,
+        None,
     )
     .await?;
     finish_download(&result.final_path, target_path).await?;
@@ -277,6 +280,10 @@ pub async fn finish_download(temp_path: &Path, target_path: &Path) -> DownloadRe
 
 /// [`stream_download`] without the final rename: the file stays at its hidden
 /// `.downloading` path, returned as `final_path`, so the caller can check it first.
+///
+/// `digest` is the CRC32 of the bytes already on disk (empty for a fresh download);
+/// every byte written is added to it, in write order, and the final value is
+/// returned in `crc32`.
 #[allow(clippy::too_many_arguments)]
 pub async fn stream_to_temp(
     client: &PutioApiClient,
@@ -288,6 +295,7 @@ pub async fn stream_to_temp(
     limiter: Option<&RateLimiter>,
     resume_from_byte: Option<u64>,
     stop: Option<&StopSignal>,
+    digest: Option<Crc32>,
 ) -> DownloadResult<StreamDownloadResult> {
     let buffer_size = buffer_size_mb * 1024 * 1024;
 
@@ -477,6 +485,7 @@ pub async fn stream_to_temp(
         async move {
             let mut writer = BufWriter::with_capacity(buffer_size, file);
             let mut total_written = 0u64;
+            let mut digest = digest;
 
             // Continuously read from channel and write to disk
             while let Some(chunk) = rx.recv().await {
@@ -486,6 +495,9 @@ pub async fn stream_to_temp(
                         format!("Failed to write to download file: {}", e),
                     ))
                 })?;
+                if let Some(digest) = digest.as_mut() {
+                    digest.update(&chunk);
+                }
                 putio_sync_telemetry::download::bytes(chunk.len() as u64);
                 total_written += chunk.len() as u64;
                 if let Some(id) = worker {
@@ -518,7 +530,7 @@ pub async fn stream_to_temp(
                 temp_path.display()
             );
 
-            Ok::<u64, DownloadError>(total_written)
+            Ok::<(u64, Option<String>), DownloadError>((total_written, digest.map(|d| d.hex())))
         }
     });
 
@@ -606,7 +618,7 @@ pub async fn stream_to_temp(
     network_result?;
 
     // Propagate any disk errors
-    disk_result?;
+    let (_, crc32) = disk_result?;
 
     debug!(
         "Downloaded {} bytes to {}",
@@ -648,6 +660,7 @@ pub async fn stream_to_temp(
         bytes_downloaded,
         final_path: temp_path,
         success: true,
+        crc32,
     })
 }
 

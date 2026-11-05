@@ -315,6 +315,51 @@ CREATE TABLE IF NOT EXISTS storage_run_files (
 CREATE INDEX IF NOT EXISTS idx_storage_run_files_run ON storage_run_files(run_id)
 "#;
 
+/// SQL to create the verify_runs table (feature 034): each "verify everything" run.
+/// `state` is `running` while it goes, then `finished`, `stopped` or `failed`.
+pub const CREATE_VERIFY_RUNS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS verify_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL,
+    report_only INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL,
+    error TEXT,
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ended_at TIMESTAMP,
+    files_total INTEGER NOT NULL DEFAULT 0,
+    files_done INTEGER NOT NULL DEFAULT 0,
+    bytes_total INTEGER NOT NULL DEFAULT 0,
+    bytes_done INTEGER NOT NULL DEFAULT 0,
+    verified INTEGER NOT NULL DEFAULT 0,
+    mismatch INTEGER NOT NULL DEFAULT 0,
+    missing INTEGER NOT NULL DEFAULT 0,
+    not_on_putio INTEGER NOT NULL DEFAULT 0,
+    busy INTEGER NOT NULL DEFAULT 0,
+    unreadable INTEGER NOT NULL DEFAULT 0,
+    not_checked INTEGER NOT NULL DEFAULT 0
+)
+"#;
+
+/// SQL to create the verify_problems table (feature 034): files that did not verify,
+/// from a run (`run_id` set) or a download that gave up (`source = 'download'`)
+pub const CREATE_VERIFY_PROBLEMS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS verify_problems (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER REFERENCES verify_runs(id),
+    source TEXT NOT NULL,
+    file_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    local_path TEXT,
+    result TEXT NOT NULL,
+    detail TEXT,
+    queued INTEGER NOT NULL DEFAULT 0,
+    at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fixed_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_verify_problems_run ON verify_problems(run_id);
+CREATE INDEX IF NOT EXISTS idx_verify_problems_file ON verify_problems(file_id)
+"#;
+
 /// SQL to create performance indexes
 /// These indexes optimize common query patterns
 pub const CREATE_INDEXES: &str = r#"

@@ -212,7 +212,10 @@ function row(i) {
         "div",
         { class: "badges" },
         h("span", { class: "badge", text: STAGES[i.stage] }),
-        h("span", { class: `badge ${BADGE[i.state] || ""}`, text: LABEL[i.state] || i.state }),
+        // features 040 and 034: every running file reads back from disk
+        i.phase === "checking" || i.phase === "verifying"
+          ? h("span", { class: "badge active", text: i.phase === "checking" ? "Checking" : "Verifying" })
+          : h("span", { class: `badge ${BADGE[i.state] || ""}`, text: LABEL[i.state] || i.state }),
         i.held ? h("span", { class: "badge warn", text: "on hold" }) : null,
       ),
     ),

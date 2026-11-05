@@ -8,6 +8,7 @@ What changed in each build is in [CHANGELOG.md](CHANGELOG.md); planned work is i
 
 - **Fast Downloads**: Concurrent downloads with configurable workers
 - **Bandwidth Schedules**: download limits by time of day and day of week, plus Pause or Slow for an hour from the Status page ([details](#bandwidth-schedules))
+- **Download Verification**: each download is checked against Put.io's CRC32 (or size) before it is finished, bad copies are downloaded again, and a "Verify everything" run checks files already on disk ([details](#download-verification))
 - **Resumable Downloads**: Automatic resume for interrupted downloads using range requests
 - **Streaming Downloads**: Efficient buffered streaming with minimal memory usage
 - **Smart Progress Logging**: Size-based progress intervals with single-threshold logging (every 50% for 500MB+, 33% for 1GB+, 20% for 5GB+, 10% for 10GB+, 7% for 15GB+, 5% for 20GB+, 1% for 50GB+)
@@ -624,6 +625,39 @@ schedule that pauses the whole week, and limits under 64 KiB/s are allowed but w
 about in Settings and by the doctor. The one-off `download --bandwidth-limit` holds that
 limit for the whole run and ignores the schedule.
 
+### Download verification
+
+Each download is checked against Put.io before it gets its real name. The CRC32 is
+worked out while the file streams, so a new file is not read twice; a resumed file reads
+back only the part already on disk. Where Put.io has no CRC32, the size is the check.
+
+A file that does not match is downloaded again, up to `verify_max_redownloads` times;
+then the download fails with reason `integrity`, the bad copy is deleted and nothing is
+removed from Put.io, even with `delete_after_download`. `verify.passed` comes before
+`download.finished`, so a media-server refresh only sees checked files.
+
+```toml
+[download]
+verify = true                        # check each new download
+verify_max_redownloads = 2           # 0 to 5; then the download fails
+verify_read_limit_mb_per_sec = 50    # how fast a verify run reads from disk, 1 to 10000
+verify_follow_bandwidth_pause = true # a run waits while the bandwidth schedule pauses
+```
+
+**Verify everything**, on the History page, checks files already downloaded: it reads
+each one from disk at the read limit, compares it with Put.io, and queues a mismatch to be
+downloaded over (or only reports it, with **Report only**). It can be paused, resumed and
+stopped, waits while downloads are paused by the bandwidth schedule or **Pause 1 h**, and
+skips a file being downloaded. Results are verified, mismatch, missing (gone from disk),
+not on Put.io, busy, unreadable and not checked. On the Local files page, **Verify** checks
+the ticked files, or everything under ticked folders.
+
+History shows how each download was checked (CRC32, size or not checked) and how many
+times it was downloaded again. The Queue and Active pages show **Verifying** while a
+resumed file is read back. The doctor's **Download verification** check warns when
+verification is off, a download failed its check in the last 7 days, or the last run
+found mismatches that are still open.
+
 ### Basic Configuration
 
 ```toml
@@ -729,6 +763,11 @@ H = histogram.
 | `putio_sync_download_workers` | gauge | — | Configured worker count |
 | `putio_sync_download_bandwidth_limit_bytes_per_second` | gauge | — | The download limit in force: `+Inf` unlimited, 0 paused |
 | `putio_sync_download_bandwidth_override` | gauge | — | 1 while **Pause 1 h** or **Slow 1 h** is in force, else 0 |
+| `putio_sync_verify_total` | counter | `trigger`, `method`, `result` | Download checks: `trigger` is `download` or `run`, `method` is `crc32`, `size` or `none`, `result` is `passed` or `failed` |
+| `putio_sync_verify_redownloads_total` | counter | `trigger` | Files downloaded again (or queued to be) after a mismatch |
+| `putio_sync_verify_run_files_total` | counter | `result` | Files a verify run classed: `verified`, `mismatch`, `missing`, `not_on_putio`, `busy`, `unreadable`, `not_checked` |
+| `putio_sync_verify_read_bytes_total` | counter | — | Bytes read back from disk to check files |
+| `putio_sync_verify_run_active` | gauge | — | 1 while a verify run is going, else 0 |
 | `putio_sync_downloads_completed_total` | counter | — | Downloads verified and renamed into place |
 | `putio_sync_downloads_failed_total` | counter | `reason` | Downloads that ended in failure |
 | `putio_sync_downloaded_bytes_total` | counter | — | Bytes written to disk; `rate()` gives throughput |
@@ -840,7 +879,8 @@ as well as a desktop. The pages:
   completed** (completed and seeding), **Clear failed** and **Clear all finished**
   remove those transfers from the Put.io transfer list after a confirm with the count;
   their files stay in the account.
-- **History**: downloads and deletions, filtered by action and by name.
+- **History**: downloads and deletions, filtered by action and by name, with how each
+  download was verified; the Verification panel runs **Verify everything**.
 - **Stats**: charts of what was downloaded and when (see [Stats page](#stats-page)).
 - **Doctor**: the latest health report with **Run now** and one-click fixes; a fix that
   deletes lists what it will touch and asks first (see [Doctor](#doctor)).
@@ -980,7 +1020,7 @@ daemon's download manager and watcher:
 | Group | Applies live | Needs a restart |
 |---|---|---|
 | Logging | `level`, `module_filters`, within 10 s (ignored while `RUST_LOG` is set) | `console_format`, `console_enabled`, `file_*` |
-| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`, `slow_limit_bytes_per_sec` (running downloads too), `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, for the next download | `target_directory` (new downloads go there at once, but the queue database and disk figures stay on the startup folder), and the rest of the group |
+| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`, `slow_limit_bytes_per_sec` (running downloads too), `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, `verify`, `verify_max_redownloads`, `verify_read_limit_mb_per_sec`, `verify_follow_bandwidth_pause`, for the next download or verify run | `target_directory` (new downloads go there at once, but the queue database and disk figures stay on the startup folder), and the rest of the group |
 | Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Release check | — | everything |
@@ -1084,6 +1124,9 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `GET /bandwidth` | The download limit in force: `limit`, `bytes_per_sec`, `source` (`default`, `schedule`, `pause`, `slow`), `entry`, `override`, `next_change`, `local_time`, `utc_offset`, `slow_limit_bytes_per_sec`. Also the `bandwidth` section of `GET /status` |
 | `PUT /bandwidth/override` | `{"mode": "pause" \| "slow", "minutes": 60}` (1 to 1440, default 60) → the `GET /bandwidth` body; 400 for anything else |
 | `DELETE /bandwidth/override` | Back to the schedule now; fine when nothing is in force |
+| `GET /verify` | `{"enabled", "status", "last_run", "problems"}`: the run going now (`state` `idle`, `running`, `paused`, `waiting` or `stopping`, with counts and progress), the last run, and open problems |
+| `POST /verify` | `{"paths"?: [...], "report_only": false}`: start a verify run over everything, or over those files and folders → 202 with the status; 409 while one runs, 400 when no path is a downloaded file, 503 without a database |
+| `POST /verify/{pause,resume,stop}` | Steer the run → the status; 409 when there is none (or, for resume, it isn't paused) |
 | `GET /hooks` | Each hook with its kind, cut-down target, events, timeout, waiting events and last 20 runs |
 | `POST /hooks/test` | `{"name": "..."}`: send a `hook.test` event to that hook and answer with the run; 404 for an unknown hook, 409 while a test of it runs |
 | `GET /plugins` | The plugins folder and each plugin with its source, state, manifest (events, permissions, config fields), hosts needed and approved, waiting events and last 20 runs; never a secret value |
@@ -1572,6 +1615,7 @@ daemon also runs it 2 minutes after it starts and then every `interval_minutes`.
 | | Failing downloads | A download failed 3 or more times |
 | | Leftover partial downloads | A `.downloading` file older than an hour that no download owns |
 | | Bandwidth limit | Shows the download limit in force, its source and the daemon's time; a pause from the Status page is a warning until it ends |
+| | Download verification | Verification is off, a download failed its check in the last 7 days, or the last verify run found mismatches still open (warning) |
 | This machine | Download folder | The folder is missing or not writable (problem) |
 | | Disk space | Under 10% free, or less than the queue needs (warning); under 2% (problem) |
 | | Database | SQLite's integrity check fails (problem) |

@@ -6,6 +6,7 @@ pub(crate) mod net;
 pub(crate) mod plugins;
 pub(crate) mod putio;
 pub(crate) mod sync;
+pub(crate) mod verify;
 
 use crate::report::{CheckId, CheckResult, Finding, Status};
 use chrono::{DateTime, Utc};
@@ -145,6 +146,7 @@ async fn detect(ctx: &Ctx, id: CheckId) -> Finding {
         FailingDownloads => sync::failing_downloads(ctx).await,
         OrphanPartials => sync::orphan_partials(ctx).await,
         Bandwidth => sync::bandwidth(ctx).await,
+        Verification => verify::verification(ctx).await,
         DownloadDir => local::download_dir(ctx).await,
         DiskSpace => local::disk_space(ctx).await,
         Database => local::database(ctx).await,

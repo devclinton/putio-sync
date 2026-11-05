@@ -101,6 +101,44 @@ impl<'a> QueueRepository<'a> {
         Ok(())
     }
 
+    /// Queue a file to be downloaded over whatever is at its path after a verify run
+    /// found it bad (feature 034). An existing row is set back to `pending`, keeps its
+    /// place and gets the flag; `save_as` is the name it was saved under when that
+    /// differs from Put.io's.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_redownload(
+        &self,
+        file_id: i64,
+        filename: &str,
+        file_size: i64,
+        download_url: &str,
+        relative_path: &str,
+        save_as: Option<&str>,
+    ) -> DbResult<i64> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO download_queue (file_id, filename, file_size, download_url, relative_path, priority, status, save_as, redownload)
+            VALUES (?, ?, ?, ?, ?, 0, 'pending', ?, 1)
+            ON CONFLICT(file_id) DO UPDATE SET
+                status = 'pending',
+                relative_path = excluded.relative_path,
+                save_as = excluded.save_as,
+                redownload = 1,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+        )
+        .bind(file_id)
+        .bind(filename)
+        .bind(file_size)
+        .bind(download_url)
+        .bind(relative_path)
+        .bind(save_as)
+        .execute(self.pool)
+        .await
+        .map_err(tracked(DbOp::Queue, "Failed to queue a re-download"))?;
+        Ok(result.last_insert_rowid())
+    }
+
     /// Get all pending items ordered by priority (highest first)
     pub async fn get_pending(&self) -> DbResult<Vec<QueueItem>> {
         let items = sqlx::query_as::<_, QueueItem>(

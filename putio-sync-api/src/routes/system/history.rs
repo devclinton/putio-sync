@@ -43,6 +43,10 @@ pub struct HistoryEntry {
     /// What happened to a file already at that path: skipped, resumed, restarted,
     /// overwritten or saved_as; none for a fresh download
     pub outcome: Option<String>,
+    /// How the download was checked: crc32, size or none; none before 034
+    pub verify: Option<String>,
+    /// Re-downloads a mismatch took (feature 034)
+    pub redownloads: Option<i64>,
 }
 
 /// History response
@@ -128,6 +132,8 @@ async fn get_history(
             timestamp: entry.timestamp,
             local_path: entry.local_path,
             outcome: entry.outcome,
+            verify: entry.verify,
+            redownloads: entry.redownloads,
         })
         .collect();
 

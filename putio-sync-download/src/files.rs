@@ -260,6 +260,85 @@ pub fn next_free_name(dir: &Path, name: &str, reserved: &HashSet<PathBuf>) -> St
         .expect("an unbounded range always finds a free name")
 }
 
+static CRC: crc::Crc<u32, crc::Table<16>> =
+    crc::Crc::<u32, crc::Table<16>>::new(&crc::CRC_32_ISO_HDLC);
+
+/// Block size for reading a file back to hash it
+pub const HASH_BLOCK: usize = 1024 * 1024;
+
+/// A CRC32 (ISO-HDLC, as Put.io reports it) being computed, fed in order (feature 034)
+#[derive(Clone)]
+pub struct Crc32(crc::Digest<'static, u32, crc::Table<16>>);
+
+impl Crc32 {
+    /// A digest of no bytes
+    pub fn new() -> Self {
+        Self(CRC.digest())
+    }
+
+    /// Add the next bytes
+    pub fn update(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    /// The value so far as 8 lowercase hex digits
+    pub fn hex(&self) -> String {
+        format!("{:08x}", self.0.clone().finalize())
+    }
+}
+
+impl Default for Crc32 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for Crc32 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Crc32({})", self.hex())
+    }
+}
+
+/// Put.io's CRC32 in lower case when it is one (8 hex digits after trimming), else None
+pub fn valid_crc32(value: Option<&str>) -> Option<String> {
+    let v = value?.trim();
+    (v.len() == 8 && v.bytes().all(|b| b.is_ascii_hexdigit())).then(|| v.to_ascii_lowercase())
+}
+
+/// The CRC32 of the first `len` bytes of a file, read in [`HASH_BLOCK`] blocks on a
+/// blocking thread; `on_progress` gets the bytes read so far. A file shorter than `len`
+/// is an `UnexpectedEof` error.
+pub async fn crc32_prefix(
+    path: &Path,
+    len: u64,
+    on_progress: impl Fn(u64) + Send + 'static,
+) -> std::io::Result<Crc32> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let mut file = std::fs::File::open(&path)?;
+        let mut digest = Crc32::new();
+        let mut buf = vec![0u8; HASH_BLOCK];
+        let mut read = 0u64;
+        while read < len {
+            let want = (len - read).min(HASH_BLOCK as u64) as usize;
+            let n = file.read(&mut buf[..want])?;
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    format!("{} is shorter than {len} bytes", path.display()),
+                ));
+            }
+            digest.update(&buf[..n]);
+            read += n as u64;
+            on_progress(read);
+        }
+        Ok(digest)
+    })
+    .await
+    .map_err(std::io::Error::other)?
+}
+
 /// The CRC32 (ISO-HDLC, as Put.io reports it) of a file as 8 lowercase hex digits.
 /// Reads in 1 MiB blocks on a blocking thread; `on_progress` gets the bytes read so far.
 pub async fn crc32_file(
@@ -269,11 +348,9 @@ pub async fn crc32_file(
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         use std::io::Read;
-        static CRC: crc::Crc<u32, crc::Table<16>> =
-            crc::Crc::<u32, crc::Table<16>>::new(&crc::CRC_32_ISO_HDLC);
         let mut file = std::fs::File::open(&path)?;
-        let mut digest = CRC.digest();
-        let mut buf = vec![0u8; 1024 * 1024];
+        let mut digest = Crc32::new();
+        let mut buf = vec![0u8; HASH_BLOCK];
         let mut read = 0u64;
         loop {
             let n = file.read(&mut buf)?;
@@ -284,7 +361,7 @@ pub async fn crc32_file(
             read += n as u64;
             on_progress(read);
         }
-        Ok(format!("{:08x}", digest.finalize()))
+        Ok(digest.hex())
     })
     .await
     .map_err(std::io::Error::other)?
@@ -313,6 +390,58 @@ pub async fn cleanup_partial(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crc32_matches_the_check_value_and_hashes_in_pieces() {
+        // The CRC-32/ISO-HDLC check value
+        let mut whole = Crc32::new();
+        whole.update(b"123456789");
+        assert_eq!(whole.hex(), "cbf43926");
+        let mut parts = Crc32::new();
+        parts.update(b"1234");
+        assert_eq!(format!("{parts:?}").len(), "Crc32(00000000)".len());
+        parts.update(b"56789");
+        assert_eq!(parts.hex(), whole.hex());
+        assert_eq!(Crc32::default().hex(), "00000000");
+    }
+
+    #[test]
+    fn valid_crc32_wants_eight_hex_digits() {
+        assert_eq!(valid_crc32(Some(" CBF43926 ")).as_deref(), Some("cbf43926"));
+        assert_eq!(valid_crc32(Some("")), None);
+        assert_eq!(valid_crc32(Some("cbf4392")), None);
+        assert_eq!(valid_crc32(Some("cbf4392g")), None);
+        assert_eq!(valid_crc32(None), None);
+    }
+
+    #[tokio::test]
+    async fn a_prefix_and_the_rest_hash_like_the_whole_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.bin");
+        let bytes: Vec<u8> = (0..(HASH_BLOCK * 2 + 77))
+            .map(|i| (i % 251) as u8)
+            .collect();
+        std::fs::write(&path, &bytes).unwrap();
+        let cut = HASH_BLOCK as u64 + 5;
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let s = seen.clone();
+        let mut digest = crc32_prefix(&path, cut, move |n| {
+            s.store(n, std::sync::atomic::Ordering::Relaxed)
+        })
+        .await
+        .unwrap();
+        assert_eq!(seen.load(std::sync::atomic::Ordering::Relaxed), cut);
+        digest.update(&bytes[cut as usize..]);
+        assert_eq!(digest.hex(), crc32_file(&path, |_| {}).await.unwrap());
+        assert_eq!(
+            crc32_prefix(&path, 0, |_| {}).await.unwrap().hex(),
+            "00000000"
+        );
+        let err = crc32_prefix(&path, bytes.len() as u64 + 1, |_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
 
     #[test]
     fn test_create_temp_path() {

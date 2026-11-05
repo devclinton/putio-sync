@@ -25,6 +25,18 @@ fn default_delete_empty_folders() -> bool {
     true
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_verify_max_redownloads() -> u32 {
+    DownloadConfig::DEFAULT_VERIFY_MAX_REDOWNLOADS
+}
+
+fn default_verify_read_limit() -> u64 {
+    DownloadConfig::DEFAULT_VERIFY_READ_LIMIT_MB
+}
+
 /// What to do when a file already exists at its local path (`[download] on_existing`,
 /// feature 040)
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
@@ -812,6 +824,19 @@ pub struct DownloadConfig {
     /// The limit while "Slow" is on, or the schedule's if lower (default 1 MiB/s)
     #[serde(default = "default_slow_limit")]
     pub slow_limit_bytes_per_sec: u64,
+    /// Check each download against Put.io's CRC32 (or its size) before it is saved under
+    /// its real name (feature 034)
+    #[serde(default = "default_true")]
+    pub verify: bool,
+    /// Downloads again after a mismatch before the file fails, 0..=5
+    #[serde(default = "default_verify_max_redownloads")]
+    pub verify_max_redownloads: u32,
+    /// How fast "verify everything" reads files from disk, in MB/s, 1..=10000
+    #[serde(default = "default_verify_read_limit")]
+    pub verify_read_limit_mb_per_sec: u64,
+    /// "Verify everything" waits while the bandwidth schedule or an override pauses
+    #[serde(default = "default_true")]
+    pub verify_follow_bandwidth_pause: bool,
     /// Maximum number of retry attempts for failed downloads (default: 3)
     pub max_retries: u32,
     /// Initial retry delay in seconds (doubles with each retry)
@@ -1012,6 +1037,10 @@ impl Default for DownloadConfig {
             bandwidth_limit_bytes_per_sec: None, // Unlimited by default
             bandwidth_schedule: Vec::new(),
             slow_limit_bytes_per_sec: default_slow_limit(),
+            verify: true,
+            verify_max_redownloads: Self::DEFAULT_VERIFY_MAX_REDOWNLOADS,
+            verify_read_limit_mb_per_sec: Self::DEFAULT_VERIFY_READ_LIMIT_MB,
+            verify_follow_bandwidth_pause: true,
             max_retries: 3,              // 3 retries by default
             retry_initial_delay_secs: 1, // Start with 1 second delay
             delete_empty_folders: true,  // Delete empty folders by default
@@ -1024,6 +1053,41 @@ impl Default for DownloadConfig {
 }
 
 impl DownloadConfig {
+    /// Default `verify_max_redownloads`
+    pub const DEFAULT_VERIFY_MAX_REDOWNLOADS: u32 = 2;
+    /// Largest `verify_max_redownloads`
+    pub const MAX_VERIFY_REDOWNLOADS: u32 = 5;
+    /// Default `verify_read_limit_mb_per_sec`
+    pub const DEFAULT_VERIFY_READ_LIMIT_MB: u64 = 50;
+    /// Largest `verify_read_limit_mb_per_sec`
+    pub const MAX_VERIFY_READ_LIMIT_MB: u64 = 10_000;
+
+    /// The `verify_*` keys are in range (feature 034)
+    pub fn validate_verify(&self) -> Result<(), String> {
+        if self.verify_max_redownloads > Self::MAX_VERIFY_REDOWNLOADS {
+            return Err(format!(
+                "download.verify_max_redownloads must be 0..={} (got {})",
+                Self::MAX_VERIFY_REDOWNLOADS,
+                self.verify_max_redownloads
+            ));
+        }
+        if !(1..=Self::MAX_VERIFY_READ_LIMIT_MB).contains(&self.verify_read_limit_mb_per_sec) {
+            return Err(format!(
+                "download.verify_read_limit_mb_per_sec must be 1..={} (got {})",
+                Self::MAX_VERIFY_READ_LIMIT_MB,
+                self.verify_read_limit_mb_per_sec
+            ));
+        }
+        Ok(())
+    }
+
+    /// The verify run's read limit in bytes per second (MB = 1 000 000 bytes)
+    pub fn verify_read_limit_bytes(&self) -> u64 {
+        self.verify_read_limit_mb_per_sec
+            .clamp(1, Self::MAX_VERIFY_READ_LIMIT_MB)
+            * 1_000_000
+    }
+
     /// The global choice for existing files: `on_existing`, else the old
     /// `skip_existing`, else resume
     pub fn on_existing(&self) -> ExistingFile {
@@ -1334,6 +1398,9 @@ impl Config {
     /// ```no_run
     pub fn validate(&self) -> CoreResult<()> {
         crate::bandwidth::validate(&self.download).map_err(CoreError::ConfigError)?;
+        self.download
+            .validate_verify()
+            .map_err(CoreError::ConfigError)?;
 
         // Validate workers is at least 1
         if self.download.workers == 0 {
@@ -2548,6 +2615,54 @@ mod tests {
     }
 
     #[test]
+    fn verify_keys_default_parse_and_validate() {
+        // feature 034: an older config without the keys gets the defaults
+        let text: String = toml::to_string(&super::DownloadConfig::default())
+            .unwrap()
+            .lines()
+            .filter(|l| !l.starts_with("verify"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let download: super::DownloadConfig = toml::from_str(&text).unwrap();
+        assert!(download.verify);
+        assert_eq!(download.verify_max_redownloads, 2);
+        assert_eq!(download.verify_read_limit_mb_per_sec, 50);
+        assert!(download.verify_follow_bandwidth_pause);
+        assert_eq!(download.verify_read_limit_bytes(), 50_000_000);
+
+        let mut config = super::Config::default();
+        config.download.verify = false;
+        config.download.verify_max_redownloads = 0;
+        config.download.verify_read_limit_mb_per_sec = 10_000;
+        config.download.verify_follow_bandwidth_pause = false;
+        config.validate().unwrap();
+
+        for (redownloads, read_mb, want) in [
+            (
+                9,
+                50,
+                "download.verify_max_redownloads must be 0..=5 (got 9)",
+            ),
+            (
+                2,
+                0,
+                "download.verify_read_limit_mb_per_sec must be 1..=10000 (got 0)",
+            ),
+            (
+                2,
+                10_001,
+                "download.verify_read_limit_mb_per_sec must be 1..=10000 (got 10001)",
+            ),
+        ] {
+            let mut config = super::Config::default();
+            config.download.verify_max_redownloads = redownloads;
+            config.download.verify_read_limit_mb_per_sec = read_mb;
+            let err = config.validate().unwrap_err().to_string();
+            assert!(err.contains(want), "{err}");
+        }
+    }
+
+    #[test]
     fn transfers_section_defaults_and_overrides() {
         let config: super::Config = toml::from_str("").unwrap();
         assert_eq!(config.transfers, super::TransfersConfig::default());
@@ -2610,6 +2725,10 @@ mod tests {
                 bandwidth_limit_bytes_per_sec: None,
                 bandwidth_schedule: Vec::new(),
                 slow_limit_bytes_per_sec: crate::bandwidth::DEFAULT_SLOW_LIMIT,
+                verify: true,
+                verify_max_redownloads: 2,
+                verify_read_limit_mb_per_sec: 50,
+                verify_follow_bandwidth_pause: true,
                 max_retries: 3,
                 retry_initial_delay_secs: 1,
                 delete_empty_folders: true,

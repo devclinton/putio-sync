@@ -16,4 +16,5 @@ pub mod settings;
 pub mod stats;
 pub mod status;
 pub mod tailscale;
+pub mod verify;
 pub mod whats_new;

@@ -3,10 +3,11 @@
 // with a folder's size), rename in place, and "Re-check" a rejected watch file so the
 // watcher looks at it again. The server keeps every path inside its root. Feature 045:
 // filter (globs with AND, OR and NOT), sort by a heading, and tick rows (or Select all of
-// what the filter shows) to delete several at once.
+// what the filter shows) to delete several at once. Feature 034: "Verify" checks the
+// ticked files (or everything under ticked folders) against Put.io; History shows the run.
 // Route: #/files/<root>?path=<folder>&q=<filter>&sort=<key>-<asc|desc>
 
-import { del, get, post } from "../api.js";
+import { del, get, post, startVerify } from "../api.js";
 import { confirm, empty, h, navigate, poll, toast } from "../app.js";
 import { bytes, dateTime } from "../format.js";
 import { listControls } from "../listctl.js";
@@ -44,7 +45,12 @@ export function mount(el, { path: route = [], query } = {}) {
   editing = null;
   shown = null;
   ctl = listControls({ query, columns: COLUMNS, onChange: () => shown && !editing && renderList(...shown) });
-  sel = selection({ actions: [h("button", { type: "button", class: "btn btn-small", onclick: onDeleteSelected }, "Delete")] });
+  sel = selection({
+    actions: [
+      h("button", { type: "button", class: "btn btn-small", onclick: onVerifySelected }, "Verify"),
+      h("button", { type: "button", class: "btn btn-small", onclick: onDeleteSelected }, "Delete"),
+    ],
+  });
   els = {
     roots: h("div", { class: "toolbar", role: "group", "aria-label": "Folder" }),
     crumbs: h("nav", { class: "crumbs", "aria-label": "Path" }),
@@ -225,6 +231,21 @@ async function onDeleteSelected() {
   page.busy(false);
   page.clear();
   reload();
+}
+
+/** Start a verify run over the ticked entries, by their full paths on the NAS */
+async function onVerifySelected() {
+  const current = roots.find((r) => r.key === root);
+  if (!current || !sel) return;
+  const base = String(current.path).replace(/[\\/]+$/, "");
+  const paths = entries.filter((e) => sel.has(e.path)).map((e) => `${base}/${e.path}`);
+  try {
+    await startVerify(paths);
+    toast(`Verifying ${plural(paths.length, "item", "items")}`, "ok", "History shows the run.");
+    sel.clear();
+  } catch (err) {
+    if (!quiet(err)) toast("Couldn't start verifying", "error", reason(err));
+  }
 }
 
 // ---- Rendering --------------------------------------------------------------

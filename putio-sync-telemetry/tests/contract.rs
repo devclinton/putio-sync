@@ -43,6 +43,11 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_storage_freed_files_total",
     "putio_sync_storage_freed_bytes_total",
     "putio_sync_tailscale_identity_total",
+    "putio_sync_verify_total",
+    "putio_sync_verify_redownloads_total",
+    "putio_sync_verify_run_files_total",
+    "putio_sync_verify_read_bytes_total",
+    "putio_sync_verify_run_active",
     "putio_sync_transfers_stalled",
     "putio_sync_setup_required",
     "putio_sync_pipeline_items",
@@ -202,6 +207,11 @@ fn record_everything(t: &Telemetry) {
     t.set_precheck_held(1);
     t.set_transfers_stalled(2);
     t.event_emitted("download.finished");
+    t.verify_check("download", "crc32", true);
+    t.verify_redownload("run");
+    t.verify_run_file("missing");
+    t.verify_read(10);
+    t.set_verify_run_active(false);
     t.hook_configured("test-hook");
     t.hook_run("test-hook", "hook.test", "timeout", Duration::from_secs(30));
     t.hook_dropped("test-hook", 1);
@@ -247,7 +257,11 @@ fn closed_set(label: &str) -> Vec<&'static str> {
         }
         // Host names from the config's cache list
         "cache" => vec!["itorrents.net"],
-        "method" => strs(ArrMethod::ALL, ArrMethod::as_str),
+        "method" => {
+            let mut v = strs(ArrMethod::ALL, ArrMethod::as_str);
+            v.extend(putio_sync_telemetry::verify::METHODS);
+            v
+        }
         "reason" => {
             let mut v = strs(RetryReason::ALL, RetryReason::as_str);
             v.extend(strs(FailReason::ALL, FailReason::as_str));
@@ -261,6 +275,8 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v.extend(strs(HoldResult::ALL, HoldResult::as_str));
             v.extend(putio_sync_telemetry::tailscale::RESULTS);
             v.extend(putio_sync_telemetry::hooks::RESULTS);
+            v.extend(putio_sync_telemetry::verify::RESULTS);
+            v.extend(putio_sync_telemetry::verify::RUN_RESULTS);
             v
         }
         "type" => putio_sync_telemetry::hooks::EVENT_TYPES.to_vec(),
@@ -289,7 +305,11 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v
         }
         "action" => strs(PipelineAction::ALL, PipelineAction::as_str),
-        "trigger" => strs(CleanupTrigger::ALL, CleanupTrigger::as_str),
+        "trigger" => {
+            let mut v = strs(CleanupTrigger::ALL, CleanupTrigger::as_str);
+            v.extend(putio_sync_telemetry::verify::TRIGGERS);
+            v
+        }
         "decision" => strs(RuleDecision::ALL, RuleDecision::as_str),
         other => panic!("unexpected label {}", other),
     }
