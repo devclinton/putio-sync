@@ -89,12 +89,23 @@ impl Prompter for TerminalPrompter {
             .map(|a| if a.is_empty() { default.to_string() } else { a }))
     }
 
+    /// On a terminal the token is read with echo off, so it never shows on screen
     fn token_line(&mut self, prompt: &str) -> Result<Option<String>> {
-        if self.tty {
-            eprint!("{prompt}: ");
-            io::stderr().flush()?;
+        if !self.tty {
+            return self.line();
         }
-        self.line()
+        match rpassword::prompt_password(format!("{prompt} (hidden): ")) {
+            Ok(token) => Ok(Some(token.trim().to_string())),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::UnexpectedEof | io::ErrorKind::Interrupted
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(e).context("could not read the token from the terminal"),
+        }
     }
 }
 

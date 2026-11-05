@@ -281,6 +281,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- `putio-sync setup` no longer shows the Put.io token as you type or paste it
+  in a terminal. `putio-sync login` no longer writes the token exchange
+  response (which holds the access token) to the debug log or to an error, and
+  a failed request no longer shows the URL carrying the client secret.
+
 - `GET /local/workers` reported each worker's share of the bandwidth limit;
   `total_bandwidth_limit_bps` is now the limit in force (null when unlimited,
   0 while paused) and the per-worker value is null (feature 032).
