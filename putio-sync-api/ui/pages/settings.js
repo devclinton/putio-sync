@@ -13,7 +13,8 @@
 // button; header and env values are shown only as set, with a Replace button.
 // Feature 028: the Plugins group (plugins.js): a card per Lua plugin with its state, the
 // hosts it contacts, its settings by type (secrets shown only as set), and Send test event
-// with the lines it logged; Reload reads the plugins folder again.
+// with the lines it logged; Reload reads the plugins folder again. Feature 031: action
+// buttons (Sign in with Plex), Load buttons for fields with choices, and path rules.
 
 import {
   addArrApplication,
@@ -829,11 +830,14 @@ function hooksExtra(data) {
   };
 }
 
-// ---- Lua plugins (feature 028) ----------------------------------------------
+// ---- Lua plugins (features 028, 031) -----------------------------------------
 
 /**
  * One card per plugin found: state, what it contacts, Enabled, its settings by type,
  * timeout, last run and Send test event. Settings for a plugin not found are kept.
+ * A plugin's actions (031) are buttons: an answer shows its message, code and link, fills
+ * a field's choices, and its `next` step runs on its own for up to 10 minutes. What an
+ * action saves is saved already; the card shows it.
  */
 function pluginsExtra(data) {
   const stored = data.plugins || [];
@@ -850,6 +854,7 @@ function pluginsExtra(data) {
     };
     if (f.type === "boolean") return h("input", { type: "checkbox", checked: row.values[f.key], onchange: (ev) => set(ev.currentTarget.checked) });
     if (f.type === "string_list") return h("textarea", { class: "input", rows: 3, spellcheck: "false", oninput: (ev) => set(ev.currentTarget.value) }, row.values[f.key]);
+    if (f.type === "path_map") return h("textarea", { class: "input", rows: 3, spellcheck: "false", placeholder: "/downloads => /data", oninput: (ev) => set(ev.currentTarget.value) }, row.values[f.key]);
     const type = f.type === "url" ? "url" : f.type === "integer" || f.type === "number" ? "number" : "text";
     return h("input", { class: "input", type, step: f.type === "number" ? "any" : undefined, value: row.values[f.key], autocomplete: "off", spellcheck: "false", oninput: (ev) => set(ev.currentTarget.value) });
   };
@@ -866,6 +871,79 @@ function pluginsExtra(data) {
     };
     draw();
     return box;
+  };
+
+  // The card of each plugin, so an action can draw its card again
+  const cards = new Map();
+  const redrawCard = (name) => {
+    const c = cards.get(name);
+    if (c && c.el.isConnected) c.el.replaceWith(card(c.status));
+  };
+
+  const runAction = async (row, id, input = {}, startedAt = Date.now()) => {
+    row.flow = { ...(row.flow || {}), busy: true, error: null };
+    redrawCard(row.name);
+    try {
+      const a = await post("/plugins/action", { name: row.name, action: id, input, config: plugins.overrides(row) });
+      for (const key of plugins.choiceFields(row, id)) row.choices[key] = a.choices || [];
+      if (a.saved) {
+        plugins.applyAnswer(row, a);
+        toast(`${row.name}: saved ${a.saved.join(", ")}`);
+      }
+      const wait = a.next && !a.done ? plugins.nextWait(a.next, startedAt, Date.now()) : null;
+      row.flow = { message: a.message, code: a.code, open_url: a.open_url, busy: wait != null };
+      if (a.next && !a.done && wait == null) row.flow.error = "Stopped after 10 minutes; try again";
+      redrawCard(row.name);
+      if (wait != null) setTimeout(() => list.isConnected && runAction(row, a.next.action, a.next.input, startedAt), wait);
+    } catch (e) {
+      row.flow = { ...(row.flow || {}), busy: false, error: e.status === 401 || e.status === 429 ? null : reason(e) };
+      redrawCard(row.name);
+    }
+  };
+
+  // A field with choices: a Load button, then a list to pick from (ticks for a list field)
+  const pick = (row, f, onHosts) => {
+    const opts = row.choices[f.key];
+    const load = h("button", { type: "button", class: "btn btn-small", disabled: row.flow && row.flow.busy, onclick: () => runAction(row, f.choices) }, opts ? "Reload" : "Load");
+    if (!opts) return h("div", { class: "toolbar" }, input(row, f, onHosts), load);
+    if (f.type === "string_list") {
+      const on = plugins.ticked(row, f.key);
+      const all = [...opts, ...on.filter((v) => !opts.some((o) => o.value === v)).map((v) => ({ value: v, label: v }))];
+      return h(
+        "div",
+        {},
+        all.length ? null : h("p", { class: "muted", text: "Nothing to pick from" }),
+        ...all.map((o) => h("label", { class: "field check" }, h("input", { type: "checkbox", checked: on.includes(o.value), onchange: (ev) => plugins.tick(row, f.key, o.value, ev.currentTarget.checked) }), h("span", { text: o.label }))),
+        load,
+      );
+    }
+    const current = row.values[f.key];
+    const all = current && !opts.some((o) => o.value === current) ? [{ value: current, label: current }, ...opts] : opts;
+    const select = h(
+      "select",
+      { class: "input", onchange: (ev) => ((row.values[f.key] = ev.currentTarget.value), onHosts()) },
+      h("option", { value: "", text: "—" }),
+      all.map((o) => h("option", { value: o.value, selected: o.value === current, text: o.label })),
+    );
+    return h("div", { class: "toolbar" }, select, load);
+  };
+
+  const actionsBox = (row, status) => {
+    const shown = (status.actions || []).filter((a) => !a.hidden);
+    const flow = row.flow || {};
+    if (!shown.length && !flow.message && !flow.error) return null;
+    return h(
+      "div",
+      { class: "spaced", "aria-live": "polite" },
+      shown.length
+        ? h("div", { class: "toolbar" }, ...shown.map((a) => h("button", { type: "button", class: "btn btn-small", title: a.help || undefined, disabled: flow.busy || status.state === "broken", onclick: () => runAction(row, a.id) }, a.label)))
+        : null,
+      flow.code ? h("p", { class: "big", text: flow.code }) : null,
+      flow.message ? h("p", { text: flow.message }) : null,
+      flow.open_url ? h("p", {}, h("a", { href: flow.open_url, target: "_blank", rel: "noopener noreferrer" }, "Open the sign-in page")) : null,
+      flow.busy ? h("p", { class: "muted", text: "Waiting…" }) : null,
+      flow.error ? h("p", { class: "error-text", text: flow.error }) : null,
+    );
   };
 
   const testBox = (row, status) => {
@@ -914,13 +992,14 @@ function pluginsExtra(data) {
             "div",
             { class: "fields" },
             h("label", { class: "field check" }, h("input", { type: "checkbox", checked: row.enabled, onchange: (ev) => (row.enabled = ev.currentTarget.checked) }), h("span", { text: "Enabled" })),
-            ...row.fields.map((f) => field((f.label || f.key) + (f.required ? " *" : ""), f.secret ? secret(row, f) : input(row, f, showHosts), f.help)),
+            ...row.fields.map((f) => field((f.label || f.key) + (f.required ? " *" : ""), f.secret ? secret(row, f) : f.choices ? pick(row, f, showHosts) : input(row, f, showHosts), f.help)),
             field("Time limit (s)", h("input", { class: "input", type: "number", min: 1, max: 60, value: row.timeout_secs, oninput: (ev) => (row.timeout_secs = ev.currentTarget.value) }), "Longest one event may take, 1 to 60"),
           ),
+          actionsBox(row, status),
           testBox(row, status),
         ]
       : [];
-    return h(
+    const el = h(
       "fieldset",
       { class: "hook-card" },
       h("legend", { text: status.name }),
@@ -930,6 +1009,8 @@ function pluginsExtra(data) {
       h("p", { class: "muted" }, hosts),
       ...body,
     );
+    cards.set(status.name, { el, status });
+    return el;
   };
 
   const draw = () => {

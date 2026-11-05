@@ -1,9 +1,13 @@
-// Feature 028: the Settings plugin editor's rows, hosts and labels in ui/plugins.js.
+// Features 028, 031: the Settings plugin editor's rows, hosts, labels, path rules and
+// settings actions in ui/plugins.js.
 // Run with `node --test`; tests/ui_js.rs runs it in cargo test.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MASK, fromStatus, hostsFor, runLabel, stateLabel, toSettings } from "../../ui/plugins.js";
+import {
+  FLOW_LIMIT_MS, MASK, applyAnswer, choiceFields, fromStatus, hostsFor, nextWait, overrides,
+  parsePathMap, pathMapText, runLabel, stateLabel, tick, ticked, toSettings,
+} from "../../ui/plugins.js";
 
 const ntfy = {
   name: "ntfy",
@@ -72,4 +76,58 @@ test("secrets are replaced or cleared, and bad numbers go as typed", () => {
   assert.equal(out.config.topic, "nas");
   row.secrets.token = { set: true, replace: true, value: "" };
   assert.ok(!("secrets" in toSettings(row)));
+});
+
+const plex = {
+  name: "plex",
+  permissions: { http: { hosts: [], host_from_config: ["server", "plex_tv_url"] }, store: true },
+  config_fields: [
+    { key: "token", type: "string", default: null, required: true, secret: true, choices: null },
+    { key: "server", type: "url", default: null, required: true, secret: false, choices: "load_servers" },
+    { key: "libraries", type: "string_list", default: null, required: false, secret: false, choices: "load_libraries" },
+    { key: "path_map", type: "path_map", default: null, required: false, secret: false, choices: null },
+    { key: "plex_tv_url", type: "url", default: "https://plex.tv", required: false, secret: false, choices: null },
+  ],
+};
+
+test("path rules are one `from => to` per line", () => {
+  const rules = [{ from: "/downloads", to: "/data" }, { from: "/mnt/a b", to: "D:\\Media" }];
+  assert.equal(pathMapText(rules), "/downloads => /data\n/mnt/a b => D:\\Media");
+  assert.deepEqual(parsePathMap(" /downloads=>/data \n\n/mnt/a b  =>  D:\\Media"), rules);
+  assert.equal(parsePathMap("  \n"), undefined);
+  assert.deepEqual(parsePathMap("/no/arrow"), [{ from: "/no/arrow", to: "" }]);
+  const row = fromStatus(plex, { name: "plex", config: { path_map: rules } });
+  assert.equal(row.values.path_map, pathMapText(rules));
+  assert.deepEqual(toSettings(row).config, { path_map: rules });
+});
+
+test("an action gets the typed values and its answer fills the row", () => {
+  const row = fromStatus(plex, { name: "plex", config: { server: "https://old" } });
+  row.values.server = " https://nas:32400 ";
+  row.values.libraries = "";
+  const sent = overrides(row);
+  assert.equal(sent.server, "https://nas:32400");
+  assert.equal(sent.libraries, null);
+  assert.equal(sent.plex_tv_url, "https://plex.tv");
+  assert.ok(!("token" in sent));
+
+  applyAnswer(row, { saved: ["token", "server"], config: { server: "https://picked:32400" } });
+  assert.deepEqual(row.secrets.token, { set: true, value: "" });
+  assert.equal(row.values.server, "https://picked:32400");
+  assert.deepEqual(toSettings(row).secrets, { token: MASK });
+
+  assert.deepEqual(choiceFields(row, "load_libraries"), ["libraries"]);
+  assert.deepEqual(choiceFields(row, "sign_in"), []);
+  tick(row, "libraries", "2", true);
+  tick(row, "libraries", "1", true);
+  tick(row, "libraries", "2", false);
+  assert.deepEqual(ticked(row, "libraries"), ["1"]);
+});
+
+test("the next step waits as asked and the flow stops after 10 minutes", () => {
+  assert.equal(nextWait({ after_seconds: 2 }, 0, 0), 2000);
+  assert.equal(nextWait({}, 0, 0), 2000);
+  assert.equal(nextWait({ after_seconds: 99 }, 0, 0), 30000);
+  assert.equal(nextWait({ after_seconds: 2 }, 0, FLOW_LIMIT_MS - 2000), 2000);
+  assert.equal(nextWait({ after_seconds: 2 }, 0, FLOW_LIMIT_MS - 1000), null);
 });
