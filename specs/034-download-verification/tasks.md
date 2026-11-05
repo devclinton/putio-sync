@@ -13,7 +13,7 @@ against local mocks.
 
 ## Phase 2: Foundational
 
-- [ ] T002 [P] Add `verify.passed`, `verify.failed` and `verify.redownload` to `EventType`, `Payload`, `samples()` and `putio-sync-core/src/events/schema.json` per `contracts/events.md` (`schema_version` stays 1); fix the `ALL` count and the telemetry event-type list if it mirrors `EventType::ALL`
+- [X] T002 [P] Add `verify.passed`, `verify.failed` and `verify.redownload` to `EventType`, `Payload`, `samples()` and `putio-sync-core/src/events/schema.json` per `contracts/events.md` (`schema_version` stays 1); fix the `ALL` count and the telemetry event-type list if it mirrors `EventType::ALL`
 - [ ] T003 [P] Database: columns `downloads.crc32 TEXT`, `downloads.verify TEXT`, `downloads.verified_at TIMESTAMP`, `download_history.verify TEXT`, `download_history.redownloads INTEGER`, `download_queue.redownload INTEGER NOT NULL DEFAULT 0`; tables `verify_runs` and `verify_problems` per `data-model.md`, in `putio-sync-db/src/schema.rs` and `putio-sync-db/src/lib.rs` migrate; models in `putio-sync-db/src/models.rs`
 - [ ] T004 Add `VerifyRepository` in `putio-sync-db/src/verify.rs` (start/update/finish run, prune to the latest 10 runs, stop rows left `running`, add problem, mark fixed by file id, list problems for the UI and doctor) plus `downloads().set_verified`, `history().set_verify`, queue `redownload` read/write; repository tests
 - [ ] T005 [P] Metrics in `putio-sync-telemetry/src/verify.rs` and the registry in `putio-sync-telemetry/src/lib.rs`: `putio_sync_verify_total{trigger,method,result}`, `putio_sync_verify_redownloads_total{trigger}`, `putio_sync_verify_run_files_total{result}`, `putio_sync_verify_read_bytes_total`, `putio_sync_verify_run_active`
@@ -54,7 +54,7 @@ against local mocks.
 
 ## Phase 6: User Story 4 - Hooks, plugins and monitoring (P3)
 
-- [ ] T023 [US4] Document the three events in `EVENTS.md` (fields, examples, `trigger`), keeping schema version 1; the docs/schema consistency test passes
+- [X] T023 [US4] Document the three events in `EVENTS.md` (fields, examples, `trigger`), keeping schema version 1; the docs/schema consistency test passes
 - [ ] T024 [US4] Test that a bus subscriber receives `verify.failed` with the documented fields and that `/metrics` shows the `putio_sync_verify_*` series, in `putio-sync-download/tests/verify.rs` and the telemetry tests
 
 ## Phase 7: Polish

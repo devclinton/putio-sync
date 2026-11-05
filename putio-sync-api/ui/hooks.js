@@ -13,6 +13,9 @@ export const EVENTS = [
   ["transfer.failed", "Transfer failed"],
   ["sync.completed", "Sync run complete"],
   ["storage.low", "Put.io storage low"],
+  ["verify.passed", "Download verified"],
+  ["verify.failed", "Verification failed"],
+  ["verify.redownload", "Re-downloading after a mismatch"],
 ];
 
 /** An editor row for a new hook */

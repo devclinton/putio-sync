@@ -280,6 +280,122 @@ space drops below the line, and again only after it has gone back above it.
 }
 ```
 
+### `verify.passed`
+
+A new download matched Put.io's CRC32 (or its size, where Put.io has no CRC32). It is sent
+just before `download.finished`, after the file got its real name. A "verify everything"
+run does not send it (feature 034).
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `file_id` | integer | the Put.io file id |
+| `name` | string | the file name as saved |
+| `relative_path` | string | the path under the download folder, `/`-separated |
+| `local_path` | string | the absolute path on the daemon's disk |
+| `size_bytes` | integer | |
+| `method` | string | `crc32` or `size` |
+| `crc32` | string or null | Put.io's CRC32 in lower case; `null` when the check was by size |
+| `redownloads` | integer | how many times it was downloaded again before it matched |
+| `trigger` | string | always `download` |
+
+```json
+{
+  "schema_version": 1,
+  "id": "7c1f0e2a-3b4d-4e5f-8a9b-0c1d2e3f4a5b",
+  "type": "verify.passed",
+  "occurred_at": "2026-11-04T09:12:33.100Z",
+  "source": { "app": "putio-sync", "version": "0.1.1", "host": "nas01" },
+  "data": {
+    "file_id": 1234567890,
+    "name": "Big.Buck.Bunny.2008.1080p.mkv",
+    "relative_path": "Movies/Big Buck Bunny (2008)/Big.Buck.Bunny.2008.1080p.mkv",
+    "local_path": "/downloads/Movies/Big Buck Bunny (2008)/Big.Buck.Bunny.2008.1080p.mkv",
+    "size_bytes": 2147483648,
+    "method": "crc32",
+    "crc32": "8f2c1a07",
+    "redownloads": 0,
+    "trigger": "download"
+  }
+}
+```
+
+### `verify.failed`
+
+A file did not match Put.io. For a new download (`trigger` `download`) the bad copy never
+gets its real name; it is downloaded again while `will_redownload` is `true`, and when the
+limit is spent `download.failed` follows with reason `integrity`. For a "verify everything"
+run (`trigger` `run`) the file on disk is left as it is and queued to be downloaded over,
+unless the run was "report only".
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `file_id` | integer | the Put.io file id |
+| `name` | string | the file name |
+| `relative_path` | string | the path under the download folder, `/`-separated |
+| `local_path` | string | the absolute path on the daemon's disk |
+| `size_bytes` | integer | the size Put.io gives |
+| `expected_crc32` | string or null | Put.io's CRC32; `null` for a size mismatch |
+| `actual_crc32` | string or null | what the file hashed to; `null` for a size mismatch |
+| `attempt` | integer | which download this was, `1` for the first; `1` for a run |
+| `will_redownload` | boolean | whether it is being downloaded again |
+| `trigger` | string | `download` or `run` |
+
+```json
+{
+  "schema_version": 1,
+  "id": "a3d9c2b1-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "type": "verify.failed",
+  "occurred_at": "2026-11-04T09:12:33.090Z",
+  "source": { "app": "putio-sync", "version": "0.1.1", "host": "nas01" },
+  "data": {
+    "file_id": 1234567890,
+    "name": "Big.Buck.Bunny.2008.1080p.mkv",
+    "relative_path": "Movies/Big Buck Bunny (2008)/Big.Buck.Bunny.2008.1080p.mkv",
+    "local_path": "/downloads/Movies/Big Buck Bunny (2008)/Big.Buck.Bunny.2008.1080p.mkv",
+    "size_bytes": 2147483648,
+    "expected_crc32": "8f2c1a07",
+    "actual_crc32": "00a1b2c3",
+    "attempt": 1,
+    "will_redownload": true,
+    "trigger": "download"
+  }
+}
+```
+
+### `verify.redownload`
+
+A file is being downloaded again after a mismatch: a new download starting over, or a
+"verify everything" run putting it back on the queue.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `file_id` | integer | the Put.io file id |
+| `name` | string | the file name |
+| `relative_path` | string | the path under the download folder, `/`-separated |
+| `size_bytes` | integer | |
+| `attempt` | integer | the download about to start (`2` is the first re-download); `1` for a run |
+| `max_redownloads` | integer | `[download] verify_max_redownloads` |
+| `trigger` | string | `download` or `run` |
+
+```json
+{
+  "schema_version": 1,
+  "id": "b4e0d3c2-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+  "type": "verify.redownload",
+  "occurred_at": "2026-11-04T09:12:33.095Z",
+  "source": { "app": "putio-sync", "version": "0.1.1", "host": "nas01" },
+  "data": {
+    "file_id": 1234567890,
+    "name": "Big.Buck.Bunny.2008.1080p.mkv",
+    "relative_path": "Movies/Big Buck Bunny (2008)/Big.Buck.Bunny.2008.1080p.mkv",
+    "size_bytes": 2147483648,
+    "attempt": 2,
+    "max_redownloads": 2,
+    "trigger": "download"
+  }
+}
+```
+
 ### `hook.test`
 
 Sent only to one hook, by the **Send test event** button in Settings › Hooks or
