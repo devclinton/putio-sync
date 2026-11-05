@@ -281,6 +281,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- The word "null" showed on the page in History › Verification, Settings ›
+  Tailscale › This machine and the Put.io storage card, and could show in the
+  Settings › Network list, the Radarr/Sonarr setup plan and test result, and
+  the setup wizard's dry run. These parts now leave out what isn't there.
 - A test now covers a **Verify everything** run waiting while the bandwidth
   schedule pauses downloads, and carrying on when it resumes (feature 034).
 - A hooks test that timed the first run against 2 s failed now and then under

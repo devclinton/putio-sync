@@ -4,7 +4,7 @@
 // "tailnet only" on asks first, since the LAN loses the API after a restart.
 
 import { get } from "./api.js";
-import { confirm, h } from "./app.js";
+import { confirm, fill, h } from "./app.js";
 
 const STATES = {
   running: ["ok", "Running"],
@@ -45,7 +45,7 @@ export function tailscaleExtra() {
     const allow = t.owner_login
       ? h("button", { type: "button", class: "btn btn-small", title: "Add this machine's Tailscale login to the allowed users", onclick: (ev) => allowOwner(ev.currentTarget, t.owner_login) }, `Allow ${t.owner_login}`)
       : null;
-    box.replaceChildren(h("h3", { text: "This machine" }), kv, urls ? h("p", { class: "muted small", text: "Open putio-sync over the tailnet:" }) : null, urls, ...hints, allow ? h("div", { class: "toolbar spaced" }, allow) : null);
+    fill(box, h("h3", { text: "This machine" }), kv, urls ? h("p", { class: "muted small", text: "Open putio-sync over the tailnet:" }) : null, urls, ...hints, allow ? h("div", { class: "toolbar spaced" }, allow) : null);
   }
 
   load();

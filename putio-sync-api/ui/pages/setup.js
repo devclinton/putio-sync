@@ -2,7 +2,7 @@
 // while /auth/status says setup_required. Every /setup/* call carries the setup code
 // (kept in sessionStorage) or an API token; the Put.io token never comes back.
 
-import { h, toast } from "../app.js";
+import { fill, h, toast } from "../app.js";
 import { bytes } from "../format.js";
 
 const CODE_KEY = "putio-sync.setup-code";
@@ -460,7 +460,8 @@ function reviewStep() {
       report.replaceChildren(h("p", { class: "muted", text: "Listing your Put.io files (up to a minute)…" }));
       try {
         const r = await call("POST", "/setup/dry-run");
-        report.replaceChildren(
+        fill(
+          report,
           h("p", {}, `${r.to_download.count} files, ${bytes(r.to_download.bytes)}, would be downloaded. ${r.already_present.count} are already here; ${r.skipped.count} are skipped by the rules.`),
           r.partial ? h("p", { class: "warn-text", text: "Stopped after a minute; the counts cover what was listed." }) : null,
           r.samples.length ? h("ul", { class: "setup-samples" }, r.samples.map((x) => h("li", {}, h("span", { text: x.path }), h("small", { text: bytes(x.size) })))) : null,
