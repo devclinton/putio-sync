@@ -281,6 +281,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- A test now covers a **Verify everything** run waiting while the bandwidth
+  schedule pauses downloads, and carrying on when it resumes (feature 034).
 - A hooks test that timed the first run against 2 s failed now and then under
   a full CI run; it now allows 4 s (feature 027).
 - Without a Put.io app ID, the setup wizard and `putio-sync setup` used to

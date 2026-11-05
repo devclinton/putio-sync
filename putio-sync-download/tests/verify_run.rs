@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use mockito::{Mock, ServerGuard};
 use putio_sync_client::PutioApiClient;
+use putio_sync_core::bandwidth::OverrideMode;
 use putio_sync_db::models::{DownloadStatus, QueueStatus};
 use putio_sync_db::{Database, VerifyRun};
 use putio_sync_download::{
@@ -349,6 +350,35 @@ async fn pause_holds_reads_until_resumed() {
     assert_eq!(s.manager.verify().resume().unwrap().state, "running");
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(s.manager.verify().status().bytes_done > held);
+
+    s.manager.verify().stop().unwrap();
+    s.finished().await;
+}
+
+/// While the bandwidth schedule pauses downloads the run waits, then carries on (034)
+#[tokio::test]
+async fn a_bandwidth_pause_makes_the_run_wait() {
+    let mut s = setup(64 * 1024).await;
+    s.manager
+        .set_bandwidth_override(OverrideMode::Pause, 60)
+        .await
+        .unwrap();
+    slow_run(&mut s).await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let status = s.manager.verify().status();
+    assert_eq!(status.state, "waiting");
+    assert_eq!(status.waiting_reason.as_deref(), Some("bandwidth paused"));
+    assert_eq!(status.bytes_done, 0);
+
+    s.manager.clear_bandwidth_override().await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while s.manager.verify().status().bytes_done == 0 {
+        assert!(Instant::now() < deadline, "the run did not carry on");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let status = s.manager.verify().status();
+    assert_eq!(status.state, "running");
+    assert_eq!(status.waiting_reason, None);
 
     s.manager.verify().stop().unwrap();
     s.finished().await;
