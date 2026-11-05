@@ -281,6 +281,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- A hooks test that timed the first run against 2 s failed now and then under
+  a full CI run; it now allows 4 s (feature 027).
 - Without a Put.io app ID, the setup wizard and `putio-sync setup` used to
   drop the put.io/link option with no word why. They now say the device link
   is off and how to turn it on (register an app at app.put.io/oauth and set
