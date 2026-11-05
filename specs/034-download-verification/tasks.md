@@ -47,7 +47,7 @@ against local mocks.
 - [X] T016 [US3] `verify` and `redownloads` on history rows in `putio-sync-api/src/routes/system/history.rs` (and the history model/serialiser)
 - [X] T017 [US3] Doctor check `CheckId::Verification` ("verification", "Download verification", Area::Sync) in `putio-sync-doctor/src/checks/verify.rs`, `checks/mod.rs`, `report.rs` per research R7; fix tests that count checks
 - [X] T018 [US3] Queue page "Verifying" phase and 039 pipeline state in `putio-sync-api/ui/pages/queue.js`, `putio-sync-download/src/pipeline.rs`, `putio-sync-api/ui/pages/active.js`
-- [ ] T019 [P] [US3] DOM-free helpers in `putio-sync-api/ui/verify.js` (method label, summary line, progress percent, result labels) with node tests in `putio-sync-api/ui/verify.test.js`; asset list in `putio-sync-api/src/ui.rs`
+- [X] T019 [P] [US3] DOM-free helpers in `putio-sync-api/ui/verify.js` (method label, summary line, progress percent, result labels) with node tests in `putio-sync-api/ui/verify.test.js`; asset list in `putio-sync-api/src/ui.rs`
 - [ ] T020 [US3] History page: "Verified" column and the Verification panel (summary, Verify everything, Report only, Pause, Resume, Stop, 2 s polling while running, problem list) in `putio-sync-api/ui/pages/history.js` and `putio-sync-api/ui/api.js`
 - [ ] T021 [US3] Local files (045) "Verify" bulk action on selected file rows in `putio-sync-api/ui/pages/files.js`
 - [ ] T022 [US3] Settings › Download fields for the four keys in `putio-sync-api/ui/pages/settings.js` and `/settings/download` in `putio-sync-api/src/routes/system/settings.rs`

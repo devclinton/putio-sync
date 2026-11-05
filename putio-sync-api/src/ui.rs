@@ -41,6 +41,7 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("network.js", JS, include_bytes!("../ui/network.js")),
     ("hooks.js", JS, include_bytes!("../ui/hooks.js")),
     ("plugins.js", JS, include_bytes!("../ui/plugins.js")),
+    ("verify.js", JS, include_bytes!("../ui/verify.js")),
     ("pages/login.js", JS, include_bytes!("../ui/pages/login.js")),
     ("pages/setup.js", JS, include_bytes!("../ui/pages/setup.js")),
     ("pages/news.js", JS, include_bytes!("../ui/pages/news.js")),
