@@ -407,6 +407,9 @@ pub struct LoggingSettings {
     pub console_enabled: bool,
     pub console_format: String,
     pub module_filters: Vec<String>,
+    /// Lines kept for the Logs page (feature 047); left out keeps the current value
+    #[serde(default)]
+    pub buffer_lines: Option<usize>,
 }
 
 /// Notification configuration
@@ -779,7 +782,7 @@ const DOWNLOAD_LIVE: &[&str] = &[
 const WATCHER_LIVE: &[&str] = &["paths", "parent_folder_id", "archive_directory"];
 
 /// Logging fields the config reload poller applies
-const LOGGING_LIVE: &[&str] = &["level", "module_filters"];
+const LOGGING_LIVE: &[&str] = &["level", "module_filters", "buffer_lines"];
 
 fn download_view(config: &Config) -> DownloadSettings {
     DownloadSettings {
@@ -842,6 +845,7 @@ fn logging_view(config: &Config) -> LoggingSettings {
         console_enabled: config.logging.console_enabled,
         console_format: format!("{:?}", config.logging.console_format),
         module_filters: config.logging.module_filters.clone(),
+        buffer_lines: Some(config.logging.buffer_lines),
     }
 }
 
@@ -1150,6 +1154,8 @@ async fn update_logging_settings(
         apply_logging(settings, config)
     })
     .await?;
+    // The Logs page buffer is resized at once, whatever the poller does
+    putio_sync_core::log_capture::set_capacity(state.config.read().await.logging.buffer_lines);
 
     let mut notes = Vec::new();
     if state.logging_reload && std::env::var_os("RUST_LOG").is_some() {
@@ -1175,6 +1181,9 @@ fn apply_logging(settings: LoggingSettings, config: &mut Config) -> Result<(), A
     config.logging.console_enabled = settings.console_enabled;
     config.logging.console_format = console_format;
     config.logging.module_filters = settings.module_filters;
+    if let Some(lines) = settings.buffer_lines {
+        config.logging.buffer_lines = lines;
+    }
     // The poller would refuse a bad level later; refuse it before it is saved
     putio_sync_core::logging::validate_filters(&config.logging).map_err(invalid)
 }
@@ -1185,7 +1194,7 @@ fn apply_logging(settings: LoggingSettings, config: &mut Config) -> Result<(), A
 pub(crate) fn live_logging(state: &AppState) -> (&'static [&'static str], &'static str) {
     let live: &'static [&'static str] =
         if !state.logging_reload || std::env::var_os("RUST_LOG").is_some() {
-            &[]
+            &["buffer_lines"]
         } else {
             LOGGING_LIVE
         };

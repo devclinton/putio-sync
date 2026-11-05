@@ -267,11 +267,16 @@ async fn logging_settings_round_trip() {
             "console_enabled",
             "console_format",
             "module_filters",
+            "buffer_lines",
         ],
     );
 
     put_changed(&app, path, body.clone(), "level", json!("debug")).await;
     assert_eq!(saved(&app).logging.level, "debug");
+    put_changed(&app, path, body.clone(), "buffer_lines", json!(500)).await;
+    assert_eq!(saved(&app).logging.buffer_lines, 500);
+    put_invalid(&app, path, body.clone(), "buffer_lines", json!(99)).await;
+    put_invalid(&app, path, body.clone(), "buffer_lines", json!(50_001)).await;
 
     put_invalid(&app, path, body.clone(), "level", json!("loud")).await;
     put_invalid(&app, path, body.clone(), "console_format", json!("fancy")).await;

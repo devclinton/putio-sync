@@ -284,6 +284,10 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
                 "module_filters",
                 "Per-module log levels, such as putio_sync_client=debug",
             ),
+            (
+                "buffer_lines",
+                "How many recent lines the Logs page keeps in memory",
+            ),
         ],
     ),
     (

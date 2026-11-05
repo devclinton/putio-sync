@@ -139,7 +139,7 @@ API behaviour.
 
 ## Phase 8: User Story 6 - Don't leave verbose logging on (P3)
 
-- [ ] T025 [US6] Add `CheckId::LogLevel` ("log_level", "Log level", area Local) to `putio-sync-doctor/src/report.rs`, plus the check in `putio-sync-doctor/src/checks/local.rs`:
+- [X] T025 [US6] Add `CheckId::LogLevel` ("log_level", "Log level", area Local) to `putio-sync-doctor/src/report.rs`, plus the check in `putio-sync-doctor/src/checks/local.rs`:
   - use the live `level_status()` when it is available, else config + `RUST_LOG`;
   - warn on debug/trace with the source, any end time, and a hint;
   - add a unit test for ok and warning.
@@ -149,7 +149,7 @@ API behaviour.
 
 ## Phase 9: Polish
 
-- [ ] T027 Settings › Logging: add `buffer_lines` to `LoggingSettings` (view and apply, 400 outside 100..=50000) in `putio-sync-api/src/models` / `routes/system/settings.rs`, and apply `set_capacity` on save. Add one field `["buffer_lines", "Lines kept for the Logs page", "100 to 50,000", "n", 100, 50000]` in `putio-sync-api/ui/pages/settings.js` (the only change to that file)
+- [X] T027 Settings › Logging: add `buffer_lines` to `LoggingSettings` (view and apply, 400 outside 100..=50000) in `putio-sync-api/src/models` / `routes/system/settings.rs`, and apply `set_capacity` on save. Add one field `["buffer_lines", "Lines kept for the Logs page", "100 to 50,000", "n", 100, 50000]` in `putio-sync-api/ui/pages/settings.js` (the only change to that file)
 - [ ] T028 [P] Document the Logs page, `buffer_lines`, the `/logs` API and the metric in `README.md`, and add a `CHANGELOG.md` entry under Unreleased › Added
 - [ ] T029 Run `cargo test -p putio-sync-api --test ui_assets` (384 KB cap), then check the page in the built-in browser against a local daemon (quickstart.md)
 - [ ] T030 Merge `origin/main`, then run `TMPDIR=<scratch> CARGO_PROFILE_RELEASE_STRIP=none make ci`, push, and write the hand-over note

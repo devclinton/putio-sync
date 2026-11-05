@@ -151,6 +151,7 @@ async fn detect(ctx: &Ctx, id: CheckId) -> Finding {
         DiskSpace => local::disk_space(ctx).await,
         Database => local::database(ctx).await,
         Config => local::config(ctx).await,
+        LogLevel => local::log_level(ctx).await,
         Reachability => net::reachability(ctx).await,
         RateLimit => net::rate_limit(ctx).await,
         ClockSkew => net::clock_skew(ctx).await,
