@@ -23,7 +23,7 @@ const LINKS = {
   parent_id: [DIGITS, (v) => `#/putio/${v}`],
   transfer_id: [DIGITS, () => "#/transfers"],
   hook: [NAME, () => "#/settings/integrations?field=card-hooks"],
-  plugin: [NAME, () => "#/settings/integrations?field=card-plugins"],
+  plugin: [NAME, () => "#/settings/plugins?field=card-plugins"],
   run_id: [DIGITS, () => "#/history"],
 };
 

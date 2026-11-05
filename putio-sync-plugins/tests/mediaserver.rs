@@ -339,13 +339,10 @@ async fn plex_sign_in_saves_the_token_and_shows_it_nowhere() {
         .unwrap();
     pin.assert_async().await;
     assert_eq!(first.result.code.as_deref(), Some("AB12"));
-    let link = first.result.open_url.clone().unwrap();
-    assert!(
-        link.starts_with("https://app.plex.tv/auth#?clientID=putio-sync-"),
-        "{}",
-        link
+    assert_eq!(
+        first.result.open_url.as_deref(),
+        Some("https://plex.tv/link")
     );
-    assert!(link.contains("&code=AB12"), "{}", link);
     let next = first.result.next.clone().unwrap();
     assert_eq!(next.action, "sign_in_poll");
 
@@ -354,6 +351,10 @@ async fn plex_sign_in_saves_the_token_and_shows_it_nowhere() {
         .await
         .unwrap();
     assert!(!again.result.done);
+    assert_eq!(
+        again.result.open_url.as_deref(),
+        Some("https://plex.tv/link")
+    );
     assert!(again.settings.is_none());
     waiting.remove_async().await;
 

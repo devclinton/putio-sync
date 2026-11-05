@@ -3,7 +3,9 @@
 // Each card previews a save as you type, says what each field affects and whether it applies
 // now, and has a Defaults button. A `part` card holds only some of a group's fields and saves
 // them on top of the latest saved values, so two cards of one group don't undo each other.
-// A card reports unsaved changes and problems to the page through `ctx.report`.
+// A card reports unsaved changes and problems to the page through `ctx.report`. An `extra`
+// that saves part of the group on its own (048: Enable a plugin) uses `clean` and `rebase`
+// so that save does not read as an unsaved change.
 
 import { get, previewSettings, put, settingsAssistant } from "../api.js";
 import { describeEntry } from "../bandwidth.js";
@@ -125,7 +127,6 @@ function form(g, data, reload, help, ctx, start = null) {
     return node;
   });
   const error = h("p", { class: "error-text", role: "alert", hidden: true });
-  const extra = g.extra ? g.extra(data) : null;
   const read = () => {
     const body = { ...(ctx.saved[g.key] || data) };
     for (const [name, value] of Object.entries(inputs)) body[name] = value();
@@ -144,6 +145,16 @@ function form(g, data, reload, help, ctx, start = null) {
     unsaved.hidden = !dirty;
     ctx.report(g.id, { dirty });
   };
+  const extra = g.extra
+    ? g.extra(data, {
+        clean: () => base == null || own() === base,
+        rebase: () => {
+          if (base != null) base = own();
+          mark();
+        },
+        onSaved: () => ctx.onSaved(),
+      })
+    : null;
 
   // Preview the save 400 ms after the last edit; a newer edit drops an older answer
   const panel = h("div", { class: "preview", "aria-live": "polite", hidden: true });

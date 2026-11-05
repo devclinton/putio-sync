@@ -423,7 +423,7 @@ it. Nothing else receives it.
 
 ### `plugin.test`
 
-Sent only to one plugin, by the **Send test event** button in Settings › Integrations › Plugins or
+Sent only to one plugin, by the **Send test event** button in Settings › Plugins or
 `POST /plugins/test`. A plugin gets it whatever its `events` say, and `"*"` does not
 include it. Nothing else receives it, hooks included.
 

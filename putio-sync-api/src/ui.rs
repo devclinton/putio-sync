@@ -116,6 +116,11 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
         include_bytes!("../ui/settings/integrations.js"),
     ),
     (
+        "settings/plugins.js",
+        JS,
+        include_bytes!("../ui/settings/plugins.js"),
+    ),
+    (
         "settings/arr.js",
         JS,
         include_bytes!("../ui/settings/arr.js"),
