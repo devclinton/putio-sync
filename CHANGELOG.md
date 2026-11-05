@@ -281,6 +281,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- Without a Put.io app ID, the setup wizard and `putio-sync setup` used to
+  drop the put.io/link option with no word why. They now say the device link
+  is off and how to turn it on (register an app at app.put.io/oauth and set
+  `[putio] app_id` or `PUTIO_SYNC_APP_ID`), and so does the doctor when the
+  sign-in fails. Its sign-in hint now points at `putio-sync setup`, since
+  `putio-sync login` needs an app of your own too.
 - `putio-sync setup` no longer shows the Put.io token as you type or paste it
   in a terminal. `putio-sync login` no longer writes the token exchange
   response (which holds the access token) to the debug log or to an error, and

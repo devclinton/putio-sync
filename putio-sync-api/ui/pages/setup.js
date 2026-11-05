@@ -223,7 +223,7 @@ function putioStep() {
     h("h2", { text: "Connect Put.io" }),
     s.account ? account(s.account) : null,
     s.app_id_available ? [h("p", { class: "muted" }, "Link this install to your Put.io account without copying a token."), link, box] : null,
-    s.app_id_available ? h("h3", { class: "sub", text: "Or paste a token" }) : null,
+    s.app_id_available ? h("h3", { class: "sub", text: "Or paste a token" }) : h("p", { class: "muted" }, "Linking with a code at put.io/link is off: it needs a Put.io app ID. Register one at ", h("a", { href: s.app_register_url, target: "_blank", rel: "noopener", text: s.app_register_url }), " and set it as [putio] app_id or PUTIO_SYNC_APP_ID, or paste a token below."),
     paste,
     err,
     form(nav({ next: "Next" }), async (e) => {

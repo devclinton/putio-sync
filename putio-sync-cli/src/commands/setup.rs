@@ -10,7 +10,7 @@ use putio_sync_client::{PutioApiClient, DEFAULT_BASE_URL};
 use putio_sync_core::config::Config;
 use putio_sync_core::setup::{
     check_folder, check_local, check_preset, preset_choices, putio_token, resolve_app_id,
-    suggest_download_dir, FolderWarning, SetupChoices,
+    suggest_download_dir, FolderWarning, SetupChoices, APP_ID_HELP,
 };
 use putio_sync_download::{dry_run, DRY_RUN_LIMIT};
 use std::io::{self, BufRead, IsTerminal, Write};
@@ -453,6 +453,7 @@ async fn connect_putio(
             }
             bail!("the link code expired; run setup again");
         }
+        say!(out, "{APP_ID_HELP}");
     }
     let prompt = "Put.io OAuth token (from put.io → Settings → API)";
     loop {
