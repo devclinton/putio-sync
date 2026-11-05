@@ -190,9 +190,13 @@ off and ask for a token (from put.io → Settings → API). To turn it on:
    ([app.put.io/oauth](https://app.put.io/oauth)) and choose **Create App**.
    Any name, website and callback URL will do; the device link doesn't use
    the callback.
-2. Copy the app's ID (a number) into `[putio] app_id` in the config, or set
-   `PUTIO_SYNC_APP_ID`. A build can carry one with
-   `PUTIO_SYNC_BUILTIN_APP_ID=<id> cargo build --release`.
+2. Enter the app's ID (a number) in the web wizard's **Connect Put.io** step
+   or in **Settings › Put.io**; either turns the device link on at once,
+   without a restart. It is saved as `[putio] app_id`, so you can also put it
+   in the config yourself. `PUTIO_SYNC_APP_ID` overrides the config, and
+   Settings then shows the field as set by environment. A build can carry
+   one with `PUTIO_SYNC_BUILTIN_APP_ID=<id> cargo build --release`, used
+   when neither is set.
 
 `putio-sync login` uses the same kind of app, with its ID, secret and callback
 URL in `PUTIO_CLIENT_ID`, `PUTIO_CLIENT_SECRET` and `PUTIO_REDIRECT_URI`.

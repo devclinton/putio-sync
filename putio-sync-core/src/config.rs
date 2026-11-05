@@ -650,8 +650,8 @@ pub enum AuthMethod {
 /// `[putio]`: the Put.io app putio-sync identifies as
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
 pub struct PutioConfig {
-    /// Public app ID for the device link (put.io/link). Overrides
-    /// `PUTIO_SYNC_APP_ID` and the built-in one.
+    /// Public app ID for the device link (put.io/link). `PUTIO_SYNC_APP_ID`
+    /// overrides it; it overrides the built-in one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
 }
@@ -661,6 +661,23 @@ impl PutioConfig {
     pub fn is_empty(&self) -> bool {
         self.app_id.is_none()
     }
+
+    /// Check that `app_id`, when set, is a Put.io app ID: digits only. Empty counts as
+    /// unset, as it always has.
+    pub fn validate(&self) -> CoreResult<()> {
+        match self.app_id.as_deref() {
+            Some(id) if !id.trim().is_empty() && !valid_app_id(id) => Err(CoreError::ConfigError(
+                "putio app_id must be the number Put.io shows for the app, e.g. 1234".to_string(),
+            )),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// A Put.io app ID: 1 to 12 digits, spaces around it allowed
+pub fn valid_app_id(id: &str) -> bool {
+    let id = id.trim();
+    (1..=12).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Authentication configuration
@@ -1486,6 +1503,7 @@ impl Config {
         self.precheck.validate(&self.watch.paths)?;
         self.storage.validate()?;
         self.tailscale.validate()?;
+        self.putio.validate()?;
         crate::hooks::validate(&self.hooks)?;
         crate::plugins::validate(&self.plugins)?;
         self.validate_binds()?;
@@ -4015,10 +4033,18 @@ mod save_keeping_file_credentials_tests {
         config.download.preset = Some("video".to_string());
         let text = toml::to_string_pretty(&config).unwrap();
         assert!(text.contains("[putio]\napp_id = \"1234\""), "{text}");
-        let config: Config = toml::from_str(&text).unwrap();
+        let mut config: Config = toml::from_str(&text).unwrap();
         assert_eq!(config.putio.app_id.as_deref(), Some("1234"));
         assert_eq!(config.download.preset.as_deref(), Some("video"));
         config.validate().unwrap();
+        for bad in ["abc", "12a", "1234567890123"] {
+            config.putio.app_id = Some(bad.to_string());
+            assert!(config.validate().is_err(), "{bad:?}");
+        }
+        for good in [" 42 ", ""] {
+            config.putio.app_id = Some(good.to_string());
+            config.validate().unwrap();
+        }
 
         let empty: Config = toml::from_str("").unwrap();
         assert_eq!(empty.putio, PutioConfig::default());

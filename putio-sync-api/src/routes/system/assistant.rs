@@ -242,6 +242,13 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "putio",
+        &[(
+            "app_id",
+            "Put.io app ID that turns on linking with a code at put.io/link",
+        )],
+    ),
+    (
         "tailscale",
         &[
             (

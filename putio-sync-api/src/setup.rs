@@ -212,6 +212,7 @@ pub fn setup_router(state: SetupState) -> Router {
             post(handlers::link_start).get(handlers::link_check),
         )
         .route("/setup/putio/token", post(handlers::putio_token))
+        .route("/setup/putio/app-id", put(handlers::app_id_set))
         .route("/setup/putio/folders", get(handlers::putio_folders))
         .route("/setup/folder/check", post(handlers::folder_check))
         .route("/setup/folder", put(handlers::folder_set))
