@@ -100,7 +100,7 @@ pub(crate) async fn plugins(ctx: &Ctx) -> Finding {
             Status::Problem,
             format!("{} failed.", count(unhealthy.len(), "plugin check")),
         )
-        .suggest("Open Settings › Plugins: check the server address, sign in again, or fix the path rules.")
+        .suggest("Open Settings › Integrations › Plugins: check the server address, sign in again, or fix the path rules.")
         .items(unhealthy);
     }
     if !broken.is_empty() {
@@ -108,7 +108,7 @@ pub(crate) async fn plugins(ctx: &Ctx) -> Finding {
             Status::Problem,
             format!("{} cannot load.", count(broken.len(), "enabled plugin")),
         )
-        .suggest("Fix the plugin's plugin.toml or main.lua and press Reload plugins, or turn it off in Settings › Plugins.")
+        .suggest("Fix the plugin's plugin.toml or main.lua and press Reload plugins, or turn it off in Settings › Integrations › Plugins.")
         .items(broken);
     }
 
@@ -146,7 +146,7 @@ pub(crate) async fn plugins(ctx: &Ctx) -> Finding {
                 if warnings.len() == 1 { "needs" } else { "need" }
             ),
         )
-        .suggest("Open Settings › Plugins: save to approve hosts, fill in required settings, or use Send test event.")
+        .suggest("Open Settings › Integrations › Plugins: save to approve hosts, fill in required settings, or use Send test event.")
         .items(warnings);
     }
 

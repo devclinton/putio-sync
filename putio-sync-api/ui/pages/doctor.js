@@ -4,6 +4,9 @@
 import { get, post } from "../api.js";
 import { confirm, h, poll, toast, toastError } from "../app.js";
 import { dateTime, relative } from "../format.js";
+import { linkParts } from "../settings/sections.js";
+
+const linked = (text) => linkParts(text).map((p) => (typeof p === "string" ? p : h("a", { href: p.href, text: p.text })));
 
 const REFRESH_MS = 60000;
 const CONFIRM_ITEMS = 20;
@@ -161,7 +164,7 @@ function check(k) {
       "div",
       { class: "doctor-body" },
       h("p", {}, h("strong", { text: k.title }), " ", k.summary),
-      k.suggestion ? h("p", { class: "muted", text: k.suggestion }) : null,
+      k.suggestion ? h("p", { class: "muted" }, linked(k.suggestion)) : null,
       k.items.length
         ? h(
             "details",

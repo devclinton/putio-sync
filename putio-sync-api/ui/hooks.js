@@ -1,4 +1,4 @@
-// Event hooks (feature 027): the rows of the Settings › Event hooks editor to and from
+// Event hooks (feature 027): the rows of the Settings › Integrations › Event hooks editor to and from
 // `[[hooks]]` entries, and run results for people. No DOM here, so
 // tests/ui/hooks.test.mjs runs it in node.
 

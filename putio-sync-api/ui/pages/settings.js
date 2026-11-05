@@ -1,1869 +1,241 @@
-// Settings page: appearance (this browser only, via theme.js), then the download, watcher, Put.io cleanup, Put.io storage (033), Put.io app ID, Tailscale (036), logging and notification groups
-// as forms built from each GET body. Save PUTs the whole group and shows the API's
-// message verbatim; a 400 shows its error under the form. Tokens are shown only as set /
-// not set. The Radarr / Sonarr card has the download client form, auto-setup, and the
-// Applications list with Add, Edit, Delete and Test (feature 018).
-// Feature 009: Folder rules, Presets and Recently blocked cards (rules.js).
-// Feature 042: the Release check card, with per-category and per-watch-folder overrides
-// and a read-only table of what the check does for each.
-// Feature 015: each group previews a save as you type, says what each field affects and
-// whether it applies now, has a Defaults button; a warnings banner and a Backup and
-// restore card (export and import without credentials).
-// Feature 027: the Event hooks group, with an editor per hook and a Send test event
-// button; header and env values are shown only as set, with a Replace button.
-// Feature 028: the Plugins group (plugins.js): a card per Lua plugin with its state, the
-// hosts it contacts, its settings by type (secrets shown only as set), and Send test event
-// with the lines it logged; Reload reads the plugins folder again. Feature 031: action
-// buttons (Sign in with Plex), Load buttons for fields with choices, and path rules.
+// Settings (features 015, 046): every settings card, in seven sections shown one at a time.
+// `#/settings/<section>?field=<address>` opens a section and jumps to a field. All sections
+// load at once, so search covers every field and the section list marks unsaved changes and
+// problems anywhere. Advanced fields are hidden per section until Show advanced is on.
 
-import {
-  addArrApplication,
-  arrStatus,
-  deleteArrApplication,
-  discoverArr,
-  exportSettings,
-  get,
-  importSettings,
-  post,
-  previewArrSetup,
-  previewSettings,
-  put,
-  runArrSetup,
-  saveArrApplication,
-  saveArrClient,
-  settingsAssistant,
-  testArrApplication,
-  testArrForm,
-} from "../api.js";
-import { networkBeforeSave, networkExtra } from "../network.js";
-import { tailscaleBeforeSave, tailscaleExtra } from "../tailscale.js";
-import { describeEntry, entryFromRow, move, rowFromEntry } from "../bandwidth.js";
-import { blankHook, eventChoices, fromSettings, runLabel, targetLabel, toSettings } from "../hooks.js";
-import * as plugins from "../plugins.js";
-import { confirm, fill, h, toast } from "../app.js";
-import { relative } from "../format.js";
-import { previewView, settingsCards } from "../rules.js";
+import { h, navigate } from "../app.js";
+import { SECTIONS, fieldId, sectionOf, sectionOfKey, settingsHref } from "../settings/sections.js";
+import { assistant, riskList } from "../settings/form.js";
+import * as general from "../settings/general.js";
+import * as putio from "../settings/putio.js";
+import * as downloads from "../settings/downloads.js";
+import * as filters from "../settings/filters.js";
+import * as integrations from "../settings/integrations.js";
+import { advancedCards, networkCards } from "../settings/advanced.js";
 
-// Field kinds: b checkbox, n number, n? number or empty, s text, s? text or empty,
-// l one entry per line, or an array of <select> values.
-const LEVELS = ["trace", "debug", "info", "warn", "error"];
-const GROUPS = [
-  {
-    key: "download",
-    title: "Download",
-    fields: [
-      ["workers", "Workers", "Downloads that run at once", "n", 1],
-      ["target_directory", "Download folder", "Where files are saved", "s"],
-      ["buffer_size_mb", "Buffer (MB)", "Write buffer per download", "n", 1],
-      ["chunk_size_mb", "Chunk size (MB)", "Empty downloads each file in one request", "n?", 1],
-      ["bandwidth_limit_bytes_per_sec", "Bandwidth limit (bytes/s)", "Outside the schedule below; empty for unlimited", "n?", 1],
-      ["slow_limit_bytes_per_sec", "Slow limit (bytes/s)", "Used by Slow 1 h on the Status page; 1048576 is 1 MB/s", "n", 1],
-      ["max_retries", "Retries", "Attempts after a failed download", "n", 0],
-      ["retry_initial_delay_secs", "First retry delay (s)", "Doubles on each retry", "n", 0],
-      ["sort_order", "Sort order", "Order new files are queued in", ["ByDate", "ByName", "ByExtension", "BySize"]],
-      ["progress_style", "Progress style", "Console progress bars", ["PerFile", "Overall", "Individual", "Rotating", "None"]],
-      ["whitelist_patterns", "Only download", "Patterns, e.g. *.mkv OR *.mp4; empty for all", "s?"],
-      ["blacklist_patterns", "Never download", "e.g. *sample* OR *.exe", "s?"],
-      ["blocked_extensions", "Blocked extensions", "One per line, without the dot", "l"],
-      ["reverse_sort", "Reverse sort", "Queue in the opposite order", "b"],
-      ["on_existing", "When a file already exists", null, [
-        ["resume", "Resume", "Finish a partial file, skip a complete one; a different file is kept and the new one saved as name (1)"],
-        ["overwrite", "Overwrite", "Replace it with the Put.io copy once the download completes"],
-        ["keep_both", "Keep both", "Keep it and save the new file as name (1), (2)…"],
-      ]],
-      ["resume_enabled", "Resume", "Continue a partial download from where it stopped; off starts it again", "b"],
-      ["delete_after_download", "Delete from Put.io", "Remove each file from Put.io once downloaded", "b"],
-      ["delete_empty_folders", "Delete empty folders", "Remove Put.io folders left empty", "b"],
-      ["verify", "Verify downloads", "Check each file against Put.io's CRC32 (or size) before it is finished", "b"],
-      ["verify_max_redownloads", "Re-downloads on a mismatch", "Then the download fails; 0 to 5", "n", 0, 5],
-      ["verify_read_limit_mb_per_sec", "Verify read limit (MB/s)", "How fast a verify run reads files from disk; 1 to 10000", "n", 1, 10000],
-      ["verify_follow_bandwidth_pause", "Pause verify runs with downloads", "A verify run waits while the bandwidth schedule pauses downloads", "b"],
-    ],
-    extra: downloadExtra,
-  },
-  {
-    key: "watcher",
-    title: "Torrent watcher",
-    fields: [
-      ["paths", "Watched folders", "One per line; .torrent files found here are uploaded", "l"],
-      ["refresh_cycle", "Scan interval (s)", "1 to 127", "n", 1, 127],
-      ["parent_folder_id", "Put.io folder ID", "Where transfers are saved; empty for the root", "n?", 0],
-      ["archive_directory", "Archive folder", "Move uploaded .torrent files here; empty to leave them", "s?"],
-      ["enabled", "Enabled", "Watch the folders (each must exist)", "b"],
-      ["delete_after_upload", "Delete after upload", "Remove .torrent files once uploaded", "b"],
-    ],
-  },
-  {
-    key: "cleanup",
-    title: "Put.io cleanup",
-    fields: [
-      ["run_at", "Daily run at", "24-hour local time, HH:MM", "s"],
-      ["min_age_hours", "Minimum age (hours)", "Keep empty folders newer than this; 0 to 8760", "n", 0, 8760],
-      ["enabled", "Daily run", "Remove empty Put.io folders once a day (daemon only)", "b"],
-      ["nested", "Nested empty folders", "Also remove folders whose sub-folders are all empty", "b"],
-    ],
-  },
-  {
-    key: "storage",
-    title: "Put.io storage",
-    fields: [
-      ["warn_free_percent", "Warn below (% free)", "Warn on the Put.io and Status pages and in the doctor; 1 to 89", "n", 1, 89],
-      ["target_free_percent", "Free up to (% free)", "Free up space deletes old downloaded files until this is free; up to 90", "n", 2, 90],
-      ["run_at", "Daily run at", "24-hour local time, HH:MM", "s"],
-      ["auto_free", "Automatic free-up", "Once a day, free up space when below the warning level (daemon only)", "b"],
-    ],
-  },
-  {
-    key: "putio",
-    title: "Put.io",
-    fields: [["app_id", "Put.io app ID", "Turns on linking with a code at put.io/link; empty for none", "s?"]],
-    extra: putioExtra,
-    locked: (data) => (data.status && data.status.env_override ? ["app_id"] : []),
-  },
-  {
-    key: "tailscale",
-    title: "Tailscale",
-    fields: [
-      ["identity_sign_in", "Tailscale sign-in", "Let the allowed Tailscale users in without the API token", "b"],
-      ["allowed_users", "Allowed users", "Tailscale logins, one per line, e.g. alice@example.com", "l"],
-      ["tailnet_only", "Tailnet only", "Listen on the Tailscale address only, so the LAN can't reach the API (daemon, after a restart)", "b"],
-      ["socket", "tailscaled socket", "Empty for the default; in Docker, mount the host's socket", "s?"],
-    ],
-    extra: tailscaleExtra,
-    beforeSave: tailscaleBeforeSave,
-  },
-  {
-    key: "network",
-    title: "Network",
-    fields: [
-      ["api_bind", "API addresses", "One per line: ip:port, [ipv6]:port, interface:port or tailnet:port (after a restart)", "l"],
-      ["metrics_bind", "Metrics addresses", "One per line, same forms; must not share an address with the API (after a restart)", "l"],
-    ],
-    extra: networkExtra,
-    beforeSave: networkBeforeSave,
-  },
-  {
-    key: "hooks",
-    title: "Event hooks",
-    fields: [],
-    extra: hooksExtra,
-  },
-  {
-    key: "plugins",
-    title: "Plugins",
-    fields: [["plugins_dir", "Plugins folder", "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua", "s?"]],
-    extra: pluginsExtra,
-  },
-  {
-    key: "logging",
-    title: "Logging",
-    fields: [
-      ["level", "Level", "How much is logged", LEVELS],
-      ["console_format", "Console format", "", ["Compact", "Pretty", "Json"]],
-      ["file_path", "Log file", "", "s"],
-      ["module_filters", "Module filters", "One per line, e.g. putio_sync_download=debug", "l"],
-      ["console_enabled", "Console", "Log to the console", "b"],
-      ["file_enabled", "File", "Log to the file", "b"],
-    ],
-  },
-  {
-    key: "notifications",
-    title: "Notifications",
-    fields: [
-      ["backend", "Backend", "How completed downloads are announced", ["None", "Webhook", "Email"]],
-      ["webhook_url", "Webhook URL", "Receives a POST per completed download", "s?"],
-      ["email", "Email", "For the email backend", "s?"],
-      ["enabled", "Enabled", "Send notifications", "b"],
-    ],
-  },
-];
-const PRECHECK = {
-  key: "precheck",
-  title: "Release check",
-  fields: [
-    ["min_size_mb", "Minimum size (MB)", "The largest wanted file must be at least this big; 0 to 100000", "n", 0, 100000],
-    ["lookup_timeout_secs", "Lookup timeout (s)", "Total time for all caches; 1 to 30", "n", 1, 30],
-    ["caches", "Magnet caches", "One URL per line, with {HASH} or {hash}. Only the info hash is sent.", "l"],
-    ["enabled", "Enabled", "Check releases before they reach Put.io or the NAS", "b"],
-    ["dry_run", "Check only (don't reject or delete)", "Log and count what would be rejected", "b"],
-    ["allow_archives", "Allow archives", "Count .rar, .7z and split parts as wanted", "b"],
-    ["magnet_lookup", "Look up magnets", "Find a magnet's .torrent in the caches before adding it", "b"],
-    ["hold_magnet_secs", "Hold magnets (s)", "Hold magnets no cache knows; 0 (off) to 3600", "n", 0, 3600],
-    ["hold_retry_secs", "Ask again every (s)", "10 to 600", "n", 10, 600],
-    ["first_lookup_secs", "First ask (s)", "While holding; 1 to the lookup timeout", "n", 1, 30],
-  ],
-  extra: precheckExtra,
-};
-const PUTIO_AUTH = { token: "OAuth token set", app_password: "app password set", none: "not set" };
+const BUILD = { general: general.cards, putio: putio.cards, downloads: downloads.cards, rules: filters.cards, integrations: integrations.cards, network: networkCards, advanced: advancedCards };
+const ADV_KEY = "putio-sync.settings.advanced";
 
 let seq = 0;
-let assist = null;
-let riskBox = null;
+let page = null;
 
-/** GET /settings/assistant once per page (help, defaults, risks); null when it fails */
-const assistant = () => (assist ||= settingsAssistant().catch(() => null));
-
-/** Refetch the risks of the saved config into the banner at the top */
-async function showRisks() {
-  assist = null;
-  const box = riskBox;
-  const risks = ((await assistant()) || {}).risks || [];
-  if (box !== riskBox) return;
-  box.hidden = !risks.length;
-  box.replaceChildren(h("h2", { text: "Warnings" }), ...riskList(risks));
-}
-
-const riskList = (risks) =>
-  risks.map((r) => h("p", { class: r.level === "danger" ? "error-text" : "warn-text" }, h("strong", { text: r.level === "danger" ? "Danger: " : "Warning: " }), r.message));
-
-const shown = (v) => {
-  const item = (x) => (x && typeof x === "object" ? ("days" in x ? describeEntry(x) : JSON.stringify(x)) : x);
-  const s = v == null ? "empty" : Array.isArray(v) ? v.map(item).join(", ") || "none" : typeof v === "object" ? JSON.stringify(v) : String(v);
-  const max = Array.isArray(v) ? 200 : 60;
-  return s.length > max ? `${s.slice(0, max - 3)}…` : s;
+const stored = () => {
+  try {
+    return JSON.parse(localStorage.getItem(ADV_KEY)) || {};
+  } catch {
+    return {};
+  }
 };
 
-/** A preview: what would change and whether it applies now, the refusal, and the risks */
-function previewNodes(p) {
-  if (!p.valid) return h("p", { class: "error-text", text: `Would be refused: ${p.error}` });
-  const changes = p.changes.length
-    ? h(
-        "ul",
-        { class: "changes" },
-        p.changes.map((c) => h("li", {}, h("code", { text: c.key }), ` ${shown(c.before)} → ${shown(c.after)} `, h("span", { class: `badge ${c.live ? "ok" : "warn"}`, text: c.live ? "applies now" : "needs a restart" }))),
-      )
-    : h("p", { class: "muted", text: "Nothing would change." });
-  return h("div", {}, changes, riskList(p.risks || []));
-}
-
-export function mount(el) {
+export function mount(el, params) {
   const mine = ++seq;
-  assist = null;
-  riskBox = h("section", { class: "card", role: "status", hidden: true });
-  const secrets = h("dl", { class: "kv" }, h("dt", { text: "Put.io" }), h("dd", { class: "muted", text: "…" }));
+  const state = {};
+  const cardSection = Object.fromEntries(SECTIONS.flatMap((s) => s.cards.map(([id]) => [id, s.id])));
+  const riskBox = h("section", { class: "card", role: "status", hidden: true });
+  let risks = [];
+  let jumpTimer = 0;
+  const ctx = {
+    alive: () => mine === seq,
+    saved: {},
+    cleanup: [],
+    report: (id, patch) => {
+      state[id] = { ...state[id], ...patch };
+      marks();
+    },
+    onSaved: () => showRisks(),
+    remount: () => {
+      unmount();
+      el.replaceChildren();
+      mount(el, page ? page.params : params);
+    },
+  };
+
+  const adv = stored();
+  const panels = {};
+  const nav = SECTIONS.map((s) => {
+    const mark = h("span", { class: "badge warn", hidden: true, text: "unsaved" });
+    const count = h("span", { class: "badge bad", hidden: true });
+    const toggle = h("input", { type: "checkbox", checked: Boolean(adv[s.id]) });
+    const toggleLabel = h("span");
+    const advRow = h("label", { class: "adv-toggle", hidden: true }, toggle, toggleLabel);
+    const node = h(
+      "section",
+      { class: "settings-panel", dataset: { section: s.id }, hidden: true },
+      h("div", { class: "panel-head" }, h("div", {}, h("h2", { text: s.title }), h("p", { class: "muted", text: s.help })), advRow),
+      h("div", { class: "stack" }, BUILD[s.id](ctx)),
+    );
+    const showAdv = (on) => {
+      node.classList.toggle("show-adv", on);
+      toggle.checked = on;
+    };
+    toggle.addEventListener("change", () => {
+      showAdv(toggle.checked);
+      const now = stored();
+      now[s.id] = toggle.checked;
+      try {
+        localStorage.setItem(ADV_KEY, JSON.stringify(now));
+      } catch {
+        // private mode: the choice lasts until the page is left
+      }
+    });
+    showAdv(Boolean(adv[s.id]));
+    const link = h("a", { href: settingsHref(s.id) }, h("span", { text: s.title }), mark, count);
+    panels[s.id] = { node, link, mark, count, advRow, toggleLabel, showAdv };
+    return link;
+  });
+
+  // Marks per section: unsaved cards, and cards that failed plus warnings about its settings
+  const marks = () => {
+    for (const s of SECTIONS) {
+      const p = panels[s.id];
+      const cards = Object.entries(state).filter(([id]) => cardSection[id] === s.id);
+      const problems = cards.filter(([, v]) => v.problem).length + risks.filter((r) => sectionOfKey(r.keys[0] || "") === s.id).length;
+      const dirty = cards.some(([, v]) => v.dirty);
+      p.mark.hidden = !dirty;
+      p.count.hidden = !problems;
+      p.count.textContent = String(problems);
+      p.count.title = `${problems} problem${problems === 1 ? "" : "s"}`;
+      const n = p.node.querySelectorAll(".adv").length;
+      p.advRow.hidden = !n;
+      p.toggleLabel.textContent = `Show advanced (${n})`;
+    }
+    // A warning about an advanced field shows it
+    for (const k of risks.flatMap((r) => r.keys)) {
+      const f = document.getElementById(fieldId(k));
+      if (f && f.closest(".adv")) panels[sectionOfKey(k)].showAdv(true);
+    }
+  };
+
+  async function showRisks() {
+    const a = await assistant(true);
+    if (mine !== seq) return;
+    risks = (a && a.risks) || [];
+    riskBox.hidden = !risks.length;
+    const nodes = riskList(risks);
+    risks.forEach((r, i) => {
+      if (r.keys[0]) nodes[i].append(" ", h("a", { href: settingsHref(sectionOfKey(r.keys[0]), r.keys[0]), text: "Show setting" }));
+    });
+    riskBox.replaceChildren(h("h2", { text: "Warnings" }), ...nodes);
+    marks();
+  }
+
+  // Search the labelled fields and card titles on every section
+  const results = h("ul", { class: "search-results", hidden: true });
+  const search = h("input", { class: "input", type: "search", placeholder: "Search settings", "aria-label": "Search settings", autocomplete: "off" });
+  let uid = 0;
+  const find = (q) => {
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    const hits = [];
+    const add = (text, target, card, section) => {
+      if (words.every((w) => text.toLowerCase().includes(w))) hits.push({ target, card, section });
+    };
+    for (const s of SECTIONS) {
+      for (const card of panels[s.id].node.querySelectorAll(".card")) {
+        const title = card.querySelector("h2, h3")?.textContent || "";
+        if (card.id) add(title, card.id, title, s);
+        for (const label of card.querySelectorAll("label.field")) {
+          const input = label.querySelector("input, select, textarea");
+          if (!input) continue;
+          input.id ||= `set-found-${++uid}`;
+          add(label.textContent, input.id, `${title} › ${label.querySelector("span")?.firstChild?.textContent || label.textContent}`, s);
+        }
+      }
+    }
+    return hits.slice(0, 10);
+  };
+  const go = (hit) => {
+    clear();
+    navigate(settingsHref(hit.section.id, hit.target));
+  };
+  const clear = () => {
+    search.value = "";
+    results.hidden = true;
+  };
+  search.addEventListener("input", () => {
+    const q = search.value.trim();
+    if (q.length < 2) return void (results.hidden = true);
+    const hits = find(q);
+    results.replaceChildren(
+      ...(hits.length
+        ? hits.map((hit) => h("li", {}, h("button", { type: "button", class: "link", onclick: () => go(hit) }, h("span", { text: hit.card }), h("small", { class: "muted", text: ` · ${hit.section.title}` }))))
+        : [h("li", { class: "muted", text: "Nothing matched." })]),
+    );
+    results.hidden = false;
+  });
+  search.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") clear();
+    if (ev.key === "Enter") {
+      const hits = find(search.value.trim());
+      if (hits.length) go(hits[0]);
+    }
+  });
+
+  // Open a section, then wait up to 5 s for the field's card to load and jump to it
+  const show = ({ path, query }) => {
+    const field = query.get("field");
+    const s = sectionOf(path[0] || (field && field.includes(".") ? sectionOfKey(field) : ""));
+    for (const x of SECTIONS) {
+      const p = panels[x.id];
+      p.node.hidden = x.id !== s.id;
+      if (x.id === s.id) p.link.setAttribute("aria-current", "page");
+      else p.link.removeAttribute("aria-current");
+    }
+    // The pills scroll sideways at phone width; keep the current one in view
+    const link = panels[s.id].link;
+    const nav = link.parentElement;
+    nav.scrollLeft += link.getBoundingClientRect().left - nav.getBoundingClientRect().left - 16;
+    clearTimeout(jumpTimer);
+    if (!field) return;
+    const id = fieldId(field);
+    const fallback = `card-${field.split(".")[0] === "watch" ? "watcher" : field.split(".")[0]}`;
+    const started = Date.now();
+    const jump = () => {
+      if (mine !== seq) return;
+      const late = Date.now() - started > 5000;
+      const target = document.getElementById(id) || (late ? document.getElementById(fallback) : null);
+      if (!target) return void (late || (jumpTimer = setTimeout(jump, 100)));
+      if (target.closest(".adv")) panels[s.id].showAdv(true);
+      target.scrollIntoView({ block: "center" });
+      if (target.matches("input, select, textarea")) target.focus({ preventScroll: true });
+      const mark = target.closest("label.field") || target;
+      mark.classList.add("flash");
+      setTimeout(() => mark.classList.remove("flash"), 2000);
+    };
+    jump();
+  };
+
+  const leave = (ev) => {
+    if (Object.values(state).some((v) => v.dirty)) {
+      ev.preventDefault();
+      ev.returnValue = "";
+    }
+  };
+  window.addEventListener("beforeunload", leave);
+  ctx.cleanup.push(() => window.removeEventListener("beforeunload", leave), () => clearTimeout(jumpTimer));
+
   el.append(
-    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Settings" }), h("p", { class: "muted", text: "Saved to the config file. Each save says whether it applies now or after a restart." }))),
     h(
       "div",
-      { class: "stack" },
-      riskBox,
-      appearance(),
-      h("section", { class: "card" }, h("h2", { text: "Credentials" }), secrets, h("p", { class: "muted spaced", text: "Tokens and passwords are never shown here. Change them in the config file or environment." })),
-      arrCard(mine),
-      GROUPS.map((g) => group(g, mine)),
-      precheckCard(mine),
-      settingsCards(() => mine === seq),
-      backupCard(() => {
-        unmount();
-        el.replaceChildren();
-        mount(el);
-      }),
+      { class: "page-head" },
+      h("div", {}, h("h1", { text: "Settings" }), h("p", { class: "muted", text: "Saved to the config file. Each save says whether it applies now or after a restart." })),
+      h("div", { class: "settings-search" }, search, results),
     ),
+    riskBox,
+    h("div", { class: "settings-layout" }, h("nav", { class: "settings-nav", "aria-label": "Settings sections" }, nav), h("div", {}, SECTIONS.map((s) => panels[s.id].node))),
   );
+  page = { params, ctx, show };
+  show(params);
   showRisks();
-  get("/status")
-    .then((s) => {
-      if (mine !== seq) return;
-      const auth = (s && s.auth) || {};
-      secrets.replaceChildren(
-        h("dt", { text: "Put.io" }),
-        h("dd", { text: PUTIO_AUTH[auth.putio] || "unknown" }),
-        h("dt", { text: "API token" }),
-        h("dd", { text: auth.api_token ? "set" : "not set" }),
-      );
-    })
-    .catch(() => {
-      if (mine === seq) secrets.lastChild.textContent = "unknown";
-    });
+}
+
+/** Another section or field of Settings: shown in place, so unsaved input stays */
+export function update(params) {
+  page.params = params;
+  page.show(params);
 }
 
 export function unmount() {
   seq += 1;
-  document.removeEventListener("appearancechange", syncAppearance);
-}
-
-// ---- Appearance (feature 012) -----------------------------------------------
-
-const MODE_NAMES = { system: "System", light: "Light", dark: "Dark" };
-let appearanceForm = null;
-
-/** Mode and accent radios; a change applies at once and is saved in this browser. */
-function appearance() {
-  const { MODES, ACCENTS } = window.appearance;
-  const radio = (name, value, label, attrs = {}) =>
-    h("label", attrs, h("input", { type: "radio", name, value, onchange: () => window.appearance.set({ [name]: value }) }), h("span", { text: label }));
-  appearanceForm = h(
-    "form",
-    { class: "appearance-grid", onsubmit: (ev) => ev.preventDefault() },
-    h("fieldset", { class: "choice" }, h("legend", { text: "Mode" }), h("div", { class: "seg-control" }, MODES.map((m) => radio("mode", m, MODE_NAMES[m])))),
-    h("fieldset", { class: "choice swatches" }, h("legend", { text: "Accent" }), ACCENTS.map((a) => radio("accent", a, a[0].toUpperCase() + a.slice(1), { dataset: { accent: a } }))),
-  );
-  syncAppearance();
-  document.addEventListener("appearancechange", syncAppearance);
-  return h("section", { class: "card" }, h("h2", { text: "Appearance" }), appearanceForm, h("p", { class: "muted spaced", text: "Saved in this browser only." }));
-}
-
-function syncAppearance() {
-  const now = window.appearance.get();
-  for (const input of appearanceForm.querySelectorAll("input")) input.checked = now[input.name] === input.value;
-}
-
-// ---- Put.io app ID ----------------------------------------------------------
-
-const APP_ID_FROM = { environment: "the environment (PUTIO_SYNC_APP_ID)", config: "this setting", built_in: "this build" };
-
-/** Where the app ID in use comes from, and where to register one */
-function putioExtra(data) {
-  const st = data.status || {};
-  const register = h("a", { href: st.register_url, target: "_blank", rel: "noopener", text: "Register a Put.io app" });
-  const line = st.in_use
-    ? `Linking with a code is on, with app ID ${st.in_use} from ${APP_ID_FROM[st.source] || st.source}.`
-    : "Linking with a code is off: no app ID is set.";
-  const nodes = h(
-    "div",
-    {},
-    h("p", { class: "muted small", text: line }),
-    st.env_override ? h("p", { class: "muted small", text: "Set by environment (PUTIO_SYNC_APP_ID), so it can't be changed here." }) : null,
-    h("p", { class: "muted small" }, register, " (account menu → API → Create App; any website and callback URL will do), then enter the number Put.io shows for it."),
-  );
-  return { nodes, read: () => ({}) };
-}
-
-// ---- One group --------------------------------------------------------------
-
-function group(g, mine) {
-  const card = h("section", { class: "card" });
-  const load = async () => {
-    card.replaceChildren(h("h2", { text: g.title }), h("p", { class: "muted", text: "Loading…" }));
-    try {
-      const [data, a] = await Promise.all([get(`/settings/${g.key}`), assistant()]);
-      if (mine === seq) card.replaceChildren(form(g, data, load, a && a.groups[g.key]));
-    } catch (e) {
-      if (mine !== seq || e.status === 401 || e.status === 429) return;
-      card.replaceChildren(
-        h("h2", { text: g.title }),
-        h("p", { class: "error-text", text: reason(e) }),
-        h("button", { type: "button", class: "btn spaced", onclick: load }, "Retry"),
-      );
-    }
-  };
-  load();
-  return card;
-}
-
-function form(g, data, reload, help) {
-  const inputs = {};
-  const note = h("p", { class: "muted", role: "status" });
-  const save = h("button", { type: "submit", class: "btn btn-primary" }, "Save");
-  // What the field affects and whether a change applies now (feature 015)
-  const affects = (name) => {
-    const text = help && help.affects[name];
-    if (!text) return null;
-    const live = help.live.includes(name);
-    return h("small", { class: "affects" }, `Affects: ${text}. `, h("span", { class: `badge ${live ? "ok" : "warn"}`, text: live ? "applies now" : "needs a restart" }));
-  };
-  const build = ([name, label, hint, kind, min, max]) => {
-    const id = `set-${g.key}-${name}`;
-    const value = data[name];
-    let input;
-    if (kind === "b") {
-      input = h("input", { type: "checkbox", id, checked: Boolean(value) });
-      inputs[name] = () => input.checked;
-      return h("label", { class: "field check", for: id }, input, h("span", {}, label, hint ? h("small", { text: hint }) : null));
-    }
-    if (Array.isArray(kind)) {
-      // Each option is a value, or [value, label, help]; the help line follows the choice
-      const opts = kind.map((o) => (Array.isArray(o) ? o : [o, o]));
-      if (value != null && !opts.some(([v]) => v === value)) opts.unshift([value, value]);
-      input = h("select", { class: "input", id }, opts.map(([v, text]) => h("option", { value: v, selected: v === value, text })));
-      inputs[name] = () => input.value;
-      const help = opts.some((o) => o[2]) ? h("small") : null;
-      if (help) {
-        const update = () => (help.textContent = opts.find(([v]) => v === input.value)?.[2] || "");
-        input.addEventListener("change", update);
-        update();
-        return h("label", { class: "field", for: id }, h("span", { text: label }), input, help);
-      }
-    } else if (kind === "l") {
-      input = h("textarea", { class: "input", id, rows: 3, spellcheck: "false" });
-      input.value = (value || []).join("\n");
-      inputs[name] = () => input.value.split("\n").map((s) => s.trim()).filter(Boolean);
-    } else {
-      const num = kind[0] === "n";
-      const optional = kind.endsWith("?");
-      const locked = Boolean(g.locked && g.locked(data).includes(name));
-      input = h("input", { class: "input", id, type: num ? "number" : "text", min, max, step: num ? 1 : null, required: !optional, disabled: locked, autocomplete: "off", spellcheck: "false" });
-      input.value = value == null ? "" : String(value);
-      inputs[name] = () => {
-        const v = input.value.trim();
-        if (v === "") return optional ? null : v;
-        return num ? Number(v) : v;
-      };
-    }
-    return h("label", { class: "field", for: id }, h("span", { text: label }), input, hint ? h("small", { text: hint }) : null);
-  };
-  const fields = g.fields.map((f) => {
-    const node = build(f);
-    const line = affects(f[0]);
-    if (line) (f[3] === "b" ? node.lastChild : node).append(line);
-    return node;
-  });
-  const error = h("p", { class: "error-text", role: "alert", hidden: true });
-  const extra = g.extra ? g.extra(data) : null;
-  const read = () => {
-    const body = { ...data };
-    for (const [name, value] of Object.entries(inputs)) body[name] = value();
-    if (extra) Object.assign(body, extra.read());
-    delete body.effective;
-    delete body.status;
-    return body;
-  };
-
-  // Preview the save 400 ms after the last edit; a newer edit drops an older answer
-  const panel = h("div", { class: "preview", "aria-live": "polite", hidden: true });
-  let timer = 0;
-  let asked = 0;
-  const preview = () => {
-    clearTimeout(timer);
-    timer = setTimeout(async () => {
-      const mine = ++asked;
-      try {
-        const p = await previewSettings(g.key, read());
-        if (mine !== asked || !panel.isConnected) return;
-        panel.replaceChildren(h("h3", { text: "If you save" }), previewNodes(p));
-        panel.hidden = false;
-      } catch (e) {
-        if (mine === asked && e.status !== 401 && e.status !== 429) {
-          panel.replaceChildren(h("p", { class: "error-text", text: reason(e) }));
-          panel.hidden = false;
-        }
-      }
-    }, 400);
-  };
-  const defaults =
-    help && help.defaults
-      ? h(
-          "button",
-          {
-            type: "button",
-            class: "btn",
-            title: "Fill in the defaults; nothing is saved until Save",
-            onclick: () => {
-              const fresh = form(g, { ...data, ...help.defaults }, reload, help);
-              el.replaceWith(fresh);
-              fresh.querySelector("[role=status]").textContent = "Defaults filled in; not saved yet.";
-              fresh.dispatchEvent(new Event("change"));
-            },
-          },
-          "Defaults",
-        )
-      : null;
-
-  const onSubmit = async (ev) => {
-    ev.preventDefault();
-    clearTimeout(timer);
-    asked += 1;
-    const body = read();
-    if (g.beforeSave && !(await g.beforeSave(body, data))) return;
-    save.disabled = true;
-    error.hidden = true;
-    note.textContent = "";
-    try {
-      const res = await put(`/settings/${g.key}`, body);
-      const message = (res && res.message) || "Saved";
-      toast(message);
-      showRisks();
-      await reload();
-      // reload replaced the form; show the message on the new one
-      const fresh = document.querySelector(`form[data-group="${g.key}"] [role=status]`);
-      if (fresh) fresh.textContent = message;
-    } catch (e) {
-      if (e.status === 401 || e.status === 429) return;
-      error.textContent = reason(e);
-      error.hidden = false;
-      if (save.isConnected) save.disabled = false;
-    }
-  };
-
-  const el = h(
-    "form",
-    {
-      "data-group": g.key,
-      onsubmit: onSubmit,
-      oninput: () => {
-        note.textContent = "";
-        preview();
-      },
-      onchange: preview,
-    },
-    h("h2", { text: g.title }),
-    h("div", { class: "fields" }, fields),
-    extra ? extra.nodes : null,
-    panel,
-    error,
-    h("div", { class: "form-foot" }, save, defaults, note),
-  );
-  return el;
-}
-
-// ---- Backup and restore (feature 015) ---------------------------------------
-
-function backupCard(remount) {
-  const text = h("textarea", { class: "input wide", rows: 5, spellcheck: "false", placeholder: "Paste a settings file, or choose one", "aria-label": "Settings file" });
-  const out = h("div", { class: "preview", "aria-live": "polite", hidden: true });
-  const apply = h("button", { type: "button", class: "btn btn-primary", disabled: true }, "Apply");
-  let last = null;
-  const show = (...nodes) => {
-    out.replaceChildren(h("div", {}, nodes));
-    out.hidden = false;
-  };
-  const check = async () => {
-    apply.disabled = true;
-    last = null;
-    if (!text.value.trim()) return void (out.hidden = true);
-    try {
-      const p = await importSettings(text.value, false);
-      last = p;
-      const lists = [
-        [p.ignored, "Left out (credentials stay as they are)"],
-        [(p.unknown || []).map((u) => u.key), "Not known, ignored"],
-      ].map(([keys, label]) => (keys && keys.length ? h("p", { class: "muted", text: `${label}: ${keys.join(", ")}` }) : null));
-      show(h("h3", { text: "If you import" }), previewNodes(p), lists);
-      apply.disabled = !p.valid || !p.changes.length;
-    } catch (e) {
-      if (e.status !== 401 && e.status !== 429) show(h("p", { class: "error-text", text: reason(e) }));
-    }
-  };
-  const file = h("input", {
-    type: "file",
-    accept: ".toml,text/plain",
-    "aria-label": "Choose a settings file",
-    onchange: async () => {
-      const f = file.files[0];
-      if (f) text.value = await f.text();
-      check();
-    },
-  });
-  let timer = 0;
-  text.addEventListener("input", () => {
-    clearTimeout(timer);
-    timer = setTimeout(check, 400);
-  });
-  apply.addEventListener("click", async () => {
-    const n = last ? last.changes.length : 0;
-    if (!(await confirm({ title: "Import these settings?", text: `${n} setting${n === 1 ? "" : "s"} will change and be saved to the config file.`, verb: "Import" }))) return;
-    apply.disabled = true;
-    try {
-      const p = await importSettings(text.value, true);
-      toast(p.message || "Imported");
-      remount();
-    } catch (e) {
-      if (e.status !== 401 && e.status !== 429) show(h("p", { class: "error-text", text: reason(e) }));
-    }
-  });
-  const download = async () => {
-    try {
-      const url = URL.createObjectURL(new Blob([await exportSettings()], { type: "text/plain" }));
-      h("a", { href: url, download: "putio-sync-settings.toml" }).click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (e) {
-      if (e.status !== 401 && e.status !== 429) toast(reason(e), "error");
-    }
-  };
-  return h(
-    "section",
-    { class: "card" },
-    h("h2", { text: "Backup and restore" }),
-    h("p", { class: "muted", text: "The file holds every setting except credentials and the Radarr / Sonarr section. Importing changes only the settings the file has; you see what changes first." }),
-    h("div", { class: "form-foot" }, h("button", { type: "button", class: "btn", onclick: download }, "Export"), file),
-    h("div", { class: "spaced" }, text),
-    out,
-    h("div", { class: "form-foot" }, apply),
-  );
-}
-
-// ---- Release check (feature 042) -------------------------------------------
-
-function precheckCard(mine) {
-  return group(PRECHECK, mine);
-}
-
-const TRISTATE = [
-  ["", "Default"],
-  ["true", "On"],
-  ["false", "Off"],
-];
-
-/** The override editors and the effective table; `read()` gives `{categories, watch}` */
-/** Preview of the typed Only and Never download patterns over the whole account (020) */
-function downloadExtra(data) {
-  const schedule = scheduleEditor(data.bandwidth_schedule || []);
-  const out = h("div", { class: "rule-preview", "aria-live": "polite" });
-  const value = (name) => document.getElementById(`set-download-${name}`).value;
-  const run = async (ev) => {
-    const button = ev.currentTarget;
-    button.disabled = true;
-    out.replaceChildren(h("p", { class: "muted", text: "Checking…" }));
-    try {
-      const p = await post("/rules/preview", { folder_id: 0, global: { include: value("whitelist_patterns"), exclude: value("blacklist_patterns") } });
-      out.replaceChildren(h("div", {}, previewView(p)));
-    } catch (e) {
-      out.replaceChildren(e.status === 401 || e.status === 429 ? "" : h("p", { class: "error-text", text: reason(e) }));
-    }
-    if (button.isConnected) button.disabled = false;
-  };
-  return {
-    nodes: [
-      h(
-        "div",
-        { class: "toolbar spaced" },
-        h("button", { type: "button", class: "btn btn-small", onclick: run }, "Preview patterns"),
-        h("small", { class: "muted", text: "Lists your whole Put.io account; this can take a while." }),
-      ),
-      out,
-      schedule.node,
-    ],
-    read: () => ({ bandwidth_schedule: schedule.read() }),
-  };
-}
-
-const LIMIT_KINDS = [
-  ["rate", "MB/s"],
-  ["unlimited", "Unlimited"],
-  ["paused", "Paused"],
-];
-
-/**
- * The bandwidth schedule (feature 032): rows of days, start, end and limit, checked in
- * order; the first row containing the daemon's local time wins.
- */
-function scheduleEditor(entries) {
-  let rows = entries.map(rowFromEntry);
-  const body = h("tbody");
-  const table = h(
-    "table",
-    { class: "table override-table schedule-table" },
-    h("thead", {}, h("tr", {}, ["Days", "Start", "End", "Limit", ""].map((t) => h("th", { text: t })))),
-    body,
-  );
-  const none = h("p", { class: "muted", text: "No entries: the bandwidth limit above applies all day." });
-  const changed = () => table.closest("form")?.dispatchEvent(new Event("change"));
-  const input = (row, key, label, placeholder) =>
-    h("input", { class: "input", value: row[key], placeholder, "aria-label": label, autocomplete: "off", spellcheck: "false", oninput: (ev) => (row[key] = ev.currentTarget.value) });
-  const draw = () => {
-    body.replaceChildren(
-      ...rows.map((row, i) => {
-        const mbs = input(row, "mbs", "Limit in MB/s", "5");
-        mbs.type = "number";
-        mbs.min = "0.01";
-        mbs.step = "any";
-        mbs.hidden = row.kind !== "rate";
-        const kind = h(
-          "select",
-          { class: "input", "aria-label": "Limit", onchange: (ev) => ((row.kind = ev.currentTarget.value), (mbs.hidden = row.kind !== "rate")) },
-          LIMIT_KINDS.map(([v, t]) => h("option", { value: v, selected: row.kind === v, text: t })),
-        );
-        const button = (text, label, onclick, disabled = false) => h("button", { type: "button", class: "btn btn-small", "aria-label": label, disabled, onclick }, text);
-        const redraw = (next) => () => {
-          rows = next();
-          draw();
-          changed();
-        };
-        return h(
-          "tr",
-          {},
-          h("td", { "data-label": "Days" }, input(row, "days", "Days", "daily, mon-fri, sat,sun")),
-          h("td", { class: "time", "data-label": "Start" }, input(row, "start", "Start", "01:00")),
-          h("td", { class: "time", "data-label": "End" }, input(row, "end", "End", "07:00")),
-          h("td", { class: "limit", "data-label": "Limit" }, h("div", { class: "toolbar" }, kind, mbs)),
-          h(
-            "td",
-            { class: "actions-cell" },
-            button("↑", `Move entry ${i + 1} up`, redraw(() => move(rows, i, -1)), i === 0),
-            button("↓", `Move entry ${i + 1} down`, redraw(() => move(rows, i, 1)), i === rows.length - 1),
-            button("Remove", `Remove entry ${i + 1}`, redraw(() => rows.filter((_, j) => j !== i))),
-          ),
-        );
-      }),
-    );
-    table.hidden = !rows.length;
-    none.hidden = rows.length > 0;
-  };
-  draw();
-  const add = () => {
-    rows = [...rows, { days: "daily", start: "01:00", end: "07:00", kind: "unlimited", mbs: "" }];
-    draw();
-    changed();
-    body.lastChild.querySelector("input").focus();
-  };
-  const node = h(
-    "div",
-    { class: "spaced" },
-    h("h3", { class: "sub", text: "Bandwidth schedule" }),
-    h("p", { class: "muted", text: "In the daemon's local time (see Daemon time on the Status page). The first matching entry wins; an end before the start runs past midnight." }),
-    table,
-    none,
-    h("button", { type: "button", class: "btn btn-small spaced", onclick: add }, "Add entry"),
-  );
-  return { node, read: () => rows.map(entryFromRow) };
-}
-
-// ---- Event hooks (feature 027) ----------------------------------------------
-
-/**
- * One editor per hook: name, on/off, command or URL, headers or env, events, timeout,
- * and for a saved hook its last run and a Send test event button
- */
-function hooksExtra(data) {
-  let rows = (data.hooks || []).map(fromSettings);
-  const saved = new Set(rows.map((r) => r.name));
-  const status = new Map();
-  const list = h("div", { class: "stack" });
-  const none = h("p", { class: "muted", text: "No hooks. A hook runs a command or calls a webhook with each event as JSON; see EVENTS.md for the fields." });
-  const changed = () => list.closest("form")?.dispatchEvent(new Event("change"));
-  const redraw = () => {
-    draw();
-    changed();
-  };
-  const field = (label, input, hint) => h("label", { class: "field" }, h("span", { text: label }), input, hint ? h("small", { text: hint }) : null);
-  const text = (row, key, attrs = {}) =>
-    h("input", { class: "input", value: row[key], autocomplete: "off", spellcheck: "false", oninput: (ev) => (row[key] = ev.currentTarget.value), ...attrs });
-
-  const pairsTable = (row) => {
-    const what = row.kind === "url" ? "header" : "variable";
-    const body = h(
-      "tbody",
-      {},
-      row.pairs.map((p, i) =>
-        h(
-          "tr",
-          {},
-          h("td", { "data-label": "Name" }, text(p, "key", { "aria-label": `${what} name`, placeholder: row.kind === "url" ? "Authorization" : "LIBRARY" })),
-          h(
-            "td",
-            { "data-label": "Value" },
-            p.masked
-              ? h("div", { class: "toolbar" }, h("span", { class: "muted", text: "set" }), h("button", { type: "button", class: "btn btn-small", onclick: () => ((p.masked = false), (p.value = ""), redraw()) }, "Replace"))
-              : text(p, "value", { "aria-label": `${what} value`, type: row.kind === "url" ? "password" : "text" }),
-          ),
-          h("td", { class: "actions-cell" }, h("button", { type: "button", class: "btn btn-small", "aria-label": `Remove ${what} ${i + 1}`, onclick: () => (row.pairs.splice(i, 1), redraw()) }, "Remove")),
-        ),
-      ),
-    );
-    return h(
-      "div",
-      { class: "spaced" },
-      h("h3", { class: "sub", text: row.kind === "url" ? "Headers" : "Environment" }),
-      row.pairs.length ? h("table", { class: "table override-table" }, h("thead", {}, h("tr", {}, ["Name", "Value", ""].map((t) => h("th", { text: t })))), body) : null,
-      h("button", { type: "button", class: "btn btn-small", onclick: () => (row.pairs.push({ key: "", value: "", masked: false }), redraw()) }, row.kind === "url" ? "Add header" : "Add variable"),
-    );
-  };
-
-  const events = (row) => {
-    const boxes = eventChoices(row).map((c) =>
-      h(
-        "label",
-        { class: "field check" },
-        h("input", {
-          type: "checkbox",
-          checked: c.checked,
-          disabled: row.all,
-          onchange: (ev) => {
-            row.events = ev.currentTarget.checked ? [...row.events, c.value] : row.events.filter((e) => e !== c.value);
-          },
-        }),
-        h("span", { text: c.label }),
-      ),
-    );
-    const all = h("label", { class: "field check" }, h("input", { type: "checkbox", checked: row.all, onchange: (ev) => ((row.all = ev.currentTarget.checked), redraw()) }), h("span", { text: "All events" }));
-    return h("fieldset", { class: "hook-events" }, h("legend", { text: "Events" }), all, ...boxes);
-  };
-
-  const testBox = (row) => {
-    if (!saved.has(row.name)) return h("p", { class: "muted", text: "Save to send a test event." });
-    const out = h("span", { class: "muted", "aria-live": "polite" });
-    const show = (run) => {
-      out.textContent = run ? `Last run: ${run.event_type}, ${runLabel(run)}, ${relative(run.started_at)}` : "Not run yet";
-      out.className = run && run.result !== "success" ? "error-text" : "muted";
-      out.title = run && run.error ? run.error : "";
-    };
-    show((status.get(row.name)?.runs || [])[0]);
-    const send = async (ev) => {
-      const button = ev.currentTarget;
-      button.disabled = true;
-      out.textContent = "Sending…";
-      try {
-        const run = await post("/hooks/test", { name: row.name });
-        show(run);
-        toast(`Test event to ${row.name}: ${runLabel(run)}`);
-      } catch (e) {
-        if (e.status !== 401 && e.status !== 429) {
-          out.textContent = reason(e);
-          out.className = "error-text";
-        }
-      }
-      if (button.isConnected) button.disabled = false;
-    };
-    return h("div", { class: "toolbar spaced" }, h("button", { type: "button", class: "btn btn-small", onclick: send }, "Send test event"), out);
-  };
-
-  const card = (row, i) => {
-    const kind = h(
-      "select",
-      { class: "input", onchange: (ev) => ((row.kind = ev.currentTarget.value), redraw()) },
-      [["command", "Command"], ["url", "Webhook URL"]].map(([v, t]) => h("option", { value: v, selected: row.kind === v, text: t })),
-    );
-    const target =
-      row.kind === "url"
-        ? [field("URL", text(row, "url", { type: "url", placeholder: "https://ha.local:8123/api/webhook/…" }), (row.url || "").endsWith("…") ? "Shown cut down so its secrets stay hidden; leave it to keep the saved URL" : "Gets a POST with the event as JSON; shown cut down in logs")]
-        : [
-            field("Program", text(row, "program", { placeholder: "/config/hooks/on-download.py" }), "Absolute path; gets the event as JSON on stdin and runs as the daemon's user"),
-            field("Arguments", h("textarea", { class: "input", rows: 2, spellcheck: "false", oninput: (ev) => (row.args = ev.currentTarget.value) }, row.args), "One per line"),
-          ];
-    const timeout = text(row, "timeout_secs", { type: "number", min: 1, max: 600, step: 1 });
-    const enabled = h("label", { class: "field check" }, h("input", { type: "checkbox", checked: row.enabled, onchange: (ev) => (row.enabled = ev.currentTarget.checked) }), h("span", { text: "Enabled" }));
-    return h(
-      "fieldset",
-      { class: "hook-card" },
-      h("legend", { text: targetLabel(row) ? `${row.name} → ${targetLabel(row)}` : row.name }),
-      h(
-        "div",
-        { class: "fields" },
-        field("Name", text(row, "name", { "aria-label": `Hook ${i + 1} name`, pattern: "[A-Za-z0-9_\\-]{1,40}" }), "Letters, digits, - and _"),
-        field("Runs", kind),
-        ...target,
-        field("Timeout (s)", timeout, "1 to 600; a webhook is tried up to 3 times"),
-        enabled,
-      ),
-      events(row),
-      pairsTable(row),
-      testBox(row),
-      h("div", { class: "toolbar spaced" }, h("button", { type: "button", class: "btn btn-small", onclick: () => ((rows = rows.filter((_, j) => j !== i)), redraw()) }, "Remove hook")),
-    );
-  };
-
-  const draw = () => {
-    list.replaceChildren(...rows.map(card));
-    none.hidden = rows.length > 0;
-  };
-  draw();
-  get("/hooks")
-    .then((s) => {
-      for (const hook of s.hooks || []) status.set(hook.name, hook);
-      if (list.isConnected) draw();
-    })
-    .catch(() => {});
-  const add = () => {
-    rows = [...rows, blankHook(rows.length + 1)];
-    redraw();
-    list.lastChild.querySelector("input").focus();
-  };
-  return {
-    nodes: [none, list, h("button", { type: "button", class: "btn btn-small spaced", onclick: add }, "Add hook")],
-    read: () => ({ hooks: rows.map(toSettings) }),
-  };
-}
-
-// ---- Lua plugins (features 028, 031) -----------------------------------------
-
-/**
- * One card per plugin found: state, what it contacts, Enabled, its settings by type,
- * timeout, last run and Send test event. Settings for a plugin not found are kept.
- * A plugin's actions (031) are buttons: an answer shows its message, code and link, fills
- * a field's choices, and its `next` step runs on its own for up to 10 minutes. What an
- * action saves is saved already; the card shows it.
- */
-function pluginsExtra(data) {
-  const stored = data.plugins || [];
-  let found = null;
-  let rows = [];
-  const list = h("div", { class: "stack" }, h("p", { class: "muted", text: "Loading plugins…" }));
-  const field = (label, input, hint) => h("label", { class: "field" }, h("span", { text: label }), input, hint ? h("small", { text: hint }) : null);
-  const changed = () => list.closest("form")?.dispatchEvent(new Event("change"));
-
-  const input = (row, f, onHosts) => {
-    const set = (v) => {
-      row.values[f.key] = v;
-      onHosts();
-    };
-    if (f.type === "boolean") return h("input", { type: "checkbox", checked: row.values[f.key], onchange: (ev) => set(ev.currentTarget.checked) });
-    if (f.type === "string_list") return h("textarea", { class: "input", rows: 3, spellcheck: "false", oninput: (ev) => set(ev.currentTarget.value) }, row.values[f.key]);
-    if (f.type === "path_map") return h("textarea", { class: "input", rows: 3, spellcheck: "false", placeholder: "/downloads => /data", oninput: (ev) => set(ev.currentTarget.value) }, row.values[f.key]);
-    const type = f.type === "url" ? "url" : f.type === "integer" || f.type === "number" ? "number" : "text";
-    return h("input", { class: "input", type, step: f.type === "number" ? "any" : undefined, value: row.values[f.key], autocomplete: "off", spellcheck: "false", oninput: (ev) => set(ev.currentTarget.value) });
-  };
-
-  const secret = (row, f) => {
-    const s = row.secrets[f.key];
-    const box = h("div");
-    const draw = () => {
-      box.replaceChildren(
-        s.set && !s.replace
-          ? h("div", { class: "toolbar" }, h("span", { class: "muted", text: "set" }), h("button", { type: "button", class: "btn btn-small", onclick: () => ((s.replace = true), draw(), changed()) }, "Replace"))
-          : h("input", { class: "input", type: "password", value: s.value, autocomplete: "new-password", "aria-label": f.label || f.key, oninput: (ev) => (s.value = ev.currentTarget.value) }),
-      );
-    };
-    draw();
-    return box;
-  };
-
-  // The card of each plugin, so an action can draw its card again
-  const cards = new Map();
-  const redrawCard = (name) => {
-    const c = cards.get(name);
-    if (c && c.el.isConnected) c.el.replaceWith(card(c.status));
-  };
-
-  const runAction = async (row, id, input = {}, startedAt = Date.now()) => {
-    row.flow = { ...(row.flow || {}), busy: true, error: null };
-    redrawCard(row.name);
-    try {
-      const a = await post("/plugins/action", { name: row.name, action: id, input, config: plugins.overrides(row) });
-      for (const key of plugins.choiceFields(row, id)) row.choices[key] = a.choices || [];
-      if (a.saved) {
-        plugins.applyAnswer(row, a);
-        toast(`${row.name}: saved ${a.saved.join(", ")}`);
-      }
-      const wait = a.next && !a.done ? plugins.nextWait(a.next, startedAt, Date.now()) : null;
-      row.flow = { message: a.message, code: a.code, open_url: a.open_url, busy: wait != null };
-      if (a.next && !a.done && wait == null) row.flow.error = "Stopped after 10 minutes; try again";
-      redrawCard(row.name);
-      if (wait != null) setTimeout(() => list.isConnected && runAction(row, a.next.action, a.next.input, startedAt), wait);
-    } catch (e) {
-      row.flow = { ...(row.flow || {}), busy: false, error: e.status === 401 || e.status === 429 ? null : reason(e) };
-      redrawCard(row.name);
-    }
-  };
-
-  // A field with choices: a Load button, then a list to pick from (ticks for a list field)
-  const pick = (row, f, onHosts) => {
-    const opts = row.choices[f.key];
-    const load = h("button", { type: "button", class: "btn btn-small", disabled: row.flow && row.flow.busy, onclick: () => runAction(row, f.choices) }, opts ? "Reload" : "Load");
-    if (!opts) return h("div", { class: "toolbar" }, input(row, f, onHosts), load);
-    if (f.type === "string_list") {
-      const on = plugins.ticked(row, f.key);
-      const all = [...opts, ...on.filter((v) => !opts.some((o) => o.value === v)).map((v) => ({ value: v, label: v }))];
-      return h(
-        "div",
-        {},
-        all.length ? null : h("p", { class: "muted", text: "Nothing to pick from" }),
-        ...all.map((o) => h("label", { class: "field check" }, h("input", { type: "checkbox", checked: on.includes(o.value), onchange: (ev) => plugins.tick(row, f.key, o.value, ev.currentTarget.checked) }), h("span", { text: o.label }))),
-        load,
-      );
-    }
-    const current = row.values[f.key];
-    const all = current && !opts.some((o) => o.value === current) ? [{ value: current, label: current }, ...opts] : opts;
-    const select = h(
-      "select",
-      { class: "input", onchange: (ev) => ((row.values[f.key] = ev.currentTarget.value), onHosts()) },
-      h("option", { value: "", text: "—" }),
-      all.map((o) => h("option", { value: o.value, selected: o.value === current, text: o.label })),
-    );
-    return h("div", { class: "toolbar" }, select, load);
-  };
-
-  const actionsBox = (row, status) => {
-    const shown = (status.actions || []).filter((a) => !a.hidden);
-    const flow = row.flow || {};
-    if (!shown.length && !flow.message && !flow.error) return null;
-    return h(
-      "div",
-      { class: "spaced", "aria-live": "polite" },
-      shown.length
-        ? h("div", { class: "toolbar" }, ...shown.map((a) => h("button", { type: "button", class: "btn btn-small", title: a.help || undefined, disabled: flow.busy || status.state === "broken", onclick: () => runAction(row, a.id) }, a.label)))
-        : null,
-      flow.code ? h("p", { class: "big", text: flow.code }) : null,
-      flow.message ? h("p", { text: flow.message }) : null,
-      flow.open_url ? h("p", {}, h("a", { href: flow.open_url, target: "_blank", rel: "noopener noreferrer" }, "Open the sign-in page")) : null,
-      flow.busy ? h("p", { class: "muted", text: "Waiting…" }) : null,
-      flow.error ? h("p", { class: "error-text", text: flow.error }) : null,
-    );
-  };
-
-  const testBox = (row, status) => {
-    const out = h("span", { class: "muted", "aria-live": "polite" });
-    const logs = h("pre", { class: "muted", hidden: true });
-    const show = (run) => {
-      out.textContent = run ? `Last run: ${run.event_type}, ${plugins.runLabel(run)}, ${relative(run.started_at)}` : "Not run yet";
-      out.className = run && run.result !== "success" ? "error-text" : "muted";
-      const lines = (run && run.logs) || [];
-      logs.textContent = lines.map((l) => `${l.level}: ${l.message}`).join("\n");
-      logs.hidden = !lines.length;
-    };
-    show((status.runs || []).at(-1));
-    const send = async (ev) => {
-      const button = ev.currentTarget;
-      button.disabled = true;
-      out.textContent = "Sending…";
-      try {
-        const run = await post("/plugins/test", { name: row.name });
-        show(run);
-        toast(`Test event to ${row.name}: ${plugins.runLabel(run)}`);
-      } catch (e) {
-        if (e.status !== 401 && e.status !== 429) {
-          out.textContent = reason(e);
-          out.className = "error-text";
-        }
-      }
-      if (button.isConnected) button.disabled = false;
-    };
-    const saved = stored.some((s) => s.name === row.name);
-    return h("div", { class: "spaced" }, h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn-small", onclick: send, disabled: status.state === "broken" }, "Send test event"), out), saved ? null : h("small", { class: "muted", text: "Tests use the saved settings." }), logs);
-  };
-
-  const card = (status) => {
-    const row = rows.find((r) => r.name === status.name);
-    const hosts = h("span");
-    const showHosts = () => {
-      const needed = plugins.hostsFor(status, row.values);
-      hosts.textContent = needed.length ? `Contacts: ${needed.join(", ")}` : "No network access";
-    };
-    showHosts();
-    const head = [status.version ? `v${status.version}` : null, status.source, plugins.stateLabel(status.state)].filter(Boolean).join(" · ");
-    const body = row
-      ? [
-          h(
-            "div",
-            { class: "fields" },
-            h("label", { class: "field check" }, h("input", { type: "checkbox", checked: row.enabled, onchange: (ev) => (row.enabled = ev.currentTarget.checked) }), h("span", { text: "Enabled" })),
-            ...row.fields.map((f) => field((f.label || f.key) + (f.required ? " *" : ""), f.secret ? secret(row, f) : f.choices ? pick(row, f, showHosts) : input(row, f, showHosts), f.help)),
-            field("Time limit (s)", h("input", { class: "input", type: "number", min: 1, max: 60, value: row.timeout_secs, oninput: (ev) => (row.timeout_secs = ev.currentTarget.value) }), "Longest one event may take, 1 to 60"),
-          ),
-          actionsBox(row, status),
-          testBox(row, status),
-        ]
-      : [];
-    const el = h(
-      "fieldset",
-      { class: "hook-card" },
-      h("legend", { text: status.name }),
-      h("p", { class: status.state === "broken" ? "error-text" : "muted", text: status.error ? `${head}: ${status.error}` : head }),
-      status.description ? h("p", { text: status.description }) : null,
-      status.events && status.events.length ? h("p", { class: "muted", text: `Events: ${status.events.join(", ")}` }) : null,
-      h("p", { class: "muted" }, hosts),
-      ...body,
-    );
-    cards.set(status.name, { el, status });
-    return el;
-  };
-
-  const draw = () => {
-    const orphans = stored.filter((s) => !found.some((p) => p.name === s.name));
-    list.replaceChildren(
-      ...(found.length ? found.map(card) : [h("p", { class: "muted", text: "No plugins found." })]),
-      ...orphans.map((s) => h("p", { class: "muted", text: `Settings for ${s.name} are kept, but no plugin of that name is in the folder.` })),
-    );
-  };
-  const load = () =>
-    get("/plugins")
-      .then((s) => {
-        found = s.plugins || [];
-        // Plugins with a broken manifest have no fields to edit
-        rows = found.filter((p) => p.config_fields).map((p) => plugins.fromStatus(p, stored.find((x) => x.name === p.name)));
-        if (list.isConnected || !list.parentNode) draw();
-      })
-      .catch((e) => list.replaceChildren(h("p", { class: "error-text", text: reason(e) })));
-  load();
-  const reload = async (ev) => {
-    const button = ev.currentTarget;
-    button.disabled = true;
-    try {
-      toast((await post("/plugins/reload")).message);
-      await load();
-    } catch (e) {
-      if (e.status !== 401 && e.status !== 429) toast(reason(e));
-    }
-    button.disabled = false;
-  };
-  return {
-    nodes: [h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn-small", onclick: reload }, "Reload plugins")), list],
-    read: () => {
-      if (!found) return { plugins: stored };
-      const edited = rows.map(plugins.toSettings);
-      return { plugins: [...edited, ...stored.filter((s) => !edited.some((e) => e.name === s.name))] };
-    },
-  };
-}
-
-function precheckExtra(data) {
-  const categories = overrides("categories", "Per category", "The *arr category, e.g. sonarr", data.categories);
-  const watch = overrides("watch", "Per watch folder", "A watched folder, as listed above", data.watch);
-  return {
-    nodes: [categories.node, watch.node, effectiveTable(data.effective || [])],
-    read: () => ({ categories: categories.read(), watch: watch.read() }),
-  };
-}
-
-/** Rows of key, enabled, minimum size and archives; empty fields come from the defaults */
-function overrides(name, title, placeholder, map) {
-  const rows = [];
-  const body = h("tbody");
-  const table = h("table", { class: "table override-table" }, h("thead", {}, h("tr", {}, h("th", { text: "Folder" }), h("th", { text: "Enabled" }), h("th", { text: "Min size (MB)" }), h("th", { text: "Archives" }), h("th"))), body);
-  const none = h("p", { class: "muted", text: "None: each uses the settings above." });
-  const sync = () => {
-    table.hidden = !rows.length;
-    none.hidden = rows.length > 0;
-  };
-  const select = (value, label) =>
-    h("select", { class: "input", "aria-label": label }, TRISTATE.map(([v, t]) => h("option", { value: v, selected: String(value ?? "") === v, text: t })));
-  const add = (key = "", o = {}) => {
-    const r = {
-      key: h("input", { class: "input", value: key, placeholder, "aria-label": "Folder", autocomplete: "off", spellcheck: "false" }),
-      enabled: select(o.enabled, "Enabled"),
-      min: h("input", { class: "input", type: "number", min: 0, max: 100000, step: 1, value: o.min_size_mb ?? "", placeholder: "Default", "aria-label": "Minimum size (MB)" }),
-      archives: select(o.allow_archives, "Allow archives"),
-    };
-    const remove = () => {
-      rows.splice(rows.indexOf(r), 1);
-      tr.remove();
-      sync();
-    };
-    const tr = h(
-      "tr",
-      {},
-      h("td", { "data-label": "Folder" }, r.key),
-      h("td", { "data-label": "Enabled" }, r.enabled),
-      h("td", { "data-label": "Min size (MB)" }, r.min),
-      h("td", { "data-label": "Archives" }, r.archives),
-      h("td", { class: "actions-cell" }, h("button", { type: "button", class: "btn btn-small", "aria-label": `Remove ${key || "this row"}`, onclick: remove }, "Remove")),
-    );
-    rows.push(r);
-    body.append(tr);
-    sync();
-    return r;
-  };
-  for (const [key, o] of Object.entries(map || {})) add(key, o);
-  sync();
-  const flag = (sel) => (sel.value === "" ? undefined : sel.value === "true");
-  const node = h(
-    "div",
-    { class: "spaced", dataset: { overrides: name } },
-    h("h3", { class: "sub", text: title }),
-    table,
-    none,
-    h("button", { type: "button", class: "btn btn-small spaced", onclick: () => add().key.focus() }, "Add"),
-  );
-  const read = () => {
-    const out = {};
-    for (const r of rows) {
-      const key = r.key.value.trim();
-      if (!key) continue;
-      const min = r.min.value.trim();
-      out[key] = { enabled: flag(r.enabled), min_size_mb: min === "" ? undefined : Number(min), allow_archives: flag(r.archives) };
-    }
-    return out;
-  };
-  return { node, read };
-}
-
-/** What the check does per category and watch folder (FR-020), as saved */
-function effectiveTable(rows) {
-  const wanted = (r) => {
-    if (r.wanted == null) return "From the upload folder's rule";
-    const list = r.wanted.slice(0, 6).join(", ") + (r.wanted.length > 6 ? ", …" : "");
-    return `${list} (${r.wanted_from ? `rule on ${r.wanted_from}` : "video default"})`;
-  };
-  return h(
-    "div",
-    { class: "spaced" },
-    h("h3", { class: "sub", text: "What gets checked" }),
-    rows.length
-      ? h(
-          "table",
-          { class: "table" },
-          h("thead", {}, h("tr", {}, h("th", { text: "Folder" }), h("th", { text: "Checked" }), h("th", { class: "right", text: "Min size" }), h("th", { text: "Archives" }), h("th", { text: "Wanted types" }))),
-          h(
-            "tbody",
-            {},
-            rows.map((r) =>
-              h(
-                "tr",
-                {},
-                h("td", { class: "name-cell name", "data-label": "Folder" }, r.key, h("small", { text: r.kind === "watch" ? " watch folder" : " category" })),
-                h("td", { "data-label": "Checked", text: r.enabled ? "Yes" : "No" }),
-                h("td", { class: "num right nowrap", "data-label": "Min size", text: `${r.min_size_mb} MB` }),
-                h("td", { "data-label": "Archives", text: r.allow_archives ? "Allowed" : "No" }),
-                h("td", { "data-label": "Wanted types", text: wanted(r) }),
-              ),
-            ),
-          ),
-        )
-      : h("p", { class: "muted", text: "No categories or watch folders yet." }),
-    h("p", { class: "muted spaced", text: "As saved; changes apply after a restart." }),
-  );
-}
-
-// ---- Radarr / Sonarr --------------------------------------------------------
-
-// FR-026 reasons (plus the server test's no_api_key): what happened, then what to check (US8)
-const ARR_HELP = {
-  unreachable: ["Unreachable", "Check the address and port, and that the app is running."],
-  timed_out: ["Unreachable (timed out)", "The app didn't answer in time. Check it isn't stuck or behind a firewall."],
-  untrusted_certificate: ["Untrusted HTTPS certificate", "Use the http:// address, or give the app a certificate this machine trusts."],
-  unauthorized: ["API key refused", "Copy the key again from Settings → General in Radarr or Sonarr."],
-  not_arr: ["Not a Radarr or Sonarr server", "Check the port: Radarr is usually 7878 and Sonarr 8989. Add the URL base if it has one."],
-  unsupported_version: ["Version 3 or later is needed", "Update Radarr or Sonarr, then try again."],
-  invalid_category: ["Invalid category", "Use a folder name without .. or backslashes, or leave it empty."],
-  arr_cannot_reach: ["Radarr/Sonarr can't reach putio-sync", "Enter the address Radarr/Sonarr can reach putio-sync at in “putio-sync host”, then try again."],
-  arr_test_failed: ["The download client test failed", "The app's own message is above. Nothing was saved."],
-  arr_refused: ["Radarr/Sonarr refused the download client", "The app's own message is above. Nothing was left behind."],
-  config_write_failed: ["Could not write the config file", "Check the config file isn't read-only. Nothing was changed."],
-  no_api_key: ["No API key", "Edit the application and enter its API key."],
-};
-const arrReason = (r) => (ARR_HELP[r] || [r])[0];
-const arrNext = (r) => (ARR_HELP[r] || [])[1];
-const FOUND_BY = { saved: "saved", container: "container", host: "this host", browser: "browser address" };
-
-function arrCard(mine) {
-  const card = h("section", { class: "card" });
-  const title = () => h("h2", { text: "Radarr / Sonarr" });
-  const load = async () => {
-    card.replaceChildren(title(), h("p", { class: "muted", text: "Loading…" }));
-    try {
-      const data = await arrStatus();
-      // replaceChildren prints null as text, unlike h(), so drop the optional parts
-      if (mine === seq) card.replaceChildren(title(), ...arrBody(data, load, mine).filter(Boolean));
-    } catch (e) {
-      if (mine !== seq || e.status === 401 || e.status === 429) return;
-      card.replaceChildren(
-        title(),
-        h("p", { class: "error-text", text: reason(e) }),
-        h("button", { type: "button", class: "btn spaced", onclick: load }, "Retry"),
-      );
-    }
-  };
-  load();
-  return card;
-}
-
-const kv = (pairs) => h("dl", { class: "kv" }, pairs.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", {}, v)]));
-
-function arrBody(data, reload, mine) {
-  const c = data.client;
-  const connection = kv([
-    ["Type", "Transmission"],
-    ["Host", h("span", { class: "name", text: c.connection.hosts.join(" or ") })],
-    ["Port", String(c.connection.port)],
-    ["Use SSL", c.connection.ssl ? "Yes" : "No"],
-    ["URL base", c.connection.url_base],
-    ["Username", c.username],
-    ["Download folder", h("span", { class: "name", text: c.download_dir })],
-  ]);
-  return [
-    c.available ? null : h("p", { class: "warn-text", text: "The download client needs the database, which isn't open." }),
-    h("h3", { class: "sub", text: "Download client" }),
-    clientForm(c, reload),
-    h("h3", { class: "sub", text: "Connection" }),
-    h("p", { class: "muted", text: "Set up automatically below, or add a Transmission download client in Radarr or Sonarr with these details. Use the first host that works." }),
-    connection,
-    h(
-      "p",
-      { class: "muted" },
-      "Radarr and Sonarr import from the download folder, so they must see it: at the same path, or through a Remote Path Mapping. ",
-      h("a", { href: PATH_HELP, target: "_blank", rel: "noopener", text: "How to map paths" }),
-    ),
-    h("h3", { class: "sub", text: "Set up automatically" }),
-    setupView(reload, mine),
-    h("h3", { class: "sub", text: "Applications" }),
-    applications(data.applications, reload),
-  ];
-}
-
-/** 32 characters from [A-Za-z0-9], from the browser's CSPRNG */
-function generatePassword() {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  const bytes = crypto.getRandomValues(new Uint8Array(64));
-  let out = "";
-  // Reject bytes past the last whole multiple of 62, so every character is equally likely
-  for (const b of bytes) {
-    if (b < 248 && out.length < 32) out += chars[b % 62];
-  }
-  return out.length === 32 ? out : generatePassword();
-}
-
-function clientForm(c, reload) {
-  const envPassword = c.env && c.env.password;
-  const enabled = h("input", { type: "checkbox", id: "arr-enabled", checked: Boolean(c.enabled) });
-  const username = h("input", { class: "input", id: "arr-username", type: "text", required: true, autocomplete: "off", spellcheck: "false" });
-  username.value = c.username;
-  const password = h("input", {
-    class: "input",
-    id: "arr-password",
-    type: "password",
-    autocomplete: "new-password",
-    disabled: envPassword,
-    placeholder: envPassword ? "set by environment" : c.password_set ? "set; leave empty to keep" : "not set",
-  });
-  const copy = h("button", { type: "button", class: "btn", hidden: true }, "Copy");
-  copy.onclick = async () => {
-    try {
-      await navigator.clipboard.writeText(password.value);
-      toast("Password copied");
-    } catch {
-      password.select();
-    }
-  };
-  const generate = h("button", { type: "button", class: "btn", disabled: envPassword }, "Generate");
-  generate.onclick = () => {
-    password.value = generatePassword();
-    // Shown until the form is saved or left, so it can be copied
-    password.type = "text";
-    copy.hidden = false;
-  };
-  const error = h("p", { class: "error-text", role: "alert", hidden: true });
-  const note = h("p", { class: "muted", role: "status" });
-  const save = h("button", { type: "submit", class: "btn btn-primary" }, "Save");
-
-  const onSubmit = async (ev) => {
-    ev.preventDefault();
-    save.disabled = true;
-    error.hidden = true;
-    note.textContent = "";
-    try {
-      const res = await saveArrClient({ enabled: enabled.checked, username: username.value.trim(), password: envPassword ? "" : password.value });
-      toast(res.message || "Saved");
-      // Shown in the Applications list once the card reloads (FR-008)
-      if (res.password_changed && c.password_set) passwordOffer = true;
-      await reload();
-    } catch (e) {
-      if (e.status === 401 || e.status === 429) return;
-      error.textContent = reason(e);
-      error.hidden = false;
-      if (save.isConnected) save.disabled = false;
-    }
-  };
-
-  return h(
-    "form",
-    { onsubmit: onSubmit, oninput: () => (note.textContent = "") },
-    h(
-      "div",
-      { class: "fields" },
-      h("label", { class: "field check", for: "arr-enabled" }, enabled, h("span", {}, "On", h("small", { text: "Answer Radarr and Sonarr as a Transmission client" }))),
-      h("label", { class: "field", for: "arr-username" }, h("span", { text: "Username" }), username),
-      h(
-        "label",
-        { class: "field", for: "arr-password" },
-        h("span", { text: "Password" }),
-        password,
-        h("small", { text: envPassword ? "Set by environment (PUTIO_SYNC_ARR_PASSWORD)" : "Never shown once saved" }),
-      ),
-    ),
-    h("div", { class: "form-foot" }, generate, copy),
-    error,
-    h("div", { class: "form-foot" }, save, note),
-  );
-}
-
-let setupSeq = 0;
-
-/** Discovery, then preview, then setup (US1). A late answer for a closed view is dropped. */
-function setupView(reload, mine) {
-  const wrap = h("div", { class: "stack" });
-  const open = h("button", { type: "button", class: "btn" }, "Set up automatically");
-  const live = (view) => mine === seq && view === setupSeq && wrap.isConnected;
-
-  const close = () => {
-    setupSeq += 1;
-    wrap.replaceChildren(open);
-  };
-  open.onclick = () => {
-    const view = ++setupSeq;
-    const found = h("div", { class: "stack" }, h("p", { class: "muted", text: "Looking for Radarr and Sonarr…" }));
-    const url = h("input", { class: "input", id: "arr-setup-url", type: "text", placeholder: "http://radarr:7878", autocomplete: "off", spellcheck: "false" });
-    const key = h("input", { class: "input", id: "arr-setup-key", type: "password", autocomplete: "off" });
-    const category = h("input", { class: "input", id: "arr-setup-category", type: "text", placeholder: "radarr or sonarr", autocomplete: "off", spellcheck: "false" });
-    const host = h("input", { class: "input", id: "arr-setup-host", type: "text", placeholder: "found automatically", autocomplete: "off", spellcheck: "false" });
-    const remember = h("input", { type: "checkbox", id: "arr-setup-remember" });
-    // Unticked by default: the operator may still use the blackhole (US5)
-    const blackhole = h("input", { type: "checkbox", id: "arr-setup-blackhole" });
-    const out = h("div", { role: "status" });
-    const previewBtn = h("button", { type: "button", class: "btn" }, "Preview");
-    const runBtn = h("button", { type: "submit", class: "btn btn-primary" }, "Set up");
-    const cancel = h("button", { type: "button", class: "btn", onclick: close }, "Close");
-
-    const req = () => ({
-      target: { url: url.value.trim() },
-      api_key: key.value.trim(),
-      category: category.value.trim() || null,
-      host: host.value.trim() || null,
-      remember: remember.checked,
-      disable_blackhole: blackhole.checked,
-    });
-    const busy = (on) => {
-      previewBtn.disabled = on;
-      runBtn.disabled = on;
-    };
-    const failure = (r) => {
-      // The host override is the fix for this one: take the operator there
-      if (r.reason === "arr_cannot_reach") {
-        host.focus();
-        host.select();
-      }
-      return h(
-        "div",
-        {},
-        h("p", { class: "error-text", text: `${arrReason(r.reason)}${r.detail ? `: ${r.detail}` : ""}` }),
-        r.hosts_tried && r.hosts_tried.length ? h("p", { class: "muted", text: `Hosts tried: ${r.hosts_tried.join(", ")}` }) : null,
-        arrNext(r.reason) ? h("p", { class: "muted", text: arrNext(r.reason) }) : null,
-      );
-    };
-    const fail = (e) => {
-      if (e.status === 401 || e.status === 429) return;
-      out.replaceChildren(h("p", { class: "error-text", text: reason(e) }));
-    };
-
-    previewBtn.onclick = async () => {
-      busy(true);
-      out.replaceChildren(h("p", { class: "muted", text: "Checking…" }));
-      try {
-        const plan = await previewArrSetup(req());
-        if (!live(view)) return;
-        if (!plan.ok) {
-          out.replaceChildren(failure(plan));
-          return;
-        }
-        if (!category.value.trim()) category.placeholder = plan.category;
-        const what = plan.action === "update" ? `Update ${plan.client_name}` : plan.action === "unchanged" ? "Already set up" : `Create ${plan.client_name}`;
-        const notes = [];
-        if (plan.download_client.will_enable) notes.push("The download client will be turned on.");
-        if (plan.download_client.will_generate_password) notes.push("A password will be generated for it.");
-        fill(
-          out,
-          kv([
-            ["App", `${plan.name} ${plan.version}`],
-            ["Address", h("span", { class: "name", text: plan.url })],
-            ["Change", what],
-            ["Category", plan.category],
-          ]),
-          existingClients(plan.existing_clients),
-          plan.blackhole_enabled
-            ? h("p", { class: "warn-text", text: "An enabled Torrent Blackhole may still take releases. Tick “Disable Torrent Blackhole” to turn it off." })
-            : null,
-          notes.length ? h("p", { class: "muted", text: notes.join(" ") }) : null,
-        );
-      } catch (e) {
-        if (live(view)) fail(e);
-      } finally {
-        if (live(view)) busy(false);
-      }
-    };
-
-    const onSubmit = async (ev) => {
-      ev.preventDefault();
-      busy(true);
-      out.replaceChildren(h("p", { class: "muted", text: "Setting up… this can take up to 30 s." }));
-      try {
-        const r = await runArrSetup(req());
-        if (!live(view)) return;
-        if (r.outcome === "failed") {
-          out.replaceChildren(failure(r));
-          busy(false);
-          return;
-        }
-        const verb = r.outcome === "updated" ? "Updated" : r.outcome === "unchanged" ? "Already set up:" : "Created";
-        toast(`${verb} ${r.client_name} in ${r.app} ${r.version}, host ${r.host}`);
-        if (r.blackhole_disabled) toast("Torrent Blackhole disabled");
-        if (r.warning) toast(r.warning);
-        if (r.path_check && r.path_check.status === "not_visible") {
-          toast(`${r.app} cannot see ${r.path_check.arr_path}: mount the download folder there or add a Remote Path Mapping`);
-        }
-        await reload();
-      } catch (e) {
-        if (live(view)) {
-          fail(e);
-          busy(false);
-        }
-      }
-    };
-
-    wrap.replaceChildren(
-      found,
-      h(
-        "form",
-        { onsubmit: onSubmit },
-        h(
-          "div",
-          { class: "fields" },
-          h("label", { class: "field", for: "arr-setup-url" }, h("span", { text: "Address" }), url, h("small", { text: "Pick one above, or type it. A bare host like nas is tried on ports 7878 and 8989." })),
-          h("label", { class: "field", for: "arr-setup-key" }, h("span", { text: "API key" }), key, h("small", { text: "Settings → General in Radarr or Sonarr" })),
-          h("label", { class: "field", for: "arr-setup-category" }, h("span", { text: "Category" }), category),
-          h("label", { class: "field", for: "arr-setup-host" }, h("span", { text: "putio-sync host" }), host, h("small", { text: "Only if the automatic choice fails" })),
-          h(
-            "label",
-            { class: "field check", for: "arr-setup-blackhole" },
-            blackhole,
-            h("span", {}, "Disable Torrent Blackhole", h("small", { text: "Only after putio-sync's client is saved. It's turned off, not deleted." })),
-          ),
-          h("label", { class: "field check", for: "arr-setup-remember" }, remember, h("span", {}, "Remember", h("small", { text: "Save this app and its API key in the config file" }))),
-        ),
-        h("div", { class: "form-foot" }, previewBtn, runBtn, cancel),
-        out,
-      ),
-    );
-
-    discoverArr()
-      .then((d) => {
-        if (!live(view)) return;
-        // Open when nothing was found, so the operator sees where it looked (US2)
-        const tried = h("details", { open: !d.instances.length }, h("summary", { class: "muted", text: `Addresses tried (${d.tried.length})` }), h("p", { class: "muted name", text: d.tried.join(", ") }));
-        if (!d.instances.length) {
-          found.replaceChildren(h("p", { class: "muted", text: "No Radarr or Sonarr found. Type the address below." }), tried);
-          return;
-        }
-        const pick = (i) =>
-          h("button", { type: "button", class: "btn", onclick: () => ((url.value = i.url), key.focus()) }, `${i.kind === "radarr" ? "Radarr" : "Sonarr"} at ${i.url} (${FOUND_BY[i.found_by] || i.found_by})`);
-        found.replaceChildren(h("div", { class: "form-foot" }, d.instances.map(pick)), tried);
-      })
-      .catch((e) => {
-        if (!live(view) || e.status === 401 || e.status === 429) return;
-        found.replaceChildren(h("p", { class: "muted", text: `Discovery didn't run: ${reason(e)}. Type the address below.` }));
-      });
-  };
-  wrap.append(open);
-  return wrap;
-}
-
-/** The *arr's download clients, putio-sync's own marked */
-function existingClients(list) {
-  if (!list.length) return h("p", { class: "muted", text: "No download clients there yet." });
-  return h(
-    "ul",
-    { class: "stack" },
-    list.map((c) =>
-      h(
-        "li",
-        {},
-        h("strong", { text: c.name || "(no name)" }),
-        ` ${c.implementation}`,
-        c.enabled ? null : h("span", { class: "muted", text: " (off)" }),
-        c.points_at_putio_sync ? [" ", h("span", { class: "badge", text: "putio-sync" })] : null,
-      ),
-    ),
-  );
-}
-
-/** Set after a password change: the saved applications still use the old one (FR-008) */
-let passwordOffer = false;
-
-const KIND_NAME = { radarr: "Radarr", sonarr: "Sonarr" };
-const DEFAULT_PORT = { radarr: 7878, sonarr: 8989 };
-
-/** A legacy typed category as the server compares it */
-const normalCategory = (c) => c.trim().replace(/^\/+|\/+$/g, "").toLowerCase();
-
-/** The Applications list, its Add buttons and the password update offer */
-function applications(list, reload) {
-  const wrap = h("div", { class: "stack" });
-  const rows = list.map((s) => applicationRow(s, list, reload));
-  const add = (kind) => {
-    const form = applicationForm(kind, null, reload, () => form.replaceWith(addBar));
-    addBar.replaceWith(form);
-  };
-  const addBar = h(
-    "div",
-    { class: "form-foot" },
-    h("button", { type: "button", class: "btn", onclick: () => add("radarr") }, "Add Radarr"),
-    h("button", { type: "button", class: "btn", onclick: () => add("sonarr") }, "Add Sonarr"),
-  );
-  if (passwordOffer) wrap.append(updateOffer(list, reload));
-  wrap.append(
-    rows.length ? h("div", { class: "stack" }, rows) : h("p", { class: "muted", text: "No applications saved. Add one, or set one up above with Remember ticked." }),
-    addBar,
-  );
-  return wrap;
-}
-
-/** Run setup again for each saved application with a key, so it gets the new password */
-function updateOffer(list, reload) {
-  const withKey = list.filter((s) => s.api_key_set);
-  const out = h("div", { role: "status" });
-  const update = h("button", { type: "button", class: "btn btn-primary", disabled: !withKey.length }, `Update ${withKey.length === 1 ? withKey[0].name : `${withKey.length} applications`}`);
-  const dismiss = h("button", { type: "button", class: "btn" }, "Not now");
-  const box = h(
-    "div",
-    { class: "stack" },
-    h("p", { class: "warn-text", text: "Radarr and Sonarr still use the old password until their putio-sync client is updated." }),
-    h("div", { class: "form-foot" }, update, dismiss),
-    out,
-  );
-  dismiss.onclick = () => {
-    passwordOffer = false;
-    box.remove();
-  };
-  update.onclick = async () => {
-    update.disabled = true;
-    dismiss.disabled = true;
-    const lines = [];
-    for (const s of withKey) {
-      out.replaceChildren(h("p", { class: "muted", text: `Updating ${s.name}…` }), ...lines);
-      try {
-        const r = await runArrSetup({ target: { application: s.index } });
-        lines.push(
-          r.outcome === "failed"
-            ? h("p", { class: "error-text", text: `${s.name}: ${arrReason(r.reason)}${r.detail ? `: ${r.detail}` : ""}` })
-            : h("p", {}, h("span", { class: "dot ok" }), `${s.name}: updated`),
-        );
-      } catch (e) {
-        if (e.status === 401 || e.status === 429) return;
-        lines.push(h("p", { class: "error-text", text: `${s.name}: ${reason(e)}` }));
-      }
-    }
-    out.replaceChildren(...lines);
-    passwordOffer = false;
-    if (lines.every((l) => l.className !== "error-text")) {
-      toast("Applications updated");
-      await reload();
-    } else {
-      dismiss.disabled = false;
-      dismiss.textContent = "Close";
-    }
-  };
-  return box;
-}
-
-const PATH_HELP = "https://github.com/devclinton/putio-sync#path-mapping";
-
-/** Can the application see the download folder (R10); null before a check */
-function pathLines(check, app) {
-  if (!check) return [];
-  if (check.status === "visible") {
-    return [h("p", {}, h("span", { class: "dot ok" }), `Folder visible to ${app}`)];
-  }
-  if (check.status === "unknown") {
-    return [h("p", { class: "muted", text: `Folder not checked${check.detail ? `: ${check.detail}` : ""}` })];
-  }
-  const mapped = check.arr_path !== check.folder ? ` (${check.folder} after its path mappings)` : "";
-  const mappings = check.mappings.length
-    ? `Its path mappings: ${check.mappings.map((m) => `${m.host}: ${m.remote_path} → ${m.local_path}`).join("; ")}.`
-    : "It has no path mappings.";
-  return [
-    h("p", { class: "error-text", text: `${app} cannot see ${check.arr_path}${mapped}` }),
-    h(
-      "p",
-      { class: "muted" },
-      `Mount putio-sync's download folder in ${app} at ${check.folder}, or add a Remote Path Mapping in ${app} from ${check.folder} to where ${app} sees it. ${mappings} `,
-      h("a", { href: PATH_HELP, target: "_blank", rel: "noopener", text: "How to map paths" }),
-    ),
-  ];
-}
-
-/** What putio-sync knows about an application's categories (R4) */
-function categoriesLine(s) {
-  if (!s.api_key_set) return null;
-  if (!s.read_at) {
-    return h("p", { class: "muted", text: s.read_error ? `Categories not read: ${arrReason(s.read_error)}` : "Categories not read yet" });
-  }
-  const age = `read ${relative(s.read_at)}`;
-  const stale = s.read_error ? `; last read failed: ${arrReason(s.read_error)}` : "";
-  if (!s.client_present) return h("p", { class: "muted", text: `Not set up: no putio-sync client there (${age}${stale})` });
-  const cats = s.categories.length ? s.categories.join(", ") : "none";
-  return h("p", { class: s.read_error ? "warn-text" : "muted", text: `Category ${cats} (${age}${stale})` });
-}
-
-function testResult(r) {
-  if (r.ok) {
-    const cats = r.client_present ? `, category ${r.categories.join(", ") || "none"}` : ", no putio-sync client yet";
-    return h("div", {}, h("p", {}, h("span", { class: "dot ok" }), `Connected to ${r.app} ${r.version}${cats}`), pathLines(r.path_check, r.app));
-  }
-  return h("p", { class: "error-text", text: `${arrReason(r.reason)}${r.detail ? `: ${r.detail}` : ""}. ${arrNext(r.reason) || ""}`.trim() });
-}
-
-/** One saved application: categories, warnings, Test, Set up, Edit and Delete */
-function applicationRow(s, list, reload) {
-  const result = h("div", { role: "status" });
-  const test = h("button", { type: "button", class: "btn" }, "Test");
-  // Only when the last read found no putio-sync client there
-  const setUp = s.client_present === false ? h("button", { type: "button", class: "btn", disabled: !s.api_key_set }, "Set up") : null;
-  const edit = h("button", { type: "button", class: "btn" }, "Edit");
-  const remove = h("button", { type: "button", class: "btn" }, "Delete");
-  const legacy = s.legacy_category && s.read_at && !s.categories.includes(normalCategory(s.legacy_category));
-
-  test.onclick = async () => {
-    test.disabled = true;
-    result.replaceChildren(h("p", { class: "muted", text: "Testing…" }));
-    try {
-      const r = await testArrApplication(s.index);
-      if (!row.isConnected) return;
-      result.replaceChildren(testResult(r));
-      // The categories were re-read: show them
-      if (r.ok) await reload();
-    } catch (e) {
-      if (e.status === 401 || e.status === 429) return;
-      result.replaceChildren(h("p", { class: "error-text", text: reason(e) }));
-    } finally {
-      if (test.isConnected) test.disabled = false;
-    }
-  };
-  if (setUp) setUp.onclick = async () => {
-    setUp.disabled = true;
-    result.replaceChildren(h("p", { class: "muted", text: "Setting up… this can take up to 30 s." }));
-    try {
-      const r = await runArrSetup({ target: { application: s.index } });
-      if (!row.isConnected) return;
-      if (r.outcome === "failed") {
-        fill(
-          result,
-          h("p", { class: "error-text", text: `${arrReason(r.reason)}${r.detail ? `: ${r.detail}` : ""}` }),
-          arrNext(r.reason) ? h("p", { class: "muted", text: arrNext(r.reason) }) : null,
-        );
-        setUp.disabled = false;
-        return;
-      }
-      toast(`${r.outcome === "updated" ? "Updated" : r.outcome === "unchanged" ? "Already set up:" : "Created"} ${r.client_name} in ${r.app}`);
-      await reload();
-    } catch (e) {
-      if (e.status === 401 || e.status === 429) return;
-      result.replaceChildren(h("p", { class: "error-text", text: reason(e) }));
-      if (setUp.isConnected) setUp.disabled = false;
-    }
-  };
-  edit.onclick = () => {
-    row.replaceWith(applicationForm(s.kind, s, reload, () => reload()));
-  };
-  remove.onclick = async () => {
-    const ok = await confirm({
-      title: `Delete ${s.name}`,
-      text: `Remove ${s.name} from putio-sync? Its putio-sync download client in ${KIND_NAME[s.kind]} stays as it is.`,
-      verb: "Delete",
-    });
-    if (!ok) return;
-    try {
-      await deleteArrApplication(s.index);
-      toast(`${s.name} removed`);
-      await reload();
-    } catch (e) {
-      if (e.status === 401 || e.status === 429) return;
-      result.replaceChildren(h("p", { class: "error-text", text: reason(e) }));
-    }
-  };
-
-  const row = h(
-    "div",
-    {},
-    h("div", { class: "form-foot" }, h("span", {}, h("strong", { text: s.name }), " ", h("span", { class: "badge", text: KIND_NAME[s.kind] })), test, setUp, edit, remove),
-    h("p", { class: "muted name", text: `${s.url}${s.api_key_set ? "" : " (no API key)"}${s.api_key_env ? " (key from environment)" : ""}` }),
-    categoriesLine(s),
-    pathLines(s.path_check, s.name),
-    legacy
-      ? h("p", { class: "warn-text", text: `The typed category “${s.legacy_category}” is no longer used. Blocklisting follows the category of ${s.name}'s putio-sync client.` })
-      : null,
-    result,
-  );
-  return row;
-}
-
-/** Add (`s` null) or Edit form. Saving after a failed or missing test asks first (FR-012). */
-function applicationForm(kind, s, reload, onCancel) {
-  const id = (f) => `arr-app-${s ? s.index : "new"}-${f}`;
-  const input = (f, attrs) => h("input", { class: "input", id: id(f), autocomplete: "off", spellcheck: "false", ...attrs });
-  const name = input("name", { type: "text", placeholder: KIND_NAME[kind] });
-  const host = input("host", { type: "text", required: true, placeholder: kind });
-  const port = input("port", { type: "number", min: 1, max: 65535, placeholder: String(DEFAULT_PORT[kind]) });
-  const ssl = h("input", { type: "checkbox", id: id("ssl") });
-  const base = input("base", { type: "text", placeholder: "none" });
-  const key = input("key", {
-    type: "password",
-    required: !s,
-    disabled: Boolean(s && s.api_key_env),
-    placeholder: s ? (s.api_key_env ? "set by environment" : s.api_key_set ? "set; leave empty to keep" : "not set") : "",
-  });
-  if (s) {
-    name.value = s.name;
-    host.value = s.host;
-    port.value = s.port ? String(s.port) : "";
-    ssl.checked = Boolean(s.ssl);
-    base.value = s.url_base;
-  }
-  const out = h("div", { role: "status" });
-  const error = h("p", { class: "error-text", role: "alert", hidden: true });
-  const testBtn = h("button", { type: "button", class: "btn" }, "Test");
-  const save = h("button", { type: "submit", class: "btn btn-primary" }, "Save");
-  const cancel = h("button", { type: "button", class: "btn", onclick: onCancel }, "Cancel");
-  // The last test's result for the values as they are now; any change clears it
-  let passed = false;
-
-  const body = () => ({
-    kind,
-    name: name.value.trim(),
-    host: host.value.trim(),
-    port: port.value ? Number(port.value) : null,
-    ssl: ssl.checked,
-    url_base: base.value.trim(),
-    api_key: key.value.trim(),
-  });
-  const shown = (e) => {
-    if (e.status === 401 || e.status === 429) return;
-    error.textContent = reason(e);
-    error.hidden = false;
-  };
-
-  testBtn.onclick = async () => {
-    testBtn.disabled = true;
-    error.hidden = true;
-    out.replaceChildren(h("p", { class: "muted", text: "Testing…" }));
-    try {
-      const r = await testArrForm(s ? { ...body(), index: s.index } : body());
-      if (!form.isConnected) return;
-      passed = r.ok;
-      out.replaceChildren(testResult(r));
-    } catch (e) {
-      out.replaceChildren();
-      shown(e);
-    } finally {
-      if (testBtn.isConnected) testBtn.disabled = false;
-    }
-  };
-
-  const onSubmit = async (ev) => {
-    ev.preventDefault();
-    error.hidden = true;
-    if (!passed) {
-      const ok = await confirm({
-        title: "Save without a passing test",
-        text: `${KIND_NAME[kind]} hasn't passed a test with these values. Save anyway?`,
-        verb: "Save",
-      });
-      if (!ok) return;
-    }
-    save.disabled = true;
-    try {
-      const res = s ? await saveArrApplication(s.index, body()) : await addArrApplication(body());
-      toast((res && res.message) || "Saved");
-      await reload();
-    } catch (e) {
-      shown(e);
-      if (save.isConnected) save.disabled = false;
-    }
-  };
-
-  const form = h(
-    "form",
-    { class: "stack", onsubmit: onSubmit, oninput: () => (passed = false) },
-    h("strong", { text: s ? `Edit ${s.name}` : `Add ${KIND_NAME[kind]}` }),
-    h(
-      "div",
-      { class: "fields" },
-      h("label", { class: "field", for: id("name") }, h("span", { text: "Name" }), name),
-      h("label", { class: "field", for: id("host") }, h("span", { text: "Host" }), host, h("small", { text: "A name or address only, like radarr or 192.168.1.10" })),
-      h("label", { class: "field", for: id("port") }, h("span", { text: "Port" }), port),
-      h("label", { class: "field check", for: id("ssl") }, ssl, h("span", {}, "Use SSL")),
-      h("label", { class: "field", for: id("base") }, h("span", { text: "URL base" }), base, h("small", { text: "Only behind a reverse proxy, like /radarr" })),
-      h(
-        "label",
-        { class: "field", for: id("key") },
-        h("span", { text: "API key" }),
-        key,
-        h("small", { text: s && s.api_key_env ? `Set by environment (PUTIO_SYNC_${kind.toUpperCase()}_API_KEY)` : "Settings → General. Never shown once saved." }),
-      ),
-    ),
-    h("div", { class: "form-foot" }, testBtn, save, cancel),
-    out,
-    error,
-  );
-  return form;
-}
-
-function reason(e) {
-  return e.details ? `${e.error}: ${e.details}` : e.error || String(e);
+  if (page) for (const f of page.ctx.cleanup) f();
+  page = null;
 }
