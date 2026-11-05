@@ -51,7 +51,8 @@ impl LogLine {
         self.level.parse().unwrap_or(Level::TRACE)
     }
 
-    fn matches(&self, query: &LogQuery) -> bool {
+    /// Whether the line passes `query`'s filters (`limit` aside)
+    pub fn matches(&self, query: &LogQuery) -> bool {
         if query.after.is_some_and(|after| self.seq <= after) {
             return false;
         }

@@ -229,6 +229,7 @@ async fn save_arr(
     if let Some(arr) = &state.arr {
         arr.service.apply(resolved.clone());
     }
+    putio_sync_core::log_redact::set_secrets(candidate.secret_values());
     *config = candidate;
     Ok(resolved)
 }

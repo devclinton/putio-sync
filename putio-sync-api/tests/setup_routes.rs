@@ -144,6 +144,10 @@ async fn other_paths_answer_503() {
         "/plugins",
         // And download verification (feature 034)
         "/verify",
+        // And the Logs page (feature 047)
+        "/logs",
+        "/logs/stream",
+        "/logs/level",
     ] {
         let (status, _) = s.call(Method::GET, path, Some(&code), None).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");

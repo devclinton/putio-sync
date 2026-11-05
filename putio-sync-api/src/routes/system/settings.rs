@@ -87,6 +87,7 @@ pub(crate) async fn update<V: Serialize>(
     }
     let changed = changed_fields(&view(&config), &view(&candidate));
     state.doctor.configure(&candidate);
+    putio_sync_core::log_redact::set_secrets(candidate.secret_values());
     *config = candidate;
     Ok(changed)
 }

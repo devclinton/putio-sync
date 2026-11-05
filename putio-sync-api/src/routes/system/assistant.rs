@@ -472,6 +472,7 @@ async fn import_settings(
                 .map_err(|e| ApiError::InternalError(format!("Failed to persist config: {}", e)))?;
         }
         state.doctor.configure(&candidate);
+        putio_sync_core::log_redact::set_secrets(candidate.secret_values());
         state.cleanup.configure(&candidate);
         state.storage.configure(&candidate);
         state.hooks.configure(candidate.hooks.clone());

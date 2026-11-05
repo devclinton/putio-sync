@@ -149,6 +149,7 @@ impl AppState {
         file_watcher: Option<Arc<TorrentWatcher>>,
     ) -> AppState {
         let logging_reload = config_path.as_ref().is_some_and(|path| path.exists());
+        putio_sync_core::log_redact::set_secrets(config.secret_values());
         let cleanup = Arc::new(EmptyFolderCleanup::from_config(client.clone(), &config));
         let storage = Arc::new(StorageService::from_config(
             client.clone(),
@@ -382,6 +383,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/releases", routes::releases::router())
         .nest("/whats-new", routes::system::whats_new::router())
         .nest("/tailscale", routes::system::tailscale::router())
+        .nest("/logs", routes::system::logs::router())
         .route(
             "/listen",
             axum::routing::get(routes::system::network::get_listen),
