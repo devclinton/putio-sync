@@ -118,3 +118,33 @@ async fn entries_carry_local_path_and_outcome() {
     assert_eq!(entry["local_path"], Value::Null);
     assert_eq!(entry["outcome"], Value::Null);
 }
+
+/// Feature 034: a row says how it was checked and how many re-downloads it took; older
+/// rows say neither
+#[tokio::test]
+async fn entries_carry_verify_and_redownloads() {
+    let app = seeded().await;
+    let rows = app.db().history();
+    let id = rows
+        .insert(
+            6,
+            "Checked.mkv",
+            1024,
+            HistoryAction::Downloaded,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    rows.set_verify(id, "crc32", 1).await.unwrap();
+
+    let body = history(&app, "?name=Checked").await;
+    let entry = &body["entries"][0];
+    assert_eq!(entry["verify"], "crc32");
+    assert_eq!(entry["redownloads"], 1);
+
+    let body = history(&app, "?name=debian").await;
+    let entry = &body["entries"][0];
+    assert_eq!(entry["verify"], Value::Null);
+    assert_eq!(entry["redownloads"], Value::Null);
+}
