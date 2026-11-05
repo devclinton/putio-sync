@@ -104,6 +104,7 @@ pub async fn execute_server(
             std::time::Duration::from_secs(10),
             |logging| {
                 let _ = putio_sync_core::logging::apply_level(&logging);
+                putio_sync_core::log_capture::set_capacity(logging.buffer_lines);
             },
         );
     }

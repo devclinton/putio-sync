@@ -77,6 +77,7 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_plugin_run_duration_seconds",
     "putio_sync_plugin_events_dropped_total",
     "putio_sync_plugin_counter_total",
+    "putio_sync_log_lines_dropped_total",
     "putio_sync_db_errors_total",
     "putio_sync_disk_free_bytes",
     "putio_sync_disk_total_bytes",
@@ -265,6 +266,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
         "reason" => {
             let mut v = strs(RetryReason::ALL, RetryReason::as_str);
             v.extend(strs(FailReason::ALL, FailReason::as_str));
+            v.extend(putio_sync_telemetry::logs::DROP_REASONS);
             v
         }
         "result" => {

@@ -353,7 +353,8 @@ the setting. Fill the buffer and check the dropped-lines count goes up.
 
 - Lines are kept in memory only; a restart starts with an empty buffer. The log file and
   console output are unchanged.
-- Only `daemon` and `server` keep lines; other CLI commands do not.
+- Only `daemon` and `server` serve kept lines; other CLI commands may keep them in memory but
+  nothing reads them.
 - The live stream follows the UI's existing sign-in, which sends the token in a header, so the
   page reads the stream with a normal authenticated request rather than a browser feature
   that cannot send headers.

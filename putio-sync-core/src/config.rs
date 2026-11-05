@@ -4469,3 +4469,119 @@ mod precheck_tests {
         assert!(bad.validate().is_err());
     }
 }
+
+/// Environment variables that can hold a secret, masked in captured log lines (feature 047)
+const SECRET_VARS: [&str; 7] = [
+    "PUTIO_TOKEN",
+    "PUTIO_SYNC_PUTIO_TOKEN",
+    "PUTIO_SYNC_API_TOKEN",
+    "PUTIO_SYNC_ARR_PASSWORD",
+    "PUTIO_SYNC_RADARR_API_KEY",
+    "PUTIO_SYNC_SONARR_API_KEY",
+    "PUTIO_CLIENT_SECRET",
+];
+
+impl Config {
+    /// Every secret value in the config and the environment, for
+    /// [`crate::log_redact::set_secrets`]: the Put.io token and password, the API token, the
+    /// *arr password and API keys, the notification webhook, hook URLs, headers and env,
+    /// and plugin secrets.
+    pub fn secret_values(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut add = |value: Option<&String>| {
+            if let Some(v) = value.filter(|v| !v.trim().is_empty()) {
+                out.push(v.clone());
+            }
+        };
+        if let Some(auth) = &self.auth {
+            add(auth.token.as_ref());
+            add(auth.password.as_ref());
+        }
+        add(self.api.auth_token.as_ref());
+        add(self.arr.password.as_ref());
+        for server in &self.arr.servers {
+            add(server.api_key.as_ref());
+        }
+        add(self.notifications.webhook_url.as_ref());
+        for hook in &self.hooks {
+            add(hook.url.as_ref());
+            hook.headers.values().for_each(|v| add(Some(v)));
+            hook.env.values().for_each(|v| add(Some(v)));
+        }
+        for plugin in &self.plugins {
+            plugin.secrets.values().for_each(|v| add(Some(v)));
+        }
+        for var in SECRET_VARS {
+            add(std::env::var(var).ok().as_ref());
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod secret_values_tests {
+    use super::*;
+
+    #[test]
+    fn every_secret_source_is_listed() {
+        let config: Config = toml::from_str(
+            r#"
+            [auth]
+            token = "s-putio-token"
+            password = "s-putio-password"
+            [api]
+            auth_token = "s-api-token"
+            [arr]
+            password = "s-arr-password"
+            [[arr.servers]]
+            kind = "sonarr"
+            url = "http://nas:8989"
+            api_key = "s-arr-key"
+            [[hooks]]
+            name = "h"
+            events = ["*"]
+            url = "https://hook.lan/s-hook-url"
+            headers = { Authorization = "s-hook-header" }
+            [[hooks]]
+            name = "c"
+            events = ["*"]
+            command = ["/bin/true"]
+            env = { KEY = "s-hook-env" }
+            [[plugins]]
+            name = "p"
+            secrets = { key = "s-plugin-secret" }
+            "#,
+        )
+        .unwrap();
+        let mut config = config;
+        config.notifications.webhook_url = Some("https://ha.lan/s-webhook".to_string());
+        let values = config.secret_values();
+        for expected in [
+            "s-putio-token",
+            "s-putio-password",
+            "s-api-token",
+            "https://ha.lan/s-webhook",
+            "s-arr-password",
+            "s-arr-key",
+            "https://hook.lan/s-hook-url",
+            "s-hook-header",
+            "s-hook-env",
+            "s-plugin-secret",
+        ] {
+            assert!(values.iter().any(|v| v == expected), "{expected} missing");
+        }
+    }
+
+    #[test]
+    fn secret_env_vars_are_listed() {
+        let previous = std::env::var("PUTIO_CLIENT_SECRET").ok();
+        std::env::set_var("PUTIO_CLIENT_SECRET", "s-client-secret");
+        let config: Config = toml::from_str("").unwrap();
+        let values = config.secret_values();
+        match previous {
+            Some(v) => std::env::set_var("PUTIO_CLIENT_SECRET", v),
+            None => std::env::remove_var("PUTIO_CLIENT_SECRET"),
+        }
+        assert!(values.iter().any(|v| v == "s-client-secret"));
+    }
+}
