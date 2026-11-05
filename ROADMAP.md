@@ -94,13 +94,6 @@ events, has a test button, and groups repeats). Still to do: email (SMTP),
 which cannot be a plugin, stuck-download and doctor-problem events, and a
 simpler Notifications page over the bundled channels.
 
-### 031 Media server refresh
-
-After a download lands, tell Plex to rescan just that folder, so new episodes
-and movies show up within seconds. Then Jellyfin and Emby. Includes signing
-in to Plex, choosing the library, and mapping paths when the media server sees
-the folder under a different path.
-
 ### 034 Download verification
 
 Check each finished download against Put.io's CRC32 (or size where there is

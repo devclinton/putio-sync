@@ -62,6 +62,52 @@ more". Set it to 0 to send every event.
 
 There is no email plugin. A plugin can only make HTTP requests.
 
+## Media servers: Plex, Jellyfin and Emby
+
+Three bundled plugins tell a media server to rescan only the folder of each finished
+download, so new episodes and movies show up within seconds instead of at the next full
+library scan. They are off until turned on.
+
+| Plugin | Sign-in | Contacts |
+|--------|---------|----------|
+| `plex` | **Sign in with Plex**: shows a code for plex.tv/link and a link to the Plex sign-in page; the token is saved for you | `plex.tv` and your server's host |
+| `jellyfin` | An API key (Dashboard › API Keys), pasted as a secret | Your server's host |
+| `emby` | An API key (Settings › Advanced › API Keys), pasted as a secret | Your server's host |
+
+Each has these settings:
+
+- **Server**: the server's address, such as `http://192.168.1.10:32400`. For Plex,
+  **Load** lists the servers of your account (local and remote addresses; relays are
+  left out).
+- **Libraries**: **Load** lists the server's libraries to tick. None ticked means any
+  library that holds the folder.
+- **Path rules** (`path_map`): one `this machine's folder => the server's folder` per line,
+  for when the server sees the download folder under another path, for example
+  `/downloads => /data/media` when both run in Docker with different mounts. The longest
+  matching folder wins. A Windows path on the right (`D:\Media`) is joined with `\`.
+- **Wait for more files** (`delay_seconds`, default 20) and **Longest wait**
+  (`max_wait_seconds`, default 300).
+
+How a refresh is sent:
+
+1. A finished download's folder, after the path rules, waits. Each further file in the
+   same folder restarts the wait, so a season of 20 episodes gives one rescan of that
+   folder, not 20.
+2. A folder is sent once no file has landed in it for **Wait for more files**, once it has
+   waited **Longest wait**, or as soon as a sync run completes.
+3. The folder goes to the chosen library whose folder holds it, by the longest match. A
+   folder in no chosen library is skipped and logged. Plex gets one rescan per folder;
+   Jellyfin and Emby get every due folder in one request.
+4. A failed refresh is tried once more after another wait, then dropped and counted.
+
+Waiting folders are kept in the plugin's store, so a restart or reload does not lose them.
+Up to 500 folders wait at once.
+
+**Send test event** and the doctor check the server: whether it answers, whether the token
+or API key is accepted, and whether the download folder (after the path rules) is inside a
+chosen library. Tokens and API keys are sent only in request headers, never in a URL, and
+are never logged or shown.
+
 ## Writing a plugin
 
 A plugin is a folder in the plugins folder:
@@ -92,7 +138,7 @@ host_from_config = ["url"]     # hosts taken from these url settings
 
 [[config]]
 key = "url"
-type = "url"                   # string, integer, number, boolean, url, string_list
+type = "url"                   # string, integer, number, boolean, url, string_list, path_map
 label = "Webhook URL"
 help = "Settings › Automations › Webhook"
 required = true
@@ -107,6 +153,27 @@ default = false
 Up to 32 config fields. Mistakes name the file and the field, for example
 `plugins/ha/plugin.toml: events: unknown event type "download.done"`. The plugin shows as
 **Broken** with that message until it is fixed and reloaded.
+
+Plugins that need setting up with the server (feature 031) can also declare:
+
+```toml
+tick_seconds = 5                 # on_tick this often, 5 to 3600; default 60
+
+[[actions]]                      # buttons in Settings; at most 8
+id = "sign_in"                   # a-z, 0-9 and _; up to 40
+label = "Sign in"                # up to 40 characters
+help = "Opens the sign-in page"  # optional
+hidden = true                    # optional: no button; reached through `next` or `choices`
+
+[[config]]
+key = "library"
+type = "string"
+choices = "load_libraries"       # an action id: Settings shows a Load button and a list
+
+[[config]]
+key = "path_map"
+type = "path_map"                # a list of {from, to}; cannot be secret
+```
 
 ### `main.lua`
 
@@ -138,6 +205,35 @@ end
 return plugin
 ```
 
+Two more functions are optional:
+
+```lua
+-- A button in Settings, or the `next` step of one. `input` is what the last answer put in
+-- `next.input` ({} for a button). Settings values typed but not saved yet count for the call.
+function plugin.on_action(id, input)
+  return {
+    message = "Enter this code at example.com/link",   -- up to 500 characters
+    code = "AB12",                                      -- shown large; up to 32
+    open_url = "https://example.com/link",              -- shown as a link
+    choices = { {value = "1", label = "TV Shows"} },    -- for fields with this choices action
+    next = { action = "poll", input = {id = 7}, after_seconds = 2 },   -- 1 to 30 s
+    done = false,
+    save = { token = "..." },   -- saved to the plugin's settings at once; secrets masked
+  }
+end
+
+-- The doctor and Send test event ask this. Each item is "ok", "warn" or "fail".
+function plugin.health()
+  return { {status = "ok", message = "Server reachable"} }
+end
+```
+
+Settings runs `next` steps on its own for up to 10 minutes. `on_action` and `health` run
+on a worker of their own, with the same sandbox and limits, and may call every host the
+plugin's settings need (approved or not, since the person is setting it up). One action or
+health check per plugin runs at a time. Values in `save` must be the plugin's own settings;
+they are checked like a Settings save and do not turn the plugin on.
+
 A function that returns is a success. One that raises an error is a failure, with that
 message. `event` has the JSON shape documented in [EVENTS.md](EVENTS.md): `id`, `type`,
 `time`, `data` and so on. A test from Settings sends `plugin.test`, whatever events the
@@ -155,6 +251,10 @@ plugin subscribes to.
 | `putio.time.iso(seconds?)` | RFC 3339 UTC text | — |
 | `putio.json.encode(value)` / `decode(text)` | text / value, or `nil, error` | — |
 | `putio.plugin.name`, `putio.plugin.version`, `putio.version`, `putio.api_version` | — | — |
+| `putio.path.map(path, rules)` | `path` with the longest matching `{from, to}` rule applied, or unchanged | — |
+| `putio.path.parent(path)` / `within(path, folder)` | The folder above / whether `path` is `folder` or below it | — |
+| `putio.metrics.count(name, n?)` | Adds `n` (default 1) to `putio_sync_plugin_counter_total{plugin, name}`; up to 16 names, `[a-z0-9_]` | — |
+| `putio.download_dir` | The daemon's download folder, or `""` | — |
 
 - **HTTP** goes only to http(s) hosts the manifest names and the user approved. Any other
   host returns `nil, "host not approved: example.com"`. Up to 3 redirects to the same host
@@ -172,7 +272,7 @@ plugin subscribes to.
   `coroutine`, `package`, `require`, `dofile`, `loadfile`, `collectgarbage` and
   `string.dump` are missing, and `load` takes text only. A plugin cannot read files, run
   programs or open sockets.
-- **Time.** Each call (`init`, `on_event`, `on_tick`) may run for `timeout_secs`, including
+- **Time.** Each call (`init`, `on_event`, `on_tick`, `on_action`, `health`) may run for `timeout_secs`, including
   the HTTP requests it makes. A call that runs longer is stopped and recorded as a timeout.
 - **Memory.** The plugin's whole Lua state may use `memory_mb`. Past that, the call fails
   and the state is built again for the next event.
@@ -185,15 +285,20 @@ plugin subscribes to.
 
 ## Watching plugins
 
-- `GET /plugins` lists each plugin with its state, manifest, approved hosts, waiting events
-  and last 20 runs. `POST /plugins/test` and `POST /plugins/reload` do what the Settings
-  buttons do.
+- `GET /plugins` lists each plugin with its state, manifest (actions and fields with
+  choices included), approved hosts, waiting events and last 20 runs. `POST /plugins/test`,
+  `POST /plugins/reload` and `POST /plugins/action` do what the Settings buttons do.
 - Metrics: `putio_sync_plugin_runs_total{plugin, event, result}`,
   `putio_sync_plugin_run_duration_seconds{plugin}` and
-  `putio_sync_plugin_events_dropped_total{plugin}`.
+  `putio_sync_plugin_events_dropped_total{plugin}`, and each plugin's own counters as
+  `putio_sync_plugin_counter_total{plugin, name}`. The media plugins count `refreshes`
+  (folders sent), `folders_grouped` (files that joined a waiting folder), `skipped` and
+  `refresh_failures`.
 - The doctor's Plugins check reports an enabled plugin that cannot load as a problem. A
   plugin that needs approval or a value, settings for a plugin that is not found, and a
-  failed last run in the past 24 hours are warnings.
+  failed last run in the past 24 hours are warnings. Each enabled plugin with a `health()`
+  is asked too: a `fail` item is a problem and a `warn` item a warning. A plugin busy with
+  a settings action is skipped.
 
 ## Later
 

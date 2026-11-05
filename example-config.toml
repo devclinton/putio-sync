@@ -76,10 +76,18 @@ delete_after_upload = true
 # command = ["/config/hooks/on-download.py"]
 # timeout_secs = 30
 
-# Plugins: bundled ntfy, discord, telegram and pushover notifiers (see PLUGINS.md)
+# Plugins: bundled ntfy, discord, telegram and pushover notifiers and plex, jellyfin
+# and emby library refresh (see PLUGINS.md)
 # [[plugins]]
 # name = "ntfy"
 # enabled = true
 # approved_hosts = ["ntfy.sh"]
 # [plugins.config]
 # topic = "my-nas-8f3k"
+#
+# [[plugins]]                      # sign in from Settings > Plugins > plex
+# name = "plex"
+# enabled = true
+# [plugins.config]
+# server = "http://192.168.1.10:32400"
+# path_map = [{ from = "/downloads", to = "/data/media" }]

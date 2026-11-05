@@ -35,13 +35,19 @@ Anything else in the table is ignored. A non-table return is an error.
 A list of `{ status = "ok"|"warn"|"fail", message = string }` items (≤ 8); a single item table is accepted too.
 Scrubbed. A Lua error counts as `fail` with the error text.
 
-## Pending folder (Lua, in memory)
+## Pending folder (Lua, kept in the plugin's store)
 
-`pending[library_key .. "\0" .. mapped_folder] = { folder, library, first, last, count, tries }`
+`pending[mapped_folder] = { first, last, count, tries }`; the library is found when the
+folder is sent, from libraries cached for 10 minutes (looked up again on a miss).
 
 Lifecycle: created on `download.finished` → `count`/`last` updated by more files → refreshed
 when due (deleted on success; `tries+1` and window restarted on failure; dropped after 2
-tries) → all flushed on `sync.completed`. Lost on reload (a plugin restart).
+tries) → all flushed on `sync.completed`. Saved to the store key `pending` on each change and
+read back in `init`, so a reload or restart keeps it (implementation change from "lost on
+reload"). At most 500 folders wait.
+
+Plex also has a `plex_tv_url` url field (default `https://plex.tv`, "Leave as is") so the
+sign-in and server list can be tested against a mock.
 
 ## Counters
 

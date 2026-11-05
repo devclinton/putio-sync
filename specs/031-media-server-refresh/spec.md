@@ -257,10 +257,9 @@ when the download folder maps to no library folder. Metrics count refreshes by r
 - **A file straight in the download folder**: its folder is the download folder; it is
   refreshed only if that folder is inside a library.
 - **A library holding the folder twice** (nested library folders, or two libraries): the
-  library with the longest matching folder wins; with a tie each is refreshed.
-- **Settings change or reload while folders wait**: waiting folders are dropped (logged);
-  the next download of that folder refreshes it. Grouping state is not kept across a
-  restart.
+  library with the longest matching folder wins; with a tie the first listed is refreshed.
+- **Settings change or reload while folders wait**: waiting folders are kept in the
+  plugin's store and sent when due after the reload or restart.
 - **Plugin disabled**: the sign-in and Load buttons still work, so it can be set up before
   it is turned on.
 - **Sign-in while the token field is being replaced in the form**: the saved token wins;
@@ -337,7 +336,7 @@ Media servers:
 - **Plugin action**: id, label, help; a result (message, code, link, choices, next step,
   saved values).
 - **Path rule**: `from` (a path on this machine), `to` (the path the other program sees).
-- **Pending folder** (in the plugin's memory): mapped path, library, first and last file
+- **Pending folder** (kept in the plugin's store): mapped path, first and last file
   time, file count, tries.
 - **Plugin counter**: plugin, name, value.
 - **Health item**: status (ok, warn, fail), message.
@@ -365,7 +364,7 @@ Media servers:
 - The plex.tv API (PINs, resources) and the Plex, Jellyfin and Emby HTTP APIs are tested
   against mock servers only (Constitution III); a check against real servers is listed in
   the hand-over.
-- The grouping state lives in the plugin's memory; the client id lives in its store.
+- The grouping state and the client id live in the plugin's store.
 - An action may contact the hosts the plugin needs for the values in the form when the
   user presses it; pressing the button counts as approving them for that call, as saving
   does for the plugin's runs.

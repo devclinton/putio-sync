@@ -773,9 +773,10 @@ H = histogram.
 | `putio_sync_hook_runs_total` | counter | `hook`, `event`, `result` | Hook runs: `success`, `failure`, `timeout` |
 | `putio_sync_hook_run_duration_seconds` | H | `hook` | Duration of each hook run, retries included |
 | `putio_sync_hook_events_dropped_total` | counter | `hook` | Events dropped because the hook's queue was full |
-| `putio_sync_plugin_runs_total` | counter | `plugin`, `event`, `result` | Plugin calls (an event type, `tick` or `init`): `success`, `failure`, `timeout` |
+| `putio_sync_plugin_runs_total` | counter | `plugin`, `event`, `result` | Plugin calls (an event type, `tick`, `init`, `action` or `health`): `success`, `failure`, `timeout` |
 | `putio_sync_plugin_run_duration_seconds` | H | `plugin` | Duration of each plugin call |
 | `putio_sync_plugin_events_dropped_total` | counter | `plugin` | Events dropped because the plugin's queue was full |
+| `putio_sync_plugin_counter_total` | counter | `plugin`, `name` | A plugin's own counts, such as the media plugins' `refreshes`, `folders_grouped`, `skipped` and `refresh_failures` |
 | `putio_sync_start_time_seconds` | gauge | — | Process start, Unix seconds |
 | `putio_sync_build_info` | gauge (=1) | `version`, `commit` | Build identity |
 | `putio_sync_process_cpu_seconds_total` | counter | — | CPU time used (user + system); `rate()` gives cores in use |
@@ -1087,7 +1088,8 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /hooks/test` | `{"name": "..."}`: send a `hook.test` event to that hook and answer with the run; 404 for an unknown hook, 409 while a test of it runs |
 | `GET /plugins` | The plugins folder and each plugin with its source, state, manifest (events, permissions, config fields), hosts needed and approved, waiting events and last 20 runs; never a secret value |
 | `POST /plugins/test` | `{"name": "..."}`: send a `plugin.test` event to that plugin, even when it is off, and answer with the run and its logged lines; 404 for an unknown plugin, 409 while a test of it runs, 422 when it cannot load |
-| `POST /plugins/reload` | Read the plugins folder again → `{"message": "Reloaded 5 plugins"}` |
+| `POST /plugins/reload` | Read the plugins folder again → `{"message": "Reloaded 7 plugins"}` |
+| `POST /plugins/action` | `{"name", "action", "input"?, "config"?}`: run a plugin's settings action (Sign in with Plex, Load libraries) with unsaved non-secret `config` values for this call; answers `{message, code, open_url, choices, next, done, run}`, plus `saved` (key names) and `config` when it saved values. Saved secrets are never returned. 404 unknown plugin or action, 409 while one runs, 422 when it fails |
 | `GET /events/schema` | The JSON Schema of the events (see [EVENTS.md](EVENTS.md)) |
 | `GET /doctor` | The latest doctor report; 404 before the first run |
 | `POST /doctor/run` | Run every check now and answer with the report (a run already going is joined, not repeated) |
@@ -1400,10 +1402,16 @@ executable, and a hook whose last run failed in the last day.
 ## Plugins
 
 Plugins are small Lua scripts that run inside putio-sync on the same events as hooks,
-with no other program to install. Four come with it, all off until turned on: **ntfy**,
-**Discord**, **Telegram** and **Pushover** notifications, which group repeats so a busy
+with no other program to install. Seven come with it, all off until turned on. Four are
+**ntfy**, **Discord**, **Telegram** and **Pushover** notifications, which group repeats so a busy
 night sends a summary instead of a hundred messages. Settings › Plugins turns them on,
 edits their settings, shows the hosts each one contacts and sends a test event.
+
+**Plex**, **Jellyfin** and **Emby** plugins rescan just the folder of each finished
+download, so new episodes show up within seconds. Files landing in the same folder are
+grouped into one rescan. Plex signs in with a code at plex.tv/link (no token to paste),
+both pickers load from the server, and path rules cover a server that sees the downloads
+under another path. The doctor checks the server, the token and the path rules.
 
 ```toml
 [[plugins]]
