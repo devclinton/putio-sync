@@ -91,7 +91,14 @@ fn scalar_or_strings(value: &serde_json::Value) -> bool {
     use serde_json::Value;
     match value {
         Value::String(_) | Value::Number(_) | Value::Bool(_) => true,
-        Value::Array(items) => items.iter().all(Value::is_string),
+        // A list of text, or of tables of text such as `path_map` rules (031)
+        Value::Array(items) => {
+            items.iter().all(Value::is_string)
+                || items.iter().all(|item| {
+                    item.as_object()
+                        .is_some_and(|o| o.values().all(Value::is_string))
+                })
+        }
         _ => false,
     }
 }
@@ -140,7 +147,7 @@ impl PluginSettings {
         for (key, value) in &self.config {
             if !scalar_or_strings(value) {
                 return bad(format!(
-                    "{}.config.{}: must be a string, number, true/false or a list of strings",
+                    "{}.config.{}: must be a string, number, true/false, a list of strings or a list of tables of strings",
                     plugin, key
                 ));
             }
@@ -329,7 +336,14 @@ mod tests {
         p.config
             .insert("group_minutes".to_string(), serde_json::json!(5));
         p.config.insert("on".to_string(), serde_json::json!(true));
+        p.config.insert(
+            "path_map".to_string(),
+            serde_json::json!([{"from": "/downloads", "to": "/data"}]),
+        );
         validate(&[p.clone()]).unwrap();
+        p.config
+            .insert("x".to_string(), serde_json::json!([{"from": 1}]));
+        assert!(err(p.clone()).contains("config.x"));
         p.config
             .insert("x".to_string(), serde_json::json!({"a": 1}));
         assert!(err(p.clone()).contains("config.x: must be a string"));
@@ -369,9 +383,15 @@ mod tests {
 
     #[test]
     fn config_round_trip() {
+        let mut plex = ntfy();
+        plex.name = "plex".to_string();
+        plex.config.insert(
+            "path_map".to_string(),
+            serde_json::json!([{"from": "/downloads", "to": "D:\\Media"}]),
+        );
         let config = crate::config::Config {
             plugins_dir: Some(PathBuf::from("/config/plugins")),
-            plugins: vec![ntfy()],
+            plugins: vec![ntfy(), plex],
             ..Default::default()
         };
         let text = toml::to_string(&config).unwrap();

@@ -69,6 +69,7 @@ fn service(dir: &Path, data: &Path, settings: Vec<PluginSettings>) -> PluginsSer
         data_dir: Some(data.to_path_buf()),
         settings,
         clock: None,
+        download_dir: None,
     })
 }
 

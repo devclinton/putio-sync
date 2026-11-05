@@ -140,6 +140,7 @@ pub struct Telemetry {
     pub(crate) plugin_runs: IntCounterVec,
     pub(crate) plugin_duration: HistogramVec,
     pub(crate) plugin_dropped: IntCounterVec,
+    pub(crate) plugin_counter: IntCounterVec,
 
     pub(crate) db_errors: IntCounterVec,
     pub(crate) disk_free: GaugeVec,
@@ -626,6 +627,14 @@ impl Telemetry {
                 &["plugin"],
             )
             .unwrap(),
+            plugin_counter: IntCounterVec::new(
+                opts(
+                    "plugin_counter_total",
+                    "Counts a plugin keeps with putio.metrics.count (at most 16 names each).",
+                ),
+                &["plugin", "name"],
+            )
+            .unwrap(),
 
             db_errors: IntCounterVec::new(
                 opts("db_errors_total", "Database errors."),
@@ -733,6 +742,7 @@ impl Telemetry {
             Box::new(self.plugin_runs.clone()),
             Box::new(self.plugin_duration.clone()),
             Box::new(self.plugin_dropped.clone()),
+            Box::new(self.plugin_counter.clone()),
             Box::new(self.db_errors.clone()),
             Box::new(self.disk_free.clone()),
             Box::new(self.disk_total.clone()),

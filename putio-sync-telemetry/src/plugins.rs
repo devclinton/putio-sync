@@ -2,14 +2,16 @@
 //!
 //! The `plugin` label is the plugin's name, which the manifest rules limit to
 //! `[A-Za-z0-9_-]{1,40}` and the plugin count to 32, so it cannot carry a path or URL.
+//! The `name` label of `plugin_counter_total` (031) is `[a-z0-9_]{1,40}`, at most 16 per
+//! plugin, checked by the plugin host.
 
 use std::time::Duration;
 
 use crate::{global, Telemetry};
 
-/// What a plugin run was for, besides the event types: the 60 s tick and the
-/// script's `init`.
-pub const RUN_KINDS: [&str; 2] = ["tick", "init"];
+/// What a plugin run was for, besides the event types: the tick, the script's `init`,
+/// and (031) a settings action or a health check.
+pub const RUN_KINDS: [&str; 4] = ["tick", "init", "action", "health"];
 
 impl Telemetry {
     /// Create a loaded plugin's series at zero, so they show before its first run.
@@ -18,7 +20,7 @@ impl Telemetry {
         self.plugin_duration.with_label_values(&[plugin]);
     }
 
-    /// Record one finished plugin call. `event` is an event type, `tick` or `init`;
+    /// Record one finished plugin call. `event` is an event type or one of [`RUN_KINDS`];
     /// `result` is `success`, `failure` or `timeout`.
     pub fn plugin_run(&self, plugin: &str, event: &str, result: &str, took: Duration) {
         self.plugin_runs
@@ -27,6 +29,13 @@ impl Telemetry {
         self.plugin_duration
             .with_label_values(&[plugin])
             .observe(took.as_secs_f64());
+    }
+
+    /// Add `n` to one of a plugin's own counters (`putio.metrics.count`).
+    pub fn plugin_counter(&self, plugin: &str, name: &str, n: u64) {
+        self.plugin_counter
+            .with_label_values(&[plugin, name])
+            .inc_by(n);
     }
 
     /// Count events dropped because the plugin's queue was full.
@@ -43,6 +52,11 @@ pub fn record_configured(plugin: &str) {
 /// Record a plugin run on the global instance.
 pub fn record_run(plugin: &str, event: &str, result: &str, took: Duration) {
     global().plugin_run(plugin, event, result, took);
+}
+
+/// Add to a plugin counter on the global instance.
+pub fn record_counter(plugin: &str, name: &str, n: u64) {
+    global().plugin_counter(plugin, name, n);
 }
 
 /// Count dropped events on the global instance.
@@ -70,7 +84,11 @@ mod tests {
         );
         t.plugin_run("ntfy", "tick", "timeout", Duration::from_secs(10));
         t.plugin_dropped("ntfy", 2);
+        t.plugin_counter("plex", "refreshes", 3);
         let text = t.encode();
+        assert!(
+            text.contains("putio_sync_plugin_counter_total{name=\"refreshes\",plugin=\"plex\"} 3")
+        );
         assert!(text.contains(
             "putio_sync_plugin_runs_total{event=\"download.finished\",plugin=\"ntfy\",result=\"success\"} 1"
         ));

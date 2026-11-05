@@ -22,6 +22,7 @@ fn status(ctx: &Ctx) -> Vec<PluginStatus> {
             data_dir: None,
             settings: ctx.config.plugins.clone(),
             clock: None,
+            download_dir: None,
         })
         .status(),
     }

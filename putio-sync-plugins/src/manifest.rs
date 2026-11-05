@@ -13,6 +13,12 @@ use serde_json::Value;
 /// Most config fields in one manifest
 pub const MAX_FIELDS: usize = 32;
 
+/// Most `[[actions]]` in one manifest
+pub const MAX_ACTIONS: usize = 8;
+
+/// Seconds between ticks when `tick_seconds` is not set
+pub const DEFAULT_TICK_SECONDS: u64 = 60;
+
 fn default_runtime() -> String {
     "lua".to_string()
 }
@@ -47,6 +53,28 @@ pub struct Manifest {
     /// Settings the plugin takes
     #[serde(default)]
     pub config: Vec<ConfigField>,
+    /// Buttons in Settings that call `plugin.on_action` (031)
+    #[serde(default)]
+    pub actions: Vec<Action>,
+    /// Seconds between `on_tick` calls, 5 to 3600 (031); 60 when not set
+    #[serde(default)]
+    pub tick_seconds: Option<u64>,
+}
+
+/// One `[[actions]]` entry (031)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Action {
+    /// `[a-z0-9_]{1,40}`, passed to `on_action`
+    pub id: String,
+    /// The button's text, 1 to 40 characters
+    pub label: String,
+    /// One line of help in Settings
+    #[serde(default)]
+    pub help: String,
+    /// No button: a step reached through `next` or a field's `choices` only
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 /// `[permissions]`
@@ -96,6 +124,8 @@ pub enum FieldType {
     Url,
     /// A list of text
     StringList,
+    /// A list of `{from, to}` path rules (031)
+    PathMap,
 }
 
 /// One `[[config]]` field
@@ -122,6 +152,9 @@ pub struct ConfigField {
     /// Kept in `[plugins.secrets]`, masked and never logged
     #[serde(default)]
     pub secret: bool,
+    /// An action whose `choices` Settings offers for this field (031)
+    #[serde(default)]
+    pub choices: Option<String>,
 }
 
 /// Whether `value` has the field's type; a `url` must be http(s) with a host
@@ -135,7 +168,19 @@ fn type_ok(kind: FieldType, value: &Value) -> bool {
         FieldType::StringList => value
             .as_array()
             .is_some_and(|items| items.iter().all(Value::is_string)),
+        FieldType::PathMap => crate::paths::rules(value).is_ok(),
     }
+}
+
+/// Why `value` is not of the field's type
+fn type_error(kind: FieldType, value: &Value) -> Option<String> {
+    if type_ok(kind, value) {
+        return None;
+    }
+    Some(match (kind, crate::paths::rules(value)) {
+        (FieldType::PathMap, Err(e)) => e,
+        _ => format!("must be {}", type_name(kind)),
+    })
 }
 
 fn type_name(kind: FieldType) -> &'static str {
@@ -146,7 +191,17 @@ fn type_name(kind: FieldType) -> &'static str {
         FieldType::Boolean => "true or false",
         FieldType::Url => "an http or https URL",
         FieldType::StringList => "a list of text",
+        FieldType::PathMap => "a list of {from, to} path rules",
     }
+}
+
+/// `[a-z0-9_]{1,40}`: config keys and action ids
+fn valid_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= 40
+        && key
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
 /// The lowercase host of an http(s) URL, without the port
@@ -234,15 +289,34 @@ impl Manifest {
         if self.config.len() > MAX_FIELDS {
             return Err(format!("config: at most {} fields", MAX_FIELDS));
         }
+        if let Some(t) = self.tick_seconds {
+            if !(5..=3600).contains(&t) {
+                return Err("tick_seconds: 5 to 3600".to_string());
+            }
+        }
+        if self.actions.len() > MAX_ACTIONS {
+            return Err(format!("actions: at most {}", MAX_ACTIONS));
+        }
+        let mut ids = HashSet::new();
+        for action in &self.actions {
+            if !valid_key(&action.id) {
+                return Err(format!(
+                    "actions: id \"{}\" may only use a-z, 0-9 and _ (1 to 40)",
+                    action.id
+                ));
+            }
+            if !ids.insert(action.id.as_str()) {
+                return Err(format!("actions.{}: listed twice", action.id));
+            }
+            let n = action.label.trim().chars().count();
+            if n == 0 || n > 40 {
+                return Err(format!("actions.{}.label: 1 to 40 characters", action.id));
+            }
+        }
         let mut keys = HashSet::new();
         for field in &self.config {
             let key = &field.key;
-            let key_ok = !key.is_empty()
-                && key.len() <= 40
-                && key
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
-            if !key_ok {
+            if !valid_key(key) {
                 return Err(format!(
                     "config: key \"{}\" may only use a-z, 0-9 and _ (1 to 40)",
                     key
@@ -258,11 +332,24 @@ impl Manifest {
                 ));
             }
             if let Some(default) = &field.default {
-                if !type_ok(field.kind, default) {
+                if let Some(e) = type_error(field.kind, default) {
+                    return Err(format!("config.{}.default: {}", key, e));
+                }
+            }
+            if let Some(action) = &field.choices {
+                if !matches!(
+                    field.kind,
+                    FieldType::String | FieldType::Url | FieldType::StringList
+                ) {
                     return Err(format!(
-                        "config.{}.default: must be {}",
-                        key,
-                        type_name(field.kind)
+                        "config.{}.choices: only for text, URL and list fields",
+                        key
+                    ));
+                }
+                if !ids.contains(action.as_str()) {
+                    return Err(format!(
+                        "config.{}.choices: \"{}\" is not one of the actions",
+                        key, action
                     ));
                 }
             }
@@ -277,6 +364,16 @@ impl Manifest {
             }
         }
         Ok(())
+    }
+
+    /// Seconds between `on_tick` calls
+    pub fn tick_every(&self) -> u64 {
+        self.tick_seconds.unwrap_or(DEFAULT_TICK_SECONDS)
+    }
+
+    /// Whether `id` is one of the actions
+    pub fn has_action(&self, id: &str) -> bool {
+        self.actions.iter().any(|a| a.id == id)
     }
 
     /// Whether the plugin wants `event_type`. `*` leaves out the test events.
@@ -352,12 +449,8 @@ impl Manifest {
                     at("config", key)
                 ));
             }
-            if !type_ok(field.kind, value) {
-                return Err(format!(
-                    "{}: must be {}",
-                    at("config", key),
-                    type_name(field.kind)
-                ));
+            if let Some(e) = type_error(field.kind, value) {
+                return Err(format!("{}: {}", at("config", key), e));
             }
         }
         for (key, value) in &settings.secrets {
@@ -545,6 +638,40 @@ default = 5
                 NTFY.replace("type = \"integer\"", "type = \"date\""),
                 "unknown variant `date`",
             ),
+            (with("events = [\"*\"]\ntick_seconds = 2"), "tick_seconds: 5 to 3600"),
+            (
+                format!("{}\n[[actions]]\nid = \"Go\"\nlabel = \"Go\"\n", NTFY),
+                "actions: id \"Go\"",
+            ),
+            (
+                format!("{}\n[[actions]]\nid = \"go\"\nlabel = \"\"\n", NTFY),
+                "actions.go.label: 1 to 40",
+            ),
+            (
+                format!(
+                    "{}\n[[actions]]\nid = \"go\"\nlabel = \"Go\"\n[[actions]]\nid = \"go\"\nlabel = \"Go\"\n",
+                    NTFY
+                ),
+                "actions.go: listed twice",
+            ),
+            (
+                NTFY.replace("type = \"string\"\nrequired = true", "type = \"string\"\nchoices = \"load\""),
+                "config.topic.choices: \"load\" is not one of the actions",
+            ),
+            (
+                format!(
+                    "{}\n[[config]]\nkey = \"paths\"\ntype = \"path_map\"\ndefault = [{{ from = \"x\", to = \"/y\" }}]\n",
+                    NTFY
+                ),
+                "config.paths.default: rule 1: from must start with /",
+            ),
+            (
+                format!(
+                    "{}\n[[config]]\nkey = \"paths\"\ntype = \"path_map\"\nsecret = true\n",
+                    NTFY
+                ),
+                "config.paths: only text and URL fields can be secret",
+            ),
         ];
         for (text, want) in cases {
             let e = err(&text);
@@ -617,6 +744,37 @@ default = 5
             s.secrets.insert("topic".into(), "x".into());
         })
         .contains("secrets.topic: is not secret"));
+    }
+
+    #[test]
+    fn actions_choices_and_path_maps() {
+        let text = format!(
+            "{}tick_seconds = 5\n{}",
+            "",
+            NTFY.replace(
+                "type = \"string\"\nrequired = true",
+                "type = \"string\"\nchoices = \"load\"",
+            ) + "\n[[config]]\nkey = \"paths\"\ntype = \"path_map\"\ndefault = []\n\n[[actions]]\nid = \"load\"\nlabel = \"Load\"\nhidden = true\n"
+        );
+        let m = parse(&text).unwrap();
+        assert_eq!(m.tick_every(), 5);
+        assert!(m.has_action("load") && !m.has_action("x"));
+        assert!(m.actions[0].hidden);
+        assert_eq!(parse(NTFY).unwrap().tick_every(), 60);
+        let mut s = settings();
+        s.config.insert(
+            "paths".into(),
+            serde_json::json!([{"from": "/downloads", "to": "D:\\Media"}]),
+        );
+        m.check_values(&s).unwrap();
+        s.config.insert(
+            "paths".into(),
+            serde_json::json!([{"from": "/d", "to": "rel"}]),
+        );
+        assert!(m
+            .check_values(&s)
+            .unwrap_err()
+            .contains("config.paths: rule 1: to must start with"));
     }
 
     #[test]

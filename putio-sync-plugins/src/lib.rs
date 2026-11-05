@@ -9,15 +9,18 @@
 //! store ([`store`]), time and JSON. [`PluginsService`] feeds them events and keeps the
 //! last runs; a failing or slow plugin never holds anything else up.
 
+pub mod action;
 pub mod discover;
 pub mod host;
 pub mod manifest;
+pub mod paths;
 pub mod sandbox;
 pub mod service;
 pub mod store;
 pub mod worker;
 
 pub use service::{
-    PluginState, PluginStatus, PluginsOptions, PluginsService, TestError, TEST_MESSAGE,
+    ActionAnswer, CallError, PluginState, PluginStatus, PluginsOptions, PluginsService, TestError,
+    TEST_MESSAGE,
 };
 pub use worker::{PluginRun, RunResult};

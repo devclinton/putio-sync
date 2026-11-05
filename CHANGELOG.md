@@ -14,6 +14,16 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Media server refresh: bundled Plex, Jellyfin and Emby plugins (off until
+  turned on) ask the server to rescan just the folder of each finished download,
+  grouped per folder over a short window, so new episodes and movies show up
+  within seconds. Plex signs in with a code at plex.tv/link instead of a pasted
+  token; Settings loads the servers and libraries to pick from, and path rules
+  map the download folder to the path the media server sees. The doctor checks
+  the server, the token and the path rules; tokens are never logged. For plugin
+  authors: settings action buttons, fields with choices, a `path_map` field
+  type, `tick_seconds`, a `health()` check, `putio.path`, `putio.download_dir`
+  and `putio.metrics.count` (`putio_sync_plugin_counter_total`).
 - Lua plugins: small sandboxed Lua scripts in a plugins folder (default
   `plugins` next to the config file), each with a `plugin.toml` manifest that
   names its events, permissions and config fields. Plugins run on the same

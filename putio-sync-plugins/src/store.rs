@@ -14,6 +14,10 @@ pub const MAX_VALUE_BYTES: usize = 64 * 1024;
 /// Largest store, as JSON
 pub const MAX_STORE_BYTES: usize = 1024 * 1024;
 
+/// One plugin's store as every worker of the plugin shares it (031): the running one,
+/// tests, actions and health checks, so no write is lost to a second copy
+pub type SharedStore = std::sync::Arc<std::sync::Mutex<Store>>;
+
 /// One plugin's store
 #[derive(Debug)]
 pub struct Store {

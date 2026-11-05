@@ -71,6 +71,7 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_plugin_runs_total",
     "putio_sync_plugin_run_duration_seconds",
     "putio_sync_plugin_events_dropped_total",
+    "putio_sync_plugin_counter_total",
     "putio_sync_db_errors_total",
     "putio_sync_disk_free_bytes",
     "putio_sync_disk_total_bytes",
@@ -213,6 +214,7 @@ fn record_everything(t: &Telemetry) {
     );
     t.plugin_run("test-plugin", "tick", "timeout", Duration::from_secs(10));
     t.plugin_dropped("test-plugin", 1);
+    t.plugin_counter("test-plugin", "refreshes", 1);
     t.db_error(DbOp::Queue);
     t.set_queue_counts(&[(QueueState::Pending, 2)]);
     let dir = tempfile::tempdir().unwrap();
@@ -271,6 +273,8 @@ fn closed_set(label: &str) -> Vec<&'static str> {
         "hook" => vec!["test-hook"],
         // Plugin names from the manifests
         "plugin" => vec!["test-plugin"],
+        // Counter names a plugin chose: [a-z0-9_]{1,40}, at most 16 per plugin
+        "name" => vec!["refreshes"],
         "via" => putio_sync_telemetry::tailscale::VIAS.to_vec(),
         "kind" => {
             let mut v = strs(SyncKind::ALL, SyncKind::as_str);

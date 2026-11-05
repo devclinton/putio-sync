@@ -5,7 +5,7 @@
 //! the script, call `init`). A state that cannot be built stays broken until the next
 //! reload or settings change.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -20,10 +20,10 @@ use putio_sync_core::plugins::PluginSettings;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
-use crate::host::{self, Clock, Host, Http, LogLine, Logs};
+use crate::host::{self, Clock, Counters, Host, Http, LogLine, Logs};
 use crate::manifest::Manifest;
 use crate::sandbox::{self, Deadline, TIME_LIMIT};
-use crate::store::Store;
+use crate::store::{SharedStore, Store};
 
 /// Jobs kept per plugin; the oldest event is dropped past this
 pub const MAX_QUEUE: usize = 1000;
@@ -75,6 +75,15 @@ pub struct PluginRun {
 /// Recent runs by plugin name, kept across reloads
 pub type History = Arc<Mutex<HashMap<String, VecDeque<PluginRun>>>>;
 
+/// Each plugin's store, opened once and shared by all its workers
+pub type Stores = Arc<Mutex<HashMap<String, SharedStore>>>;
+
+/// Each plugin's counter names, shared by all its workers
+pub type CounterNames = Arc<Mutex<HashMap<String, Counters>>>;
+
+/// The download folder plugins see as `putio.download_dir`
+pub type DownloadDir = Arc<Mutex<Option<PathBuf>>>;
+
 /// What a worker builds its state from; replaced on reload and settings changes
 #[derive(Debug, Clone)]
 pub struct Spec {
@@ -101,16 +110,76 @@ pub struct Env {
     pub clock: Clock,
     /// Recent runs
     pub history: History,
+    /// Open stores
+    pub stores: Stores,
+    /// Counter names used
+    pub counters: CounterNames,
+    /// `putio.download_dir`
+    pub download_dir: DownloadDir,
+}
+
+impl Env {
+    /// `name`'s store, opened on first use
+    pub fn store_for(&self, name: &str) -> SharedStore {
+        self.stores
+            .lock()
+            .unwrap()
+            .entry(name.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(Store::open(self.data_dir.as_deref(), name))))
+            .clone()
+    }
+
+    /// `name`'s counter names
+    pub fn counters_for(&self, name: &str) -> Counters {
+        self.counters
+            .lock()
+            .unwrap()
+            .entry(name.to_string())
+            .or_default()
+            .clone()
+    }
+
+    fn download_dir_text(&self) -> String {
+        self.download_dir
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    }
+}
+
+/// What a [`Job::Call`] sends back
+#[derive(Debug)]
+pub struct CallReply {
+    /// The run, logs included
+    pub run: PluginRun,
+    /// What the function returned, as JSON; `None` when it failed or is not defined
+    pub value: Option<serde_json::Value>,
+    /// Whether the module has the function
+    pub defined: bool,
 }
 
 /// A queued call
 pub enum Job {
     /// An event from the bus
     Event(Arc<Event>),
-    /// The 60 s tick
+    /// The plugin's tick
     Tick,
     /// A test event; the run goes back on the channel
     Test(Arc<Event>, oneshot::Sender<PluginRun>),
+    /// Call a module function by name (031: `on_action`, `health`); the run and what it
+    /// returned go back on the channel. `kind` is the run's event type.
+    Call {
+        /// The function in the module
+        function: String,
+        /// `action` or `health`
+        kind: String,
+        /// Its arguments, as JSON
+        args: Vec<serde_json::Value>,
+        /// Where the answer goes
+        reply: oneshot::Sender<CallReply>,
+    },
 }
 
 struct Queue {
@@ -129,11 +198,14 @@ pub struct Slot {
     has_tick: AtomicBool,
     testing: AtomicBool,
     load_error: Mutex<Option<String>>,
+    tick_every: Mutex<Duration>,
+    last_tick: Mutex<Instant>,
 }
 
 impl Slot {
     /// A slot for `spec`; [`Slot::spawn`] starts its thread
     pub fn new(spec: Spec) -> Arc<Slot> {
+        let every = Duration::from_secs(spec.manifest.tick_every());
         Arc::new(Slot {
             name: spec.manifest.name.clone(),
             queue: Mutex::new(Queue {
@@ -146,6 +218,8 @@ impl Slot {
             has_tick: AtomicBool::new(false),
             testing: AtomicBool::new(false),
             load_error: Mutex::new(None),
+            tick_every: Mutex::new(every),
+            last_tick: Mutex::new(Instant::now()),
         })
     }
 
@@ -165,6 +239,7 @@ impl Slot {
 
     /// Swap the spec; the worker rebuilds before its next job
     pub fn update(&self, spec: Spec) {
+        *self.tick_every.lock().unwrap() = Duration::from_secs(spec.manifest.tick_every());
         let mut q = self.queue.lock().unwrap();
         q.spec = Arc::new(spec);
         q.generation += 1;
@@ -203,6 +278,21 @@ impl Slot {
     /// Whether the module has `on_tick` (known once the state is built)
     pub fn has_tick(&self) -> bool {
         self.has_tick.load(Ordering::Relaxed)
+    }
+
+    /// Whether the plugin's tick interval has passed since its last tick at `now`; when
+    /// it has, that becomes the last tick. Half a second early counts, so a 5 s tick on
+    /// a 5 s ticker is not skipped by jitter.
+    pub fn tick_due(&self, now: Instant) -> bool {
+        let every = *self.tick_every.lock().unwrap();
+        let mut last = self.last_tick.lock().unwrap();
+        let slack = Duration::from_millis(500);
+        if now.saturating_duration_since(*last) + slack >= every {
+            *last = now;
+            true
+        } else {
+            false
+        }
     }
 
     /// Why the state could not be built, until the next update
@@ -261,7 +351,7 @@ struct Worker {
     slot: Arc<Slot>,
     env: Env,
     deadline: Deadline,
-    store: Option<Rc<RefCell<Store>>>,
+    store: Option<SharedStore>,
     state: Option<(u64, Loaded)>,
     broken: Option<(u64, String)>,
 }
@@ -304,6 +394,29 @@ impl Worker {
 
     /// A job for a state that cannot be built: a test gets the error, the rest is dropped
     fn refuse(&self, job: Job, error: String) {
+        if let Job::Call { kind, reply, .. } = job {
+            let run = PluginRun {
+                event_type: kind,
+                event_id: String::new(),
+                started_at: now_text(),
+                duration_ms: 0,
+                result: RunResult::Failure,
+                error: Some(error),
+                logs: Vec::new(),
+            };
+            putio_sync_telemetry::plugins::record_run(
+                &self.slot.name,
+                &run.event_type,
+                run.result.as_str(),
+                Duration::ZERO,
+            );
+            let _ = reply.send(CallReply {
+                run,
+                value: None,
+                defined: true,
+            });
+            return;
+        }
         if let Job::Test(event, reply) = job {
             let run = PluginRun {
                 event_type: event.event_type().as_str().to_string(),
@@ -327,8 +440,7 @@ impl Worker {
         let secrets: Rc<Vec<String>> = Rc::new(spec.settings.secrets.values().cloned().collect());
         let logs: Logs = Rc::default();
         if m.permissions.store && self.store.is_none() {
-            let store = Store::open(self.env.data_dir.as_deref(), &m.name);
-            self.store = Some(Rc::new(RefCell::new(store)));
+            self.store = Some(self.env.store_for(&m.name));
         }
         let host = Host {
             name: m.name.clone(),
@@ -345,6 +457,8 @@ impl Worker {
             } else {
                 None
             },
+            download_dir: self.env.download_dir_text(),
+            counters: self.env.counters_for(&m.name),
             deadline: self.deadline.clone(),
             logs: logs.clone(),
             clock: self.env.clock.clone(),
@@ -383,7 +497,7 @@ impl Worker {
         };
         if let Ok(LuaValue::Function(init)) = loaded.module.get::<LuaValue>("init") {
             let started_at = now_text();
-            let out = self.call(&loaded, &init, LuaValue::Nil, timeout);
+            let (out, _) = self.call(&loaded, &init, Vec::new(), timeout);
             let run = PluginRun {
                 event_type: "init".to_string(),
                 event_id: String::new(),
@@ -405,24 +519,36 @@ impl Worker {
         Ok(())
     }
 
-    fn call(&self, loaded: &Loaded, f: &Function, arg: LuaValue, timeout: Duration) -> Outcome {
+    /// Call `f` under the time limit; the outcome and the first value it returned
+    fn call(
+        &self,
+        loaded: &Loaded,
+        f: &Function,
+        args: Vec<LuaValue>,
+        timeout: Duration,
+    ) -> (Outcome, LuaValue) {
         loaded.logs.borrow_mut().clear();
         let started = Instant::now();
         self.deadline.set(Some(started + timeout));
-        let result = f.call::<()>(arg);
+        let result = f.call::<LuaValue>(mlua::MultiValue::from_vec(args));
         self.deadline.set(None);
         let late = started.elapsed() >= timeout;
-        match result {
-            Ok(()) if late => Outcome {
+        let outcome = match result {
+            Ok(_) if late => Outcome {
                 result: RunResult::Timeout,
                 error: Some(limit_text(timeout)),
                 rebuild: true,
             },
-            Ok(()) => Outcome {
-                result: RunResult::Success,
-                error: None,
-                rebuild: false,
-            },
+            Ok(value) => {
+                return (
+                    Outcome {
+                        result: RunResult::Success,
+                        error: None,
+                        rebuild: false,
+                    },
+                    value,
+                )
+            }
             Err(e) => {
                 let timed_out = late || sandbox::error_text(&e).contains(TIME_LIMIT);
                 let memory = sandbox::is_memory_error(&e);
@@ -439,7 +565,8 @@ impl Worker {
                     rebuild: timed_out || memory,
                 }
             }
-        }
+        };
+        (outcome, LuaValue::Nil)
     }
 
     fn execute(&mut self, job: Job, spec: &Spec) {
@@ -448,6 +575,15 @@ impl Worker {
         };
         let timeout = spec.settings.timeout();
         let (event_type, event_id, function, arg, reply) = match job {
+            Job::Call {
+                function,
+                kind,
+                args,
+                reply,
+            } => {
+                self.execute_call(function, kind, args, reply, timeout);
+                return;
+            }
             Job::Tick => {
                 let Ok(LuaValue::Function(f)) = loaded.module.get::<LuaValue>("on_tick") else {
                     return;
@@ -486,7 +622,8 @@ impl Worker {
         };
         let started_at = now_text();
         let started = Instant::now();
-        let out = self.call(loaded, &function, arg, timeout);
+        let args = if arg.is_nil() { Vec::new() } else { vec![arg] };
+        let (out, _) = self.call(loaded, &function, args, timeout);
         let took = started.elapsed();
         let test = reply.is_some();
         let run = PluginRun {
@@ -511,6 +648,93 @@ impl Worker {
             self.slot.testing.store(false, Ordering::Release);
             let _ = reply.send(run);
         }
+    }
+
+    /// Run a [`Job::Call`]: counted and logged like any run, kept out of the history
+    fn execute_call(
+        &mut self,
+        function: String,
+        kind: String,
+        args: Vec<serde_json::Value>,
+        reply: oneshot::Sender<CallReply>,
+        timeout: Duration,
+    ) {
+        let Some((_, loaded)) = &self.state else {
+            return;
+        };
+        let started_at = now_text();
+        let Ok(LuaValue::Function(f)) = loaded.module.get::<LuaValue>(function.as_str()) else {
+            let _ = reply.send(CallReply {
+                run: PluginRun {
+                    event_type: kind,
+                    event_id: String::new(),
+                    started_at,
+                    duration_ms: 0,
+                    result: RunResult::Success,
+                    error: None,
+                    logs: Vec::new(),
+                },
+                value: None,
+                defined: false,
+            });
+            return;
+        };
+        let mut lua_args = Vec::with_capacity(args.len());
+        for a in &args {
+            match host::to_lua(&loaded.lua, a) {
+                Ok(v) => lua_args.push(v),
+                Err(e) => {
+                    let error = sandbox::error_text(&e);
+                    self.refuse(
+                        Job::Call {
+                            function,
+                            kind,
+                            args,
+                            reply,
+                        },
+                        error,
+                    );
+                    return;
+                }
+            }
+        }
+        let started = Instant::now();
+        let (mut out, value) = self.call(loaded, &f, lua_args, timeout);
+        let took = started.elapsed();
+        let value = match (out.result, value) {
+            (RunResult::Success, LuaValue::Nil) => Some(serde_json::Value::Null),
+            (RunResult::Success, v) => match host::from_lua(&loaded.lua, v) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    out.result = RunResult::Failure;
+                    out.error = Some(format!(
+                        "{} returned a value that is not JSON: {}",
+                        function,
+                        host::scrub(&e, &loaded.secrets)
+                    ));
+                    None
+                }
+            },
+            _ => None,
+        };
+        let run = PluginRun {
+            event_type: kind,
+            event_id: String::new(),
+            started_at,
+            duration_ms: millis(took),
+            result: out.result,
+            error: out.error,
+            logs: loaded.logs.borrow().clone(),
+        };
+        self.finished(&run, took, true);
+        if out.rebuild {
+            self.state = None;
+        }
+        let _ = reply.send(CallReply {
+            run,
+            value,
+            defined: true,
+        });
     }
 
     /// Log, count and keep a run; `quiet` runs are counted only

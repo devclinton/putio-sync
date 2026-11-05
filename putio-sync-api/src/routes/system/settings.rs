@@ -899,6 +899,14 @@ async fn update_download_settings(
     }
 
     let mut notes = Vec::new();
+    if changed.iter().any(|c| c == "target_directory") {
+        // Plugins see the folder as putio.download_dir (031); rebuild them with it
+        let config = state.config.read().await;
+        state
+            .plugins
+            .set_download_dir(Some(config.download.target_directory.clone()));
+        state.plugins.configure(config.plugins.clone());
+    }
     if take(&mut changed, "target_directory") {
         notes.push(
             "New downloads go to the new target_directory now; the queue database and disk figures stay on the startup folder until a restart."

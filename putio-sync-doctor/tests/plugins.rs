@@ -102,6 +102,7 @@ async fn plugins_are_checked_for_their_state_and_last_run() {
         data_dir: None,
         settings: config.plugins.clone(),
         clock: None,
+        download_dir: None,
     }));
     service.start();
     service.test("fails").await.unwrap();
