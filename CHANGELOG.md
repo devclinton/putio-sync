@@ -326,6 +326,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- The CLI's `--filter` (`list`, `download`, `delete`, `queue add`) now takes
+  the folder-rule pattern language instead of a single glob, so
+  `--filter "*.mkv,*.mp4"` (the README's own example) matches either, case
+  never matters, `-*sample*` leaves files out, and a word without `*` matches
+  anywhere in the name. An unclosed quote or brace now stops the command
+  instead of matching nothing (feature 020).
 - A resumed download is checked by reading back only the part already on disk,
   then hashing the rest as it streams, instead of reading the whole file again
   after the download; `verify.passed` now comes just before `download.finished`.

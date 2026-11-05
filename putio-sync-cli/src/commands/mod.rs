@@ -32,3 +32,14 @@ pub use server::execute_server;
 pub use setup::execute_setup;
 pub use stat::execute_stat;
 pub use status::{execute_debug, execute_health, execute_status};
+
+/// Check a `--filter` value like a saved folder-rule pattern (feature 020): text that
+/// can't mean what was typed stops the command, and warnings go to stderr
+pub(crate) fn check_filter(text: &str) -> anyhow::Result<()> {
+    let warnings = putio_sync_core::pattern::check(text)
+        .map_err(|e| anyhow::anyhow!("invalid --filter {text:?}: {e}"))?;
+    for warning in warnings {
+        eprintln!("Warning: --filter {text:?}: {warning}");
+    }
+    Ok(())
+}

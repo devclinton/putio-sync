@@ -86,9 +86,6 @@ ctrlc = "3.4"
 # Date/time handling
 chrono = "0.4"
 
-# Glob patterns
-glob = "0.3"
-
 # Filesystem watching
 
 # System information

@@ -101,6 +101,7 @@ pub async fn execute_add(
 
         // Apply name filter if specified
         if let Some(name_pattern) = filter {
+            super::check_filter(&name_pattern)?;
             let file_filter = FileFilter::new().with_name_pattern(name_pattern);
             file_filter.filter(response.files)
         } else {

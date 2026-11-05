@@ -291,7 +291,7 @@ Arguments:
 
 Options:
   -a, --all                 Download all files
-  -f, --filter <PATTERN>    Filter files with glob pattern (e.g., "*.mkv")
+  -f, --filter <PATTERN>    Filter by name pattern, as in folder rules (e.g., "*.mkv,*.mp4")
   -d, --dir <PATH>          Download directory [default: from config]
   -w, --workers <N>         Number of concurrent workers [default: from config]
   --buffer-size <SIZE>      Buffer size for streaming (e.g., 16MB) [default: from config]
@@ -1724,7 +1724,9 @@ that blocked it, recorded under Recently blocked and counted in the `blocked` me
 **Preview patterns** in Settings › Download shows what the typed patterns would do
 across the whole account.
 
-The CLI's `--filter` option of `list` and `delete` still takes a single glob.
+The CLI's `--filter` option (`list`, `download`, `delete`, `queue add`) takes the same
+language, matched against the file name. Text that can't mean what was typed, such as an
+unclosed quote, stops the command.
 
 #### Executable guard
 

@@ -2,9 +2,9 @@
 
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
-use glob::Pattern;
 use putio_sync_client::{FileEntry, PutioApiClient};
 use putio_sync_core::config::{AuthMethod, Config};
+use putio_sync_core::pattern::Pattern;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use tracing::{debug, info};
@@ -24,6 +24,9 @@ pub async fn execute_delete(
     config_path: Option<PathBuf>,
 ) -> Result<()> {
     info!("Starting delete command");
+    if let Some(text) = &filter {
+        super::check_filter(text)?;
+    }
 
     // Load configuration
     let config = load_config(config_path)?;
@@ -186,15 +189,14 @@ fn filter_files(
     pattern: Option<&str>,
     before_date: Option<&NaiveDate>,
 ) -> Vec<FileEntry> {
+    let pattern = pattern.map(Pattern::parse);
     files
         .into_iter()
         .filter(|file| {
-            // Apply glob pattern filter
-            if let Some(p) = pattern {
-                if let Ok(glob_pattern) = Pattern::new(p) {
-                    if !glob_pattern.matches(&file.name) {
-                        return false;
-                    }
+            // Apply the name pattern; a listing has no root path, so the name stands in
+            if let Some(p) = &pattern {
+                if !p.matches(&file.name, &file.name) {
+                    return false;
                 }
             }
 
