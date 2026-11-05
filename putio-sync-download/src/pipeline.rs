@@ -140,6 +140,9 @@ pub struct PipelineItem {
     #[serde(serialize_with = "rfc3339_opt")]
     pub next_sync_at: Option<SystemTime>,
     pub note: Option<String>,
+    /// NAS: `checking` or `verifying` while every running file reads back from disk
+    /// (features 040, 034); none otherwise
+    pub phase: Option<&'static str>,
     pub links: Links,
 }
 
@@ -188,6 +191,8 @@ pub struct Pipeline {
 pub struct FileProgress {
     pub downloaded: u64,
     pub speed_bps: u64,
+    /// `downloading`, `checking` or `verifying` (features 040, 034)
+    pub phase: &'static str,
 }
 
 /// Everything [`build`] reads
@@ -444,6 +449,7 @@ fn transfer_item(
         }),
         next_sync_at: None,
         note: None,
+        phase: None,
         links: links(Some(transfer.id)),
         key,
     })
@@ -483,6 +489,7 @@ fn waiting_item(input: &BuildInput, transfer: &Transfer, key: String) -> Option<
         reason: None,
         next_sync_at: input.next_sync_at,
         note: None,
+        phase: None,
         links: links(Some(transfer.id)),
         key,
     })
@@ -500,6 +507,7 @@ fn nas_item(
     let mut size = 0;
     let mut done_bytes = 0;
     let mut speed = None::<u64>;
+    let mut phases = Vec::new();
     for file in files {
         match &file.state {
             // A queue row left with status completed (older versions) is done too
@@ -526,6 +534,7 @@ fn nas_item(
                     done_bytes += progress.downloaded.min(file.size.max(0) as u64) as i64;
                     if status == "downloading" {
                         *speed.get_or_insert(0) += progress.speed_bps;
+                        phases.push(progress.phase);
                     }
                 }
             }
@@ -585,6 +594,10 @@ fn nas_item(
         }),
         next_sync_at: None,
         note,
+        phase: phases
+            .first()
+            .copied()
+            .filter(|p| *p != "downloading" && phases.iter().all(|q| q == p)),
         links: links(transfer_id),
         key,
     })
@@ -930,6 +943,7 @@ mod tests {
             FileProgress {
                 downloaded: 120,
                 speed_bps: 40,
+                phase: "downloading",
             },
         );
         let pipeline = build(&input);
@@ -951,6 +965,11 @@ mod tests {
         assert!((item.percent - 520.0 / 12.0).abs() < 1e-9);
         assert_eq!(item.speed_bps, Some(40));
         assert_eq!(item.eta_seconds, Some((1200 - 520) / 40));
+        assert_eq!(item.phase, None);
+
+        // Feature 034: the running file reads back from disk
+        input.progress.get_mut(&12).unwrap().phase = "verifying";
+        assert_eq!(only(&build(&input)).phase, Some("verifying"));
     }
 
     #[test]

@@ -3045,6 +3045,7 @@ impl DownloadManager {
                     FileProgress {
                         downloaded: d.bytes_downloaded,
                         speed_bps: d.speed_bps.max(0.0) as u64,
+                        phase: d.phase,
                     },
                 )
             })
