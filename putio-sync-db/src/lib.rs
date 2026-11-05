@@ -46,6 +46,7 @@ pub mod sources;
 pub mod stats;
 pub mod storage;
 pub mod torrents;
+pub mod verify;
 pub mod whats_new;
 
 pub use arr::{ArrItem, ArrRepository, ArrState, BlocklistState, NewArrItem, PutioProgress};
@@ -64,6 +65,7 @@ pub use sources::SourcesRepository;
 pub use stats::{ExtensionStats, StatsRepository};
 pub use storage::{NewRunFile, StorageRepository, StorageRun, StorageRunFile};
 pub use torrents::ProcessedTorrentsRepository;
+pub use verify::{NewProblem, RunCounts, VerifyProblem, VerifyRepository, VerifyRun};
 pub use whats_new::WhatsNewRepository;
 
 use crate::error::tracked;
@@ -233,6 +235,11 @@ impl Database {
         WhatsNewRepository::new(&self.pool)
     }
 
+    /// Get the verify runs and problems repository (feature 034)
+    pub fn verify(&self) -> VerifyRepository<'_> {
+        VerifyRepository::new(&self.pool)
+    }
+
     /// Get the Put.io storage runs repository (feature 033)
     pub fn storage(&self) -> StorageRepository<'_> {
         StorageRepository::new(&self.pool)
@@ -324,6 +331,13 @@ impl Database {
             ("download_queue", "fixed_path", "INTEGER NOT NULL DEFAULT 0"),
             ("download_history", "local_path", "TEXT"),
             ("download_history", "outcome", "TEXT"),
+            // Download verification (feature 034)
+            ("downloads", "crc32", "TEXT"),
+            ("downloads", "verify", "TEXT"),
+            ("downloads", "verified_at", "TIMESTAMP"),
+            ("download_history", "verify", "TEXT"),
+            ("download_history", "redownloads", "INTEGER"),
+            ("download_queue", "redownload", "INTEGER NOT NULL DEFAULT 0"),
         ] {
             self.add_column_if_missing(table, column, declaration)
                 .await?;
@@ -405,6 +419,15 @@ impl Database {
             (
                 schema::CREATE_STORAGE_RUN_FILES_TABLE,
                 "Failed to create storage_run_files table",
+            ),
+            // Download verification (feature 034)
+            (
+                schema::CREATE_VERIFY_RUNS_TABLE,
+                "Failed to create verify_runs table",
+            ),
+            (
+                schema::CREATE_VERIFY_PROBLEMS_TABLE,
+                "Failed to create verify_problems table",
             ),
         ] {
             sqlx::query(sql)

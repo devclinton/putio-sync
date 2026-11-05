@@ -73,6 +73,10 @@ pub struct QueueItem {
     pub save_as: Option<String>,
     /// Never give this file a numbered name (Radarr/Sonarr items, feature 040)
     pub fixed_path: bool,
+    /// Queued by a verify run after a mismatch: overwrite whatever is at the path
+    /// (feature 034)
+    #[sqlx(default)]
+    pub redownload: bool,
 }
 
 impl QueueItem {
@@ -136,6 +140,15 @@ pub struct Download {
     pub status: String,
     /// Number of retry attempts
     pub retry_count: i64,
+    /// Put.io's CRC32 when the file was downloaded (feature 034)
+    #[sqlx(default)]
+    pub crc32: Option<String>,
+    /// How the download was checked: `crc32`, `size` or `none`
+    #[sqlx(default)]
+    pub verify: Option<String>,
+    /// When it last passed a check (download or verify run)
+    #[sqlx(default)]
+    pub verified_at: Option<String>,
 }
 
 impl Download {
@@ -201,6 +214,12 @@ pub struct DownloadHistory {
     pub local_path: Option<String>,
     /// What happened to a file that already existed locally (feature 040)
     pub outcome: Option<String>,
+    /// How the download was checked: `crc32`, `size` or `none`; NULL before 034
+    #[sqlx(default)]
+    pub verify: Option<String>,
+    /// Re-downloads after a mismatch it took (feature 034)
+    #[sqlx(default)]
+    pub redownloads: Option<i64>,
 }
 
 impl DownloadHistory {

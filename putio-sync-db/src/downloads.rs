@@ -212,6 +212,48 @@ impl<'a> DownloadRepository<'a> {
         .map_err(tracked(DbOp::History, "Failed to list completed downloads"))
     }
 
+    /// Record how a download was checked (feature 034). `verified_at` is set to now
+    /// unless the method is `none` (verification off).
+    pub async fn set_verified(&self, id: i64, crc32: Option<&str>, verify: &str) -> DbResult<()> {
+        sqlx::query(
+            "UPDATE downloads SET crc32 = ?, verify = ?, \
+             verified_at = CASE WHEN ? = 'none' THEN verified_at ELSE CURRENT_TIMESTAMP END \
+             WHERE id = ?",
+        )
+        .bind(crc32)
+        .bind(verify)
+        .bind(verify)
+        .bind(id)
+        .execute(self.pool)
+        .await
+        .map_err(tracked(DbOp::History, "Failed to set download verify"))?;
+        Ok(())
+    }
+
+    /// A verify run found the file matching (feature 034)
+    pub async fn touch_verified(&self, file_id: i64, method: &str) -> DbResult<()> {
+        sqlx::query(
+            "UPDATE downloads SET verify = ?, verified_at = CURRENT_TIMESTAMP \
+             WHERE file_id = ? AND status = 'completed'",
+        )
+        .bind(method)
+        .bind(file_id)
+        .execute(self.pool)
+        .await
+        .map_err(tracked(DbOp::History, "Failed to set download verified_at"))?;
+        Ok(())
+    }
+
+    /// Every completed download, oldest first, for a verify run (feature 034)
+    pub async fn completed_rows(&self) -> DbResult<Vec<Download>> {
+        sqlx::query_as::<_, Download>(
+            "SELECT * FROM downloads WHERE status = 'completed' ORDER BY id",
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::History, "Failed to list completed downloads"))
+    }
+
     /// Delete a download record
     pub async fn delete(&self, id: i64) -> DbResult<()> {
         debug!("Deleting download {}", id);
