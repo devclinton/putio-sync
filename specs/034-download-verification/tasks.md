@@ -55,7 +55,7 @@ against local mocks.
 ## Phase 6: User Story 4 - Hooks, plugins and monitoring (P3)
 
 - [X] T023 [US4] Document the three events in `EVENTS.md` (fields, examples, `trigger`), keeping schema version 1; the docs/schema consistency test passes
-- [ ] T024 [US4] Test that a bus subscriber receives `verify.failed` with the documented fields and that `/metrics` shows the `putio_sync_verify_*` series, in `putio-sync-download/tests/verify.rs` and the telemetry tests
+- [X] T024 [US4] Test that a bus subscriber receives `verify.failed` with the documented fields and that `/metrics` shows the `putio_sync_verify_*` series, in `putio-sync-download/tests/verify.rs` and the telemetry tests
 
 ## Phase 7: Polish
 

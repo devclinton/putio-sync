@@ -227,6 +227,77 @@ async fn mismatch_then_match_downloads_twice_and_finishes_after_verify_passed() 
     assert!(row.verified_at.is_some());
 }
 
+/// T024: a bus subscriber gets `verify.failed` with the fields EVENTS.md documents, and
+/// /metrics counts the check and the re-download
+#[tokio::test]
+async fn subscribers_and_metrics_see_a_mismatch() {
+    let counter = |result: &str| {
+        putio_sync_telemetry::global()
+            .sample(
+                "putio_sync_verify_total",
+                &[
+                    ("trigger", "download"),
+                    ("method", "crc32"),
+                    ("result", result),
+                ],
+            )
+            .unwrap_or(0.0)
+    };
+    let redownloads = || {
+        putio_sync_telemetry::global()
+            .sample(
+                "putio_sync_verify_redownloads_total",
+                &[("trigger", "download")],
+            )
+            .unwrap_or(0.0)
+    };
+    let (failed_before, redownloads_before) = (counter("failed"), redownloads());
+    let mut s = setup(verify_on(1), false).await;
+    let _file = s.file_details(3409, Some(&crc(&good()))).await;
+    let _bodies = s.bodies(3409, vec![bad(), good()]).await;
+    s.queue(3409).await;
+    let mut rx = events::subscribe();
+
+    assert!(s.manager.process_queue().await.unwrap());
+
+    let seen = events_for(&mut rx, 3409).await;
+    let failed = seen
+        .iter()
+        .find(|e| e.event_type().as_str() == "verify.failed")
+        .expect("verify.failed");
+    let json = serde_json::to_value(&**failed).unwrap();
+    assert_eq!(json["schema_version"], 1);
+    let data = json["data"].as_object().unwrap();
+    let mut keys: Vec<_> = data.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "actual_crc32",
+            "attempt",
+            "expected_crc32",
+            "file_id",
+            "local_path",
+            "name",
+            "relative_path",
+            "size_bytes",
+            "trigger",
+            "will_redownload"
+        ]
+    );
+    assert_eq!(data["relative_path"], "movie.mkv");
+
+    // Tests share the global registry, so only growth is checked
+    assert!(counter("failed") > failed_before);
+    assert!(redownloads() > redownloads_before);
+    let text = putio_sync_telemetry::global().encode();
+    assert!(text.contains("putio_sync_verify_total{"), "{text}");
+    assert!(
+        text.contains("putio_sync_verify_read_bytes_total"),
+        "{text}"
+    );
+}
+
 #[tokio::test]
 async fn always_mismatching_fails_with_integrity_and_is_never_deleted_from_putio() {
     let mut s = setup(verify_on(2), true).await;
