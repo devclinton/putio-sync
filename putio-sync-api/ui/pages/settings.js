@@ -1,4 +1,4 @@
-// Settings page: appearance (this browser only, via theme.js), then the download, watcher, Put.io cleanup, Put.io storage (033), Tailscale (036), logging and notification groups
+// Settings page: appearance (this browser only, via theme.js), then the download, watcher, Put.io cleanup, Put.io storage (033), Put.io app ID, Tailscale (036), logging and notification groups
 // as forms built from each GET body. Save PUTs the whole group and shows the API's
 // message verbatim; a 400 shows its error under the form. Tokens are shown only as set /
 // not set. The Radarr / Sonarr card has the download client form, auto-setup, and the
@@ -112,6 +112,13 @@ const GROUPS = [
       ["run_at", "Daily run at", "24-hour local time, HH:MM", "s"],
       ["auto_free", "Automatic free-up", "Once a day, free up space when below the warning level (daemon only)", "b"],
     ],
+  },
+  {
+    key: "putio",
+    title: "Put.io",
+    fields: [["app_id", "Put.io app ID", "Turns on linking with a code at put.io/link; empty for none", "s?"]],
+    extra: putioExtra,
+    locked: (data) => (data.status && data.status.env_override ? ["app_id"] : []),
   },
   {
     key: "tailscale",
@@ -301,6 +308,27 @@ function syncAppearance() {
   for (const input of appearanceForm.querySelectorAll("input")) input.checked = now[input.name] === input.value;
 }
 
+// ---- Put.io app ID ----------------------------------------------------------
+
+const APP_ID_FROM = { environment: "the environment (PUTIO_SYNC_APP_ID)", config: "this setting", built_in: "this build" };
+
+/** Where the app ID in use comes from, and where to register one */
+function putioExtra(data) {
+  const st = data.status || {};
+  const register = h("a", { href: st.register_url, target: "_blank", rel: "noopener", text: "Register a Put.io app" });
+  const line = st.in_use
+    ? `Linking with a code is on, with app ID ${st.in_use} from ${APP_ID_FROM[st.source] || st.source}.`
+    : "Linking with a code is off: no app ID is set.";
+  const nodes = h(
+    "div",
+    {},
+    h("p", { class: "muted small", text: line }),
+    st.env_override ? h("p", { class: "muted small", text: "Set by environment (PUTIO_SYNC_APP_ID), so it can't be changed here." }) : null,
+    h("p", { class: "muted small" }, register, " (account menu → API → Create App; any website and callback URL will do), then enter the number Put.io shows for it."),
+  );
+  return { nodes, read: () => ({}) };
+}
+
 // ---- One group --------------------------------------------------------------
 
 function group(g, mine) {
@@ -363,7 +391,8 @@ function form(g, data, reload, help) {
     } else {
       const num = kind[0] === "n";
       const optional = kind.endsWith("?");
-      input = h("input", { class: "input", id, type: num ? "number" : "text", min, max, step: num ? 1 : null, required: !optional, autocomplete: "off", spellcheck: "false" });
+      const locked = Boolean(g.locked && g.locked(data).includes(name));
+      input = h("input", { class: "input", id, type: num ? "number" : "text", min, max, step: num ? 1 : null, required: !optional, disabled: locked, autocomplete: "off", spellcheck: "false" });
       input.value = value == null ? "" : String(value);
       inputs[name] = () => {
         const v = input.value.trim();
@@ -386,6 +415,7 @@ function form(g, data, reload, help) {
     for (const [name, value] of Object.entries(inputs)) body[name] = value();
     if (extra) Object.assign(body, extra.read());
     delete body.effective;
+    delete body.status;
     return body;
   };
 

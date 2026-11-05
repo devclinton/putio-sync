@@ -14,14 +14,14 @@ use std::path::{Path, PathBuf};
 
 /// The Put.io app ID built into this binary, set at build time with
 /// `PUTIO_SYNC_BUILTIN_APP_ID`. No release sets one yet, so without `[putio] app_id`
-/// or `PUTIO_SYNC_APP_ID` the wizard offers pasting a token only.
+/// or `PUTIO_SYNC_APP_ID` the wizard asks for an app ID or a pasted token.
 pub const BUILTIN_APP_ID: Option<&str> = option_env!("PUTIO_SYNC_BUILTIN_APP_ID");
 
 /// Where to register a Put.io app, whose ID turns on the device link
 pub const APP_REGISTER_URL: &str = "https://app.put.io/oauth";
 
 /// Why the device link is off and how to turn it on, for the wizards and the doctor
-pub const APP_ID_HELP: &str = "Linking with a code at put.io/link needs a Put.io app ID, and none is set. Register an app at https://app.put.io/oauth (account menu → API → Create App; any website and callback URL will do), then set its ID as `[putio] app_id` in the config or in PUTIO_SYNC_APP_ID. Until then, paste a token from put.io → Settings → API.";
+pub const APP_ID_HELP: &str = "Linking with a code at put.io/link needs a Put.io app ID, and none is set. Register an app at https://app.put.io/oauth (account menu → API → Create App; any website and callback URL will do), then enter its ID in the setup wizard or Settings → Put.io, or set `[putio] app_id` in the config or PUTIO_SYNC_APP_ID. Until then, paste a token from put.io → Settings → API.";
 
 /// Free space below this always warns (10 GiB)
 pub const LOW_SPACE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
@@ -341,22 +341,47 @@ pub fn in_container() -> bool {
         || std::env::var_os("container").is_some()
 }
 
-/// The Put.io app ID for the device link: `[putio] app_id`, else `PUTIO_SYNC_APP_ID`,
-/// else [`BUILTIN_APP_ID`]. Empty values count as unset.
-pub fn resolve_app_id(config: &Config) -> Option<String> {
+/// The environment variable that sets the Put.io app ID over the config
+pub const APP_ID_VAR: &str = "PUTIO_SYNC_APP_ID";
+
+/// Where the Put.io app ID in use comes from
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppIdSource {
+    /// `PUTIO_SYNC_APP_ID`
+    Environment,
+    /// `[putio] app_id`
+    Config,
+    /// [`BUILTIN_APP_ID`]
+    BuiltIn,
+}
+
+/// The Put.io app ID for the device link and where it comes from: `PUTIO_SYNC_APP_ID`,
+/// else `[putio] app_id`, else [`BUILTIN_APP_ID`]. Empty values count as unset.
+pub fn app_id_with_source(config: &Config) -> Option<(String, AppIdSource)> {
     let set = |v: &str| Some(v.trim().to_string()).filter(|v| !v.is_empty());
-    config
-        .putio
-        .app_id
-        .as_deref()
+    let env = std::env::var(APP_ID_VAR).ok();
+    env.as_deref()
         .and_then(set)
+        .map(|id| (id, AppIdSource::Environment))
         .or_else(|| {
-            std::env::var("PUTIO_SYNC_APP_ID")
-                .ok()
+            config
+                .putio
+                .app_id
                 .as_deref()
                 .and_then(set)
+                .map(|id| (id, AppIdSource::Config))
         })
-        .or_else(|| BUILTIN_APP_ID.and_then(set))
+        .or_else(|| {
+            BUILTIN_APP_ID
+                .and_then(set)
+                .map(|id| (id, AppIdSource::BuiltIn))
+        })
+}
+
+/// The Put.io app ID for the device link; see [`app_id_with_source`]
+pub fn resolve_app_id(config: &Config) -> Option<String> {
+    app_id_with_source(config).map(|(id, _)| id)
 }
 
 /// The download folder to suggest: the configured one when it is not the built-in
@@ -720,13 +745,19 @@ mod tests {
     }
 
     #[test]
-    fn app_id_from_config_first() {
+    fn app_id_from_config() {
         let mut config = Config::default();
         config.putio.app_id = Some(" 42 ".to_string());
-        assert_eq!(resolve_app_id(&config).as_deref(), Some("42"));
+        // The environment wins over the config; tests leave it unset
+        if std::env::var(APP_ID_VAR).is_err() {
+            assert_eq!(
+                app_id_with_source(&config),
+                Some(("42".to_string(), AppIdSource::Config))
+            );
+        }
         config.putio.app_id = Some(String::new());
-        // Falls through to the environment / built-in, which tests leave unset
-        if std::env::var("PUTIO_SYNC_APP_ID").is_err() && BUILTIN_APP_ID.is_none() {
+        // Falls through to the built-in, which tests leave unset
+        if std::env::var(APP_ID_VAR).is_err() && BUILTIN_APP_ID.is_none() {
             assert_eq!(resolve_app_id(&config), None);
         }
     }

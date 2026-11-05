@@ -223,7 +223,7 @@ function putioStep() {
     h("h2", { text: "Connect Put.io" }),
     s.account ? account(s.account) : null,
     s.app_id_available ? [h("p", { class: "muted" }, "Link this install to your Put.io account without copying a token."), link, box] : null,
-    s.app_id_available ? h("h3", { class: "sub", text: "Or paste a token" }) : h("p", { class: "muted" }, "Linking with a code at put.io/link is off: it needs a Put.io app ID. Register one at ", h("a", { href: s.app_register_url, target: "_blank", rel: "noopener", text: s.app_register_url }), " and set it as [putio] app_id or PUTIO_SYNC_APP_ID, or paste a token below."),
+    s.app_id_available ? h("h3", { class: "sub", text: "Or paste a token" }) : appIdForm(s),
     paste,
     err,
     form(nav({ next: "Next" }), async (e) => {
@@ -233,6 +233,26 @@ function putioStep() {
       }
       show(1);
     }),
+  ];
+}
+
+/** No app ID yet: enter one to turn on the device link, or paste a token below */
+function appIdForm(s) {
+  const input = h("input", { class: "input", inputmode: "numeric", autocomplete: "off", spellcheck: "false", placeholder: "e.g. 1234" });
+  const register = h("a", { href: s.app_register_url, target: "_blank", rel: "noopener", text: "Register an app" });
+  return [
+    h("p", { class: "muted" }, "Linking with a code at put.io/link needs a Put.io app ID. Register one at ", h("a", { href: s.app_register_url, target: "_blank", rel: "noopener", text: s.app_register_url }), " (account menu → API → Create App; any website and callback URL will do) and enter its ID, or paste a token below."),
+    form([field("Put.io app ID", input, "The number Put.io shows for the app."), h("p", {}, register), h("button", { type: "submit", class: "btn", text: "Use app ID" })], async (err) => {
+      const id = input.value.trim();
+      if (!/^\d{1,12}$/.test(id)) {
+        err.textContent = "Enter the app ID Put.io shows for the app: a number.";
+        return;
+      }
+      await call("PUT", "/setup/putio/app-id", { app_id: id });
+      s.app_id_available = true;
+      show(0);
+    }),
+    h("h3", { class: "sub", text: "Or paste a token" }),
   ];
 }
 

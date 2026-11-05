@@ -18,6 +18,8 @@
 //! - GET  /settings/plugins - Get the plugins folder and plugin settings, secrets masked
 //!   (feature 028)
 //! - PUT  /settings/plugins - Replace them; checked against the manifests, applied now
+//! - GET  /settings/putio - Get the Put.io app ID and where the one in use comes from
+//! - PUT  /settings/putio - Update the Put.io app ID; refused while PUTIO_SYNC_APP_ID sets it
 //! - GET/PUT /settings/network - The listen addresses (feature 037, in `network.rs`)
 //! - POST /settings/{group}/preview - What a PUT of that body would do, without saving
 //!   (feature 015; the assistant, export and import routes are in `assistant.rs`)
@@ -147,7 +149,7 @@ pub(crate) struct GroupInfo {
     pub when: &'static str,
 }
 
-/// The ten groups. Defaults are the default config's, with the current download
+/// The twelve groups. Defaults are the default config's, with the current download
 /// folder kept: resetting it is almost never what a user means.
 pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
     let mut defaults = Config::default();
@@ -217,6 +219,11 @@ pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
             "precheck",
             json(serde_json::to_value(precheck_view(&defaults))),
             (&[], ""),
+        ),
+        group(
+            "putio",
+            json(serde_json::to_value(putio_view(&defaults))),
+            live_putio(),
         ),
     ]
 }
@@ -547,6 +554,35 @@ pub struct EffectivePrecheck {
     pub wanted_from: Option<String>,
 }
 
+/// The Put.io app ID (`[putio]`). A PUT body leaves out `status`.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PutioSettings {
+    /// The configured app ID; `null` for none
+    pub app_id: Option<String>,
+}
+
+/// GET /settings/putio
+#[derive(Debug, Serialize)]
+pub struct PutioView {
+    #[serde(flatten)]
+    pub settings: PutioSettings,
+    pub status: AppIdStatus,
+}
+
+/// The app ID in use, which may not be the configured one
+#[derive(Debug, Serialize)]
+pub struct AppIdStatus {
+    /// The app ID the device link uses; `null` when the link is off
+    pub in_use: Option<String>,
+    /// Where it comes from: `environment`, `config` or `built_in`
+    pub source: Option<putio_sync_core::setup::AppIdSource>,
+    /// `PUTIO_SYNC_APP_ID` sets it, so a save can't change it
+    pub env_override: bool,
+    /// Where to register a Put.io app
+    pub register_url: &'static str,
+}
+
 /// GET /settings/precheck
 #[derive(Debug, Serialize)]
 pub struct PrecheckView {
@@ -578,6 +614,8 @@ pub fn router() -> Router<AppState> {
         .route("/hooks", put(update_hooks_settings))
         .route("/plugins", get(get_plugins_settings))
         .route("/plugins", put(update_plugins_settings))
+        .route("/putio", get(get_putio_settings))
+        .route("/putio", put(update_putio_settings))
         .route("/download/preview", post(preview_download))
         .route("/watcher/preview", post(preview_watcher))
         .route("/logging/preview", post(preview_logging))
@@ -588,6 +626,7 @@ pub fn router() -> Router<AppState> {
         .route("/tailscale/preview", post(preview_tailscale))
         .route("/hooks/preview", post(preview_hooks))
         .route("/plugins/preview", post(preview_plugins))
+        .route("/putio/preview", post(preview_putio))
         .merge(super::network::settings_router())
         .merge(assistant::router())
 }
@@ -687,6 +726,18 @@ async fn preview_tailscale(
     let live = live_tailscale(&state);
     Ok(preview(&state, tailscale_view, live, |c| {
         apply_tailscale(settings, c)
+    })
+    .await)
+}
+
+/// POST /settings/putio/preview
+async fn preview_putio(
+    State(state): State<AppState>,
+    settings: Result<Json<PutioSettings>, JsonRejection>,
+) -> Result<Json<Preview>, ApiError> {
+    let settings = body(settings)?;
+    Ok(preview(&state, putio_view, live_putio(), |c| {
+        apply_putio(settings, c)
     })
     .await)
 }
@@ -1586,6 +1637,76 @@ async fn update_precheck_settings(
 fn apply_precheck(settings: PrecheckSettings, config: &mut Config) -> Result<(), ApiError> {
     config.precheck = settings.into_config();
     Ok(())
+}
+
+fn putio_view(config: &Config) -> PutioSettings {
+    PutioSettings {
+        app_id: config.putio.app_id.clone(),
+    }
+}
+
+/// Get the Put.io app ID and the one in use
+///
+/// GET /settings/putio
+async fn get_putio_settings(State(state): State<AppState>) -> Json<PutioView> {
+    let config = state.config.read().await;
+    let in_use = putio_sync_core::setup::app_id_with_source(&config);
+    Json(PutioView {
+        settings: putio_view(&config),
+        status: AppIdStatus {
+            source: in_use.as_ref().map(|(_, source)| *source),
+            in_use: in_use.map(|(id, _)| id),
+            env_override: app_id_env_set(),
+            register_url: putio_sync_core::setup::APP_REGISTER_URL,
+        },
+    })
+}
+
+fn app_id_env_set() -> bool {
+    std::env::var(putio_sync_core::setup::APP_ID_VAR).is_ok_and(|v| !v.trim().is_empty())
+}
+
+/// Update the Put.io app ID
+///
+/// PUT /settings/putio
+///
+/// While `PUTIO_SYNC_APP_ID` is set, a save that changes the app ID is refused: the
+/// environment would still win.
+async fn update_putio_settings(
+    State(state): State<AppState>,
+    settings: Result<Json<PutioSettings>, JsonRejection>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let settings = body(settings)?;
+    let changed = update(&state, putio_view, |config| {
+        let before = config.putio.app_id.clone();
+        apply_putio(settings, config)?;
+        if app_id_env_set() && config.putio.app_id != before {
+            return Err(ApiError::BadRequest(format!(
+                "{} sets the Put.io app ID; change it there.",
+                putio_sync_core::setup::APP_ID_VAR
+            )));
+        }
+        Ok(())
+    })
+    .await?;
+    let (live, when) = live_putio();
+    Ok(Json(SuccessResponse {
+        message: saved_message("Put.io", &changed, live, when, &[]),
+    }))
+}
+
+/// Apply a Put.io body to `config` (shared by PUT and preview); empty means none
+fn apply_putio(settings: PutioSettings, config: &mut Config) -> Result<(), ApiError> {
+    config.putio.app_id = settings
+        .app_id
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty());
+    Ok(())
+}
+
+/// The app ID is read each time a link code is asked for
+pub(crate) fn live_putio() -> (&'static [&'static str], &'static str) {
+    (&["app_id"], "Applies now")
 }
 
 #[cfg(test)]

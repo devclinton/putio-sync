@@ -209,6 +209,52 @@ async fn device_link_without_an_app_id_is_409() {
 }
 
 #[tokio::test]
+async fn an_entered_app_id_turns_on_the_device_link() {
+    std::env::remove_var("PUTIO_SYNC_APP_ID");
+    if putio_sync_core::setup::BUILTIN_APP_ID.is_some() {
+        return;
+    }
+    let mut server = mockito::Server::new_async().await;
+    server
+        .mock("GET", "/oauth2/oob/code")
+        .match_query(mockito::Matcher::UrlEncoded("app_id".into(), "777".into()))
+        .with_body(r#"{"status":"OK","code":"LINK42"}"#)
+        .create_async()
+        .await;
+    let s = setup_with(None, Some(&server.url()));
+    let (_, session) = s.gated(Method::GET, "/setup/session", None).await;
+    assert_eq!(session["app_id_available"], json!(false));
+
+    for bad in ["", "abc", "12 34"] {
+        let (status, _) = s
+            .gated(
+                Method::PUT,
+                "/setup/putio/app-id",
+                Some(json!({ "app_id": bad })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad:?}");
+    }
+    let (status, body) = s
+        .gated(
+            Method::PUT,
+            "/setup/putio/app-id",
+            Some(json!({ "app_id": " 777 " })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["app_id_available"], json!(true));
+    let (_, session) = s.gated(Method::GET, "/setup/session", None).await;
+    assert_eq!(session["app_id_available"], json!(true));
+    assert_eq!(session["app_id_source"], json!("config"));
+
+    // No restart: the next link request uses it
+    let (status, body) = s.gated(Method::POST, "/setup/putio/link", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["code"], json!("LINK42"));
+}
+
+#[tokio::test]
 async fn device_link_flow() {
     let mut server = mockito::Server::new_async().await;
     server
@@ -443,6 +489,14 @@ async fn finish_saves_once_and_creates_the_api_token() {
         )
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = s
+        .gated(
+            Method::PUT,
+            "/setup/putio/app-id",
+            Some(json!({ "app_id": "4242" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
 
     let waiter = {
         let state = s.state.clone();
@@ -464,6 +518,7 @@ async fn finish_saves_once_and_creates_the_api_token() {
     assert!(saved.watch.enabled);
     assert_eq!(saved.watch.paths, vec![watch]);
     assert!(saved.metrics.enabled);
+    assert_eq!(saved.putio.app_id.as_deref(), Some("4242"));
     assert_eq!(saved.api.auth_token.as_deref(), Some(api_token.as_str()));
     #[cfg(unix)]
     {

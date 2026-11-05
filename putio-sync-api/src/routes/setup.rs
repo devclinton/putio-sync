@@ -16,8 +16,9 @@ use putio_sync_client::oob::{DeviceLink, OobCheck, LINK_URL};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{ArrConfig, ArrServer, ArrSettings, Config};
 use putio_sync_core::setup::{
-    check_folder, check_preset, in_container, preset_choices, resolve_app_id, suggest_download_dir,
-    suggest_watch_dir, FolderCheck, FolderChoice, APP_ID_HELP, APP_REGISTER_URL,
+    app_id_with_source, check_folder, check_preset, in_container, preset_choices, resolve_app_id,
+    suggest_download_dir, suggest_watch_dir, FolderCheck, FolderChoice, APP_ID_HELP, APP_ID_VAR,
+    APP_REGISTER_URL,
 };
 use putio_sync_download::{dry_run as run_dry_run, DRY_RUN_LIMIT};
 use serde::{Deserialize, Deserializer};
@@ -67,6 +68,7 @@ pub async fn session(State(state): State<SetupState>) -> Json<Value> {
         "metrics_bind": choices.metrics_bind.clone().unwrap_or_else(|| base.metrics.bind.entries().join(", ")),
         "arr_enabled": arr_enabled,
         "app_id_available": resolve_app_id(base).is_some(),
+        "app_id_source": app_id_with_source(base).map(|(_, source)| source),
         "app_register_url": APP_REGISTER_URL,
         "in_container": in_container(),
         "suggestions": {
@@ -75,6 +77,35 @@ pub async fn session(State(state): State<SetupState>) -> Json<Value> {
         },
         "presets": presets,
     }))
+}
+
+/// Body of `PUT /setup/putio/app-id`
+#[derive(Deserialize)]
+pub struct AppIdBody {
+    app_id: String,
+}
+
+/// PUT /setup/putio/app-id: the Put.io app ID that turns on the device link. It is kept
+/// with the session and saved as `[putio] app_id` at finish.
+pub async fn app_id_set(
+    State(state): State<SetupState>,
+    Json(body): Json<AppIdBody>,
+) -> Result<Json<Value>, ApiError> {
+    if std::env::var(APP_ID_VAR).is_ok_and(|v| !v.trim().is_empty()) {
+        return Err(ApiError::Conflict(format!(
+            "{APP_ID_VAR} sets the Put.io app ID; change it there."
+        )));
+    }
+    let id = body.app_id.trim();
+    if !putio_sync_core::config::valid_app_id(id) {
+        return Err(ApiError::BadRequest(
+            "Enter the app ID Put.io shows for the app: a number, e.g. 1234".into(),
+        ));
+    }
+    let mut session = state.inner.session.lock().await;
+    session.base.putio.app_id = Some(id.to_string());
+    session.link = None;
+    Ok(Json(json!({ "app_id_available": true })))
 }
 
 /// POST /setup/putio/link: ask Put.io for a device-link code

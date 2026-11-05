@@ -14,6 +14,14 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- The Put.io app ID that turns on linking with a code at put.io/link can be
+  entered in the web wizard's **Connect Put.io** step and in a new
+  **Settings › Put.io** group, with the register link beside it. Saving it turns
+  the link on without a restart. Settings shows where the ID in use comes from
+  (this setting, `PUTIO_SYNC_APP_ID` or the build) and is read-only while the
+  environment variable sets it. `PUTIO_SYNC_APP_ID` now overrides
+  `[putio] app_id`, as other environment variables override the config, and an
+  app ID that isn't a number is refused.
 - Download verification: each download is checked against Put.io's CRC32 (or
   its size where Put.io has none) before it gets its real name. The CRC32 is
   worked out while the file streams, so it is not read twice. A file that does
