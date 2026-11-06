@@ -180,8 +180,8 @@ roots working.
 
 - [x] T035 [P] Update `README.md` (a Media server section) and `INSTALLATION.md` (Docker `network_mode: host` for discovery; manual `description.xml` URL with bridge networking)
 - [x] T036 [P] Add a `CHANGELOG.md` entry under Unreleased › Added
-- [ ] T037 Run `make ci` and fix everything it reports
-- [ ] T038 Run quickstart §2 locally with curl, and §3 with VLC; note results in the spec status
+- [x] T037 Run `make ci` and fix everything it reports
+- [x] T038 Run quickstart §2 locally with curl, and §3 with VLC; note results in the spec status
 
 ## Dependencies
 
@@ -229,3 +229,8 @@ Where the build differed from the plan, and why.
   were added for the tests, and `wiremock` was left out.
 - **Real-player checks (quickstart §3 to §5) are the operator's**: nothing here can drive VLC,
   Kodi or a TV.
+- **T038 ran against the media server alone** (`MediaServer::update` with a temp config, a
+  temporary example that was not committed), not the full daemon: the daemon needs a valid Put.io
+  token to leave setup mode and the client has no base-URL override. Quickstart §2 passed: friendly
+  name served, Browse listed only the `.mp4`, a ranged GET gave `206` (100 bytes), and
+  `downloads/..%2F..` gave fault `701`. §3 (VLC, Kodi, TV) is the operator's.
