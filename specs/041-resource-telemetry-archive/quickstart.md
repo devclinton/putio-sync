@@ -31,8 +31,15 @@ seconds go up.
 
 ## 3. Recording rules and alerts (promtool)
 
+Render the `putio-sync` alert group and the recording rules from home-network to `/tmp`,
+as in 003's quickstart §4. Ansible's Python has jinja2 and PyYAML:
+
 ```bash
-promtool check rules putio-sync-recording.yml
+"$(head -1 "$(which ansible)" | sed 's/^#!//')" -c "import jinja2, yaml, os; d = os.path.expanduser('~/dev/home-network/roles/monitoring_prometheus/templates/'); t = jinja2.Template(open(d + 'alerts.yml.j2').read()); g = [g for g in yaml.safe_load(t.render(groups={}, prometheus_longterm_listen='127.0.0.1:9092'))['groups'] if g['name'] == 'putio-sync']; open('/tmp/putio-sync-alerts.yml', 'w').write(yaml.safe_dump({'groups': g}, sort_keys=False)); open('/tmp/putio-sync-recording.yml', 'w').write(jinja2.Template(open(d + 'putio-sync-recording.yml.j2').read()).render())"
+```
+
+```bash
+promtool check rules /tmp/putio-sync-recording.yml /tmp/putio-sync-alerts.yml
 promtool test rules specs/041-resource-telemetry-archive/alert-tests.yml
 ```
 
@@ -101,8 +108,9 @@ The User Scripts plugin must be installed first; that is the operator's step.
 - **Restore**: pick an archived day. Gunzip it, then run `promtool tsdb create-blocks-from
   openmetrics` into a spare dir and start a throwaway Prometheus on it. The day's series match
   the dashboard for that day.
-- **Gap fill**: stop the long-term instance for 1 hour. `PutioSyncLongTermDown` stays silent
-  (its `for` is 2h), and `PutioSyncLongTermBehind` fires. Start it again, run the
+- **Gap fill**: stop the long-term instance for 1 hour. Both alerts stay silent:
+  `PutioSyncLongTermDown` has a `for` of 2h, and `PutioSyncLongTermBehind` waits for 2 hours
+  of lag. Start it again, run the
   `create-blocks-from rules` step in
   [contracts/long-term.md](contracts/long-term.md#gap-fill-and-restore-documented-run-by-hand-on-the-monitoring-server)
   for the gap, and move the blocks in. The hole is gone at "last 7 days".

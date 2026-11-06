@@ -6,6 +6,21 @@ use putio_sync_telemetry::DbOp;
 use sqlx::SqlitePool;
 use tracing::debug;
 
+/// What was downloaded on one UTC day (feature 041)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DailyTotals {
+    /// The UTC day
+    pub day: chrono::NaiveDate,
+    /// Downloads finished that day
+    pub downloads: i64,
+    /// Bytes of those downloads
+    pub bytes: i64,
+    /// Seconds spent downloading them
+    pub download_seconds: i64,
+    /// `bytes` over `download_seconds`, 0 when no time was recorded
+    pub avg_speed_bytes_per_s: i64,
+}
+
 /// Repository for managing history records
 pub struct HistoryRepository<'a> {
     pool: &'a SqlitePool,
@@ -261,6 +276,51 @@ impl<'a> HistoryRepository<'a> {
 
         Ok(count.0)
     }
+
+    /// Downloads per UTC day between `from` and `to`, both inclusive and both optional,
+    /// oldest first. Days without downloads are left out. History timestamps are UTC.
+    pub async fn daily_totals(
+        &self,
+        from: Option<chrono::NaiveDate>,
+        to: Option<chrono::NaiveDate>,
+    ) -> DbResult<Vec<DailyTotals>> {
+        let rows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
+            r#"
+            SELECT date(timestamp) AS day,
+                   COUNT(*),
+                   COALESCE(SUM(file_size), 0),
+                   COALESCE(SUM(duration_seconds), 0)
+            FROM download_history
+            WHERE action = 'downloaded'
+              AND (?1 IS NULL OR date(timestamp) >= ?1)
+              AND (?2 IS NULL OR date(timestamp) <= ?2)
+            GROUP BY day
+            ORDER BY day
+            "#,
+        )
+        .bind(from.map(|d| d.to_string()))
+        .bind(to.map(|d| d.to_string()))
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::History, "Failed to total history by day"))?;
+
+        Ok(rows
+            .into_iter()
+            .filter_map(|(day, downloads, bytes, download_seconds)| {
+                Some(DailyTotals {
+                    day: day.parse().ok()?,
+                    downloads,
+                    bytes,
+                    download_seconds,
+                    avg_speed_bytes_per_s: if download_seconds > 0 {
+                        bytes / download_seconds
+                    } else {
+                        0
+                    },
+                })
+            })
+            .collect())
+    }
 }
 
 /// `AND …` clauses and their bindings for the action and name filters (R7)
@@ -322,6 +382,89 @@ mod tests {
         assert_eq!(rows[0].timestamp, "2026-03-04 05:06:07");
         assert_eq!(rows[0].extension.as_deref(), Some("mkv"));
         assert_eq!(rows[0].action, "downloaded");
+    }
+
+    fn at(text: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(text)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+
+    fn day(text: &str) -> chrono::NaiveDate {
+        text.parse().unwrap()
+    }
+
+    #[tokio::test]
+    async fn daily_totals_split_at_utc_midnight() {
+        let (_temp_dir, db) = setup_test_db().await;
+        let repo = HistoryRepository::new(db.pool());
+        repo.insert_download_at(1, "a.mkv", 1000, Some(10), None, at("2026-03-04T23:59:59Z"))
+            .await
+            .unwrap();
+        repo.insert_download_at(2, "b.mkv", 3000, Some(20), None, at("2026-03-05T00:00:00Z"))
+            .await
+            .unwrap();
+        repo.insert_download_at(3, "c.mkv", 500, Some(5), None, at("2026-03-05T12:00:00Z"))
+            .await
+            .unwrap();
+        // Deleted rows and days far away do not count
+        repo.insert(4, "d.mkv", 9999, HistoryAction::Deleted, None, None)
+            .await
+            .unwrap();
+        repo.insert_download_at(5, "e.mkv", 1, Some(1), None, at("2026-04-01T00:00:00Z"))
+            .await
+            .unwrap();
+
+        let totals = repo
+            .daily_totals(Some(day("2026-03-04")), Some(day("2026-03-05")))
+            .await
+            .unwrap();
+        assert_eq!(
+            totals,
+            vec![
+                DailyTotals {
+                    day: day("2026-03-04"),
+                    downloads: 1,
+                    bytes: 1000,
+                    download_seconds: 10,
+                    avg_speed_bytes_per_s: 100,
+                },
+                DailyTotals {
+                    day: day("2026-03-05"),
+                    downloads: 2,
+                    bytes: 3500,
+                    download_seconds: 25,
+                    avg_speed_bytes_per_s: 140,
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn daily_totals_without_bounds_or_duration() {
+        let (_temp_dir, db) = setup_test_db().await;
+        let repo = HistoryRepository::new(db.pool());
+        assert!(repo.daily_totals(None, None).await.unwrap().is_empty());
+
+        repo.insert_download_at(1, "a.mkv", 1000, None, None, at("2026-03-04T10:00:00Z"))
+            .await
+            .unwrap();
+        repo.insert_download_at(2, "b.mkv", 1, Some(1), None, at("2026-05-01T10:00:00Z"))
+            .await
+            .unwrap();
+
+        let all = repo.daily_totals(None, None).await.unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].day, day("2026-03-04"));
+        assert_eq!(all[0].download_seconds, 0);
+        assert_eq!(all[0].avg_speed_bytes_per_s, 0);
+
+        let from = repo
+            .daily_totals(Some(day("2026-04-01")), None)
+            .await
+            .unwrap();
+        assert_eq!(from.len(), 1);
+        assert_eq!(from[0].day, day("2026-05-01"));
     }
 
     #[tokio::test]

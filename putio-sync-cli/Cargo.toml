@@ -22,6 +22,7 @@ putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 # Core library (for Config and utilities)
 putio-sync-core = { path = "../putio-sync-core" }
 putio-sync-api = { path = "../putio-sync-api" }
+putio-sync-archive = { path = "../putio-sync-archive" }
 putio-sync-tailscale = { path = "../putio-sync-tailscale" }
 
 # Specialized crates
@@ -101,6 +102,7 @@ assert_cmd = "2.0"
 predicates = "3.0"
 assert_fs = "1.1"
 mockito = "1.2"
+flate2 = "1"
 
 [package.metadata.docs.rs]
 all-features = true

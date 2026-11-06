@@ -1,0 +1,244 @@
+# promtool test rules for the 041 recording rules and resource alerts.
+# Render both from home-network first (quickstart.md §3), then:
+#   promtool test rules specs/041-resource-telemetry-archive/alert-tests.yml
+#
+# Recording-rule input is 15 s, like the real scrape. Prometheus 3 ranges are
+# left-open, so a 5m window at 10m holds the samples after 5m up to 10m.
+
+rule_files:
+  - /tmp/putio-sync-recording.yml
+  - /tmp/putio-sync-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # --- recording rules ------------------------------------------------------
+
+  - name: cpu and memory avg and max
+    interval: 15s
+    input_series:
+      # +3.75 s of CPU every 15 s = 0.25 cores.
+      - series: 'putio_sync_process_cpu_seconds_total{job="putio_sync",instance="nas"}'
+        values: '0+3.75x80'
+      - series: 'putio_sync_process_resident_memory_bytes{job="putio_sync",instance="nas"}'
+        values: '100000000+1000000x80'
+    promql_expr_test:
+      # rate extrapolates, so the result is 0.25 only to within float error.
+      - expr: abs(putio_sync:process_cpu_usage:avg5m - 0.25) < bool 1e-9
+        eval_time: 10m
+        exp_samples:
+          - labels: '{job="putio_sync",instance="nas"}'
+            value: 1
+      - expr: abs(putio_sync:process_cpu_usage:max5m - 0.25) < bool 1e-9
+        eval_time: 10m
+        exp_samples:
+          - labels: '{job="putio_sync",instance="nas"}'
+            value: 1
+      # Samples 21..40 are 121e6..140e6.
+      - expr: putio_sync:process_resident_memory_bytes:avg5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'putio_sync:process_resident_memory_bytes:avg5m{job="putio_sync",instance="nas"}'
+            value: 130500000
+      - expr: putio_sync:process_resident_memory_bytes:max5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'putio_sync:process_resident_memory_bytes:max5m{job="putio_sync",instance="nas"}'
+            value: 140000000
+
+  # A restart at 7m30s resets the counter. rate counts the reset as a reset,
+  # so the 5m CPU stays near 0.2 instead of going negative.
+  - name: cpu rate across a counter reset
+    interval: 15s
+    input_series:
+      - series: 'putio_sync_process_cpu_seconds_total{job="putio_sync",instance="nas"}'
+        values: '0+3x29 0+3x50'
+    promql_expr_test:
+      - expr: putio_sync:process_cpu_usage:avg5m > bool 0.18 and putio_sync:process_cpu_usage:avg5m < bool 0.21
+        eval_time: 10m
+        exp_samples:
+          - labels: '{job="putio_sync",instance="nas"}'
+            value: 1
+
+  # 2 = two downloads, -1 = syncing, 0 = idle; downloading beats syncing.
+  - name: activity state
+    interval: 15s
+    input_series:
+      - series: 'putio_sync_downloads_active{job="putio_sync",instance="downloading"}'
+        values: '2x80'
+      - series: 'putio_sync_sync_in_progress{job="putio_sync",instance="downloading"}'
+        values: '0x80'
+      - series: 'putio_sync_downloads_active{job="putio_sync",instance="syncing"}'
+        values: '0x80'
+      - series: 'putio_sync_sync_in_progress{job="putio_sync",instance="syncing"}'
+        values: '1x80'
+      - series: 'putio_sync_downloads_active{job="putio_sync",instance="idle"}'
+        values: '0x80'
+      - series: 'putio_sync_sync_in_progress{job="putio_sync",instance="idle"}'
+        values: '0x80'
+      - series: 'putio_sync_downloads_active{job="putio_sync",instance="both"}'
+        values: '1x80'
+      - series: 'putio_sync_sync_in_progress{job="putio_sync",instance="both"}'
+        values: '1x80'
+    promql_expr_test:
+      - expr: putio_sync:activity_state:5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'putio_sync:activity_state:5m{job="putio_sync",instance="downloading"}'
+            value: 2
+          - labels: 'putio_sync:activity_state:5m{job="putio_sync",instance="syncing"}'
+            value: -1
+          - labels: 'putio_sync:activity_state:5m{job="putio_sync",instance="idle"}'
+            value: 0
+          - labels: 'putio_sync:activity_state:5m{job="putio_sync",instance="both"}'
+            value: 1
+
+  # --- alerts ---------------------------------------------------------------
+
+  - name: PutioSyncMemoryHigh
+    interval: 1m
+    input_series:
+      - series: 'putio_sync_process_resident_memory_bytes{job="putio_sync",instance="bad",host="nas01"}'
+        values: '2000000000x40'
+      - series: 'putio_sync_process_resident_memory_bytes{job="putio_sync",instance="good",host="nas01"}'
+        values: '500000000x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: PutioSyncMemoryHigh
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: PutioSyncMemoryHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, job: putio_sync, instance: bad, host: nas01}
+            exp_annotations:
+              summary: "putio-sync using over 1 GiB of memory on nas01"
+              description: "Resident memory has been above 1 GiB for 30 minutes. See the putio-sync resources dashboard."
+
+  # bad grows 12 MB an hour from 300 MB: past 1 GiB within 7 days. restarted
+  # grows the same but restarted at 20h, so it stays silent until 44h.
+  - name: PutioSyncMemoryGrowing
+    interval: 10m
+    input_series:
+      - series: 'putio_sync_process_resident_memory_bytes{job="putio_sync",instance="bad",host="nas01"}'
+        values: '300000000+2000000x200'
+      - series: 'putio_sync_start_time_seconds{job="putio_sync",instance="bad",host="nas01"}'
+        values: '1000x200'
+      - series: 'putio_sync_process_resident_memory_bytes{job="putio_sync",instance="restarted",host="nas01"}'
+        values: '300000000+2000000x200'
+      - series: 'putio_sync_start_time_seconds{job="putio_sync",instance="restarted",host="nas01"}'
+        values: '1000x119 73000x80'
+      - series: 'putio_sync_process_resident_memory_bytes{job="putio_sync",instance="flat",host="nas01"}'
+        values: '300000000x200'
+      - series: 'putio_sync_start_time_seconds{job="putio_sync",instance="flat",host="nas01"}'
+        values: '1000x200'
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: PutioSyncMemoryGrowing
+        exp_alerts:
+          - exp_labels: {severity: warning, job: putio_sync, instance: bad, host: nas01}
+            exp_annotations:
+              summary: "putio-sync memory heading past 1 GiB on nas01"
+              description: "At the last 24 hours' rate, resident memory will pass 1 GiB within 7 days, with no restart in between. Possible leak."
+
+  - name: PutioSyncCpuHigh
+    interval: 1m
+    input_series:
+      # +57 s a minute = 0.95 cores; +6 s = 0.1.
+      - series: 'putio_sync_process_cpu_seconds_total{job="putio_sync",instance="bad",host="nas01"}'
+        values: '0+57x40'
+      - series: 'putio_sync_process_cpu_seconds_total{job="putio_sync",instance="good",host="nas01"}'
+        values: '0+6x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: PutioSyncCpuHigh
+        exp_alerts: []
+      - eval_time: 38m
+        alertname: PutioSyncCpuHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, job: putio_sync, instance: bad, host: nas01}
+            exp_annotations:
+              summary: "putio-sync using over 90% of a CPU on nas01"
+              description: "CPU use has been above 0.9 cores for 30 minutes."
+
+  - name: PutioSyncOpenFilesHigh
+    interval: 1m
+    input_series:
+      - series: 'putio_sync_process_open_fds{job="putio_sync",instance="bad",host="nas01"}'
+        values: '900x20'
+      - series: 'putio_sync_process_max_fds{job="putio_sync",instance="bad",host="nas01"}'
+        values: '1024x20'
+      - series: 'putio_sync_process_open_fds{job="putio_sync",instance="good",host="nas01"}'
+        values: '100x20'
+      - series: 'putio_sync_process_max_fds{job="putio_sync",instance="good",host="nas01"}'
+        values: '1024x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: PutioSyncOpenFilesHigh
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: PutioSyncOpenFilesHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, job: putio_sync, instance: bad, host: nas01}
+            exp_annotations:
+              summary: "putio-sync near its open-file limit on nas01"
+              description: "More than 80% of the open-file limit has been in use for 10 minutes."
+
+  # Sending stops at 60m. 2 h behind is reached at 180m, plus 5m of for.
+  - name: PutioSyncLongTermBehind fires
+    interval: 1m
+    input_series:
+      - series: 'prometheus_remote_storage_highest_timestamp_in_seconds{job="prometheus",instance="127.0.0.1:9090"}'
+        values: '0+60x200'
+      - series: 'prometheus_remote_storage_queue_highest_sent_timestamp_seconds{job="prometheus",instance="127.0.0.1:9090",remote_name="putio-longterm"}'
+        values: '0+60x60 3600x140'
+    alert_rule_test:
+      - eval_time: 120m
+        alertname: PutioSyncLongTermBehind
+        exp_alerts: []
+      - eval_time: 190m
+        alertname: PutioSyncLongTermBehind
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "putio-sync long-term copy is behind"
+              description: "The main Prometheus is over 2 hours behind sending putio-sync's 5-minute series to the long-term instance. Gaps still in the raw 30 days can be filled; see apps/putio-sync.md."
+
+  - name: PutioSyncLongTermBehind silent while sending
+    interval: 1m
+    input_series:
+      - series: 'prometheus_remote_storage_highest_timestamp_in_seconds{job="prometheus",instance="127.0.0.1:9090"}'
+        values: '60+60x200'
+      - series: 'prometheus_remote_storage_queue_highest_sent_timestamp_seconds{job="prometheus",instance="127.0.0.1:9090",remote_name="putio-longterm"}'
+        values: '0+60x200'
+    alert_rule_test:
+      - eval_time: 190m
+        alertname: PutioSyncLongTermBehind
+        exp_alerts: []
+
+  # Silent at 1 h down (a short outage), firing after 2 h.
+  - name: PutioSyncLongTermDown
+    interval: 1m
+    input_series:
+      - series: 'up{job="prometheus_longterm",instance="127.0.0.1:9092"}'
+        values: '0x200'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: PutioSyncLongTermDown
+        exp_alerts: []
+      - eval_time: 130m
+        alertname: PutioSyncLongTermDown
+        exp_alerts:
+          - exp_labels: {severity: warning, job: prometheus_longterm, instance: "127.0.0.1:9092"}
+            exp_annotations:
+              summary: "putio-sync long-term Prometheus is down"
+              description: "The long-term Prometheus on 127.0.0.1:9092 has not been scrapable for 2 hours. Restart its service, then gap-fill; see apps/putio-sync.md."
+
+  - name: PutioSyncLongTermDown silent while up
+    interval: 1m
+    input_series:
+      - series: 'up{job="prometheus_longterm",instance="127.0.0.1:9092"}'
+        values: '1x200'
+    alert_rule_test:
+      - eval_time: 130m
+        alertname: PutioSyncLongTermDown
+        exp_alerts: []

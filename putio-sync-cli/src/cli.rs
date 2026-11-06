@@ -709,6 +709,17 @@ pub enum Commands {
         yes: bool,
     },
 
+    /// Long-term archive of metrics, database and usage summary (feature 041)
+    #[command(
+        subcommand,
+        about = "Save metrics, database copies and usage summaries",
+        long_about = "Save the 5-minute resource series from Prometheus, a gzipped copy of \
+                      the database, and daily and monthly usage CSVs, into one archive folder. \
+                      Exit code: 0 done, 1 bad arguments or config, 2 Prometheus error, \
+                      3 database error, 4 archive folder error."
+    )]
+    Archive(ArchiveCommands),
+
     /// First-run setup in the terminal (feature 013)
     #[command(
         about = "Set up putio-sync: Put.io, download folder, what to download",
@@ -762,6 +773,130 @@ pub enum Commands {
             help = "Take every suggestion and write without asking"
         )]
         yes: bool,
+    },
+}
+
+/// Options every archive command takes (feature 041)
+#[derive(clap::Args, Debug)]
+pub struct ArchiveCommon {
+    /// Archive folder
+    #[arg(
+        long = "dir",
+        value_name = "PATH",
+        env = "PUTIO_SYNC_ARCHIVE_DIR",
+        help = "Archive folder [default: <config dir>/archive]"
+    )]
+    pub dir: Option<PathBuf>,
+
+    /// Stop when the archive folder has no manifest.jsonl
+    #[arg(
+        long = "require-manifest",
+        help = "Fail if manifest.jsonl is missing (guards an unmounted share)"
+    )]
+    pub require_manifest: bool,
+}
+
+impl From<ArchiveCommon> for putio_sync_cli::commands::archive::ArchiveCommon {
+    fn from(common: ArchiveCommon) -> Self {
+        Self {
+            dir: common.dir,
+            require_manifest: common.require_manifest,
+        }
+    }
+}
+
+/// Where the archive commands read the 5-minute series
+#[derive(clap::Args, Debug)]
+pub struct ArchivePrometheus {
+    /// Prometheus base URL
+    #[arg(
+        long = "prometheus",
+        value_name = "URL",
+        env = "PUTIO_SYNC_ARCHIVE_PROMETHEUS_URL",
+        help = "Prometheus base URL, e.g. http://192.168.1.60:9090"
+    )]
+    pub prometheus: Option<String>,
+
+    /// The `instance` label of this putio-sync
+    #[arg(
+        long = "instance",
+        value_name = "VALUE",
+        env = "PUTIO_SYNC_ARCHIVE_INSTANCE",
+        help = "Prometheus instance label [default: the only putio-sync instance]"
+    )]
+    pub instance: Option<String>,
+}
+
+/// Archive subcommands (feature 041)
+#[derive(Subcommand, Debug)]
+pub enum ArchiveCommands {
+    /// Save the 5-minute resource series of each finished day
+    #[command(about = "Save each finished day of 5-minute metrics from Prometheus")]
+    Metrics {
+        #[command(flatten)]
+        common: ArchiveCommon,
+
+        #[command(flatten)]
+        prometheus: ArchivePrometheus,
+
+        /// Delete saved files older than this many days
+        #[arg(
+            long = "keep-days",
+            value_name = "N",
+            env = "PUTIO_SYNC_ARCHIVE_KEEP_DAYS",
+            help = "Delete saved files older than N days [default: keep forever]"
+        )]
+        keep_days: Option<u32>,
+
+        /// First day to save
+        #[arg(
+            long = "since",
+            value_name = "YYYY-MM-DD",
+            help = "First day to save [default: 366 days ago]"
+        )]
+        since: Option<chrono::NaiveDate>,
+    },
+
+    /// Save a compact copy of the database
+    #[command(about = "Save a gzipped copy of the database (once per day)")]
+    Db {
+        #[command(flatten)]
+        common: ArchiveCommon,
+
+        /// Delete saved files older than this many days
+        #[arg(
+            long = "keep-days",
+            value_name = "N",
+            env = "PUTIO_SYNC_ARCHIVE_KEEP_DAYS",
+            help = "Delete saved files older than N days [default: keep forever]"
+        )]
+        keep_days: Option<u32>,
+    },
+
+    /// Write daily and monthly usage CSVs
+    #[command(about = "Write daily and monthly usage CSVs from history and metrics")]
+    Summary {
+        #[command(flatten)]
+        common: ArchiveCommon,
+
+        #[command(flatten)]
+        prometheus: ArchivePrometheus,
+
+        /// First day
+        #[arg(
+            long = "from",
+            value_name = "YYYY-MM-DD",
+            help = "First day [default: first day in the download history]"
+        )]
+        from: Option<chrono::NaiveDate>,
+
+        /// Last day
+        #[arg(
+            long = "to",
+            value_name = "YYYY-MM-DD",
+            help = "Last day [default: today, UTC]"
+        )]
+        to: Option<chrono::NaiveDate>,
     },
 }
 
@@ -1210,6 +1345,44 @@ mod tests {
         } else {
             panic!("Expected List command");
         }
+    }
+
+    #[test]
+    fn test_archive_flags() {
+        let cli = Cli::try_parse_from([
+            "putio-sync",
+            "archive",
+            "metrics",
+            "--prometheus",
+            "http://p:9090",
+            "--since",
+            "2026-01-02",
+            "--keep-days",
+            "400",
+            "--require-manifest",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Archive(ArchiveCommands::Metrics {
+                common,
+                prometheus,
+                keep_days,
+                since,
+            }) => {
+                assert!(common.require_manifest);
+                assert_eq!(common.dir, None);
+                assert_eq!(prometheus.prometheus.as_deref(), Some("http://p:9090"));
+                assert_eq!(keep_days, Some(400));
+                assert_eq!(since, "2026-01-02".parse().ok());
+            }
+            _ => panic!("Expected archive metrics"),
+        }
+        // db takes neither --prometheus nor --since
+        assert!(Cli::try_parse_from(["putio-sync", "archive", "db", "--prometheus", "x"]).is_err());
+        assert!(Cli::try_parse_from(["putio-sync", "archive", "summary", "--to", "soon"]).is_err());
+        assert!(
+            Cli::try_parse_from(["putio-sync", "archive", "summary", "--to", "2026-11-02"]).is_ok()
+        );
     }
 
     #[test]
