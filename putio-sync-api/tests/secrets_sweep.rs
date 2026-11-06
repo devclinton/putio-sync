@@ -161,6 +161,10 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         get("/settings/subtitles"),
         (Method::PUT, "/settings/subtitles", Some(json!({}))),
         post("/settings/subtitles/preview"),
+        get("/settings/translation"),
+        (Method::PUT, "/settings/translation", Some(json!({}))),
+        post("/settings/translation/preview"),
+        post("/settings/translation/test"),
         // Unknown paths fall through to the protected fallback
         get("/robots.txt"),
     ]
@@ -776,6 +780,68 @@ async fn no_transcription_key_in_responses_or_logs() {
     let logs = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
     for text in texts.iter().chain([&logs]) {
         assert!(!text.contains(KEY), "{KEY} in {text}");
+    }
+}
+
+/// The chat key and the callback header values never come back from the settings routes,
+/// the export, the doctor, the metrics, the test route or a log line (feature 026)
+#[tokio::test]
+async fn no_translation_secrets_in_responses_or_logs() {
+    const KEY: &str = "TRANSLATIONKEY0123";
+    const HEADER: &str = "TRANSLATIONHEADER0123";
+    let logs = captured_logs();
+    let app = common::test_app_with(|config| {
+        config.subtitles.languages = vec!["en".to_string()];
+        config.translation.kind = putio_sync_core::translation::TranslatorKind::Chat;
+        config.translation.chat.base_url = "http://127.0.0.1:9".to_string();
+        config.translation.chat.model = "m".to_string();
+        config.translation.chat.api_key = KEY.to_string();
+        config
+            .translation
+            .callback
+            .headers
+            .insert("Authorization".to_string(), HEADER.to_string());
+    })
+    .await;
+
+    let mut texts = Vec::new();
+    for path in [
+        "/settings/translation",
+        "/settings/export",
+        "/settings/assistant",
+        "/doctor",
+        "/metrics",
+    ] {
+        texts.push(body_text(app.get(path).await).await);
+    }
+    let settings: Value = serde_json::from_str(&texts[0]).unwrap();
+    assert_eq!(settings["chat"]["api_key"], "********");
+    assert_eq!(settings["callback"]["headers"]["Authorization"], "********");
+    texts.push(
+        body_text(
+            app.post_json("/settings/translation/preview", settings.clone())
+                .await,
+        )
+        .await,
+    );
+    // The test route talks to a closed port with the key; its answer must not echo it
+    texts.push(body_text(app.post_json("/settings/translation/test", json!({})).await).await);
+    let response = app
+        .req(
+            Method::PUT,
+            "/settings/translation",
+            Some(&app.token),
+            Some(settings),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    texts.push(body_text(response).await);
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let logs = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
+    for text in texts.iter().chain([&logs]) {
+        assert!(!text.contains(KEY), "{KEY} in {text}");
+        assert!(!text.contains(HEADER), "{HEADER} in {text}");
     }
 }
 

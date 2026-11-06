@@ -11,6 +11,7 @@ pub mod callback;
 pub mod chat;
 pub mod chunk;
 pub mod engine;
+pub mod probe;
 pub mod prompt;
 pub mod source;
 pub mod translator;

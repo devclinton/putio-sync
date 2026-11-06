@@ -276,6 +276,27 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "translation",
+        &[
+            (
+                "kind",
+                "How missing subtitle languages are translated: none, chat (an OpenAI-compatible model) or callback (your own API)",
+            ),
+            (
+                "excluded_categories",
+                "Download categories (the first folder) that get no translation",
+            ),
+            (
+                "chat",
+                "Chat server base URL, model name and optional API key",
+            ),
+            (
+                "callback",
+                "Your translation service URL, the address it reaches putio-sync at, and its headers",
+            ),
+        ],
+    ),
+    (
         "putio",
         &[(
             "app_id",
