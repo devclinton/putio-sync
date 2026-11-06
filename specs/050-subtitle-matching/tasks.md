@@ -8,7 +8,7 @@
 ## Phase 1: Setup
 
 - [X] T001 [P] Add module `media` (empty `MediaInfo`, `MediaKind`, `MediaRequest`, `MediaLookup` skeleton) to `putio-sync-core/src/media.rs` and export it in `putio-sync-core/src/lib.rs`; move or re-export the `BoxFut` alias there if `core` has none
-- [ ] T002 [P] Create fixture folder `putio-sync-subtitles/tests/fixtures/opensubtitles/` with `search_hash.json`, `search_ids.json`, `search_empty.json`, `download.json`, `login.json` copied from `contracts/opensubtitles-api.md`
+- [X] T002 [P] Create fixture folder `putio-sync-subtitles/tests/fixtures/opensubtitles/` with `search_hash.json`, `search_ids.json`, `search_empty.json`, `download.json`, `login.json` copied from `contracts/opensubtitles-api.md`
 
 ## Phase 2: Foundational (blocks all stories)
 
@@ -56,9 +56,9 @@
 - [X] T021 [P] [US2] Write failing tests for the OpenSubtitles file hash in `putio-sync-subtitles/src/hash.rs`: known-answer vector from a published sample, file under 128 KiB returns `None`, size wraparound, last block shorter than 64 KiB handled
 - [X] T022 [P] [US2] Write failing table tests for the release parser in `putio-sync-subtitles/src/release.rs` (title, year, `SxxEyy`, `NxNN`, resolution, source incl. `WEB-DL`/`web.dl`, codec, group suffix and `[Group]`, a title that contains a year, `S01E01E02`, junk names)
 - [X] T023 [P] [US2] Write failing score tests in `putio-sync-subtitles/src/score.rs`: fingerprint = 100; IDs alone = 60; +15/+10/+10/+5 for group/source/resolution/codec; default threshold 65 accepts 70 and rejects 60; download-count tie-break never moves a score across the threshold
-- [ ] T024 [P] [US2] Write failing mockito tests in `putio-sync-subtitles/tests/opensubtitles.rs`: headers (`Api-Key`, `User-Agent`), sorted lowercase query, search parsing (lenient fields), download two-step (`/download` then link), login and token reuse, 401 key rejected, 406 quota exhausted (no further requests until reset), 429 waits `Retry-After`, no secret in any error string
+- [X] T024 [P] [US2] Write failing mockito tests in `putio-sync-subtitles/tests/opensubtitles.rs`: headers (`Api-Key`, `User-Agent`), sorted lowercase query, search parsing (lenient fields), download two-step (`/download` then link), login and token reuse, 401 key rejected, 406 quota exhausted (no further requests until reset), 429 waits `Retry-After`, no secret in any error string
 - [ ] T025 [P] [US2] Write failing mockito tests in `putio-sync-arr/tests/media_lookup.rs`: Radarr and Sonarr history by `downloadId`, season pack picks all episodes, cache hit makes no second call, unreachable server and empty history return `None`, `/movie/{id}` fallback, API key not logged
-- [ ] T026 [P] [US2] Write failing engine tests in `putio-sync-subtitles/tests/matching.rs`: levels in order and early stop, one search per level for all missing languages, skip when inputs missing, threshold skip recorded as `below_threshold(score)`, quota gives `quota` skip then Whisper fallback in Download then Whisper, machine-translated dropped, hearing-impaired not used as main, existing subtitle means no request
+- [X] T026 [P] [US2] Write failing engine tests in `putio-sync-subtitles/tests/matching.rs`: levels in order and early stop, one search per level for all missing languages, skip when inputs missing, threshold skip recorded as `below_threshold(score)`, quota gives `quota` skip then Whisper fallback in Download then Whisper, machine-translated dropped, hearing-impaired not used as main, existing subtitle means no request
 
 ### Implementation for User Story 2
 
@@ -66,11 +66,11 @@
 - [X] T028 [P] [US2] Implement `ReleaseInfo::parse` and its enums in `putio-sync-subtitles/src/release.rs` (std only, rules in research R5)
 - [X] T029 [US2] Implement `Score`, constants, `score_ids`, `score_hash` and the threshold check in `putio-sync-subtitles/src/score.rs` (depends on T028)
 - [X] T030 [P] [US2] Add `OpenSubtitlesConfig` to `putio-sync-core/src/subtitles.rs` (`api_key`, `username`, `password`, `user_agent`; `is_active`, env overrides `PUTIO_SYNC_OPENSUBTITLES_API_KEY` and `..._PASSWORD`, redacted `Debug`, mask/unmask, "password needs username"); extend its tests
-- [ ] T031 [US2] Implement the REST client in `putio-sync-subtitles/src/opensubtitles.rs`: `search`, `download`, `login`, `QuotaState`, pacing (4 per second), 429 handling, redacted errors; trait `SubtitleSearch` for the engine seam (depends on T030)
+- [X] T031 [US2] Implement the REST client in `putio-sync-subtitles/src/opensubtitles.rs`: `search`, `download`, `login`, `QuotaState`, pacing (4 per second), 429 handling, redacted errors; trait `SubtitleSearch` for the engine seam (depends on T030)
 - [X] T032 [P] [US2] Fill `MediaInfo`, `MediaKind`, `MediaRequest`, `MediaLookup` in `putio-sync-core/src/media.rs` per `contracts/media-lookup.md`
 - [ ] T033 [US2] Add `ArrApi::history_by_download` (Radarr and Sonarr variants) in `putio-sync-arr/src/arr_api.rs` and `ArrMedia: MediaLookup` with the hash cache in `putio-sync-arr/src/media.rs` (uses `arr_items.get_by_file_id`)
-- [ ] T034 [US2] Implement the matching levels (fingerprint, IDs) in `putio-sync-subtitles/src/matching.rs`: build the search, convert results to scored candidates in `candidates.rs`, pick the best at or above the threshold per language, try the next on a bad download, record `SkipNote`s (depends on T027-T029, T031-T032)
-- [ ] T035 [US2] Hook the OpenSubtitles pass into `fetch_for_video` after the Put.io pass for languages that download and are still missing, honouring `Skipped(quota)`, in `putio-sync-subtitles/src/engine.rs`; saved files use sources `os_hash` and `os_ids`; step message shows level and score
+- [X] T034 [US2] Implement the matching levels (fingerprint, IDs) in `putio-sync-subtitles/src/matching.rs`: build the search, convert results to scored candidates in `candidates.rs`, pick the best at or above the threshold per language, try the next on a bad download, record `SkipNote`s (depends on T027-T029, T031-T032)
+- [X] T035 [US2] Hook the OpenSubtitles pass into `fetch_for_video` after the Put.io pass for languages that download and are still missing, honouring `Skipped(quota)`, in `putio-sync-subtitles/src/engine.rs`; saved files use sources `os_hash` and `os_ids`; step message shows level and score
 - [ ] T036 [US2] Pass the `SubtitleSearch` client and `Arc<dyn MediaLookup>` into the pipeline and the engine request (file ID, category, hash path) in `putio-sync-pipeline/src/subtitles.rs` and `putio-sync-pipeline/src/lib.rs`
 - [ ] T037 [US2] Build the client and the `ArrMedia` adapter and rebuild them on settings change in `putio-sync-daemon/src/daemon.rs`
 - [ ] T038 [US2] Add the `opensubtitles` fields and `POST /settings/subtitles/opensubtitles/test` (unsaved input allowed, masked values keep stored ones) in `putio-sync-api/src/routes/system/subtitles.rs`; extend the secrets sweep test to the new fields and the JWT
@@ -88,13 +88,13 @@
 ### Tests for User Story 3
 
 - [X] T042 [P] [US3] Write failing tests for title similarity (normalised tokens, Dice) and the name-level score (title x40 + year or episode agreement up to 10 + release parts; any year/season/episode disagreement scores 0) in `putio-sync-subtitles/src/score.rs`
-- [ ] T043 [P] [US3] Write failing engine tests in `putio-sync-subtitles/tests/matching_name.rs`: name level used only when earlier levels found nothing or lacked inputs, query params (`query`, `type`, `year` or `season_number` and `episode_number`), unparsable name makes no request and notes `no_name`, wrong-title result rejected, `S01E01E02` uses the first episode
+- [X] T043 [P] [US3] Write failing engine tests in `putio-sync-subtitles/tests/matching_name.rs`: name level used only when earlier levels found nothing or lacked inputs, query params (`query`, `type`, `year` or `season_number` and `episode_number`), unparsable name makes no request and notes `no_name`, wrong-title result rejected, `S01E01E02` uses the first episode
 - [ ] T044 [P] [US3] Write failing test in `putio-sync-pipeline/tests/subtitles.rs` for the manual Fetch subtitles item using all three levels and the modes
 
 ### Implementation for User Story 3
 
 - [X] T045 [US3] Implement `similarity` and `score_name` in `putio-sync-subtitles/src/score.rs`
-- [ ] T046 [US3] Add the name level (query builder from `ReleaseInfo`, `type` movie/episode) in `putio-sync-subtitles/src/matching.rs` and call it from `fetch_for_video` after IDs; source label `os_name`
+- [X] T046 [US3] Add the name level (query builder from `ReleaseInfo`, `type` movie/episode) in `putio-sync-subtitles/src/matching.rs` and call it from `fetch_for_video` after IDs; source label `os_name`
 - [ ] T047 [US3] Make the manual path (`start_manual_subtitles`, Local files) pass the same lookups and OpenSubtitles client in `putio-sync-pipeline/src/subtitles.rs`; bypass nothing but the size/sample rules (025)
 - [ ] T048 [US3] Verify US3 acceptance 1-4 against the mocks
 

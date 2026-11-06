@@ -1,0 +1,37 @@
+{
+  "total_pages": 1,
+  "total_count": 1,
+  "per_page": 50,
+  "page": 1,
+  "data": [
+    {
+      "id": "7001",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "7001",
+        "language": "en",
+        "download_count": 4200,
+        "hearing_impaired": false,
+        "foreign_parts_only": false,
+        "machine_translated": false,
+        "ai_translated": false,
+        "moviehash_match": true,
+        "ratings": 8.0,
+        "release": "Show.Name.S02E05.1080p.WEB-DL.x264-GRP",
+        "feature_details": {
+          "feature_type": "Episode",
+          "year": 2019,
+          "title": "Fifth Episode",
+          "parent_title": "Show Name",
+          "season_number": 2,
+          "episode_number": 5,
+          "imdb_id": 111,
+          "tmdb_id": 222,
+          "parent_imdb_id": 333,
+          "parent_tmdb_id": 444
+        },
+        "files": [{ "file_id": 98765, "file_name": "Show.Name.S02E05.1080p.WEB-DL.x264-GRP.srt" }]
+      }
+    }
+  ]
+}

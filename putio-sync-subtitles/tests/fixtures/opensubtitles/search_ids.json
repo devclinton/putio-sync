@@ -1,0 +1,56 @@
+{
+  "total_pages": 1,
+  "total_count": 3,
+  "per_page": 50,
+  "page": 1,
+  "data": [
+    {
+      "id": "8001",
+      "type": "subtitle",
+      "attributes": {
+        "language": "en",
+        "download_count": 90,
+        "hearing_impaired": false,
+        "foreign_parts_only": false,
+        "machine_translated": false,
+        "ai_translated": false,
+        "moviehash_match": false,
+        "release": "Show.Name.S02E05.720p.HDTV.x265-OTHER",
+        "feature_details": { "feature_type": "Episode", "year": 2019, "title": "Fifth Episode", "parent_title": "Show Name", "season_number": 2, "episode_number": 5, "parent_imdb_id": 333, "parent_tmdb_id": 444 },
+        "files": [{ "file_id": 11111, "file_name": "a.srt" }]
+      }
+    },
+    {
+      "id": "8002",
+      "type": "subtitle",
+      "attributes": {
+        "language": "en",
+        "download_count": 10,
+        "hearing_impaired": false,
+        "foreign_parts_only": false,
+        "machine_translated": false,
+        "ai_translated": false,
+        "moviehash_match": false,
+        "release": "Show.Name.S02E05.1080p.WEB-DL.x264-GRP",
+        "feature_details": { "feature_type": "Episode", "year": 2019, "title": "Fifth Episode", "parent_title": "Show Name", "season_number": 2, "episode_number": 5, "parent_imdb_id": 333, "parent_tmdb_id": 444 },
+        "files": [{ "file_id": 22222, "file_name": "b.srt" }]
+      }
+    },
+    {
+      "id": "8003",
+      "type": "subtitle",
+      "attributes": {
+        "language": "en",
+        "download_count": 5000,
+        "hearing_impaired": false,
+        "foreign_parts_only": false,
+        "machine_translated": true,
+        "ai_translated": false,
+        "moviehash_match": false,
+        "release": "Show.Name.S02E05.1080p.WEB-DL.x264-GRP",
+        "feature_details": { "feature_type": "Episode", "year": 2019, "title": "Fifth Episode", "parent_title": "Show Name", "season_number": 2, "episode_number": 5, "parent_imdb_id": 333, "parent_tmdb_id": 444 },
+        "files": [{ "file_id": 33333, "file_name": "c.srt" }]
+      }
+    }
+  ]
+}

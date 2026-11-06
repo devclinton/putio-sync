@@ -103,7 +103,7 @@ pub struct Score {
 }
 
 impl Score {
-    fn zero(level: Level) -> Self {
+    pub(crate) fn zero(level: Level) -> Self {
         Self {
             total: 0,
             tiebreak: 0,

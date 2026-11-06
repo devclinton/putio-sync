@@ -10,6 +10,7 @@ use tracing::{info, warn};
 
 use crate::audio;
 use crate::candidates::{self, Candidate, SourceKind};
+use crate::matching::{self, Matching};
 use crate::modes::ModePlan;
 use crate::naming::{self, Slot, SlotKind, WriteOutcome};
 use crate::srt;
@@ -28,6 +29,8 @@ pub struct VideoRequest<'a> {
     pub languages: &'a [String],
     /// What each language does: download, transcribe or both (feature 050)
     pub modes: &'a ModePlan,
+    /// The OpenSubtitles pass, when a key is set (feature 050)
+    pub matching: Option<Matching<'a>>,
 }
 
 impl<'a> VideoRequest<'a> {
@@ -43,7 +46,14 @@ impl<'a> VideoRequest<'a> {
             file_id,
             languages,
             modes,
+            matching: None,
         }
+    }
+
+    /// The same request with the OpenSubtitles pass turned on
+    pub fn with_matching(mut self, matching: Matching<'a>) -> Self {
+        self.matching = Some(matching);
+        self
     }
 }
 
@@ -245,6 +255,11 @@ pub async fn fetch_for_video(
                 }
             }
         }
+    }
+
+    // What Put.io did not give: OpenSubtitles by fingerprint, ids, then name
+    if let Some(m) = &req.matching {
+        matching::fill(req, m, &mut out, &mut existing).await?;
     }
 
     for lang in req.languages {
