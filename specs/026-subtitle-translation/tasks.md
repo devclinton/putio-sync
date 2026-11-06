@@ -8,14 +8,14 @@ from a branch that has 025 merged; tasks that touch 025's code say so (gaps G1 t
 
 ## Phase 1: Setup
 
-- [ ] T001 Create crate `putio-sync-translation` (`Cargo.toml`, `src/lib.rs`) and add it to workspace members in `Cargo.toml`; deps per research R15 (`putio-sync-core`, `putio-sync-subtitles`, `putio-sync-telemetry`, `tokio`, `reqwest`, `serde`, `serde_json`, `tracing`, `thiserror`, `sha2`, `uuid` v4 from the lockfile; dev `mockito`, `tempfile`)
-- [ ] T002 [P] Add the new crate's `Cargo.toml` COPY, `src` mkdir and stub echo lines to `Dockerfile` (layer-cache stubs)
+- [x] T001 Create crate `putio-sync-translation` (`Cargo.toml`, `src/lib.rs`) and add it to workspace members in `Cargo.toml`; deps per research R15 (`putio-sync-core`, `putio-sync-subtitles`, `putio-sync-telemetry`, `tokio`, `reqwest`, `serde`, `serde_json`, `tracing`, `thiserror`, `sha2`, `uuid` v4 from the lockfile; dev `mockito`, `tempfile`)
+- [x] T002 [P] Add the new crate's `Cargo.toml` COPY, `src` mkdir and stub echo lines to `Dockerfile` (layer-cache stubs)
 
 ## Phase 2: Foundational (blocks all stories)
 
-- [ ] T003 [P] Write failing tests for `TranslationConfig` validation in `putio-sync-core/src/translation.rs`: kind rules (chat needs `base_url` http/https with host and non-empty `model`; callback needs `url` and `callback_base_url` with "no user info, no query or fragment, trailing `/` removed"), ranges (`max_in_flight` 1..=8, `timeout_secs` 10..=1800, `chunk_cues` 5..=200, callback `timeout_secs` 60..=86400, `instruction` at most 500 characters, headers at most 20), mask/unmask of `api_key` and header values, a leftover mask for a new header is an error, `Debug` prints `<redacted>`
-- [ ] T004 Implement `TranslationConfig`, `ChatConfig`, `CallbackConfig`, `TranslatorKind`, `validate`, mask helpers in `putio-sync-core/src/translation.rs`; add the `translation` field and validation call in `putio-sync-core/src/config.rs`
-- [ ] T005 [P] Document `[translation]`, `[translation.chat]`, `[translation.callback]` and its headers in `config.example.toml`
+- [x] T003 [P] Write failing tests for `TranslationConfig` validation in `putio-sync-core/src/translation.rs`: kind rules (chat needs `base_url` http/https with host and non-empty `model`; callback needs `url` and `callback_base_url` with "no user info, no query or fragment, trailing `/` removed"), ranges (`max_in_flight` 1..=8, `timeout_secs` 10..=1800, `chunk_cues` 5..=200, callback `timeout_secs` 60..=86400, `instruction` at most 500 characters, headers at most 20), mask/unmask of `api_key` and header values, a leftover mask for a new header is an error, `Debug` prints `<redacted>`
+- [x] T004 Implement `TranslationConfig`, `ChatConfig`, `CallbackConfig`, `TranslatorKind`, `validate`, mask helpers in `putio-sync-core/src/translation.rs`; add the `translation` field and validation call in `putio-sync-core/src/config.rs`
+- [x] T005 [P] Document `[translation]`, `[translation.chat]`, `[translation.callback]` and its headers in `config.example.toml`
 - [ ] T006 [P] Write failing migration tests in `putio-sync-db/tests/pipeline_migration.rs`: `translation_callbacks` (state CHECK `waiting|done|failed|expired`, `token_hash` PRIMARY KEY, `job_id` UNIQUE, cascade from `pipeline_steps`) and `subtitle_provenance` (source CHECK) exist; the `kind` CHECK rebuild adds `translate_scan` and `translate` on a DB that already has 025's rebuild, keeps `pipeline_attempts` rows, and is idempotent
 - [ ] T007 Add the `CREATE` text for `translation_callbacks` (with indexes `(state, expires_at)` and `step_id`) and `subtitle_provenance` in `putio-sync-db/src/schema.rs` and register them in `putio-sync-db/src/lib.rs` (columns exactly as data-model.md)
 - [ ] T008 Make 025's `pipeline_steps` CHECK rebuild take the kind list, add `translate_scan` and `translate`, and update the new-install `CREATE TABLE` text in `putio-sync-db/src/schema.rs` and `putio-sync-db/src/lib.rs` (gap G4)

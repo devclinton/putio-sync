@@ -18,6 +18,7 @@ members = [
     "putio-sync-plugins",
     "putio-sync-pipeline",
     "putio-sync-subtitles",
+    "putio-sync-translation",
 ]
 resolver = "2"
 

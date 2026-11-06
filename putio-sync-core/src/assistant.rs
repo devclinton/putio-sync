@@ -430,7 +430,7 @@ fn flatten(table: &toml::Table) -> BTreeMap<String, toml::Value> {
 
 const EXPORT_HEADER: &str = "# putio-sync settings export\n\
 # Credentials ([auth], api.auth_token) and the Radarr/Sonarr section ([arr]) are left out.\n\
-# Hook header and env values, plugin secrets and the transcription key read \"********\"; an import keeps the stored ones.\n\
+# Hook header and env values, plugin secrets, the transcription key and the translation secrets read \"********\"; an import keeps the stored ones.\n\
 # Import it from Settings › Advanced › Backup and restore.\n\n";
 
 /// `config` with every hook header and env value (feature 027) and plugin secret
@@ -439,6 +439,8 @@ fn masked(config: &Config) -> std::borrow::Cow<'_, Config> {
     if config.hooks.is_empty()
         && config.plugins.is_empty()
         && config.subtitles.transcription.api_key.is_empty()
+        && config.translation.chat.api_key.is_empty()
+        && config.translation.callback.headers.is_empty()
     {
         return std::borrow::Cow::Borrowed(config);
     }
@@ -446,6 +448,7 @@ fn masked(config: &Config) -> std::borrow::Cow<'_, Config> {
     if !config.subtitles.transcription.api_key.is_empty() {
         config.subtitles.transcription.api_key = crate::subtitles::MASK.to_string();
     }
+    config.translation = config.translation.masked();
     config.hooks = crate::hooks::mask(&config.hooks);
     config.plugins = crate::plugins::mask(&config.plugins);
     std::borrow::Cow::Owned(config)
@@ -520,6 +523,7 @@ pub fn import(current: &Config, text: &str) -> CoreResult<Import> {
     if config.subtitles.transcription.api_key == crate::subtitles::MASK {
         config.subtitles.transcription.api_key = current.subtitles.transcription.api_key.clone();
     }
+    config.translation = config.translation.clone().unmasked(&current.translation);
     config.expand_paths()?;
     Ok(Import {
         config,
@@ -739,6 +743,12 @@ mod tests {
         config.auth = Some(AuthConfig::with_token("putio-secret-token".to_string()));
         config.api.auth_token = Some("api-secret-token".to_string());
         config.subtitles.transcription.api_key = "whisper-secret-key".to_string();
+        config.translation.chat.api_key = "translation-secret-key".to_string();
+        config.translation.callback.headers = [(
+            "Authorization".to_string(),
+            "translation-secret-header".to_string(),
+        )]
+        .into();
         config.arr.password = Some("arr-secret-password".to_string());
         config.arr.servers.push(ArrServer {
             kind: ArrKind::Radarr,
@@ -777,6 +787,8 @@ mod tests {
             "hook-secret-header",
             "hook-secret-env",
             "whisper-secret-key",
+            "translation-secret-key",
+            "translation-secret-header",
         ] {
             assert!(!text.contains(secret), "{secret} leaked");
         }

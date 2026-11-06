@@ -2589,6 +2589,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "putio-sync-translation"
+version = "0.1.1"
+dependencies = [
+ "mockito",
+ "putio-sync-core",
+ "putio-sync-subtitles",
+ "putio-sync-telemetry",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"

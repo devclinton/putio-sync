@@ -413,6 +413,33 @@ run_at = "02:30"
 # ffmpeg_path = ""                      # empty searches PATH. Needed for transcription only
 
 # ============================================================================
+# Subtitle translation (feature 026)
+# ============================================================================
+# When a wanted language ([subtitles] languages) has no subtitle, translate one that
+# exists: with an OpenAI-compatible chat model (Ollama, LM Studio, a hosted API) or
+# through your own API. Off by default. Needs the Subtitles stage above. The result is
+# written as <video>.<lang>.srt next to the video with the same cues and timings.
+# [translation]
+# kind = "none"                         # "none" (off), "chat" or "callback"
+# excluded_categories = []              # categories that skip translation, e.g. ["radarr"]
+# max_in_flight = 2                     # requests to the translator at once, 1 to 8
+# timeout_secs = 180                    # per HTTP request, 10 to 1800
+# chunk_cues = 40                       # cues per chat request, 5 to 200
+# instruction = ""                      # extra instruction, at most 500 characters, e.g. "informal Spanish (Spain)"
+#
+# [translation.chat]
+# base_url = "http://ollama.lan:11434/v1"  # "/chat/completions" is added
+# model = "qwen2.5:14b"
+# api_key = ""                          # Bearer token when set; PUTIO_SYNC_TRANSLATION_API_KEY overrides. Never logged
+#
+# [translation.callback]
+# url = "http://translator.lan:9000/translate"  # putio-sync POSTs the subtitle here
+# callback_base_url = "http://nas.lan:8088"     # how the service reaches putio-sync. Required for kind "callback"
+# timeout_secs = 3600                   # how long to wait for the callback, 60 to 86400
+# [translation.callback.headers]        # optional; values are masked in Settings and the export
+# Authorization = "Bearer ..."
+
+# ============================================================================
 # Lua plugins (feature 028)
 # ============================================================================
 # Sandboxed Lua scripts run on the same events as hooks. ntfy, discord,

@@ -49,6 +49,9 @@ pub mod lang;
 /// `[subtitles]` settings: validation and key masking (feature 025)
 pub mod subtitles;
 
+/// `[translation]` settings: validation and secret masking (feature 026)
+pub mod translation;
+
 /// Listen addresses: `ip:port`, `[v6]:port`, `eth0:port`, `tailnet:port` (feature 037)
 pub mod listen;
 
