@@ -642,7 +642,9 @@ pub enum StagingMode {
     /// On while a pipeline hook exists
     #[default]
     Auto,
+    /// Always stage watch-folder downloads
     On,
+    /// Never stage
     Off,
 }
 

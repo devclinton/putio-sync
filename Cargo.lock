@@ -2467,6 +2467,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "putio-sync-pipeline"
+version = "0.1.1"
+dependencies = [
+ "mockito",
+ "putio-sync-core",
+ "putio-sync-db",
+ "putio-sync-download",
+ "putio-sync-hooks",
+ "putio-sync-telemetry",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "putio-sync-plugins"
 version = "0.1.1"
 dependencies = [

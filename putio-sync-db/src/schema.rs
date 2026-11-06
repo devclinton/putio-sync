@@ -197,6 +197,58 @@ CREATE TABLE IF NOT EXISTS pipeline_finished (
 )
 "#;
 
+/// SQL to create the pipeline_items table (feature 038): one row per item the processing
+/// pipeline follows, keyed like the Active page (`transfer:<id>`, `folder:<path>`, `file:<id>`)
+pub const CREATE_PIPELINE_ITEMS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS pipeline_items (
+    key TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    category TEXT,
+    source TEXT NOT NULL,
+    dir TEXT NOT NULL DEFAULT '',
+    transfer_id INTEGER,
+    stage TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('running', 'held', 'waiting_for_operator', 'done', 'done_with_warnings', 'failed', 'cancelled', 'skipped')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    finished_at TIMESTAMP
+)
+"#;
+
+/// SQL to create the pipeline_steps table (feature 038): the planned steps of an item
+pub const CREATE_PIPELINE_STEPS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS pipeline_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_key TEXT NOT NULL REFERENCES pipeline_items(key) ON DELETE CASCADE,
+    stage TEXT NOT NULL,
+    branch TEXT,
+    position INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL CHECK (kind IN ('hook', 'download', 'notify')),
+    name TEXT NOT NULL,
+    required INTEGER NOT NULL DEFAULT 1,
+    changes_files INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL CHECK (state IN ('waiting', 'running', 'done', 'failed', 'skipped', 'interrupted')),
+    skip_reason TEXT CHECK (skip_reason IS NULL OR skip_reason IN ('not_configured', 'category', 'operator', 'hook')),
+    next_attempt_at TIMESTAMP,
+    progress REAL
+)
+"#;
+
+/// SQL to create the pipeline_attempts table (feature 038): every run of a step, with the
+/// redacted tail of its output
+pub const CREATE_PIPELINE_ATTEMPTS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS pipeline_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    step_id INTEGER NOT NULL REFERENCES pipeline_steps(id) ON DELETE CASCADE,
+    n INTEGER NOT NULL,
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ended_at TIMESTAMP,
+    result TEXT CHECK (result IS NULL OR result IN ('done', 'failed', 'timeout', 'skip', 'interrupted')),
+    exit_code INTEGER,
+    output TEXT NOT NULL DEFAULT ''
+)
+"#;
+
 /// SQL to create the release_checks table (feature 042): one row per release pre-check
 pub const CREATE_RELEASE_CHECKS_TABLE: &str = r#"
 CREATE TABLE IF NOT EXISTS release_checks (
@@ -363,6 +415,11 @@ CREATE INDEX IF NOT EXISTS idx_verify_problems_file ON verify_problems(file_id)
 /// SQL to create performance indexes
 /// These indexes optimize common query patterns
 pub const CREATE_INDEXES: &str = r#"
+-- Processing pipeline steps by item and by what is due (feature 038)
+CREATE INDEX IF NOT EXISTS idx_pipeline_steps_item ON pipeline_steps(item_key);
+CREATE INDEX IF NOT EXISTS idx_pipeline_steps_due ON pipeline_steps(state, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_pipeline_attempts_step ON pipeline_attempts(step_id);
+
 -- Index for finding downloads by file_id
 CREATE INDEX IF NOT EXISTS idx_downloads_file_id ON downloads(file_id);
 

@@ -11,7 +11,7 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the crate `putio-sync-pipeline`:
+- [x] T001 Create the crate `putio-sync-pipeline`:
   - deps: `putio-sync-core`, `putio-sync-db`, `putio-sync-hooks`, `tokio`, `sqlx`, `serde`,
     `serde_json`, `tracing`, `prometheus`, `thiserror`;
   - dev-deps: `tempfile`, `wiremock`;
@@ -21,12 +21,12 @@
 
 ## Phase 2: Foundational
 
-- [ ] T003 Add the tables to `putio-sync-db/src/schema.rs` and register them where the 039
+- [x] T003 Add the tables to `putio-sync-db/src/schema.rs` and register them where the 039
   tables are registered:
   - `pipeline_items`, `pipeline_steps` and `pipeline_attempts`, with the exact columns in
     data-model.md;
   - an index on `pipeline_steps(item_key)`, and one on `pipeline_steps(state, next_attempt_at)`.
-- [ ] T004 [P] Write the stage, step and item types in `putio-sync-pipeline/src/model.rs`:
+- [x] T004 [P] Write the stage, step and item types in `putio-sync-pipeline/src/model.rs`:
   - `Stage`, in this order: `pre_download`, `downloading`, `pre_processing`, `subtitles`,
     `translating`, `post_processing`, `notifications`;
   - `StepKind`: `hook`, `download`, `notify`;
@@ -47,9 +47,9 @@
   - validation: `stage` set means `events` is empty, and `categories` entries are not empty;
   - unit tests for each rule;
   - document all of it in `config.example.toml`.
-- [ ] T006 [P] Add `trait PipelineGate { fn pending(&self, key: &str) -> Option<String>; }` and
+- [x] T006 [P] Add `trait PipelineGate { fn pending(&self, key: &str) -> Option<String>; }` and
   a `NoGate` impl in `putio-sync-core/src/pipeline_gate.rs`.
-- [ ] T007 Write the store in `putio-sync-pipeline/src/store.rs`:
+- [x] T007 Write the store in `putio-sync-pipeline/src/store.rs`:
   - insert an item with its planned steps;
   - get the timeline;
   - start an attempt and end it, keeping the output tail to "the last 200 lines or 64 KB";
@@ -58,7 +58,7 @@
   - set the item state;
   - prune with 039's retention;
   - tests on an in-memory DB.
-- [ ] T008 Write the planner in `putio-sync-pipeline/src/plan.rs`. For an item and the config,
+- [x] T008 Write the planner in `putio-sync-pipeline/src/plan.rs`. For an item and the config,
   it gives the ordered steps per stage:
   - the hooks of each stage, in config order, filtered by category (a filtered-out hook is
     skipped with reason `category`);

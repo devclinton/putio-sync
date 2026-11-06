@@ -388,6 +388,19 @@ impl Database {
                 schema::CREATE_PIPELINE_FINISHED_TABLE,
                 "Failed to create pipeline_finished table",
             ),
+            // Processing pipeline (feature 038)
+            (
+                schema::CREATE_PIPELINE_ITEMS_TABLE,
+                "Failed to create pipeline_items table",
+            ),
+            (
+                schema::CREATE_PIPELINE_STEPS_TABLE,
+                "Failed to create pipeline_steps table",
+            ),
+            (
+                schema::CREATE_PIPELINE_ATTEMPTS_TABLE,
+                "Failed to create pipeline_attempts table",
+            ),
             // Release pre-check (feature 042)
             (
                 schema::CREATE_RELEASE_CHECKS_TABLE,
@@ -634,6 +647,41 @@ mod tests {
         .execute(db.pool())
         .await;
         assert!(bad.is_err(), "outcome is done or failed");
+        db.close().await.unwrap();
+    }
+
+    /// Feature 038: the pipeline tables exist, check their states, and drop steps and
+    /// attempts with their item
+    #[tokio::test]
+    async fn pipeline_tables_check_states_and_cascade() {
+        let temp_dir = TempDir::new().unwrap();
+        let db = Database::new(&temp_dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let pool = db.pool();
+        sqlx::query("INSERT INTO pipeline_items (key, name, source, stage, state) VALUES ('transfer:1', 'n', 'arr', 'pre_processing', 'running')")
+            .execute(pool).await.unwrap();
+        let bad = sqlx::query("INSERT INTO pipeline_items (key, name, source, stage, state) VALUES ('transfer:2', 'n', 'arr', 'pre_processing', 'weird')")
+            .execute(pool).await;
+        assert!(bad.is_err(), "state is checked");
+        let step = sqlx::query("INSERT INTO pipeline_steps (item_key, stage, kind, name, state) VALUES ('transfer:1', 'post_processing', 'hook', 'tidy', 'waiting')")
+            .execute(pool).await.unwrap().last_insert_rowid();
+        sqlx::query("INSERT INTO pipeline_attempts (step_id, n, output) VALUES (?, 1, 'x')")
+            .bind(step)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM pipeline_items WHERE key = 'transfer:1'")
+            .execute(pool)
+            .await
+            .unwrap();
+        for table in ["pipeline_steps", "pipeline_attempts"] {
+            let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(n, 0, "{table} follows its item");
+        }
         db.close().await.unwrap();
     }
 

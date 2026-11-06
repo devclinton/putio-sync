@@ -1,0 +1,39 @@
+[package]
+name = "putio-sync-pipeline"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Processing pipeline for putio-sync - the stages an item passes between Put.io and the library, and the steps that run in them"
+
+[dependencies]
+# Internal dependencies
+putio-sync-core = { path = "../putio-sync-core" }
+putio-sync-db = { path = "../putio-sync-db" }
+putio-sync-download = { path = "../putio-sync-download" }
+putio-sync-hooks = { path = "../putio-sync-hooks" }
+putio-sync-telemetry = { path = "../putio-sync-telemetry" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Hook client
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Errors
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.8"
+mockito = "1.2"
