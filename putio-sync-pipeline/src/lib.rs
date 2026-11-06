@@ -30,6 +30,7 @@ use putio_sync_subtitles::SubtitleSource;
 use tokio::sync::{Notify, Semaphore};
 use tracing::{debug, info, warn};
 
+pub mod callback;
 pub mod deletes;
 pub mod gate;
 pub mod locate;
@@ -238,6 +239,10 @@ impl Pipeline {
             ),
             Err(e) => warn!(error = %e, "Could not mark running pipeline steps interrupted"),
         }
+        // A job that was waiting for a callback and whose step is no longer running can
+        // never be answered
+        let _ = self.inner.store.expire_orphans(callback::unix_now()).await;
+        self.refresh_callback_gauge().await;
         self.check_staging();
         self.refresh_gate().await;
     }
@@ -250,6 +255,7 @@ impl Pipeline {
             loop {
                 let _ =
                     tokio::time::timeout(Duration::from_secs(1), me.inner.wake.notified()).await;
+                me.expire_callbacks().await;
                 me.spawn_due().await;
             }
         })
@@ -557,6 +563,14 @@ impl Pipeline {
             .await;
         if let Some(notify) = self.inner.cancels.lock().unwrap().get(key) {
             notify.notify_waiters();
+        }
+        if let Ok(jobs) = self
+            .inner
+            .store
+            .expire_for_item(key, callback::unix_now())
+            .await
+        {
+            self.abandon_jobs(jobs).await;
         }
         self.inner.missed.lock().unwrap().remove(key);
         info!(key, "Pipeline item cancelled: it is gone from Put.io");

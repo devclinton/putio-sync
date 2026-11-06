@@ -32,7 +32,7 @@ fn readable(path: &Path) -> bool {
 }
 
 /// The label for a language in metrics: a wanted language, else `other`
-fn language_label(language: &str, wanted: &[String]) -> String {
+pub(crate) fn language_label(language: &str, wanted: &[String]) -> String {
     if wanted.iter().any(|w| w == language) {
         language.to_string()
     } else {
@@ -44,6 +44,9 @@ fn language_label(language: &str, wanted: &[String]) -> String {
 pub(crate) struct Source {
     pub language: String,
     pub cues: Vec<srt::Cue>,
+    /// The file the cues were read from, and the hash of its bytes
+    pub path: PathBuf,
+    pub sha256: String,
 }
 
 /// Why the step ends before translating
@@ -52,6 +55,9 @@ pub(crate) enum Early {
     Pass(String),
     /// Fails with this message
     Fail(String),
+    /// The callback service accepted the job: the step stays `running` with its attempt
+    /// open until the callback or the time limit ends it
+    Parked,
 }
 
 impl Pipeline {
@@ -226,7 +232,13 @@ impl Pipeline {
         if cues.is_empty() {
             return Err(Early::Fail("the source subtitle has no cues".to_string()));
         }
-        Ok(Source { language, cues })
+        let sha256 = putio_sync_translation::callback::sha256_hex(&bytes);
+        Ok(Source {
+            language,
+            cues,
+            path,
+            sha256,
+        })
     }
 
     /// Save a finished translation next to the video, never over a file, and remember it
@@ -296,15 +308,31 @@ impl Pipeline {
                 key: item.key.clone(),
                 video: step.name.clone(),
             };
-            let translated = match kind {
-                TranslatorKind::Chat => self.translate_chat(step, &source, &target, log).await,
-                _ => Err(TranslateError::Refused(
-                    "no translator is selected".to_string(),
-                )),
-            }
-            .map_err(|e| Early::Fail(log_redact::redact(&e.to_string())))?;
+            let (cues, detail) = match kind {
+                TranslatorKind::Chat => {
+                    let t = self
+                        .translate_chat(step, &source, &target, log)
+                        .await
+                        .map_err(|e| Early::Fail(log_redact::redact(&e.to_string())))?;
+                    let detail = format!(
+                        "{} chunks, {} retries, {} splits",
+                        t.stats.chunks, t.stats.retries, t.stats.splits
+                    );
+                    (t.cues, detail)
+                }
+                TranslatorKind::Callback => {
+                    let (cues, realigned) = self
+                        .translate_callback(step, attempt_id, &source, &target, &video)
+                        .await?;
+                    let detail = format!("{} cues, realigned {realigned}", cues.len());
+                    (cues, detail)
+                }
+                TranslatorKind::None => {
+                    return Err(Early::Fail("no translator is selected".to_string()))
+                }
+            };
             let (path, write) = self
-                .save_translation(&video, &target, &translated.cues)
+                .save_translation(&video, &target, &cues)
                 .await
                 .map_err(Early::Fail)?;
             let name = path
@@ -312,13 +340,9 @@ impl Pipeline {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             Ok(match write {
-                WriteOutcome::Written => format!(
-                    "{target}: saved {name} from {} ({} chunks, {} retries, {} splits)",
-                    source.language,
-                    translated.stats.chunks,
-                    translated.stats.retries,
-                    translated.stats.splits
-                ),
+                WriteOutcome::Written => {
+                    format!("{target}: saved {name} from {} ({detail})", source.language)
+                }
                 WriteOutcome::AlreadyExists => format!("{target}: already exists"),
             })
         };
@@ -328,6 +352,12 @@ impl Pipeline {
         };
         let took = started.elapsed();
         let Some(run) = run else {
+            if let Ok(jobs) = store
+                .expire_for_step(step.id, crate::callback::unix_now())
+                .await
+            {
+                self.abandon_jobs(jobs).await;
+            }
             let _ = store
                 .end_attempt(attempt_id, AttemptResult::Interrupted, None, "")
                 .await;
@@ -342,6 +372,11 @@ impl Pipeline {
             );
             return Outcome::Stopped;
         };
+        if matches!(run, Err(Early::Parked)) {
+            // The attempt stays open and the step `running`; the callback or the time
+            // limit ends them. This task is done, which frees the item's permit.
+            return Outcome::Continue;
+        }
         let language = language_label(&target, &wanted);
         let (result, output, error) = match run {
             Ok(message) => {
@@ -352,6 +387,7 @@ impl Pipeline {
                 );
                 (AttemptResult::Done, message, None)
             }
+            Err(Early::Parked) => unreachable!("handled above"),
             Err(Early::Pass(message)) => (AttemptResult::Done, message, None),
             Err(Early::Fail(why)) => {
                 putio_sync_telemetry::translation::done(label, "failed", &language, took);

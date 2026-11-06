@@ -381,6 +381,23 @@ impl Pipeline {
 
     /// A step failed or timed out
     async fn failed(&self, item: &ItemRow, step: &StepRow, n: i64, error: String) -> Outcome {
+        self.failed_with(item, step, n, error, true).await
+    }
+
+    /// A step failed or timed out and will not be tried again by itself (a callback that
+    /// never came: the service was asked once, the operator can retry)
+    pub(crate) async fn give_up(&self, item: &ItemRow, step: &StepRow, n: i64, error: String) {
+        self.failed_with(item, step, n, error, false).await;
+    }
+
+    async fn failed_with(
+        &self,
+        item: &ItemRow,
+        step: &StepRow,
+        n: i64,
+        error: String,
+        retry: bool,
+    ) -> Outcome {
         let store = &self.inner.store;
         events::emit(Payload::PipelineStepFailed(PipelineStepFailed {
             key: item.key.clone(),
@@ -400,7 +417,7 @@ impl Pipeline {
             return Outcome::Stopped;
         }
         let retries = self.settings().pipeline.optional_retries;
-        match retries.get((n - 1) as usize) {
+        match retries.get((n - 1) as usize).filter(|_| retry) {
             Some(delay) => {
                 let _ = store
                     .set_step(step.id, StepState::Waiting, None, Some(*delay))
