@@ -198,6 +198,9 @@ pub struct Config {
     /// Tailscale: tailnet-only listening and identity sign-in (feature 036)
     #[serde(default)]
     pub tailscale: TailscaleConfig,
+    /// DLNA media server: show downloads and a Put.io folder to players (feature 022)
+    #[serde(default)]
+    pub dlna: DlnaConfig,
     /// Event hooks: commands and webhooks run for events (feature 027)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<crate::hooks::HookConfig>,
@@ -1503,6 +1506,8 @@ impl Config {
         self.precheck.validate(&self.watch.paths)?;
         self.storage.validate()?;
         self.tailscale.validate()?;
+        self.dlna.validate()?;
+        self.validate_dlna_with(&self.dlna)?;
         self.putio.validate()?;
         crate::hooks::validate(&self.hooks)?;
         crate::plugins::validate(&self.plugins)?;
@@ -1754,6 +1759,7 @@ impl ConfigBuilder {
             precheck: PrecheckConfig::default(),
             storage: StorageConfig::default(),
             tailscale: TailscaleConfig::default(),
+            dlna: DlnaConfig::default(),
             hooks: Vec::new(),
             plugins_dir: None,
             plugins: Vec::new(),
@@ -1959,6 +1965,217 @@ impl TailscaleConfig {
                 .allowed_users
                 .iter()
                 .any(|a| a.trim().eq_ignore_ascii_case(login))
+    }
+}
+
+/// Default `[dlna] name`
+pub const DEFAULT_DLNA_NAME: &str = "putio-sync";
+
+/// Default `[dlna] port`
+pub const DEFAULT_DLNA_PORT: u16 = 8200;
+
+/// Longest friendly name players get (characters)
+pub const DLNA_NAME_MAX: usize = 64;
+
+/// The UDP port UPnP discovery uses; the media server's HTTP port must not be it
+pub const SSDP_PORT: u16 = 1900;
+
+fn default_dlna_name() -> String {
+    DEFAULT_DLNA_NAME.to_string()
+}
+
+fn default_dlna_port() -> u16 {
+    DEFAULT_DLNA_PORT
+}
+
+fn default_dlna_roots() -> Vec<String> {
+    vec!["downloads".to_string()]
+}
+
+fn empty_bind() -> BindList {
+    BindList::Many(Vec::new())
+}
+
+/// `[dlna]`: the media server that shows downloaded files, and optionally one Put.io
+/// folder, to TVs and players on the home network (feature 022).
+///
+/// - `roots`: `downloads`, `cat:<category>` (a subfolder of the download folder),
+///   `watch:<path>` (one of `[watch] paths`) or `putio`
+/// - `bind`: the addresses to serve on, in the `[api] bind` syntax; only the host part
+///   of an entry is used, the port is `port`. Empty is every LAN IPv4 address.
+/// - `putio_folder`: the Put.io folder shown as "Put.io" (needed when `roots` has `putio`)
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct DlnaConfig {
+    /// Serve media to players
+    pub enabled: bool,
+    /// The name players show
+    #[serde(default = "default_dlna_name")]
+    pub name: String,
+    /// HTTP port for descriptions, browsing and streams
+    #[serde(default = "default_dlna_port")]
+    pub port: u16,
+    /// Where to listen; empty is every LAN IPv4 address
+    #[serde(default = "empty_bind")]
+    pub bind: BindList,
+    /// What players see
+    #[serde(default = "default_dlna_roots")]
+    pub roots: Vec<String>,
+    /// The Put.io folder id shown as the "Put.io" root
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub putio_folder: Option<i64>,
+}
+
+impl Default for DlnaConfig {
+    fn default() -> Self {
+        DlnaConfig {
+            enabled: false,
+            name: default_dlna_name(),
+            port: default_dlna_port(),
+            bind: empty_bind(),
+            roots: default_dlna_roots(),
+            putio_folder: None,
+        }
+    }
+}
+
+impl DlnaConfig {
+    /// The name players show: trimmed, `putio-sync` when empty, cut to 64 characters
+    pub fn effective_name(&self) -> String {
+        let name: String = self.name.trim().chars().take(DLNA_NAME_MAX).collect();
+        let name = name.trim_end().to_string();
+        if name.is_empty() {
+            default_dlna_name()
+        } else {
+            name
+        }
+    }
+
+    /// Whether `roots` has the Put.io root
+    pub fn shares_putio(&self) -> bool {
+        self.roots.iter().any(|r| r == "putio")
+    }
+
+    /// The `bind` entries, parsed; empty when `bind` is empty (every LAN address)
+    pub fn bind_entries(&self) -> CoreResult<Vec<ListenAddr>> {
+        if self.bind.entries().is_empty() {
+            return Ok(Vec::new());
+        }
+        self.bind.parse("dlna.bind").map_err(CoreError::ConfigError)
+    }
+
+    /// Check every rule that does not depend on the rest of the config
+    pub fn validate(&self) -> CoreResult<()> {
+        let bad = |msg: String| Err(CoreError::ConfigError(msg));
+        if self.port == 0 {
+            return bad("invalid dlna.port: expected 1 to 65535".to_string());
+        }
+        if self.port == SSDP_PORT {
+            return bad(format!(
+                "invalid dlna.port {SSDP_PORT}: that port is used for discovery; pick another"
+            ));
+        }
+        self.bind_entries()?;
+        for (i, root) in self.roots.iter().enumerate() {
+            if self.roots[..i].contains(root) {
+                return bad(format!("invalid dlna.roots: '{root}' is listed twice"));
+            }
+            let ok = match root.as_str() {
+                "downloads" | "putio" => true,
+                other => match other.strip_prefix("cat:") {
+                    Some(name) => {
+                        !name.trim().is_empty() && !name.contains(['/', '\\', '\0']) && name != ".."
+                    }
+                    None => other
+                        .strip_prefix("watch:")
+                        .is_some_and(|p| !p.trim().is_empty()),
+                },
+            };
+            if !ok {
+                return bad(format!(
+                    "invalid dlna.roots entry '{root}': expected downloads, cat:<category>, watch:<path> or putio"
+                ));
+            }
+        }
+        if self.enabled && self.roots.is_empty() {
+            return bad("invalid dlna.roots: share at least one folder".to_string());
+        }
+        if self.shares_putio() && self.putio_folder.is_none() {
+            return bad(
+                "dlna.putio_folder is required when dlna.roots has putio (the Put.io folder id)"
+                    .to_string(),
+            );
+        }
+        if self.putio_folder.is_some_and(|id| id < 0) {
+            return bad("invalid dlna.putio_folder: expected a folder id (0 or more)".to_string());
+        }
+        Ok(())
+    }
+}
+
+impl Config {
+    /// `[dlna]` after the `PUTIO_SYNC_DLNA_ENABLED`, `PUTIO_SYNC_DLNA_NAME` and
+    /// `PUTIO_SYNC_DLNA_PORT` overrides (an empty variable counts as unset), checked
+    /// against the rest of the config
+    pub fn resolve_dlna(&self) -> CoreResult<DlnaConfig> {
+        let mut out = self.dlna.clone();
+        if let Some(v) = env_value("PUTIO_SYNC_DLNA_ENABLED") {
+            out.enabled = match v.as_str() {
+                "true" | "1" => true,
+                "false" | "0" => false,
+                _ => return Err(invalid("dlna.enabled", &v, "true, false, 1, 0")),
+            };
+        }
+        if let Some(v) = env_value("PUTIO_SYNC_DLNA_NAME") {
+            out.name = v;
+        }
+        if let Some(v) = env_value("PUTIO_SYNC_DLNA_PORT") {
+            out.port = v
+                .trim()
+                .parse()
+                .map_err(|_| invalid("dlna.port", &v, "a port from 1 to 65535"))?;
+        }
+        out.validate()?;
+        self.validate_dlna_with(&out)?;
+        Ok(out)
+    }
+
+    /// The rules for `dlna` that need the rest of the config: its port is not the API's
+    /// or the metrics', and `watch:` roots are watch folders
+    fn validate_dlna_with(&self, dlna: &DlnaConfig) -> CoreResult<()> {
+        if !dlna.enabled {
+            return Ok(());
+        }
+        let others = self
+            .api_bind_saved()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| ("api", a.port()))
+            .chain(
+                self.metrics
+                    .bind
+                    .parse("metrics.bind")
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|a| ("metrics", a.port())),
+            );
+        for (who, port) in others {
+            if port == dlna.port {
+                return Err(CoreError::ConfigError(format!(
+                    "invalid dlna.port {port}: the {who} already listens on it; pick another"
+                )));
+            }
+        }
+        for root in &dlna.roots {
+            if let Some(path) = root.strip_prefix("watch:") {
+                if !self.watch.paths.iter().any(|p| p.to_string_lossy() == path) {
+                    return Err(CoreError::ConfigError(format!(
+                        "invalid dlna.roots entry '{root}': {path} is not one of [watch] paths"
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -2775,6 +2992,7 @@ mod tests {
             precheck: PrecheckConfig::default(),
             storage: StorageConfig::default(),
             tailscale: TailscaleConfig::default(),
+            dlna: DlnaConfig::default(),
             hooks: Vec::new(),
             plugins_dir: None,
             plugins: Vec::new(),
@@ -4583,5 +4801,180 @@ mod secret_values_tests {
             None => std::env::remove_var("PUTIO_CLIENT_SECRET"),
         }
         assert!(values.iter().any(|v| v == "s-client-secret"));
+    }
+}
+
+#[cfg(test)]
+mod dlna_tests {
+    use super::*;
+
+    /// Serialises tests that change the `[dlna]` env overrides
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    const VARS: [&str; 3] = [
+        "PUTIO_SYNC_DLNA_ENABLED",
+        "PUTIO_SYNC_DLNA_NAME",
+        "PUTIO_SYNC_DLNA_PORT",
+    ];
+
+    fn with_env<R>(vars: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        for v in VARS {
+            std::env::remove_var(v);
+        }
+        for (k, v) in vars {
+            std::env::set_var(k, v);
+        }
+        let out = f();
+        for v in VARS {
+            std::env::remove_var(v);
+        }
+        out
+    }
+
+    fn parse(text: &str) -> Config {
+        toml::from_str(text).unwrap()
+    }
+
+    fn error(text: &str) -> String {
+        match parse(text).validate() {
+            Err(CoreError::ConfigError(msg)) => msg,
+            other => panic!("expected a config error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn defaults_are_off_and_share_downloads() {
+        let d = Config::default().dlna;
+        assert!(!d.enabled);
+        assert_eq!(d.name, "putio-sync");
+        assert_eq!(d.port, 8200);
+        assert!(d.bind.entries().is_empty());
+        assert_eq!(d.roots, vec!["downloads".to_string()]);
+        assert_eq!(d.putio_folder, None);
+        assert!(Config::default().validate().is_ok());
+        assert_eq!(parse("[dlna]\nenabled = true\n").dlna.roots, d.roots);
+    }
+
+    #[test]
+    fn name_is_trimmed_defaulted_and_cut() {
+        let name = |n: &str| DlnaConfig {
+            name: n.to_string(),
+            ..DlnaConfig::default()
+        };
+        assert_eq!(name("  NAS putio-sync ").effective_name(), "NAS putio-sync");
+        assert_eq!(name("   ").effective_name(), "putio-sync");
+        assert_eq!(name("").effective_name(), "putio-sync");
+        let long = "é".repeat(100);
+        assert_eq!(name(&long).effective_name().chars().count(), 64);
+    }
+
+    #[test]
+    fn port_rules() {
+        assert!(error("[dlna]\nport = 0\n").contains("dlna.port"));
+        assert!(error("[dlna]\nport = 1900\n").contains("discovery"));
+        let api = error("[dlna]\nenabled = true\nport = 15432\n");
+        assert!(api.contains("dlna.port") && api.contains("api"), "{api}");
+        let metrics = error("[dlna]\nenabled = true\nport = 9742\n");
+        assert!(metrics.contains("metrics"), "{metrics}");
+        // Off, the port is not compared with the others
+        assert!(parse("[dlna]\nport = 15432\n").validate().is_ok());
+        assert!(parse("[dlna]\nenabled = true\nport = 8300\n")
+            .validate()
+            .is_ok());
+    }
+
+    #[test]
+    fn root_rules() {
+        let ok = |roots: &str| {
+            parse(&format!(
+                "[watch]\nenabled = true\npaths = [\"/tmp\"]\nrefresh_cycle = 60\n[dlna]\nenabled = true\nroots = {roots}\nputio_folder = 5\n"
+            ))
+            .validate()
+        };
+        assert!(ok(r#"["downloads", "cat:radarr", "watch:/tmp", "putio"]"#).is_ok());
+        for bad in [
+            r#"["movies"]"#,
+            r#"["cat:"]"#,
+            r#"["cat:a/b"]"#,
+            r#"["cat:.."]"#,
+            r#"["watch:"]"#,
+            r#"["downloads", "downloads"]"#,
+        ] {
+            match ok(bad) {
+                Err(CoreError::ConfigError(msg)) => assert!(msg.contains("dlna.roots"), "{msg}"),
+                other => panic!("{bad}: expected an error, got {other:?}"),
+            }
+        }
+        // A watch root must be one of [watch] paths
+        match ok(r#"["watch:/elsewhere"]"#) {
+            Err(CoreError::ConfigError(msg)) => assert!(msg.contains("[watch] paths"), "{msg}"),
+            other => panic!("expected an error, got {other:?}"),
+        }
+        // Enabled needs at least one root
+        let msg = error("[dlna]\nenabled = true\nroots = []\n");
+        assert!(msg.contains("at least one"), "{msg}");
+        assert!(parse("[dlna]\nroots = []\n").validate().is_ok());
+    }
+
+    #[test]
+    fn putio_root_needs_a_folder() {
+        let msg = error("[dlna]\nroots = [\"putio\"]\n");
+        assert!(msg.contains("dlna.putio_folder"), "{msg}");
+        assert!(parse("[dlna]\nroots = [\"putio\"]\nputio_folder = 0\n")
+            .validate()
+            .is_ok());
+        assert!(error("[dlna]\nputio_folder = -3\n").contains("dlna.putio_folder"));
+    }
+
+    #[test]
+    fn bind_entries_are_checked() {
+        assert!(parse("[dlna]\nbind = [\"192.168.1.5:8200\", \"eth0:8200\"]\n")
+            .validate()
+            .is_ok());
+        let msg = error("[dlna]\nbind = [\"nonsense\"]\n");
+        assert!(msg.contains("dlna.bind"), "{msg}");
+    }
+
+    #[test]
+    fn env_overrides_apply() {
+        let c = parse("[dlna]\nname = \"file\"\n");
+        let r = with_env(
+            &[
+                ("PUTIO_SYNC_DLNA_ENABLED", "1"),
+                ("PUTIO_SYNC_DLNA_NAME", "from env"),
+                ("PUTIO_SYNC_DLNA_PORT", "8300"),
+            ],
+            || c.resolve_dlna().unwrap(),
+        );
+        assert!(r.enabled);
+        assert_eq!(r.name, "from env");
+        assert_eq!(r.port, 8300);
+        let r = with_env(&[("PUTIO_SYNC_DLNA_NAME", "")], || c.resolve_dlna().unwrap());
+        assert_eq!(r.name, "file");
+        assert!(!r.enabled);
+    }
+
+    #[test]
+    fn bad_env_values_are_errors() {
+        let c = Config::default();
+        for (var, value) in [
+            ("PUTIO_SYNC_DLNA_ENABLED", "maybe"),
+            ("PUTIO_SYNC_DLNA_PORT", "eighty"),
+            ("PUTIO_SYNC_DLNA_PORT", "1900"),
+        ] {
+            let err = with_env(&[(var, value)], || c.resolve_dlna());
+            assert!(err.is_err(), "{var}={value}");
+        }
+    }
+
+    #[test]
+    fn section_round_trips_through_toml() {
+        let c = parse(
+            "[dlna]\nenabled = true\nname = \"TV\"\nport = 8300\nbind = [\"eth0:8300\"]\nroots = [\"downloads\", \"putio\"]\nputio_folder = 42\n",
+        );
+        let text = toml::to_string(&c).unwrap();
+        let again: Config = toml::from_str(&text).unwrap();
+        assert_eq!(again.dlna, c.dlna);
     }
 }
