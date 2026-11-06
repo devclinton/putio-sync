@@ -5,6 +5,7 @@ use crate::files::{
     check_resume, cleanup_partial, crc32_file, crc32_prefix, crc_equal, create_temp_path,
     needs_checksum, next_free_name, plan_existing, valid_crc32, Crc32, ExistingAction, LocalState,
 };
+use crate::pipeline::{file_key, ActionResult, ItemResult, Pipeline, PipelineItem, Stage, State};
 use crate::progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 use crate::rate_limiter::RateLimiter;
 use crate::stream::{finish_download, stream_to_temp, StopSignal};
@@ -22,9 +23,9 @@ use putio_sync_core::redact;
 use putio_sync_core::rules::{extension, Decision, Effective, RuleSet};
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::models::{DownloadSource, DownloadStatus, Origin, QueueStatus, SourceType};
-use putio_sync_db::pipeline::TRANSFER_EVENTS_SEEN;
+use putio_sync_db::pipeline::{FileState, NAS_DOWNLOADS_PAUSED, TRANSFER_EVENTS_SEEN};
 use putio_sync_db::Database;
-use putio_sync_telemetry::{self as telemetry, RuleDecision, SyncKind, SyncResult};
+use putio_sync_telemetry::{self as telemetry, PipelineAction, RuleDecision, SyncKind, SyncResult};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -602,6 +603,9 @@ pub struct DownloadManager {
     /// The transfer classes behind `transfer.*` events; `None` until read from the
     /// database (feature 027)
     transfer_events: Arc<tokio::sync::Mutex<Option<TransferEvents>>>,
+    /// The transfer items that were active on the last pipeline tick; `None` until the
+    /// first tick (feature 039, R6)
+    pub(crate) finish_seen: Arc<tokio::sync::Mutex<Option<crate::finished::SeenItems>>>,
     /// The one bandwidth limiter every download shares (feature 032)
     pub(crate) bandwidth: RateLimiter,
     /// The "verify everything" run (feature 034)
@@ -671,6 +675,7 @@ impl DownloadManager {
             notes: Arc::new(Mutex::new(HashMap::new())),
             transfers_cache: Arc::new(tokio::sync::Mutex::new(None)),
             transfer_events: Arc::new(tokio::sync::Mutex::new(None)),
+            finish_seen: Arc::new(tokio::sync::Mutex::new(None)),
             paths_in_use: Arc::new(Mutex::new(HashSet::new())),
             checking: Arc::new(Mutex::new(HashMap::new())),
             verifier: crate::verify::VerifyRunner::default(),
@@ -706,6 +711,7 @@ impl DownloadManager {
             notes: Arc::new(Mutex::new(HashMap::new())),
             transfers_cache: Arc::new(tokio::sync::Mutex::new(None)),
             transfer_events: Arc::new(tokio::sync::Mutex::new(None)),
+            finish_seen: Arc::new(tokio::sync::Mutex::new(None)),
             paths_in_use: Arc::new(Mutex::new(HashSet::new())),
             checking: Arc::new(Mutex::new(HashMap::new())),
             verifier: crate::verify::VerifyRunner::default(),
@@ -2015,6 +2021,20 @@ impl DownloadManager {
 
             let download_url = self.client.get_download_url(file.id);
 
+            // The transfer is looked up before the insert: a file of a held transfer is
+            // queued paused, so no worker can claim it in between (feature 039, R9)
+            if transfers.is_none() {
+                transfers = Some(self.transfers_by_file().await);
+            }
+            let transfer = matching_transfer(file.id, &parents, transfers.as_ref().unwrap());
+            let held = match transfer {
+                Some(t) => db.holds().is_held(t.id).await.unwrap_or_else(|e| {
+                    warn!(transfer_id = t.id, error = %e, "Failed to check the transfer hold");
+                    false
+                }),
+                None => false,
+            };
+
             match queue_repo
                 .add_with_path_kept(
                     file.id,
@@ -2023,7 +2043,11 @@ impl DownloadManager {
                     &download_url,
                     &relative_path,
                     0,
-                    QueueStatus::Pending,
+                    if held {
+                        QueueStatus::Paused
+                    } else {
+                        QueueStatus::Pending
+                    },
                     fixed_path,
                 )
                 .await
@@ -2033,11 +2057,6 @@ impl DownloadManager {
                     decide(TreeDecision::Queued);
                     debug!("Added to queue: {}", file.name);
                     self.forget_decision(db, file.id).await;
-                    if transfers.is_none() {
-                        transfers = Some(self.transfers_by_file().await);
-                    }
-                    let transfer =
-                        matching_transfer(file.id, &parents, transfers.as_ref().unwrap());
                     let source = download_source(db, transfer, &relative_path).await;
                     if let Err(e) = db.sources().record(file.id, &source).await {
                         warn!(file_id = file.id, error = %e, "Failed to record download source");
@@ -2282,6 +2301,10 @@ impl DownloadManager {
         if self.bandwidth.is_paused() {
             return Ok(false);
         }
+        // The Pause NAS downloads switch: claim nothing (feature 039, R11)
+        if self.nas_paused().await {
+            return Ok(false);
+        }
 
         // Get config snapshot
         let config = self.config.read().await;
@@ -2319,6 +2342,11 @@ impl DownloadManager {
         {
             debug!(file_id, "Claimed row was paused before it started");
             return Ok(true);
+        }
+        // The switch went on between the check above and the claim
+        if self.nas_paused().await {
+            let _ = queue_repo.unclaim_files(&[file_id]).await;
+            return Ok(false);
         }
 
         info!(
@@ -2906,6 +2934,15 @@ impl DownloadManager {
         }
     }
 
+    /// The last Put.io transfer list fetched, without asking Put.io
+    pub(crate) async fn cached_transfers(&self) -> Option<Arc<Vec<Transfer>>> {
+        self.transfers_cache
+            .lock()
+            .await
+            .as_ref()
+            .map(|c| c.transfers.clone())
+    }
+
     /// Compare a fresh transfer list with the last one and emit the `transfer.*` events
     /// due (feature 027, R6). A database error is logged and sends nothing.
     async fn track_transfers(&self, transfers: &[Transfer]) {
@@ -3016,8 +3053,6 @@ impl DownloadManager {
             .map(|s| s.transfers.to_vec())
             .unwrap_or_default();
         let transfer_ids: Vec<i64> = transfers.iter().map(|t| t.id).collect();
-        let internal = |e: putio_sync_db::DbError| DownloadError::InternalError(e.to_string());
-
         let files = db
             .pipeline_files(&transfer_ids, retention_hours)
             .await
@@ -3082,6 +3117,274 @@ impl DownloadManager {
         }))
     }
 
+    /// Whether the Pause NAS downloads switch is on (feature 039, R11). It lives in the
+    /// database, so it survives a restart; a missing flag, or no database, means off.
+    pub async fn nas_paused(&self) -> bool {
+        let Some(db) = self.database.as_ref() else {
+            return false;
+        };
+        db.flags()
+            .get_bool(NAS_DOWNLOADS_PAUSED)
+            .await
+            .unwrap_or_else(|e| {
+                warn!(error = %e, "Failed to read the Pause NAS downloads switch");
+                false
+            })
+    }
+
+    /// Turn the Pause NAS downloads switch on or off (feature 039, R11)
+    ///
+    /// On: workers claim nothing, and every running file stops and goes back to
+    /// `pending` (not `paused`), keeping its partial. Files paused on their own stay
+    /// paused. Off: workers claim again, and no row is touched.
+    pub async fn set_nas_paused(&self, paused: bool) -> DownloadResult<()> {
+        let db = self.database.as_ref().ok_or_else(|| {
+            DownloadError::InternalError("Database required for the switch".to_string())
+        })?;
+        db.flags()
+            .set_bool(NAS_DOWNLOADS_PAUSED, paused)
+            .await
+            .map_err(internal)?;
+        telemetry::pipeline::set_nas_paused(paused);
+        let mut stopped = 0;
+        if paused {
+            let running: Vec<i64> = self.stop_signals.lock().unwrap().keys().copied().collect();
+            // Rows first, so a stopped file is left `pending`
+            let requeued = db.queue().unclaim_files(&running).await.map_err(internal)?;
+            stopped = self.stop_files(&requeued).await.len();
+        }
+        info!(paused, stopped, "Pause NAS downloads switched");
+        Ok(())
+    }
+
+    /// Pause queue rows, and stop the ones that are running (feature 039, R10). Returns
+    /// the ids that were paused.
+    pub async fn pause_files(&self, file_ids: &[i64]) -> DownloadResult<Vec<i64>> {
+        let db = self.database.as_ref().ok_or_else(|| {
+            DownloadError::InternalError("Database required for pause".to_string())
+        })?;
+        let changed = db.queue().pause_files(file_ids).await.map_err(internal)?;
+        self.stop_files(&changed).await;
+        Ok(changed)
+    }
+
+    /// Put paused queue rows back in the queue, in their old place. Returns the ids that
+    /// were resumed.
+    pub async fn resume_files(&self, file_ids: &[i64]) -> DownloadResult<Vec<i64>> {
+        let db = self.database.as_ref().ok_or_else(|| {
+            DownloadError::InternalError("Database required for resume".to_string())
+        })?;
+        db.queue().resume_files(file_ids).await.map_err(internal)
+    }
+
+    /// Pause items of the Active page by key (feature 039, FR-013, FR-014, FR-016). An item
+    /// on the NAS has its files paused and any running one stopped; one still on Put.io (or
+    /// finished and waiting for sync) is held, so its files are queued paused. Nothing is
+    /// sent to Put.io.
+    pub async fn pause_items(
+        &self,
+        keys: &[String],
+        stalls: &StallTracker,
+        retention_hours: u64,
+    ) -> DownloadResult<Vec<ItemResult>> {
+        let db = self.database.as_ref().ok_or_else(|| {
+            DownloadError::InternalError("Database required for pause".to_string())
+        })?;
+        let (pipeline, queued) = self.action_context(stalls, retention_hours).await?;
+        let items: HashMap<&str, &PipelineItem> =
+            pipeline.items.iter().map(|i| (i.key.as_str(), i)).collect();
+
+        let mut results = Vec::with_capacity(keys.len());
+        for key in keys {
+            let result = match items.get(key.as_str()) {
+                None => ActionResult::NotFound,
+                Some(item) => self.pause_item(db, item, queued.get(key)).await?,
+            };
+            results.push(ItemResult {
+                key: key.clone(),
+                result,
+            });
+        }
+        Ok(results)
+    }
+
+    async fn pause_item(
+        &self,
+        db: &Database,
+        item: &PipelineItem,
+        files: Option<&Vec<(i64, String)>>,
+    ) -> DownloadResult<ActionResult> {
+        if item.stage == Stage::Nas && item.state != State::WaitingForSync {
+            let ids: Vec<i64> = files
+                .into_iter()
+                .flatten()
+                .filter(|(_, status)| status == "pending" || status == "downloading")
+                .map(|(id, _)| *id)
+                .collect();
+            if ids.is_empty() {
+                return Ok(ActionResult::Already);
+            }
+            // The rows may have changed since they were read, for a key named twice
+            let changed = self.pause_files(&ids).await?;
+            if changed.is_empty() {
+                return Ok(ActionResult::Already);
+            }
+            info!(
+                transfer_id = item.transfer_id,
+                name = %item.name,
+                files = changed.len(),
+                "Paused transfer"
+            );
+            telemetry::pipeline::action(PipelineAction::Pause);
+            return Ok(ActionResult::Paused);
+        }
+
+        // Still on Put.io, or finished and waiting for the sync: Put.io has no pause, so
+        // the NAS download is held. An item in error has nothing to hold.
+        let Some(transfer_id) = item.transfer_id.filter(|_| item.state != State::Error) else {
+            return Ok(ActionResult::NotFound);
+        };
+        if db.holds().is_held(transfer_id).await.map_err(internal)? {
+            return Ok(ActionResult::Already);
+        }
+        db.holds()
+            .add(transfer_id, &item.name)
+            .await
+            .map_err(internal)?;
+        info!(transfer_id, name = %item.name, files = 0, "Held transfer");
+        telemetry::pipeline::action(PipelineAction::Hold);
+        Ok(ActionResult::Held)
+    }
+
+    /// Delete the holds whose transfer is in error or gone from Put.io, since nothing
+    /// will arrive to hold (feature 039, R9). The list is the shared snapshot; a stale one
+    /// (Put.io unreachable) is not trusted to say a transfer is gone. Returns the transfer
+    /// ids released.
+    pub async fn release_stale_holds(&self, max_age: Duration) -> DownloadResult<Vec<i64>> {
+        let Some(db) = self.database.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let snapshot = self.transfers_snapshot(max_age).await?;
+        if snapshot.stale {
+            return Ok(Vec::new());
+        }
+        let mut released = Vec::new();
+        for hold in db.holds().list().await.map_err(internal)? {
+            let alive = snapshot
+                .transfers
+                .iter()
+                .any(|t| t.id == hold.transfer_id && !t.status.eq_ignore_ascii_case("ERROR"));
+            if !alive
+                && db
+                    .holds()
+                    .remove(hold.transfer_id)
+                    .await
+                    .map_err(internal)?
+            {
+                info!(
+                    transfer_id = hold.transfer_id,
+                    name = %hold.name,
+                    "Released the hold of a transfer that failed or is gone"
+                );
+                released.push(hold.transfer_id);
+            }
+        }
+        Ok(released)
+    }
+
+    /// Resume items of the Active page by key (feature 039, FR-015): a hold is released and
+    /// the item's paused files go back in the queue in their old place
+    pub async fn resume_items(
+        &self,
+        keys: &[String],
+        stalls: &StallTracker,
+        retention_hours: u64,
+    ) -> DownloadResult<Vec<ItemResult>> {
+        let db = self.database.as_ref().ok_or_else(|| {
+            DownloadError::InternalError("Database required for resume".to_string())
+        })?;
+        let (pipeline, queued) = self.action_context(stalls, retention_hours).await?;
+        let items: HashMap<&str, &PipelineItem> =
+            pipeline.items.iter().map(|i| (i.key.as_str(), i)).collect();
+
+        let mut results = Vec::with_capacity(keys.len());
+        for key in keys {
+            let result = match items.get(key.as_str()) {
+                None => ActionResult::NotFound,
+                Some(item) => {
+                    let paused: Vec<i64> = queued
+                        .get(key)
+                        .into_iter()
+                        .flatten()
+                        .filter(|(_, status)| status == "paused")
+                        .map(|(id, _)| *id)
+                        .collect();
+                    let released = match item.transfer_id {
+                        Some(id) => db.holds().remove(id).await.map_err(internal)?,
+                        None => false,
+                    };
+                    let resumed = self.resume_files(&paused).await?;
+                    if released || !resumed.is_empty() {
+                        info!(
+                            transfer_id = item.transfer_id,
+                            name = %item.name,
+                            files = resumed.len(),
+                            "Resumed transfer"
+                        );
+                        telemetry::pipeline::action(PipelineAction::Resume);
+                        ActionResult::Resumed
+                    } else {
+                        ActionResult::Already
+                    }
+                }
+            };
+            results.push(ItemResult {
+                key: key.clone(),
+                result,
+            });
+        }
+        Ok(results)
+    }
+
+    /// What a pause or resume reads: the pipeline, and each item's files in the queue as
+    /// `(file_id, status)` by item key. With Put.io unreachable and no list yet, the
+    /// pipeline holds NAS items only.
+    async fn action_context(
+        &self,
+        stalls: &StallTracker,
+        retention_hours: u64,
+    ) -> DownloadResult<(Pipeline, HashMap<String, Vec<(i64, String)>>)> {
+        let db = self.database.as_ref().ok_or_else(|| {
+            DownloadError::InternalError("Database required for the pipeline".to_string())
+        })?;
+        let pipeline = match self.pipeline(ACTION_MAX_AGE, stalls, retention_hours).await {
+            Err(DownloadError::ClientError(e)) => {
+                warn!(error = %error_chain(&e), "Put.io is unreachable; acting on NAS items only");
+                self.pipeline_cached(stalls, retention_hours).await?
+            }
+            other => other?,
+        };
+        let transfer_ids: Vec<i64> = pipeline
+            .items
+            .iter()
+            .filter_map(|i| i.transfer_id)
+            .collect();
+        let mut queued: HashMap<String, Vec<(i64, String)>> = HashMap::new();
+        for file in db
+            .pipeline_files(&transfer_ids, retention_hours)
+            .await
+            .map_err(internal)?
+        {
+            if let FileState::Queued(status) = &file.state {
+                queued
+                    .entry(file_key(&file))
+                    .or_default()
+                    .push((file.file_id, status.clone()));
+            }
+        }
+        Ok((pipeline, queued))
+    }
+
     /// In-memory notes per file, such as "Started again: the partial download was gone"
     pub fn file_notes(&self) -> HashMap<i64, String> {
         self.notes.lock().unwrap().clone()
@@ -3119,6 +3422,13 @@ impl DownloadManager {
         let workers = self.workers.read().await;
         workers.get(&worker_id).map(|w| w.stats.clone())
     }
+}
+
+/// How old the Put.io list may be for a pause or resume: the page's own age (R3)
+const ACTION_MAX_AGE: Duration = Duration::from_secs(10);
+
+fn internal(e: putio_sync_db::DbError) -> DownloadError {
+    DownloadError::InternalError(e.to_string())
 }
 
 /// The transfer whose file or folder holds `file_id`, walking up the listed parents

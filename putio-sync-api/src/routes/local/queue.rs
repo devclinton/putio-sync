@@ -9,17 +9,26 @@
 //! - POST /local/queue/<file_id>/move_first - Move item to first position
 //! - POST /local/queue/<file_id>/move_last  - Move item to last position
 //! - POST /local/queue/<file_id>/skip       - Skip item in queue
+//! - POST /local/queue/<file_id>/pause      - Pause a file; a running one stops and keeps its partial
+//! - POST /local/queue/<file_id>/resume     - Put a paused file back in the queue
+//! - POST /local/queue/<file_id>/retry      - Put a failed file back in the queue
+//!
+//! `GET /local/queue` takes `?transfer=<id>`, `?folder=<path>` or `?file=<id>` to list one
+//! Active page row's files.
 
 use crate::error::ApiError;
 use crate::models::SuccessResponse;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{get, post, put},
     Json, Router,
 };
+use putio_sync_db::models::QueueItem;
 use putio_sync_download::DownloadError;
+use putio_sync_telemetry::PipelineAction;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 // Re-export AppState from parent
 pub use crate::AppState;
@@ -43,6 +52,8 @@ pub struct QueueItemResponse {
 pub struct QueueResponse {
     pub items: Vec<QueueItemResponse>,
     pub total: usize,
+    /// The Pause NAS downloads switch is on
+    pub nas_paused: bool,
 }
 
 /// Queue statistics response
@@ -91,22 +102,45 @@ pub fn router() -> Router<AppState> {
         .route("/:file_id/move_first", post(move_first))
         .route("/:file_id/move_last", post(move_last))
         .route("/:file_id/skip", post(skip_item))
+        .route("/:file_id/pause", post(pause_item))
+        .route("/:file_id/resume", post(resume_item))
+        .route("/:file_id/retry", post(retry_item))
+}
+
+/// Which rows `GET /local/queue` lists; none set lists the whole queue
+#[derive(Debug, Default, Deserialize)]
+pub struct QueueFilter {
+    /// Files of this Put.io transfer
+    pub transfer: Option<i64>,
+    /// Files written into this folder that belong to no transfer
+    pub folder: Option<String>,
+    /// This one file
+    pub file: Option<i64>,
 }
 
 /// Get current download queue
 ///
 /// GET /local/queue
-async fn get_queue(State(state): State<AppState>) -> Result<Json<QueueResponse>, ApiError> {
+async fn get_queue(
+    State(state): State<AppState>,
+    Query(filter): Query<QueueFilter>,
+) -> Result<Json<QueueResponse>, ApiError> {
     let db = state
         .database
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     let queue_repo = db.queue();
-    let items = queue_repo
-        .get_all()
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get queue: {}", e)))?;
+    let items = match (filter.transfer, filter.folder.as_deref(), filter.file) {
+        (Some(transfer_id), _, _) => queue_repo.get_for_transfer(transfer_id).await,
+        (None, Some(folder), _) => queue_repo.get_for_folder(folder).await,
+        (None, None, Some(file_id)) => queue_repo
+            .get_by_file_id(file_id)
+            .await
+            .map(|item| item.into_iter().collect()),
+        (None, None, None) => queue_repo.get_all().await,
+    }
+    .map_err(|e| ApiError::InternalError(format!("Failed to get queue: {}", e)))?;
 
     let response_items: Vec<QueueItemResponse> = items
         .into_iter()
@@ -123,9 +157,12 @@ async fn get_queue(State(state): State<AppState>) -> Result<Json<QueueResponse>,
         })
         .collect();
 
+    let nas_paused = state.download_manager.nas_paused().await;
+
     Ok(Json(QueueResponse {
         total: response_items.len(),
         items: response_items,
+        nas_paused,
     }))
 }
 
@@ -349,6 +386,111 @@ async fn skip_item(
     }))
 }
 
+/// Pause one file: a running download stops within seconds and keeps its partial
+///
+/// POST /local/queue/:file_id/pause
+async fn pause_item(
+    State(state): State<AppState>,
+    Path(file_id_str): Path<String>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let file_id: i64 = file_id_str
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Invalid file ID".to_string()))?;
+    let item = queued_item(&state, file_id).await?;
+    if item.status != "pending" && item.status != "downloading" {
+        return Err(ApiError::Conflict(format!(
+            "Item is {}, not pending or downloading",
+            item.status
+        )));
+    }
+    let changed = state
+        .download_manager
+        .pause_files(&[file_id])
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to pause item: {}", e)))?;
+    if changed.is_empty() {
+        return Err(ApiError::Conflict("Item is no longer running".to_string()));
+    }
+    info!(file_id, name = %item.filename, "Paused file");
+    putio_sync_telemetry::pipeline::action(PipelineAction::Pause);
+    Ok(Json(SuccessResponse {
+        message: format!("Item {} paused", file_id),
+    }))
+}
+
+/// Put a paused file back in the queue, in its old place
+///
+/// POST /local/queue/:file_id/resume
+async fn resume_item(
+    State(state): State<AppState>,
+    Path(file_id_str): Path<String>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let file_id: i64 = file_id_str
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Invalid file ID".to_string()))?;
+    let item = queued_item(&state, file_id).await?;
+    let changed = state
+        .download_manager
+        .resume_files(&[file_id])
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to resume item: {}", e)))?;
+    if changed.is_empty() {
+        return Err(ApiError::Conflict(format!(
+            "Item is {}, not paused",
+            item.status
+        )));
+    }
+    info!(file_id, name = %item.filename, "Resumed file");
+    putio_sync_telemetry::pipeline::action(PipelineAction::Resume);
+    Ok(Json(SuccessResponse {
+        message: format!("Item {} resumed", file_id),
+    }))
+}
+
+/// Put a failed file back to `pending`, in its old place (R10)
+///
+/// POST /local/queue/:file_id/retry
+async fn retry_item(
+    State(state): State<AppState>,
+    Path(file_id_str): Path<String>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let file_id: i64 = file_id_str
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Invalid file ID".to_string()))?;
+    let item = queued_item(&state, file_id).await?;
+    let changed = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?
+        .queue()
+        .retry_files(&[file_id])
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to retry item: {}", e)))?;
+    if changed.is_empty() {
+        return Err(ApiError::Conflict(format!(
+            "Item is {}, not failed",
+            item.status
+        )));
+    }
+    info!(file_id, name = %item.filename, "Retrying file");
+    Ok(Json(SuccessResponse {
+        message: format!("Item {} queued again", file_id),
+    }))
+}
+
+/// The queue row of `file_id`, or 404
+async fn queued_item(state: &AppState, file_id: i64) -> Result<QueueItem, ApiError> {
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
+    db.queue()
+        .get_by_file_id(file_id)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get queue item: {}", e)))?
+        .ok_or_else(|| ApiError::NotFound("Item not found in queue".to_string()))
+}
+
 /// Get queue statistics
 ///
 /// GET /local/queue/stats
@@ -394,44 +536,35 @@ async fn clear_completed(State(state): State<AppState>) -> Result<Json<SuccessRe
     }))
 }
 
-/// Pause all active downloads
-///
-/// POST /local/queue/pause
-async fn pause_all(State(state): State<AppState>) -> Result<Json<SuccessResponse>, ApiError> {
-    let db = state
-        .database
-        .as_ref()
-        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
-
-    let queue_repo = db.queue();
-    let count = queue_repo
-        .pause_all()
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to pause queue: {}", e)))?;
-
-    Ok(Json(SuccessResponse {
-        message: format!("Paused {} items in queue", count),
-    }))
+/// Response of the Pause NAS downloads switch
+#[derive(Debug, Serialize)]
+pub struct SwitchResponse {
+    pub nas_paused: bool,
 }
 
-/// Resume all paused downloads
+/// Turn the Pause NAS downloads switch on: running downloads stop and keep their partial
+/// files, nothing new starts, and no row changes (feature 039, FR-020)
+///
+/// POST /local/queue/pause
+async fn pause_all(State(state): State<AppState>) -> Result<Json<SwitchResponse>, ApiError> {
+    set_switch(&state, true).await
+}
+
+/// Turn the switch off: queued files start again in their old order
 ///
 /// POST /local/queue/resume
-async fn resume_all(State(state): State<AppState>) -> Result<Json<SuccessResponse>, ApiError> {
-    let db = state
-        .database
-        .as_ref()
-        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
+async fn resume_all(State(state): State<AppState>) -> Result<Json<SwitchResponse>, ApiError> {
+    set_switch(&state, false).await
+}
 
-    let queue_repo = db.queue();
-    let count = queue_repo
-        .resume_all()
+async fn set_switch(state: &AppState, on: bool) -> Result<Json<SwitchResponse>, ApiError> {
+    state
+        .download_manager
+        .set_nas_paused(on)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to resume queue: {}", e)))?;
-
-    Ok(Json(SuccessResponse {
-        message: format!("Resumed {} items in queue", count),
-    }))
+        .map_err(|e| ApiError::InternalError(format!("Failed to change the switch: {}", e)))?;
+    info!(nas_paused = on, "Pause NAS downloads switch changed");
+    Ok(Json(SwitchResponse { nas_paused: on }))
 }
 
 #[cfg(test)]

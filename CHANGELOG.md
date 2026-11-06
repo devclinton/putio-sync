@@ -232,6 +232,19 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   Status page's Active transfers card summarises it, and the
   `putio_sync_pipeline_items` metric counts items by stage and state
   (feature 039).
+- Pause and resume on the Active page, one item or a selection at a time. Pausing a
+  transfer that is still on Put.io puts it **On hold**: Put.io keeps downloading it
+  (Put.io has no pause), nothing is sent to Put.io, and its files are queued paused when
+  they arrive. Radarr and Sonarr see a paused item as stopped, not failed. Rows on the
+  Active page link to their Transfers and Queue rows, and the Queue page can be filtered
+  to one transfer, folder or file and pauses and resumes single files (feature 039).
+- A **Pause NAS downloads** switch on the Active and Queue pages (and
+  `putio-sync queue pause` / `queue resume` with no file ids) stops every running NAS
+  download and starts none until it is turned off. It survives a restart, a banner
+  shows on the Active, Queue and Status pages while it is on, and `putio_sync_nas_downloads_paused` reports it (feature 039).
+- A **Recently finished** list on the Active page shows items that left the pipeline in the
+  last `[transfers] finished_retention_hours` (24 by default), done or failed with the
+  reason, and how long each spent on Put.io, waiting for sync and on the NAS (feature 039).
 - A Local files page in the web UI lists the download folder (with its
   `radarr/` and `sonarr/` folders) and each watch folder when watching is on,
   with sizes and times, and marks partial `.downloading` files and rejected
@@ -394,6 +407,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- **Pause all** and **Resume all** on the Queue page are replaced by the Pause NAS
+  downloads switch, and `POST /local/queue/pause` and `/resume` now turn that switch on
+  and off instead of changing every row. Upgrade note: rows paused by the old Pause all
+  stay paused after the upgrade, so resume them once from the Queue page. The pipeline
+  adds the `pipeline_holds`, `pipeline_finished` and `daemon_flags` tables, created on
+  start, and `GET /status` and `GET /local/queue` gain `nas_paused` (feature 039).
 - Settings is split into seven sections (General, Put.io, Downloads, Rules and
   filters, Integrations, Network and access, Advanced), shown as a side list on
   a wide screen and a row of buttons on a phone, each with a line of help. Each

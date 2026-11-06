@@ -7,7 +7,8 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::{body_json, test_app, TestApp};
-use putio_sync_db::models::QueueStatus;
+use putio_sync_db::models::{DownloadSource, Origin, QueueStatus};
+use putio_sync_db::pipeline::NAS_DOWNLOADS_PAUSED;
 use serde_json::{json, Value};
 
 /// Three pending rows `a`, `b`, `c` with priorities 0, 1, 2 (so listed c, b, a) and a
@@ -253,34 +254,43 @@ async fn skip_removes_the_row() {
 }
 
 #[tokio::test]
-async fn pause_and_resume_all() {
+async fn pause_and_resume_are_the_nas_switch() {
     let app = seeded().await;
     let (status, body) = action(&app, "/local/queue/pause").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["message"], "Paused 3 items in queue");
-    let s = stats(&app).await;
-    assert_eq!(
-        (s["pending"].clone(), s["paused"].clone()),
-        (json!(0), json!(3))
-    );
-    assert_eq!(s["completed"], 1, "completed rows are not paused");
+    assert_eq!(body, json!({ "nas_paused": true }));
     assert!(app
         .db()
-        .queue()
-        .claim_next_pending()
+        .flags()
+        .get_bool(NAS_DOWNLOADS_PAUSED)
         .await
-        .unwrap()
-        .is_none());
-
-    let (status, body) = action(&app, "/local/queue/resume").await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["message"], "Resumed 3 items in queue");
+        .unwrap());
+    // The switch leaves the rows alone: they stay queued and in order
     let s = stats(&app).await;
     assert_eq!(
         (s["pending"].clone(), s["paused"].clone()),
         (json!(3), json!(0))
     );
-    // Order is kept
+    assert_eq!(order(&app).await, ["c", "b", "a", "d"]);
+    // The queue page reads the switch with the rows
+    let queue = body_json(app.get("/local/queue").await).await;
+    assert_eq!(queue["nas_paused"], true);
+
+    // Pausing twice is fine
+    let (_, body) = action(&app, "/local/queue/pause").await;
+    assert_eq!(body, json!({ "nas_paused": true }));
+
+    let (status, body) = action(&app, "/local/queue/resume").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({ "nas_paused": false }));
+    assert!(!app
+        .db()
+        .flags()
+        .get_bool(NAS_DOWNLOADS_PAUSED)
+        .await
+        .unwrap());
+    let queue = body_json(app.get("/local/queue").await).await;
+    assert_eq!(queue["nas_paused"], false);
     assert_eq!(order(&app).await, ["c", "b", "a", "d"]);
 }
 
@@ -337,4 +347,152 @@ async fn queue_states_are_plain_names() {
         .map(|i| i["status"].as_str().unwrap())
         .collect();
     assert_eq!(states, ["pending", "pending", "pending", "completed"]);
+}
+
+async fn status_of(app: &TestApp, file_id: i64) -> String {
+    app.db()
+        .queue()
+        .get_by_file_id(file_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .status
+}
+
+/// Per-file pause and resume (feature 039, R10)
+#[tokio::test]
+async fn pause_and_resume_one_file_keep_its_place() {
+    let app = seeded().await;
+    let (status, body) = action(&app, "/local/queue/2/pause").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status_of(&app, 2).await, "paused");
+    assert_eq!(status_of(&app, 1).await, "pending");
+    assert!(app
+        .db()
+        .queue()
+        .claim_next_pending()
+        .await
+        .unwrap()
+        .is_some());
+
+    let (status, _) = action(&app, "/local/queue/2/pause").await;
+    assert_eq!(status, StatusCode::CONFLICT, "already paused");
+    let (status, body) = action(&app, "/local/queue/2/resume").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status_of(&app, 2).await, "pending");
+    assert_eq!(order(&app).await, ["c", "b", "a", "d"]);
+
+    let (status, _) = action(&app, "/local/queue/2/resume").await;
+    assert_eq!(status, StatusCode::CONFLICT, "not paused");
+    for verb in ["pause", "resume"] {
+        let (status, _) = action(&app, &format!("/local/queue/999/{verb}")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{verb}");
+    }
+}
+
+/// A running file is stopped, and its partial and row are kept
+#[tokio::test]
+async fn pause_marks_a_running_file_paused() {
+    let app = seeded().await;
+    app.db()
+        .queue()
+        .update_status(3, QueueStatus::Downloading)
+        .await
+        .unwrap();
+    let (status, body) = action(&app, "/local/queue/3/pause").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status_of(&app, 3).await, "paused");
+}
+
+#[tokio::test]
+async fn retry_puts_a_failed_file_back_in_its_place() {
+    let app = seeded().await;
+    app.db()
+        .queue()
+        .update_status(2, QueueStatus::Failed)
+        .await
+        .unwrap();
+    let (status, body) = action(&app, "/local/queue/2/retry").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status_of(&app, 2).await, "pending");
+    assert_eq!(order(&app).await, ["c", "b", "a", "d"]);
+
+    let (status, _) = action(&app, "/local/queue/2/retry").await;
+    assert_eq!(status, StatusCode::CONFLICT, "not failed");
+    let (status, _) = action(&app, "/local/queue/999/retry").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn pause_resume_and_retry_require_auth() {
+    let app = seeded().await;
+    for verb in ["pause", "resume", "retry"] {
+        let response = app
+            .req(Method::POST, &format!("/local/queue/1/{verb}"), None, None)
+            .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{verb}");
+    }
+}
+
+/// `?transfer=` lists only that transfer's files, through `download_sources`
+#[tokio::test]
+async fn queue_filters_by_transfer() {
+    let app = seeded().await;
+    for (file_id, transfer_id) in [(1, 7), (3, 7), (2, 8)] {
+        app.db()
+            .sources()
+            .record(
+                file_id,
+                &DownloadSource {
+                    transfer_id: Some(transfer_id),
+                    source_type: None,
+                    tracker_host: None,
+                    is_private: false,
+                    origin: Origin::Putio,
+                    watch_folder: None,
+                    putio_folder: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let body = body_json(app.get("/local/queue?transfer=7").await).await;
+    let names: Vec<&str> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["filename"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["c", "a"], "{body}");
+    assert_eq!(body["total"], 2);
+
+    let body = body_json(app.get("/local/queue?transfer=999").await).await;
+    assert_eq!(body["total"], 0);
+    let body = body_json(app.get("/local/queue").await).await;
+    assert_eq!(body["total"], 4, "no filter lists everything");
+}
+
+/// Rows with no transfer link to the queue by their folder or their file id
+#[tokio::test]
+async fn queue_filters_by_folder_and_file() {
+    let app = seeded().await;
+    let queue = app.db().queue();
+    queue
+        .add(10, "up1", 1, "", "Uploads/Pack", 0, QueueStatus::Pending)
+        .await
+        .unwrap();
+    queue
+        .add(11, "up2", 1, "", "Uploads/Pack", 0, QueueStatus::Pending)
+        .await
+        .unwrap();
+    queue
+        .add(12, "other", 1, "", "Uploads/Other", 0, QueueStatus::Pending)
+        .await
+        .unwrap();
+
+    let body = body_json(app.get("/local/queue?folder=Uploads%2FPack").await).await;
+    assert_eq!(body["total"], 2, "{body}");
+    let body = body_json(app.get("/local/queue?file=12").await).await;
+    assert_eq!(body["total"], 1, "{body}");
+    assert_eq!(body["items"][0]["filename"], "other");
 }

@@ -380,6 +380,11 @@ pub fn router(state: AppState) -> Router {
         .nest("/verify", routes::system::verify::router())
         .nest("/arr", routes::arr::router())
         .route("/active", axum::routing::get(routes::active::get_active))
+        .route("/active/pause", axum::routing::post(routes::active::pause))
+        .route(
+            "/active/resume",
+            axum::routing::post(routes::active::resume),
+        )
         .nest("/releases", routes::releases::router())
         .nest("/whats-new", routes::system::whats_new::router())
         .nest("/tailscale", routes::system::tailscale::router())

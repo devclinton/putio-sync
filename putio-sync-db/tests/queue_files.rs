@@ -100,6 +100,20 @@ async fn retry_files_puts_failed_rows_back_in_queue_order() {
     assert_eq!(status(&db, 3).await, "paused");
 }
 
+/// The Pause NAS downloads switch puts running rows back to `pending`, not `paused`
+#[tokio::test]
+async fn unclaim_files_puts_only_downloading_rows_back_to_pending() {
+    let (_dir, db) = db().await;
+    one_of_each(&db).await;
+    assert_eq!(
+        db.queue().unclaim_files(&[1, 2, 3, 4]).await.unwrap(),
+        vec![2]
+    );
+    assert_eq!(status(&db, 2).await, "pending");
+    assert_eq!(status(&db, 3).await, "paused");
+    assert_eq!(status(&db, 4).await, "failed");
+}
+
 #[tokio::test]
 async fn no_ids_changes_nothing() {
     let (_dir, db) = db().await;
@@ -107,4 +121,5 @@ async fn no_ids_changes_nothing() {
     assert!(db.queue().pause_files(&[]).await.unwrap().is_empty());
     assert!(db.queue().resume_files(&[]).await.unwrap().is_empty());
     assert!(db.queue().retry_files(&[]).await.unwrap().is_empty());
+    assert!(db.queue().unclaim_files(&[]).await.unwrap().is_empty());
 }

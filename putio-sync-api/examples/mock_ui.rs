@@ -30,7 +30,10 @@
 //! failed transfers, Elephants.Dream waiting for the next sync, the folder `Photos/2026`
 //! with no transfer, and the failed and paused queue rows. `MOCK_PUTIO_DOWN=1` makes
 //! `/transfers/list` answer 503 after the first list, so the page shows Put.io figures out
-//! of date; `MOCK_ACTIVE_COUNT=200` adds that many generated transfers.
+//! of date; `MOCK_ACTIVE_COUNT=200` adds that many generated transfers. Sintel is on hold
+//! (its NAS download is held while Put.io keeps going), the folder `Documentaries/Planet`
+//! has a paused file, and Recently finished holds one done and one failed item.
+//! `MOCK_NAS_PAUSED=1` starts with the Pause NAS downloads switch on.
 //! Feature 042: the Stats page's "Rejected releases" and "Magnet lookups" tiles count a
 //! week of seeded release checks: fakes rejected before and on Put.io, magnets found in
 //! itorrents.net or sent to Put.io, and one older reject that only 30d and longer show.
@@ -54,6 +57,7 @@ use putio_sync_core::stall::StallTracker;
 use putio_sync_db::models::{
     DownloadSource, DownloadStatus, HistoryAction, Origin, QueueStatus, SourceType,
 };
+use putio_sync_db::pipeline::{FinishedOutcome, FinishedRow, NAS_DOWNLOADS_PAUSED};
 use putio_sync_db::{CheckState, Database, NewArrItem, NewCheck, NewReport, ReportKind};
 use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadManager;
@@ -1191,6 +1195,55 @@ async fn seed_pipeline(db: &Database) -> Result<(), Box<dyn std::error::Error>> 
                 total_size: 0,
             })
             .await?;
+    }
+    // Sintel is held: Put.io keeps downloading, its NAS download waits
+    db.holds().add(1, "Sintel.2010.1080p").await?;
+    // A folder with no transfer, paused by hand
+    queue
+        .add(
+            701,
+            "Planet.Earth.S01E01.mkv",
+            EPISODE,
+            "http://unused",
+            "Documentaries/Planet",
+            0,
+            QueueStatus::Paused,
+        )
+        .await?;
+    // Recently finished: one that made it, one that did not
+    let ago = |hours: i64| {
+        (Utc::now() - Duration::hours(hours))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string()
+    };
+    for row in [
+        FinishedRow {
+            key: "transfer:799".into(),
+            name: "Some.Movie.2024.2160p".into(),
+            size: 31_000_000_000,
+            outcome: FinishedOutcome::Done,
+            reason: None,
+            added_at: Some(ago(5)),
+            putio_done_at: Some(ago(4)),
+            queued_at: Some(ago(3)),
+            done_at: ago(1),
+        },
+        FinishedRow {
+            key: "transfer:798".into(),
+            name: "Lost.Episode.S03E04.720p".into(),
+            size: 900_000_000,
+            outcome: FinishedOutcome::Failed,
+            reason: Some("Put.io transfer is gone and nothing was downloaded".into()),
+            added_at: Some(ago(9)),
+            putio_done_at: None,
+            queued_at: None,
+            done_at: ago(2),
+        },
+    ] {
+        db.finished().upsert(&row).await?;
+    }
+    if std::env::var("MOCK_NAS_PAUSED").is_ok_and(|v| v == "1") {
+        db.flags().set_bool(NAS_DOWNLOADS_PAUSED, true).await?;
     }
     for (file_id, name) in [(601, "IMG_0001.jpg"), (602, "IMG_0002.jpg")] {
         queue

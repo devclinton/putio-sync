@@ -220,6 +220,46 @@ impl<'a> QueueRepository<'a> {
         Ok(items)
     }
 
+    /// The queue rows of one Put.io transfer, through `download_sources`, in queue order
+    /// (feature 039, FR-023)
+    pub async fn get_for_transfer(&self, transfer_id: i64) -> DbResult<Vec<QueueItem>> {
+        sqlx::query_as::<_, QueueItem>(
+            r#"
+            SELECT q.* FROM download_queue q
+            JOIN download_sources s ON s.file_id = q.file_id
+            WHERE s.transfer_id = ?
+            ORDER BY q.priority DESC, q.created_at ASC
+            "#,
+        )
+        .bind(transfer_id)
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(
+            DbOp::Queue,
+            "Failed to get queue items of a transfer",
+        ))
+    }
+
+    /// The queue rows written into `relative_path` that belong to no transfer, in queue
+    /// order: the files of an Active page `folder:` row
+    pub async fn get_for_folder(&self, relative_path: &str) -> DbResult<Vec<QueueItem>> {
+        sqlx::query_as::<_, QueueItem>(
+            r#"
+            SELECT q.* FROM download_queue q
+            LEFT JOIN download_sources s ON s.file_id = q.file_id
+            WHERE q.relative_path = ? AND s.transfer_id IS NULL
+            ORDER BY q.priority DESC, q.created_at ASC
+            "#,
+        )
+        .bind(relative_path)
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(
+            DbOp::Queue,
+            "Failed to get queue items of a folder",
+        ))
+    }
+
     /// Get a queue item by file_id
     pub async fn get_by_file_id(&self, file_id: i64) -> DbResult<Option<QueueItem>> {
         let item = sqlx::query_as::<_, QueueItem>(
@@ -300,38 +340,6 @@ impl<'a> QueueRepository<'a> {
             .map_err(tracked(DbOp::Queue, "Failed to reorder queue"))
     }
 
-    /// Pause all items in the queue
-    pub async fn pause_all(&self) -> DbResult<usize> {
-        let result = sqlx::query(
-            r#"
-            UPDATE download_queue
-            SET status = 'paused', updated_at = CURRENT_TIMESTAMP
-            WHERE status IN ('pending', 'downloading')
-            "#,
-        )
-        .execute(self.pool)
-        .await
-        .map_err(tracked(DbOp::Queue, "Failed to pause queue"))?;
-
-        Ok(result.rows_affected() as usize)
-    }
-
-    /// Resume all paused items in the queue
-    pub async fn resume_all(&self) -> DbResult<usize> {
-        let result = sqlx::query(
-            r#"
-            UPDATE download_queue
-            SET status = 'pending', updated_at = CURRENT_TIMESTAMP
-            WHERE status = 'paused'
-            "#,
-        )
-        .execute(self.pool)
-        .await
-        .map_err(tracked(DbOp::Queue, "Failed to resume queue"))?;
-
-        Ok(result.rows_affected() as usize)
-    }
-
     /// Pause the `pending` or `downloading` rows among `file_ids` (feature 039). Returns
     /// the ids it changed; the caller stops the running ones.
     pub async fn pause_files(&self, file_ids: &[i64]) -> DbResult<Vec<i64>> {
@@ -364,6 +372,18 @@ impl<'a> QueueRepository<'a> {
             QueueStatus::Pending,
             "status = 'failed'",
             "Failed to retry queue items",
+        )
+        .await
+    }
+
+    /// Put the `downloading` rows among `file_ids` back to `pending`: the Pause NAS
+    /// downloads switch stops them without pausing them. Returns the ids it changed.
+    pub async fn unclaim_files(&self, file_ids: &[i64]) -> DbResult<Vec<i64>> {
+        self.set_status_where(
+            file_ids,
+            QueueStatus::Pending,
+            "status = 'downloading'",
+            "Failed to requeue running queue items",
         )
         .await
     }

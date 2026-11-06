@@ -210,31 +210,31 @@ transfer it holds the NAS download. Nothing is sent to Put.io.
 **Independent test**: pause a NAS-stage row (speed "—" within 5 s, Resume continues from the
 partial) and a Put.io-stage row ("On hold"; its files arrive paused).
 
-- [ ] T025 [P] [US3] Tests first in `putio-sync-download/tests/hold.rs` (mockito Put.io, with
+- [X] T025 [P] [US3] Tests first in `putio-sync-download/tests/hold.rs` (mockito Put.io, with
   `expect(0)` on cancel, remove and clean): holding a Put.io-stage transfer writes a
   `pipeline_holds` row and sends nothing to Put.io (SC-008); when it finishes and syncs, its
   files are inserted `paused`; resume deletes the hold and resumes its queued rows; a hold
   survives reopening the database (FR-018).
-- [ ] T026 [US3] Enqueue path in `putio-sync-download/src/manager.rs`: look up the transfer
+- [X] T026 [US3] Enqueue path in `putio-sync-download/src/manager.rs`: look up the transfer
   *before* inserting the queue row; if held, `add` with status `paused`.
-- [ ] T027 [US3] `DownloadManager::pause_items(&[key])` and `resume_items(&[key])` in
+- [X] T027 [US3] `DownloadManager::pause_items(&[key])` and `resume_items(&[key])` in
   `putio-sync-download/src/manager.rs`. Results per key in order: pause → `paused` (NAS stage:
   `pause_files` then `stop_files`), `held` (Put.io stage or waiting for sync), `already`,
   `not_found`; resume → `resumed`, `already`, `not_found`. `folder:` and `file:` items are never
   held. Unknown keys are per-item `not_found`, not a request error. Log with `transfer_id`,
   `name`, `files` fields; count `putio_sync_pipeline_actions_total`. T025 passes.
-- [ ] T028 [US3] Tests then `POST /active/pause` and `POST /active/resume` in
+- [X] T028 [US3] Tests then `POST /active/pause` and `POST /active/resume` in
   `putio-sync-api/src/routes/active.rs`: body `{ "keys": [...] }`; 400 when `keys` is empty or
   has more than 500 entries; 200 with `results` in key order; auth required.
-- [ ] T029 [US3] Tests then `POST /local/queue/{file_id}/pause` and `/resume` in
+- [X] T029 [US3] Tests then `POST /local/queue/{file_id}/pause` and `/resume` in
   `putio-sync-api/src/routes/local/queue.rs` (a running file stops and keeps its partial;
   resume keeps its place).
-- [ ] T030 [US3] Stale holds in the pipeline loop in `putio-sync-daemon/src/daemon.rs`: delete
+- [X] T030 [US3] Stale holds in the pipeline loop in `putio-sync-daemon/src/daemon.rs`: delete
   holds whose transfer is in `ERROR` or gone from Put.io. Test.
-- [ ] T031 [P] [US3] `putio-sync-arr/src/view.rs` and `service.rs`: `LocalProgress.paused` is
+- [X] T031 [P] [US3] `putio-sync-arr/src/view.rs` and `service.rs`: `LocalProgress.paused` is
   true when the item's transfer is held or every unfinished file is paused; report status 0,
   `isFinished: false`, `leftUntilDone > 0`. Test in the arr view tests (FR-021).
-- [ ] T032 [US3] UI: Pause/Resume button per row in `putio-sync-api/ui/pages/active.js`; held
+- [X] T032 [US3] UI: Pause/Resume button per row in `putio-sync-api/ui/pages/active.js`; held
   rows show the "On hold" badge with "Put.io keeps downloading; NAS download held"; paused rows
   show speed "—" and time left "Paused". Per-row Pause/Resume on
   `putio-sync-api/ui/pages/queue.js`. Add held and paused fixtures to
@@ -252,18 +252,18 @@ files (NAS stage).
 **Independent test**: on the mock UI a Put.io-stage row opens Transfers, a NAS-stage row opens
 Queue showing only its files.
 
-- [ ] T033 [US4] Fill `links` in `build()` (`#/transfers?id=<id>`, `#/queue?transfer=<id>`;
+- [X] T033 [US4] Fill `links` in `build()` (`#/transfers?id=<id>`, `#/queue?transfer=<id>`;
   folder and file rows link to the queue filtered by their files) with a test in
   `putio-sync-download/src/pipeline.rs`.
-- [ ] T034 [US4] Tests then, in `putio-sync-api/src/routes/local/queue.rs`:
+- [X] T034 [US4] Tests then, in `putio-sync-api/src/routes/local/queue.rs`:
   `GET /local/queue?transfer={id}` (only that transfer's files, via `download_sources`), and
   `POST /local/queue/{file_id}/retry` (failed → `pending` through `retry_files`, keeping its
   place; 409 if the file is not failed; auth required).
-- [ ] T035 [P] [US4] `putio-sync-api/ui/pages/queue.js`: honour `?transfer=`, show "Showing
+- [X] T035 [P] [US4] `putio-sync-api/ui/pages/queue.js`: honour `?transfer=`, show "Showing
   files of <name>" with a "Show all" link; a Retry button on failed rows.
   `putio-sync-api/ui/pages/transfers.js`: when `?id=` is present, scroll to and highlight that
   row.
-- [ ] T036 [US4] Link column in `putio-sync-api/ui/pages/active.js`. The page adds no retry,
+- [X] T036 [US4] Link column in `putio-sync-api/ui/pages/active.js`. The page adds no retry,
   cancel or remove action of its own (FR-024).
 
 ---
@@ -277,30 +277,30 @@ replaces the Queue page's Pause all/Resume all.
 on (banner on Active, Status and Queue; nothing starts; restart keeps it on), then off
 (everything resumes except individually paused files).
 
-- [ ] T037 [P] [US5] Tests first in `putio-sync-download/tests/switch.rs`: switch on → running
+- [X] T037 [P] [US5] Tests first in `putio-sync-download/tests/switch.rs`: switch on → running
   files stop and go back to `pending` (not `paused`); `process_queue` claims nothing; files
   queued by a sync stay queued; individually paused rows stay `paused`. Switch off → workers
   claim again, without touching any row. The switch survives reopening the database.
-- [ ] T038 [US5] `DownloadManager::set_nas_paused(bool)` and `nas_paused()` in
+- [X] T038 [US5] `DownloadManager::set_nas_paused(bool)` and `nas_paused()` in
   `putio-sync-download/src/manager.rs`: persisted in `daemon_flags` key `nas_downloads_paused`
   (`"1"`/`"0"`, missing means off), loaded at start; `process_queue` checks it before claiming.
   T037 passes.
-- [ ] T039 [US5] `putio-sync-api/src/routes/local/queue.rs`: `POST /local/queue/pause` turns
+- [X] T039 [US5] `putio-sync-api/src/routes/local/queue.rs`: `POST /local/queue/pause` turns
   the switch on and returns `{ "nas_paused": true }`; `POST /local/queue/resume` turns it off
   and returns `{ "nas_paused": false }`; neither rewrites row statuses. `GET /local/queue`,
   `GET /active` and `GET /status` gain `nas_paused`. Update existing queue route tests.
-- [ ] T040 [US5] Switch in the arr view (`putio-sync-arr/src/view.rs`): any item is paused while
+- [X] T040 [US5] Switch in the arr view (`putio-sync-arr/src/view.rs`): any item is paused while
   the switch is on. Test.
-- [ ] T041 [US5] Set `putio_sync_nas_downloads_paused` in the pipeline loop in
+- [X] T041 [US5] Set `putio_sync_nas_downloads_paused` in the pipeline loop in
   `putio-sync-daemon/src/daemon.rs`.
-- [ ] T042 [US5] Bulk selection on `putio-sync-api/ui/pages/active.js` with `select.js`
+- [X] T042 [US5] Bulk selection on `putio-sync-api/ui/pages/active.js` with `select.js`
   (feature 008): Pause and Resume in the selection bar send one request; one toast lists each
   key's result.
-- [ ] T043 [US5] The switch on the Active page, and the banner "NAS downloads paused" with a
+- [X] T043 [US5] The switch on the Active page, and the banner "NAS downloads paused" with a
   Resume button on Active, Status and Queue (shared helper in `putio-sync-api/ui/app.js`).
-- [ ] T044 [US5] `putio-sync-api/ui/pages/queue.js`: one switch button replaces Pause all and
+- [X] T044 [US5] `putio-sync-api/ui/pages/queue.js`: one switch button replaces Pause all and
   Resume all. Add a switch fixture to `putio-sync-api/examples/mock_ui.rs`.
-- [ ] T045 [US5] Remove `QueueRepository::pause_all` and `resume_all` from
+- [X] T045 [US5] Remove `QueueRepository::pause_all` and `resume_all` from
   `putio-sync-db/src/queue.rs` and every remaining caller (CLI, API, tests). Confirm that
   `grep -rn "pause_all\|resume_all" --include='*.rs' .` finds none.
 
@@ -313,7 +313,7 @@ on (banner on Active, Status and Queue; nothing starts; restart keeps it on), th
 **Independent test**: on the mock UI a finished fixture shows in Recently finished with stage
 times; a failed one shows its reason; rows older than the retention are gone.
 
-- [ ] T046 [US6] Tests in `putio-sync-daemon/src/daemon.rs` (or `putio-sync-daemon/tests/`): the
+- [X] T046 [US6] Tests in `putio-sync-daemon/src/daemon.rs` (or `putio-sync-daemon/tests/`): the
   first transition to done writes one `pipeline_finished` row with `outcome` `done`; a failed
   item that can still be retried (Put.io `ERROR`, NAS Failed) writes nothing and stays active;
   it writes one `failed` row (`reason` set) when its transfer is gone from Put.io while in
@@ -327,7 +327,7 @@ times; a failed one shows its reason; rows older than the retention are gone.
   rows survive reopening the database (FR-026); a finished transfer whose files were all
   blocked by a rule (feature 009), and that finished within the retention period, is recorded
   once as `failed` with "nothing to download" and the blocked extensions.
-- [ ] T047 [US6] Record transitions and prune in the pipeline loop in
+- [X] T047 [US6] Record transitions and prune in the pipeline loop in
   `putio-sync-daemon/src/daemon.rs`. Keep the previous tick's active keys in memory and write
   only items that were active then and are not now, plus the restart and blocked cases in R6.
   Columns: `added_at` = `transfer.created_at`, `putio_done_at` =
@@ -335,25 +335,25 @@ times; a failed one shows its reason; rows older than the retention are gone.
   last `downloads.downloaded_at` (for a failed item, when it left the active list; for the
   blocked case, `transfer.finished_at`). T046
   passes.
-- [ ] T048 [US6] `recently_finished` in `GET /active` (`putio-sync-api/src/routes/active.rs`):
+- [X] T048 [US6] `recently_finished` in `GET /active` (`putio-sync-api/src/routes/active.rs`):
   `total_seconds`, `putio_seconds` (`putio_done_at - added_at`), `waiting_seconds`
   (`queued_at - putio_done_at`), `nas_seconds` (`done_at - queued_at`); a time is null when
   either end is NULL. Empty under the `server` engine. Extend `putio-sync-api/tests/active.rs`.
-- [ ] T049 [US6] Recently finished section in `putio-sync-api/ui/pages/active.js` and finished
+- [X] T049 [US6] Recently finished section in `putio-sync-api/ui/pages/active.js` and finished
   fixtures (done and failed) in `putio-sync-api/examples/mock_ui.rs`.
 
 ---
 
 ## Phase 9: Polish & cross-cutting
 
-- [ ] T050 [P] Performance test in `putio-sync-api/tests/active.rs`: 200 transfers and 5,000
+- [X] T050 [P] Performance test in `putio-sync-api/tests/active.rs`: 200 transfers and 5,000
   queue rows → `GET /active` under 200 ms.
-- [ ] T051 [P] `README.md`: the Active page, pause and hold (Put.io keeps downloading), the
+- [X] T051 [P] `README.md`: the Active page, pause and hold (Put.io keeps downloading), the
   Pause NAS downloads switch, and `finished_retention_hours`.
-- [ ] T052 [P] `CHANGELOG.md` entry, with the upgrade note: rows paused by the old Pause all
+- [X] T052 [P] `CHANGELOG.md` entry, with the upgrade note: rows paused by the old Pause all
   stay paused after the upgrade, so resume them once from the Queue page.
-- [ ] T053 Run `make ci` and fix anything it reports.
-- [ ] T054 Walk through [quickstart.md](quickstart.md) sections 2 and 3 on the mock UI (all 15
+- [X] T053 Run `make ci` and fix anything it reports.
+- [X] T054 Walk through [quickstart.md](quickstart.md) sections 2 and 3 on the mock UI (all 15
   checks, then `MOCK_PUTIO_DOWN=1`).
 
 ---

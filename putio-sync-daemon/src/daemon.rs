@@ -767,7 +767,7 @@ impl PutioDaemon {
 }
 
 /// One pipeline update: build the Active pipeline from a Put.io list at most
-/// [`PIPELINE_MAX_AGE`] old and set `putio_sync_pipeline_items`
+/// [`PIPELINE_MAX_AGE`] old, set `putio_sync_pipeline_items`, and record Recently finished
 pub async fn pipeline_tick(
     download_manager: &DownloadManager,
     tracker: &StallTracker,
@@ -779,6 +779,15 @@ pub async fn pipeline_tick(
     for (stage, state, n) in pipeline_gauges(&pipeline.counts) {
         putio_sync_telemetry::pipeline::set_items(stage, state, n);
     }
+    putio_sync_telemetry::pipeline::set_nas_paused(download_manager.nas_paused().await);
+    // Same list as above: it is inside the cache age, so this asks Put.io for nothing
+    download_manager
+        .release_stale_holds(PIPELINE_MAX_AGE)
+        .await?;
+    // Items that left the list since the last tick go to Recently finished (R6, R12)
+    download_manager
+        .record_finished(&pipeline, retention_hours)
+        .await?;
     Ok(pipeline.counts)
 }
 
@@ -909,7 +918,9 @@ mod tests {
         assert_eq!(tracker.stalled_count(), 1);
     }
 
-    async fn pipeline_manager(server: &mockito::Server) -> (tempfile::TempDir, DownloadManager) {
+    async fn pipeline_manager(
+        server: &mockito::Server,
+    ) -> (tempfile::TempDir, DownloadManager, Arc<Database>) {
         let dir = tempfile::tempdir().unwrap();
         let db = Arc::new(
             Database::new(dir.path().join(".putiosync.db"))
@@ -921,7 +932,7 @@ mod tests {
             target_directory: dir.path().to_path_buf(),
             ..DownloadConfig::default()
         };
-        (dir, DownloadManager::new(client, db, config))
+        (dir, DownloadManager::new(client, db.clone(), config), db)
     }
 
     /// FR-028, SC-006: with no page open, a minute of loop ticks asks Put.io once
@@ -939,7 +950,7 @@ mod tests {
             .expect(1)
             .create_async()
             .await;
-        let (_dir, manager) = pipeline_manager(&server).await;
+        let (_dir, manager, _db) = pipeline_manager(&server).await;
         let tracker = StallTracker::new(Duration::from_secs(3600));
 
         let ticks = PIPELINE_MAX_AGE.as_secs() / PIPELINE_TICK.as_secs();
@@ -967,7 +978,7 @@ mod tests {
             .expect(1)
             .create_async()
             .await;
-        let (_dir, manager) = pipeline_manager(&server).await;
+        let (_dir, manager, _db) = pipeline_manager(&server).await;
         let tracker = StallTracker::new(Duration::from_secs(3600));
 
         // One 10 s window: a loop tick, and each of three tabs polls twice
@@ -981,6 +992,476 @@ mod tests {
             }
         }
         list.assert_async().await;
+    }
+
+    /// R9: a hold is cleared when its transfer is in error or gone from Put.io; a hold on
+    /// a live transfer stays
+    #[tokio::test]
+    async fn pipeline_tick_releases_holds_of_failed_and_gone_transfers() {
+        let mut server = mockito::Server::new_async().await;
+        let mut failed = downloading(6, 0);
+        failed["status"] = "ERROR".into();
+        failed["error_message"] = "tracker gone".into();
+        mock_list(
+            &mut server,
+            serde_json::json!([downloading(5, 970), failed]),
+        )
+        .await;
+        let (_dir, manager, db) = pipeline_manager(&server).await;
+        for id in [5, 6, 7] {
+            db.holds().add(id, "Held").await.unwrap();
+        }
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        let left: Vec<i64> = db
+            .holds()
+            .list()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|h| h.transfer_id)
+            .collect();
+        assert_eq!(left, vec![5]);
+    }
+
+    /// With Put.io down the list is the last known one, so no hold is judged gone
+    #[tokio::test]
+    async fn pipeline_tick_keeps_holds_while_putio_is_unreachable() {
+        let mut server = mockito::Server::new_async().await;
+        let list = mock_list(&mut server, serde_json::json!([downloading(5, 970)])).await;
+        let (_dir, manager, db) = pipeline_manager(&server).await;
+        db.holds().add(5, "Held").await.unwrap();
+        db.holds().add(7, "Held").await.unwrap();
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        // Put.io fails from now on; the next snapshot is stale
+        list.remove_async().await;
+        let _down = server
+            .mock("GET", "/transfers/list")
+            .with_status(400)
+            .with_body(r#"{"status":"ERROR","error_type":"Down","error_message":"down"}"#)
+            .create_async()
+            .await;
+        manager.transfers_snapshot(Duration::ZERO).await.unwrap();
+        db.holds().add(8, "Held").await.unwrap();
+
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        assert_eq!(db.holds().list().await.unwrap().len(), 2);
+    }
+
+    // --- Recently finished (feature 039, US6, R6, R12) ---
+
+    fn transfer(id: i64, status: &str, finished: Option<&str>) -> serde_json::Value {
+        serde_json::json!({
+            "id": id, "name": format!("Show {id}"), "status": status, "size": 300,
+            "downloaded": 300, "percent_done": 100, "created_at": "2026-10-26T10:00:00",
+            "finished_at": finished, "save_parent_id": 0, "file_id": 50 + id,
+            "error_message": if status == "ERROR" { Some("tracker gone") } else { None }
+        })
+    }
+
+    /// Replace the mocked Put.io list
+    async fn set_list(
+        server: &mut mockito::Server,
+        old: Option<mockito::Mock>,
+        transfers: serde_json::Value,
+    ) -> mockito::Mock {
+        if let Some(old) = old {
+            old.remove_async().await;
+        }
+        mock_list(server, transfers).await
+    }
+
+    fn recent(hours: i64) -> String {
+        (chrono::Utc::now() - chrono::Duration::hours(hours))
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string()
+    }
+
+    /// Queue a file of `transfer_id`, as the sync does
+    async fn queue_file(db: &Database, file_id: i64, transfer_id: i64) {
+        db.queue()
+            .add(
+                file_id,
+                &format!("e{file_id}.mkv"),
+                100,
+                "http://x",
+                &format!("Show {transfer_id}"),
+                0,
+                putio_sync_db::models::QueueStatus::Pending,
+            )
+            .await
+            .unwrap();
+        db.sources()
+            .record(
+                file_id,
+                &putio_sync_db::models::DownloadSource {
+                    transfer_id: Some(transfer_id),
+                    source_type: None,
+                    tracker_host: None,
+                    is_private: false,
+                    origin: putio_sync_db::models::Origin::Putio,
+                    watch_folder: None,
+                    putio_folder: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    /// The file finishes: its queue row goes and a completed download is recorded
+    async fn finish_file(db: &Database, file_id: i64) {
+        db.queue().remove(file_id).await.unwrap();
+        db.downloads()
+            .insert(
+                file_id,
+                &format!("e{file_id}.mkv"),
+                100,
+                "/x",
+                putio_sync_db::models::DownloadStatus::Completed,
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn rows(db: &Database) -> Vec<putio_sync_db::pipeline::FinishedRow> {
+        db.finished().list().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_first_transition_to_done_writes_one_done_row() {
+        let mut server = mockito::Server::new_async().await;
+        let finished = recent(2);
+        let list = set_list(
+            &mut server,
+            None,
+            serde_json::json!([transfer(1, "COMPLETED", Some(&finished))]),
+        )
+        .await;
+        let (_dir, manager, db) = pipeline_manager(&server).await;
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+        queue_file(&db, 101, 1).await;
+        queue_file(&db, 102, 1).await;
+
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        assert!(rows(&db).await.is_empty(), "still downloading");
+        finish_file(&db, 101).await;
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        assert!(rows(&db).await.is_empty(), "one file is left");
+        finish_file(&db, 102).await;
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        drop(list);
+
+        let rows = rows(&db).await;
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.key, "transfer:1");
+        assert_eq!(row.name, "Show 1");
+        assert_eq!(row.outcome, putio_sync_db::pipeline::FinishedOutcome::Done);
+        assert_eq!(row.reason, None);
+        assert_eq!(row.size, 200);
+        assert_eq!(row.added_at.as_deref(), Some("2026-10-26 10:00:00"));
+        assert_eq!(row.putio_done_at, Some(finished.replace('T', " ")));
+        assert!(row.queued_at.is_some());
+        assert!(row.done_at.len() == 19 && !row.done_at.contains('T'));
+    }
+
+    #[tokio::test]
+    async fn a_retryable_failure_writes_nothing_and_a_gone_error_writes_failed() {
+        let mut server = mockito::Server::new_async().await;
+        let list = set_list(
+            &mut server,
+            None,
+            serde_json::json!([
+                transfer(1, "ERROR", None),
+                transfer(2, "COMPLETED", Some(&recent(1)))
+            ]),
+        )
+        .await;
+        let (_dir, manager, db) = pipeline_manager(&server).await;
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+        // Transfer 2 has a failed file: it can be retried from the Queue page
+        queue_file(&db, 201, 2).await;
+        db.queue()
+            .update_status(201, putio_sync_db::models::QueueStatus::Failed)
+            .await
+            .unwrap();
+
+        for _ in 0..3 {
+            pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        }
+        assert!(rows(&db).await.is_empty(), "both can still be retried");
+
+        // The error transfer is cleared from Put.io
+        let list = set_list(
+            &mut server,
+            Some(list),
+            serde_json::json!([transfer(2, "COMPLETED", Some(&recent(1)))]),
+        )
+        .await;
+        manager.transfers_snapshot(Duration::ZERO).await.unwrap();
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        drop(list);
+
+        let rows = rows(&db).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key, "transfer:1");
+        assert_eq!(
+            rows[0].outcome,
+            putio_sync_db::pipeline::FinishedOutcome::Failed
+        );
+        assert_eq!(rows[0].reason.as_deref(), Some("tracker gone"));
+        assert!(rows[0].putio_done_at.is_none(), "the transfer is gone");
+    }
+
+    /// FR-002, R5: failed files the operator skipped end the item
+    #[tokio::test]
+    async fn skipped_failed_files_end_an_item_as_done_or_failed() {
+        let mut server = mockito::Server::new_async().await;
+        let _list = set_list(
+            &mut server,
+            None,
+            serde_json::json!([
+                transfer(1, "COMPLETED", Some(&recent(1))),
+                transfer(2, "COMPLETED", Some(&recent(1)))
+            ]),
+        )
+        .await;
+        let (_dir, manager, db) = pipeline_manager(&server).await;
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+        // Transfer 1: one file done and one failed; transfer 2: its only file failed
+        queue_file(&db, 101, 1).await;
+        queue_file(&db, 102, 1).await;
+        queue_file(&db, 201, 2).await;
+        finish_file(&db, 101).await;
+        for id in [102, 201] {
+            db.queue()
+                .update_status(id, putio_sync_db::models::QueueStatus::Failed)
+                .await
+                .unwrap();
+        }
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        assert!(rows(&db).await.is_empty());
+
+        // The operator skips the failed files: the queue rows go, no download exists
+        db.queue().remove(102).await.unwrap();
+        db.queue().remove(201).await.unwrap();
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+
+        let rows = rows(&db).await;
+        let by_key = |key: &str| rows.iter().find(|r| r.key == key).unwrap();
+        let one = by_key("transfer:1");
+        assert_eq!(one.outcome, putio_sync_db::pipeline::FinishedOutcome::Done);
+        assert_eq!(one.reason.as_deref(), Some("1 file skipped"));
+        let two = by_key("transfer:2");
+        assert_eq!(
+            two.outcome,
+            putio_sync_db::pipeline::FinishedOutcome::Failed
+        );
+        assert_eq!(two.reason.as_deref(), Some("nothing downloaded"));
+    }
+
+    #[tokio::test]
+    async fn a_later_write_replaces_the_row_and_old_rows_are_pruned() {
+        let mut server = mockito::Server::new_async().await;
+        let _list = set_list(&mut server, None, serde_json::json!([])).await;
+        let (_dir, manager, db) = pipeline_manager(&server).await;
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+        let row = |key: &str, name: &str, done_at: &str| putio_sync_db::pipeline::FinishedRow {
+            key: key.to_string(),
+            name: name.to_string(),
+            size: 1,
+            outcome: putio_sync_db::pipeline::FinishedOutcome::Done,
+            reason: None,
+            added_at: None,
+            putio_done_at: None,
+            queued_at: None,
+            done_at: done_at.to_string(),
+        };
+        let fresh = recent(1).replace('T', " ");
+        let old = recent(30).replace('T', " ");
+        db.finished()
+            .upsert(&row("transfer:1", "First", &fresh))
+            .await
+            .unwrap();
+        db.finished()
+            .upsert(&row("transfer:1", "Second", &fresh))
+            .await
+            .unwrap();
+        db.finished()
+            .upsert(&row("transfer:2", "Old", &old))
+            .await
+            .unwrap();
+
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        let rows = rows(&db).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Second");
+        // The retention is the setting, not a constant
+        pipeline_tick(&manager, &tracker, 0).await.unwrap();
+        assert!(self::rows(&db).await.is_empty());
+    }
+
+    /// R6: the first tick after a restart writes only what finished within the retention
+    /// period, and a pruned row does not come back
+    #[tokio::test]
+    async fn the_first_tick_after_a_restart_writes_only_recent_completions() {
+        let mut server = mockito::Server::new_async().await;
+        let _list = set_list(
+            &mut server,
+            None,
+            serde_json::json!([
+                transfer(1, "COMPLETED", Some(&recent(80))),
+                transfer(2, "COMPLETED", Some(&recent(2))),
+                transfer(3, "COMPLETED", Some(&recent(1)))
+            ]),
+        )
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".putiosync.db");
+        let open = || async {
+            let db = Arc::new(Database::new(path.clone()).await.unwrap());
+            let client = Arc::new(PutioApiClient::with_base_url("t".to_string(), server.url()));
+            let config = DownloadConfig {
+                target_directory: dir.path().to_path_buf(),
+                ..DownloadConfig::default()
+            };
+            (DownloadManager::new(client, db.clone(), config), db)
+        };
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+        let (manager, db) = open().await;
+        for (file, transfer) in [(101, 1), (201, 2), (301, 3)] {
+            queue_file(&db, file, transfer).await;
+            finish_file(&db, file).await;
+        }
+        // Transfer 1 finished three days ago; transfer 3 already has a row
+        sqlx::query(
+            "UPDATE downloads SET downloaded_at = datetime('now', '-72 hours') WHERE file_id = 101",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE downloads SET downloaded_at = datetime('now', '-1 hours') WHERE file_id = 201",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        let existing = putio_sync_db::pipeline::FinishedRow {
+            key: "transfer:3".to_string(),
+            name: "Already".to_string(),
+            size: 1,
+            outcome: putio_sync_db::pipeline::FinishedOutcome::Done,
+            reason: None,
+            added_at: None,
+            putio_done_at: None,
+            queued_at: None,
+            done_at: recent(1).replace('T', " "),
+        };
+        db.finished().upsert(&existing).await.unwrap();
+
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        let keys = |rows: &[putio_sync_db::pipeline::FinishedRow]| {
+            let mut keys: Vec<String> = rows.iter().map(|r| r.key.clone()).collect();
+            keys.sort();
+            keys
+        };
+        assert_eq!(keys(&rows(&db).await), vec!["transfer:2", "transfer:3"]);
+        assert_eq!(
+            rows(&db)
+                .await
+                .iter()
+                .find(|r| r.key == "transfer:3")
+                .unwrap()
+                .name,
+            "Already"
+        );
+
+        // FR-026: the rows survive a restart, which writes nothing more
+        drop((manager, db));
+        let (manager, db) = open().await;
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        assert_eq!(keys(&rows(&db).await), vec!["transfer:2", "transfer:3"]);
+
+        // Pruned (retention 0 here), a row is not written again by later ticks
+        sqlx::query("UPDATE pipeline_finished SET done_at = datetime('now', '-30 hours')")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        assert!(rows(&db).await.is_empty());
+    }
+
+    /// R6: a finished transfer whose files a rule blocked is recorded once
+    #[tokio::test]
+    async fn a_transfer_with_every_file_blocked_is_recorded_once() {
+        let mut server = mockito::Server::new_async().await;
+        let finished = recent(2);
+        let _list = set_list(
+            &mut server,
+            None,
+            serde_json::json!([
+                transfer(1, "COMPLETED", Some(&finished)),
+                transfer(2, "COMPLETED", Some(&recent(90)))
+            ]),
+        )
+        .await;
+        let (_dir, manager, db) = pipeline_manager(&server).await;
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+        for (file_id, name, folder) in [
+            (11, "a.exe", "Show 1"),
+            (12, "b.EXE", "Show 1/extras"),
+            (13, "c.scr", "Show 1"),
+            (21, "d.exe", "Show 2"),
+        ] {
+            db.rule_decisions()
+                .record(
+                    file_id,
+                    name,
+                    folder,
+                    putio_sync_telemetry::RuleDecision::Blocked,
+                    "blocked extension",
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+        // A sync ran after both transfers finished, so neither is waiting for the next
+        // one (it finds nothing). Past the first tick, so this is not the restart case.
+        let _files = server
+            .mock("GET", "/files/list?parent_id=0")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"files":[],"parent":{"id":0,"name":"Root","size":0,"file_type":"FOLDER","parent_id":0,"is_folder":true,"is_shared":false},"status":"OK"}"#,
+            )
+            .create_async()
+            .await;
+        manager.sync_downloads().await.unwrap();
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+
+        let rows = rows(&db).await;
+        assert_eq!(
+            rows.len(),
+            1,
+            "transfer 2 finished outside the retention period"
+        );
+        let row = &rows[0];
+        assert_eq!(row.key, "transfer:1");
+        assert_eq!(
+            row.outcome,
+            putio_sync_db::pipeline::FinishedOutcome::Failed
+        );
+        assert_eq!(
+            row.reason.as_deref(),
+            Some("nothing to download (blocked: .exe, .scr)")
+        );
+        assert_eq!(row.done_at, finished.replace('T', " "));
     }
 
     #[test]
