@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use common::*;
+use mockito::Matcher;
 use putio_sync_client::{PutioSubtitle, SubtitleList};
 use putio_sync_core::config::StagingMode;
 use putio_sync_core::subtitles::SubtitlesConfig;
@@ -352,4 +353,314 @@ async fn video_steps_keep_their_order_and_a_repeat_scan_adds_nothing() {
     env.pipeline.run_due().await;
     let after = steps(&env, "transfer:1").await;
     assert_eq!(before.len(), after.len());
+}
+
+// ---- Transcription (US2): a fake ffmpeg and a mock server, never the real ones -----------
+
+#[cfg(unix)]
+mod transcription {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let p = dir.join(name);
+        std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    }
+
+    /// ffprobe says 1500 s (three 600 s chunks); each ffmpeg run takes `pause` seconds
+    fn tools(dir: &Path, pause: &str) -> PathBuf {
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        script(&bin, "ffprobe", "echo 1500");
+        script(
+            &bin,
+            "ffmpeg",
+            &format!("sleep {pause}\nfor last; do :; done\nhead -c 4000 /dev/zero > \"$last\""),
+        )
+    }
+
+    fn config(url: &str, ffmpeg: &Path) -> SubtitlesConfig {
+        let mut c = subs(&["en"], &[]);
+        c.transcription.enabled = true;
+        c.transcription.url = url.to_string();
+        c.transcription.ffmpeg_path = ffmpeg.to_string_lossy().into_owned();
+        c
+    }
+
+    const SPEECH: &str = r#"{"language":"en","segments":[{"start":1.0,"end":2.0,"text":"Hi"}]}"#;
+
+    async fn with_video(env: &Env, key: &str) -> PathBuf {
+        let video = env.dir.path().join("Movie.mkv");
+        big_file(&video, BIG);
+        downloaded(env, 5, &video).await;
+        downloaded_item(env, key, &video).await;
+        env.pipeline.set_subtitle_source(Fake::offering(&[]));
+        video
+    }
+
+    #[tokio::test]
+    async fn transcription_fills_in_when_put_io_has_nothing_and_progress_is_cleared() {
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg = tools(dir.path(), "0");
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("POST", "/v1/audio/transcriptions")
+            .with_status(200)
+            .with_body(SPEECH)
+            .expect(3)
+            .create_async()
+            .await;
+        let cfg = config(&server.url(), &ffmpeg);
+        let env = env_subs(cfg).await;
+        with_video(&env, "file:5").await;
+        env.pipeline.run_due().await;
+        m.assert_async().await;
+        assert!(env.dir.path().join("Movie.en.srt").exists());
+        let t = env.pipeline.timeline("file:5").await.unwrap();
+        assert_eq!(t.state, ItemState::Done);
+        let step = &t.stages[3].steps[1];
+        assert_eq!(step.attempts[0].output, "en: transcribed");
+        assert_eq!(step.progress, None, "progress is cleared at the end");
+    }
+
+    #[tokio::test]
+    async fn progress_is_written_after_each_chunk() {
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg = tools(dir.path(), "0.3");
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("POST", Matcher::Any)
+            .with_status(200)
+            .with_body(SPEECH)
+            .create_async()
+            .await;
+        let env = env_subs(config(&server.url(), &ffmpeg)).await;
+        with_video(&env, "file:5").await;
+        let seen: Arc<Mutex<Vec<f64>>> = Arc::default();
+        let poll = {
+            let (seen, store) = (seen.clone(), env.store.clone());
+            tokio::spawn(async move {
+                loop {
+                    if let Ok(steps) = store.steps("file:5").await {
+                        for s in steps.iter().filter(|s| s.kind == StepKind::Subtitles) {
+                            if let Some(p) = s.progress {
+                                let mut v = seen.lock().unwrap();
+                                if !v.iter().any(|x| (x - p).abs() < 1e-6) {
+                                    v.push(p);
+                                }
+                            }
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            })
+        };
+        env.pipeline.run_due().await;
+        poll.abort();
+        let v = seen.lock().unwrap().clone();
+        assert!(
+            v.iter().any(|p| (p - 1.0 / 3.0).abs() < 1e-3)
+                && v.iter().any(|p| (p - 2.0 / 3.0).abs() < 1e-3),
+            "progress per chunk: {v:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_server_that_is_down_retries_then_the_item_finishes_with_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg = tools(dir.path(), "0");
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("POST", Matcher::Any)
+            .with_status(503)
+            .with_body("model loading")
+            .expect(3)
+            .create_async()
+            .await;
+        let env = env_subs(config(&server.url(), &ffmpeg)).await;
+        with_video(&env, "file:5").await;
+        for _ in 0..4 {
+            env.pipeline.run_due().await;
+        }
+        m.assert_async().await;
+        let t = env.pipeline.timeline("file:5").await.unwrap();
+        assert_eq!(t.state, ItemState::DoneWithWarnings);
+        let step = &t.stages[3].steps[1];
+        assert_eq!(step.attempts.len(), 3);
+        assert!(
+            step.attempts[0].output.contains("HTTP 503: model loading"),
+            "{:?}",
+            step.attempts[0].output
+        );
+        assert!(!env.dir.path().join("Movie.en.srt").exists());
+    }
+
+    #[tokio::test]
+    async fn transcription_runs_one_video_at_a_time_across_items() {
+        // Two items run their steps together (concurrency 2). Each fake ffmpeg run records
+        // how many runs are active when it starts; the permit must keep that at one.
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        script(&bin, "ffprobe", "echo 600");
+        let marks = dir.path().join("marks");
+        std::fs::create_dir_all(&marks).unwrap();
+        let counts = dir.path().join("counts");
+        let ffmpeg = script(
+            &bin,
+            "ffmpeg",
+            &format!(
+                "touch {m}/run.$$\nls {m} | wc -l | tr -d ' ' >> {c}\nsleep 0.3\nrm {m}/run.$$\nfor last; do :; done\nhead -c 4000 /dev/zero > \"$last\"",
+                m = marks.display(),
+                c = counts.display()
+            )
+            .replace("\\n", "\n"),
+        );
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("POST", Matcher::Any)
+            .with_status(200)
+            .with_body(SPEECH)
+            .create_async()
+            .await;
+        let env = env_subs(config(&server.url(), &ffmpeg)).await;
+        for (id, name) in [(5, "A.mkv"), (6, "B.mkv")] {
+            let video = env.dir.path().join(name);
+            big_file(&video, BIG);
+            downloaded(&env, id, &video).await;
+            downloaded_item(&env, &format!("file:{id}"), &video).await;
+        }
+        env.pipeline.set_subtitle_source(Fake::offering(&[]));
+        // The scans first, then both video steps at once
+        env.pipeline.run_due().await;
+        env.pipeline.run_due().await;
+        assert!(
+            env.dir.path().join("A.en.srt").exists() && env.dir.path().join("B.en.srt").exists()
+        );
+        let seen: Vec<String> = std::fs::read_to_string(&counts)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert!(
+            seen.iter().all(|n| n == "1"),
+            "two ffmpeg runs overlapped: {seen:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_the_item_kills_ffmpeg_and_leaves_the_step_interrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        script(&bin, "ffprobe", "echo 1500");
+        let pidfile = dir.path().join("pid");
+        let ffmpeg = script(
+            &bin,
+            "ffmpeg",
+            &format!("echo $$ > {}\nexec sleep 30", pidfile.display()),
+        );
+        let server = mockito::Server::new_async().await;
+        let env = env_subs(config(&server.url(), &ffmpeg)).await;
+        let video = env.dir.path().join("Movie.mkv");
+        big_file(&video, BIG);
+        downloaded(&env, 1, &video).await;
+        downloaded_item(&env, "transfer:1", &video).await;
+        env.pipeline.set_subtitle_source(Fake::offering(&[]));
+        let run = {
+            let pipeline = env.pipeline.clone();
+            tokio::spawn(async move { pipeline.run_due().await })
+        };
+        for _ in 0..100 {
+            if pidfile.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let pid = std::fs::read_to_string(&pidfile)
+            .expect("ffmpeg started")
+            .trim()
+            .to_string();
+        // Gone from the Active list for long enough: the item is cancelled
+        for _ in 0..3 {
+            env.pipeline.on_tick(&view(vec![])).await;
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(10), run)
+            .await
+            .expect("the step stopped")
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let alive = std::process::Command::new("kill")
+            .args(["-0", &pid])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        assert!(!alive, "ffmpeg {pid} still runs");
+        let t = env.pipeline.timeline("transfer:1").await.unwrap();
+        assert_eq!(t.state, ItemState::Cancelled);
+        assert_eq!(t.stages[3].steps[1].state, "interrupted");
+    }
+}
+
+mod manual {
+    use super::*;
+    use putio_sync_pipeline::subtitles::ManualError;
+
+    #[tokio::test]
+    async fn a_manual_item_has_one_subtitles_step_and_ignores_size_and_sample_rules() {
+        let env = env_subs(subs(&["en"], &[])).await;
+        // Small, and named like a sample: a scan would leave it out
+        let video = env.dir.path().join("sample-clip.mkv");
+        big_file(&video, 1024);
+        downloaded(&env, 7, &video).await;
+        env.pipeline.set_subtitle_source(Fake::offering(&["en"]));
+        let key = env.pipeline.start_manual_subtitles(&video).await.unwrap();
+        assert_eq!(key, "manual:1");
+        let item = env.store.item(&key).await.unwrap().unwrap();
+        assert_eq!(item.source, "manual");
+        assert_eq!(item.dir, video.to_string_lossy());
+        let rows = steps(&env, &key).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, StepKind::Subtitles);
+
+        env.pipeline.run_due().await;
+        assert!(env.dir.path().join("sample-clip.en.srt").exists());
+        let t = env.pipeline.timeline(&key).await.unwrap();
+        assert_eq!(t.state, ItemState::Done);
+        // The tick must not mistake it for a download that left the Active list
+        env.pipeline.on_tick(&view(vec![])).await;
+        let t = env.pipeline.timeline(&key).await.unwrap();
+        assert_eq!(t.state, ItemState::Done);
+    }
+
+    #[tokio::test]
+    async fn a_second_request_for_a_running_item_is_a_duplicate_and_a_finished_one_is_not() {
+        let env = env_subs(subs(&["en"], &[])).await;
+        let video = env.dir.path().join("Movie.mkv");
+        big_file(&video, BIG);
+        env.pipeline.set_subtitle_source(Fake::offering(&[]));
+        let first = env.pipeline.start_manual_subtitles(&video).await.unwrap();
+        assert_eq!(
+            env.pipeline.start_manual_subtitles(&video).await,
+            Err(ManualError::Duplicate(first.clone()))
+        );
+        env.pipeline.run_due().await;
+        let second = env.pipeline.start_manual_subtitles(&video).await.unwrap();
+        assert_eq!(second, "manual:2");
+    }
+
+    #[tokio::test]
+    async fn only_videos_are_accepted() {
+        let env = env_subs(subs(&["en"], &[])).await;
+        let note = env.dir.path().join("notes.txt");
+        std::fs::write(&note, "x").unwrap();
+        assert_eq!(
+            env.pipeline.start_manual_subtitles(&note).await,
+            Err(ManualError::NotAVideo)
+        );
+    }
 }

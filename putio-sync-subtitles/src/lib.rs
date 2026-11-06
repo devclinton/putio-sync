@@ -11,10 +11,12 @@ use std::pin::Pin;
 
 use putio_sync_client::{ClientError, PutioApiClient, PutioSubtitle, SubtitleList};
 
+pub mod audio;
 pub mod candidates;
 pub mod engine;
 pub mod naming;
 pub mod srt;
+pub mod transcribe;
 
 /// Language codes (the table lives in `putio-sync-core`, where the config check needs it too)
 pub use putio_sync_core::lang;

@@ -27,6 +27,11 @@ test("field addresses map to input ids", () => {
   assert.equal(fieldId("card-plugins"), "card-plugins");
 });
 
+test("the subtitles card is in Downloads", () => {
+  assert.deepEqual(sectionOf("downloads").cards.map(([id]) => id), ["download", "bandwidth", "verify", "subtitles"]);
+  assert.deepEqual(linkParts("Turn them on in Settings › Downloads › Subtitles."), ["Turn them on in ", { text: "Settings › Downloads › Subtitles", href: "#/settings/downloads?field=card-subtitles" }, "."]);
+});
+
 test("config keys map to sections", () => {
   assert.equal(sectionOfKey("download.workers"), "downloads");
   assert.equal(sectionOfKey("download.verify"), "downloads");
@@ -41,6 +46,8 @@ test("config keys map to sections", () => {
   assert.equal(sectionOfKey("notifications.enabled"), "general");
   assert.equal(sectionOfKey("tailscale.socket"), "network");
   assert.equal(sectionOfKey("precheck.enabled"), "rules");
+  assert.equal(sectionOfKey("subtitles.languages"), "downloads");
+  assert.equal(fieldId("subtitles.languages"), "set-subtitles-languages");
   assert.equal(sectionOfKey("mystery.key"), "general");
 });
 
@@ -63,4 +70,19 @@ test("Settings names in text become links", () => {
     ", then ",
     { text: "Settings › Put.io › Put.io storage", href: "#/settings/putio?field=card-storage" },
   ]);
+});
+
+test("the transcription Test button says what happened", async () => {
+  const { testLines, readTranscription } = await import("../../ui/transcription.js");
+  const ok = testLines({ ok: true, server: { status: 200, took_ms: 120, language: "en", text: "" }, ffmpeg: { found: true, path: "/usr/bin/ffmpeg", version: "6.1" } });
+  assert.deepEqual(ok.map((l) => l.ok), [true, true]);
+  assert.match(ok[0].text, /120 ms, language en; heard no speech/);
+  assert.match(ok[1].text, /version 6\.1/);
+  const bad = testLines({ ok: false, server: { status: 401, error: "HTTP 401: bad key" }, ffmpeg: { found: false } });
+  assert.equal(bad[0].text, "Server test failed: HTTP 401: bad key");
+  assert.match(bad[1].text, /ffmpeg not found/);
+  assert.equal(testLines({ ok: false, server: { error: "connection refused" }, ffmpeg: { found: true, path: "x" } })[0].text, "Server test failed: connection refused");
+  assert.deepEqual(readTranscription({ enabled: 1, url: " http://x ", api_key: "********", model: null, language: "", timeout_secs: "900", chunk_secs: "600", ffmpeg_path: "" }), {
+    enabled: true, url: "http://x", api_key: "********", model: "", language: "", timeout_secs: 900, chunk_secs: 600, ffmpeg_path: "",
+  });
 });

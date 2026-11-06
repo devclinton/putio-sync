@@ -74,7 +74,77 @@ fn video_path(item: &ItemRow, relative: &str) -> PathBuf {
     }
 }
 
+/// Why a manual subtitles request was refused
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManualError {
+    /// The file is not a video
+    NotAVideo,
+    /// An item for this video is still running; its key
+    Duplicate(String),
+    /// The item could not be saved
+    Failed(String),
+}
+
 impl Pipeline {
+    /// Fetch subtitles for one video on disk, by hand (feature 025, Local files). The item
+    /// has source `manual`, key `manual:<n>` and a single Subtitles step for the video, with
+    /// no size or sample rules. One that is still running for the same video is a duplicate.
+    pub async fn start_manual_subtitles(&self, video: &Path) -> Result<String, ManualError> {
+        let name = video
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if !is_video(&name) {
+            return Err(ManualError::NotAVideo);
+        }
+        let dir = video.to_string_lossy().into_owned();
+        let _one_at_a_time = self.inner.manual.lock().await;
+        let store = &self.inner.store;
+        let items = store
+            .items()
+            .await
+            .map_err(|e| ManualError::Failed(e.to_string()))?;
+        let manual = || items.iter().filter(|i| i.source == crate::MANUAL_SOURCE);
+        if let Some(running) = manual().find(|i| i.dir == dir && !i.state.is_terminal()) {
+            return Err(ManualError::Duplicate(running.key.clone()));
+        }
+        let next = manual()
+            .filter_map(|i| i.key.strip_prefix("manual:")?.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let key = format!("manual:{next}");
+        let new = crate::store::NewItem {
+            key: key.clone(),
+            name: name.clone(),
+            category: None,
+            source: crate::MANUAL_SOURCE.to_string(),
+            dir,
+            transfer_id: None,
+            stage: Stage::Subtitles,
+            state: crate::model::ItemState::Running,
+        };
+        let step = PlannedStep {
+            stage: Stage::Subtitles,
+            branch: None,
+            position: VIDEO_POSITION,
+            kind: StepKind::Subtitles,
+            name,
+            required: false,
+            changes_files: true,
+            state: StepState::Waiting,
+            skip_reason: None,
+        };
+        match store.insert_item(&new, &[step]).await {
+            Ok(true) => {
+                self.inner.wake.notify_one();
+                Ok(key)
+            }
+            Ok(false) => Err(ManualError::Failed("the item already exists".to_string())),
+            Err(e) => Err(ManualError::Failed(e.to_string())),
+        }
+    }
+
     /// Whether subtitles are off for this item now (settings changed since the plan)
     fn subtitles_off(&self, item: &ItemRow) -> Option<SkipReason> {
         let cfg = self.settings().subtitles;
@@ -204,6 +274,39 @@ impl Pipeline {
             .map(|d| d.file_id)
     }
 
+    /// The transcription pass, one video at a time across the daemon (a NAS CPU is not asked
+    /// for six at once). Progress is written to the step after each chunk.
+    async fn transcribe(
+        &self,
+        step: &StepRow,
+        req: &VideoRequest<'_>,
+        config: &putio_sync_core::subtitles::TranscriptionConfig,
+        outcome: &mut engine::Outcome,
+    ) -> Result<(), EngineError> {
+        let _permit = self
+            .inner
+            .transcribing
+            .acquire()
+            .await
+            .map_err(|_| EngineError::Failed("transcription stopped".to_string()))?;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<f64>();
+        let store = self.inner.store.clone();
+        let id = step.id;
+        let writer = tokio::spawn(async move {
+            while let Some(p) = rx.recv().await {
+                let _ = store.set_progress(id, Some(p)).await;
+            }
+        });
+        let progress = move |p: f64| {
+            let _ = tx.send(p);
+        };
+        let result = engine::transcribe_video(req, config, &progress, outcome).await;
+        drop(progress);
+        let _ = writer.await;
+        let _ = self.inner.store.set_progress(id, None).await;
+        result
+    }
+
     /// One video's step
     pub(crate) async fn run_subtitles(&self, item: &ItemRow, step: &StepRow) -> Outcome {
         if let Some(why) = self.subtitles_off(item) {
@@ -229,15 +332,17 @@ impl Pipeline {
                 )));
             }
             let file_id = self.putio_id_of(item, &video).await;
-            engine::fetch_for_video(
-                source.as_ref(),
-                &VideoRequest {
-                    video: &video,
-                    file_id,
-                    languages: &languages,
-                },
-            )
-            .await
+            let req = VideoRequest {
+                video: &video,
+                file_id,
+                languages: &languages,
+            };
+            let mut outcome = engine::fetch_for_video(source.as_ref(), &req).await?;
+            if engine::wants_transcription(&cfg.transcription, &outcome, &languages) {
+                self.transcribe(step, &req, &cfg.transcription, &mut outcome)
+                    .await?;
+            }
+            Ok(outcome)
         };
         let run = tokio::select! {
             run = run => Some(run),

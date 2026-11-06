@@ -2196,6 +2196,7 @@ dependencies = [
  "putio-sync-plugins",
  "putio-sync-precheck",
  "putio-sync-storage",
+ "putio-sync-subtitles",
  "putio-sync-tailscale",
  "putio-sync-telemetry",
  "reqwest 0.12.28",

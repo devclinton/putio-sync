@@ -259,6 +259,23 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "subtitles",
+        &[
+            (
+                "languages",
+                "Subtitle languages to save next to each video, in order; empty turns subtitles off",
+            ),
+            (
+                "excluded_categories",
+                "Download categories (the first folder) that get no subtitles",
+            ),
+            (
+                "transcription",
+                "Optional speech-to-text server that writes subtitles when none can be found",
+            ),
+        ],
+    ),
+    (
         "putio",
         &[(
             "app_id",

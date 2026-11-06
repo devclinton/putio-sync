@@ -5,6 +5,7 @@
 pub mod downloads;
 pub mod files;
 pub mod queue;
+pub mod subtitles;
 pub mod sync;
 pub mod watcher;
 pub mod workers;

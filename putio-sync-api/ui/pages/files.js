@@ -9,6 +9,7 @@
 
 import { del, get, post, startVerify } from "../api.js";
 import { confirm, empty, h, navigate, poll, toast } from "../app.js";
+import { fetchPlan, fetchState } from "../subtitles.js";
 import { bytes, dateTime } from "../format.js";
 import { listControls } from "../listctl.js";
 import { selection } from "../select.js";
@@ -163,6 +164,23 @@ async function onRequeue(button, e) {
   reload();
 }
 
+/** Ask what subtitles could be fetched, confirm when it matters, then start the item */
+async function onFetchSubtitles(button, e) {
+  button.disabled = true;
+  const base = `/local/files/${encodeURIComponent(root)}/subtitles`;
+  try {
+    const plan = fetchPlan(e.name, await get(`${base}?path=${encodeURIComponent(e.path)}`));
+    if (!plan.go) return toast(plan.message, "error");
+    if (plan.confirm && !(await confirm(plan.confirm))) return;
+    const r = await post(base, { path: e.path });
+    toast(`Fetching subtitles for ${e.name}`, "ok", `Follow it on the Active page as ${r.key}`);
+  } catch (err) {
+    if (!quiet(err)) toast(`Couldn't fetch subtitles for ${e.name}`, "error", reason(err));
+  } finally {
+    if (button.isConnected) button.disabled = false;
+  }
+}
+
 function onRename(e) {
   editing = e.path;
   const input = h("input", { class: "input", value: e.name, "aria-label": `New name for ${e.name}` });
@@ -304,6 +322,10 @@ function row(current, e) {
   if (e.valid_name && !e.in_use) {
     if (current.watch && e.rejected && /\.(torrent|magnet)$/.test(e.rejected)) {
       actions.push(h("button", { type: "button", class: "btn btn-small", title: `Rename back to ${e.rejected} so the watcher checks it again`, onclick: (ev) => onRequeue(ev.currentTarget, e) }, "Re-check"));
+    }
+    const fetch = fetchState(e);
+    if (fetch.show) {
+      actions.push(h("button", { type: "button", class: "btn btn-small", "aria-label": `Fetch subtitles for ${e.name}`, disabled: fetch.disabled, title: fetch.why || "Get subtitles for this video", onclick: (ev) => onFetchSubtitles(ev.currentTarget, e) }, "Fetch subtitles"));
     }
     actions.push(
       h("button", { type: "button", class: "btn btn-small", "aria-label": `Rename ${e.name}`, onclick: () => onRename(e) }, "Rename"),

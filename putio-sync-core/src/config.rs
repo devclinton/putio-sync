@@ -4578,7 +4578,7 @@ mod precheck_tests {
 }
 
 /// Environment variables that can hold a secret, masked in captured log lines (feature 047)
-const SECRET_VARS: [&str; 7] = [
+const SECRET_VARS: [&str; 8] = [
     "PUTIO_TOKEN",
     "PUTIO_SYNC_PUTIO_TOKEN",
     "PUTIO_SYNC_API_TOKEN",
@@ -4586,6 +4586,7 @@ const SECRET_VARS: [&str; 7] = [
     "PUTIO_SYNC_RADARR_API_KEY",
     "PUTIO_SYNC_SONARR_API_KEY",
     "PUTIO_CLIENT_SECRET",
+    "PUTIO_SYNC_TRANSCRIPTION_API_KEY",
 ];
 
 impl Config {
@@ -4618,6 +4619,7 @@ impl Config {
         for plugin in &self.plugins {
             plugin.secrets.values().for_each(|v| add(Some(v)));
         }
+        add(Some(&self.subtitles.transcription.api_key));
         for var in SECRET_VARS {
             add(std::env::var(var).ok().as_ref());
         }
@@ -4657,6 +4659,8 @@ mod secret_values_tests {
             [[plugins]]
             name = "p"
             secrets = { key = "s-plugin-secret" }
+            [subtitles.transcription]
+            api_key = "s-transcription-key"
             "#,
         )
         .unwrap();
@@ -4670,6 +4674,7 @@ mod secret_values_tests {
             "https://ha.lan/s-webhook",
             "s-arr-password",
             "s-arr-key",
+            "s-transcription-key",
             "https://hook.lan/s-hook-url",
             "s-hook-header",
             "s-hook-env",

@@ -158,6 +158,9 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         get("/settings/plugins"),
         (Method::PUT, "/settings/plugins", Some(json!({}))),
         post("/settings/plugins/preview"),
+        get("/settings/subtitles"),
+        (Method::PUT, "/settings/subtitles", Some(json!({}))),
+        post("/settings/subtitles/preview"),
         // Unknown paths fall through to the protected fallback
         get("/robots.txt"),
     ]
@@ -722,6 +725,58 @@ async fn no_plugin_secret_in_responses_or_logs() {
     assert!(all.contains("HTTP 401"), "{all}");
     assert!(all.contains("refused "), "{all}");
     assert!(all.contains("token "), "{all}");
+}
+
+/// The transcription key never comes back from the settings routes, the export, the
+/// doctor, the metrics or a log line (feature 025)
+#[tokio::test]
+async fn no_transcription_key_in_responses_or_logs() {
+    const KEY: &str = "TRANSCRIPTIONKEY0123";
+    let logs = captured_logs();
+    let app = common::test_app_with(|config| {
+        config.subtitles.languages = vec!["en".to_string()];
+        config.subtitles.transcription.enabled = true;
+        config.subtitles.transcription.url = "http://127.0.0.1:9".to_string();
+        config.subtitles.transcription.api_key = KEY.to_string();
+    })
+    .await;
+
+    let mut texts = Vec::new();
+    for path in [
+        "/settings/subtitles",
+        "/settings/export",
+        "/settings/assistant",
+        "/doctor",
+        "/metrics",
+    ] {
+        texts.push(body_text(app.get(path).await).await);
+    }
+    // The settings page sends back what it was given, masks and all
+    let settings: Value = serde_json::from_str(&texts[0]).unwrap();
+    assert_eq!(settings["transcription"]["api_key"], "********");
+    texts.push(
+        body_text(
+            app.post_json("/settings/subtitles/preview", settings.clone())
+                .await,
+        )
+        .await,
+    );
+    let response = app
+        .req(
+            Method::PUT,
+            "/settings/subtitles",
+            Some(&app.token),
+            Some(settings),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    texts.push(body_text(response).await);
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let logs = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
+    for text in texts.iter().chain([&logs]) {
+        assert!(!text.contains(KEY), "{KEY} in {text}");
+    }
 }
 
 /// A Plex token from the sign-in never comes back from an action answer, the API, the

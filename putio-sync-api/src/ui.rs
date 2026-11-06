@@ -43,6 +43,8 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("timeline.js", JS, include_bytes!("../ui/timeline.js")),
     ("plugins.js", JS, include_bytes!("../ui/plugins.js")),
     ("verify.js", JS, include_bytes!("../ui/verify.js")),
+    ("transcription.js", JS, include_bytes!("../ui/transcription.js")),
+    ("subtitles.js", JS, include_bytes!("../ui/subtitles.js")),
     ("pages/login.js", JS, include_bytes!("../ui/pages/login.js")),
     ("pages/setup.js", JS, include_bytes!("../ui/pages/setup.js")),
     ("pages/news.js", JS, include_bytes!("../ui/pages/news.js")),
@@ -120,6 +122,11 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
         "settings/plugins.js",
         JS,
         include_bytes!("../ui/settings/plugins.js"),
+    ),
+    (
+        "settings/subtitles.js",
+        JS,
+        include_bytes!("../ui/settings/subtitles.js"),
     ),
     (
         "settings/arr.js",

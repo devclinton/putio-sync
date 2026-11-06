@@ -430,16 +430,22 @@ fn flatten(table: &toml::Table) -> BTreeMap<String, toml::Value> {
 
 const EXPORT_HEADER: &str = "# putio-sync settings export\n\
 # Credentials ([auth], api.auth_token) and the Radarr/Sonarr section ([arr]) are left out.\n\
-# Hook header and env values and plugin secrets read \"********\"; an import keeps the stored ones.\n\
+# Hook header and env values, plugin secrets and the transcription key read \"********\"; an import keeps the stored ones.\n\
 # Import it from Settings › Advanced › Backup and restore.\n\n";
 
 /// `config` with every hook header and env value (feature 027) and plugin secret
 /// (feature 028) replaced by [`MASK`](crate::hooks::MASK)
 fn masked(config: &Config) -> std::borrow::Cow<'_, Config> {
-    if config.hooks.is_empty() && config.plugins.is_empty() {
+    if config.hooks.is_empty()
+        && config.plugins.is_empty()
+        && config.subtitles.transcription.api_key.is_empty()
+    {
         return std::borrow::Cow::Borrowed(config);
     }
     let mut config = config.clone();
+    if !config.subtitles.transcription.api_key.is_empty() {
+        config.subtitles.transcription.api_key = crate::subtitles::MASK.to_string();
+    }
     config.hooks = crate::hooks::mask(&config.hooks);
     config.plugins = crate::plugins::mask(&config.plugins);
     std::borrow::Cow::Owned(config)
@@ -510,6 +516,10 @@ pub fn import(current: &Config, text: &str) -> CoreResult<Import> {
     // key this config lacks is refused
     config.hooks = crate::hooks::unmask(&config.hooks, &current.hooks)?;
     config.plugins = crate::plugins::unmask(&config.plugins, &current.plugins)?;
+    // The transcription key reads "********" in an export; an import keeps the stored one
+    if config.subtitles.transcription.api_key == crate::subtitles::MASK {
+        config.subtitles.transcription.api_key = current.subtitles.transcription.api_key.clone();
+    }
     config.expand_paths()?;
     Ok(Import {
         config,
@@ -728,6 +738,7 @@ mod tests {
         config.download.target_directory = PathBuf::from("/srv/dl");
         config.auth = Some(AuthConfig::with_token("putio-secret-token".to_string()));
         config.api.auth_token = Some("api-secret-token".to_string());
+        config.subtitles.transcription.api_key = "whisper-secret-key".to_string();
         config.arr.password = Some("arr-secret-password".to_string());
         config.arr.servers.push(ArrServer {
             kind: ArrKind::Radarr,
@@ -765,6 +776,7 @@ mod tests {
             "arr-secret-key",
             "hook-secret-header",
             "hook-secret-env",
+            "whisper-secret-key",
         ] {
             assert!(!text.contains(secret), "{secret} leaked");
         }

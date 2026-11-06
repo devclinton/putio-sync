@@ -62,6 +62,9 @@ pub enum ActionError {
     Conflict(String),
 }
 
+/// The `source` of an item started by hand from Local files (feature 025)
+pub const MANUAL_SOURCE: &str = "manual";
+
 /// What the pipeline reads from the config
 #[derive(Debug, Clone)]
 pub(crate) struct Settings {
@@ -106,6 +109,8 @@ pub(crate) struct Inner {
     pub source: RwLock<Option<Arc<dyn SubtitleSource>>>,
     /// Transcriptions run one at a time, whatever the item
     pub transcribing: Semaphore,
+    /// Held while a manual item is added, so two requests for one video cannot both pass
+    pub manual: tokio::sync::Mutex<()>,
     /// Ticks an item has been missing without a finished row
     pub missed: Mutex<HashMap<String, u32>>,
     /// The database's clock when the service was built; only later finishes are picked up
@@ -142,6 +147,7 @@ impl Pipeline {
                 gate: Gate::default(),
                 source: RwLock::new(None),
                 transcribing: Semaphore::new(1),
+                manual: tokio::sync::Mutex::new(()),
                 missed: Mutex::new(HashMap::new()),
                 started_at,
                 staging_off: std::sync::atomic::AtomicBool::new(false),
@@ -275,7 +281,12 @@ impl Pipeline {
                     && r.stage == Stage::Downloading
                     && present.contains_key(r.key.as_str()))
         };
-        for row in known.values().filter(recoverable) {
+        // (a manual subtitles item was never on the list, so it never "leaves" it)
+        for row in known
+            .values()
+            .filter(recoverable)
+            .filter(|r| r.source != MANUAL_SOURCE)
+        {
             match present.get(row.key.as_str()) {
                 Some(item) => {
                     self.inner.missed.lock().unwrap().remove(&row.key);

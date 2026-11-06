@@ -8,10 +8,13 @@ use std::path::{Path, PathBuf};
 
 use tracing::{info, warn};
 
+use crate::audio;
 use crate::candidates::{self, Candidate, SourceKind};
 use crate::naming::{self, Slot, SlotKind, WriteOutcome};
 use crate::srt;
+use crate::transcribe::{self, ChunkCues, TranscribeError, Transcriber};
 use crate::{SourceError, SubtitleSource};
+use putio_sync_core::subtitles::TranscriptionConfig;
 
 /// What the engine needs to know about one video
 #[derive(Debug, Clone)]
@@ -48,6 +51,8 @@ pub struct Outcome {
     pub missing: Vec<String>,
     /// Candidates that failed and were passed over, and other notes
     pub warnings: Vec<String>,
+    /// Transcription ran and the server heard no speech
+    pub no_speech: bool,
 }
 
 impl Outcome {
@@ -72,6 +77,9 @@ impl Outcome {
         }
         for l in &self.missing {
             parts.push(format!("{l}: missing"));
+        }
+        if self.no_speech {
+            parts.push("no speech found".to_string());
         }
         if parts.is_empty() {
             "no subtitles wanted".to_string()
@@ -228,4 +236,107 @@ pub fn bounded(language: &str, wanted: &[String]) -> String {
     } else {
         "other".to_string()
     }
+}
+
+/// Whether the transcription pass should run: it is on, and no wanted language has a main
+/// subtitle (one was there already, or the Put.io pass saved one)
+pub fn wants_transcription(
+    config: &TranscriptionConfig,
+    outcome: &Outcome,
+    languages: &[String],
+) -> bool {
+    config.enabled
+        && !languages.is_empty()
+        && outcome.saved.is_empty()
+        && outcome.present.is_empty()
+}
+
+/// Progress reporter: a fraction from 0 to 1 after each chunk
+pub type Progress<'a> = &'a (dyn Fn(f64) + Send + Sync);
+
+/// The transcription pass for one video: cut the audio into chunks, send each to the server,
+/// join the cues and save `<video>.<language>.srt` in the language the server detected (which
+/// need not be a wanted one). Never overwrites a file. Dropping this future stops ffmpeg.
+///
+/// The caller holds the global one-at-a-time permit.
+pub async fn transcribe_video(
+    req: &VideoRequest<'_>,
+    config: &TranscriptionConfig,
+    progress: Progress<'_>,
+    out: &mut Outcome,
+) -> Result<(), EngineError> {
+    let tools =
+        audio::discover(&config.ffmpeg_path).map_err(|e| EngineError::Failed(e.to_string()))?;
+    let client = Transcriber::new(config);
+    let duration = audio::duration_secs(&tools.ffprobe, req.video)
+        .await
+        .map_err(|e| EngineError::Failed(e.to_string()))?;
+    let chunks = audio::plan_chunks(duration, config.chunk_secs);
+    let work = std::env::temp_dir();
+    let mut parts: Vec<ChunkCues> = Vec::new();
+    let mut detected: Option<String> = None;
+    info!(video = %req.video.display(), chunks = chunks.len(), seconds = duration as u64, "Transcribing");
+    progress(0.0);
+    for (i, chunk) in chunks.iter().enumerate() {
+        let wav = audio::extract_chunk(&tools.ffmpeg, req.video, chunk, &work)
+            .await
+            .map_err(|e| EngineError::Failed(e.to_string()))?;
+        let bytes = std::fs::read(wav.path())
+            .map_err(|e| EngineError::Failed(format!("could not read the audio: {e}")))?;
+        drop(wav);
+        // The configured hint, else the language chunk 1 (or the first that spoke) reported
+        let hint = detected
+            .clone()
+            .or_else(|| Some(client.hint().to_string()).filter(|h| !h.is_empty()));
+        let t = client
+            .transcribe(bytes, hint.as_deref())
+            .await
+            .map_err(|e: TranscribeError| EngineError::Failed(e.to_string()))?;
+        if detected.is_none() {
+            detected = t.language.clone();
+        }
+        parts.push(ChunkCues {
+            start_ms: (chunk.start_secs * 1000.0).round() as u64,
+            end_ms: ((chunk.start_secs + chunk.len_secs) * 1000.0).round() as u64,
+            cues: t.cues,
+        });
+        progress((i + 1) as f64 / chunks.len() as f64);
+    }
+    putio_sync_telemetry::subtitles::transcribed_seconds(duration as u64);
+    let cues = transcribe::join(&parts);
+    if cues.is_empty() {
+        out.no_speech = true;
+        return Ok(());
+    }
+    let language = detected
+        .or_else(|| Some(client.hint().to_string()).filter(|h| !h.is_empty()))
+        .ok_or_else(|| EngineError::Failed(TranscribeError::NoLanguage.to_string()))?;
+    let slot = Slot::main(&language);
+    let target = naming::sidecar_path(req.video, &slot);
+    let text = srt::render(&cues);
+    match naming::write_new(&target, text.as_bytes()) {
+        Ok(WriteOutcome::Written) => {
+            putio_sync_telemetry::subtitles::saved(
+                "transcribed",
+                &bounded(&language, req.languages),
+            );
+            info!(language = %language, path = %target.display(), "Transcribed subtitle saved");
+            let wanted = req.languages.contains(&language);
+            out.missing.retain(|l| *l != language);
+            out.saved.push(SavedSubtitle {
+                path: target,
+                language,
+                kind: SlotKind::Main,
+                source: "transcribed",
+                bytes: text.len(),
+                wanted,
+            });
+        }
+        Ok(WriteOutcome::AlreadyExists) => {
+            out.warnings
+                .push(format!("{language}: a subtitle file is already there"));
+        }
+        Err(e) => return Err(EngineError::Failed(format!("could not write: {e}"))),
+    }
+    Ok(())
 }

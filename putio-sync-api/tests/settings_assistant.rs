@@ -23,6 +23,7 @@ const GROUPS: &[&str] = &[
     "pipeline",
     "plugins",
     "putio",
+    "subtitles",
 ];
 
 async fn get_ok(app: &TestApp, path: &str) -> Value {
@@ -40,7 +41,13 @@ async fn post(app: &TestApp, path: &str, body: Value) -> (StatusCode, Value) {
 /// The group's PUT body as its GET returns it
 async fn group_body(app: &TestApp, group: &str) -> Value {
     let body = get_ok(app, &format!("/settings/{group}")).await;
-    if group == "precheck" || group == "putio" {
+    if group == "subtitles" {
+        let mut body = body;
+        for extra in ["known_languages", "live", "applies_now", "ffmpeg"] {
+            body.as_object_mut().unwrap().remove(extra);
+        }
+        body
+    } else if group == "precheck" || group == "putio" {
         let mut body = body;
         body.as_object_mut().unwrap().remove("effective");
         body.as_object_mut().unwrap().remove("status");
