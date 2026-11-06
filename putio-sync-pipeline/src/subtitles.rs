@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use putio_sync_core::log_redact;
 use putio_sync_subtitles::engine::{self, EngineError, VideoRequest};
+use putio_sync_subtitles::matching::Matching;
 use putio_sync_subtitles::modes::ModePlan;
 use putio_sync_subtitles::NoSource;
 use tracing::{info, warn};
@@ -340,7 +341,11 @@ impl Pipeline {
             let row = crate::store::Provenance {
                 path: s.path.to_string_lossy().into_owned(),
                 language: s.language.clone(),
-                source: s.source.to_string(),
+                // The table knows where a file came from, not how it was matched
+                source: match s.source {
+                    "os_hash" | "os_ids" | "os_name" => "opensubtitles".to_string(),
+                    other => other.to_string(),
+                },
                 bytes: s.bytes as i64,
             };
             if let Err(e) = self.inner.store.upsert_provenance(&row).await {
@@ -365,6 +370,8 @@ impl Pipeline {
             None if modes.download_languages().is_empty() => Arc::new(NoSource),
             None => return self.skip_step(step, SkipReason::NotConfigured).await,
         };
+        let search = self.inner.search.read().unwrap().clone();
+        let media = self.inner.media.read().unwrap().clone();
         let store = &self.inner.store;
         let Ok((attempt_id, n)) = store.start_attempt(step.id).await else {
             return Outcome::Stopped;
@@ -380,7 +387,15 @@ impl Pipeline {
                 )));
             }
             let file_id = self.putio_id_of(item, &video).await;
-            let req = VideoRequest::new(&video, file_id, &languages, &modes);
+            let mut req = VideoRequest::new(&video, file_id, &languages, &modes);
+            if let Some(search) = &search {
+                req = req.with_matching(Matching {
+                    search: search.as_ref(),
+                    media: media.as_deref(),
+                    category: item.category.as_deref(),
+                    min_confidence: cfg.min_confidence,
+                });
+            }
             let mut outcome = engine::fetch_for_video(source.as_ref(), &req).await?;
             if engine::wants_transcription(&cfg.transcription, &modes, &outcome, &languages) {
                 self.transcribe(step, &req, &cfg.transcription, &mut outcome)

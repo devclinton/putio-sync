@@ -20,12 +20,14 @@ use std::time::Duration;
 
 use putio_sync_core::config::{Config, PipelineConfig};
 use putio_sync_core::hooks::HookConfig;
+use putio_sync_core::media::MediaLookup;
 use putio_sync_core::pipeline_gate::PipelineGate;
 use putio_sync_core::subtitles::SubtitlesConfig;
 use putio_sync_core::translation::TranslationConfig;
 use putio_sync_db::pipeline::{FinishedOutcome, FinishedRow};
 use putio_sync_db::Database;
 use putio_sync_download::pipeline::{Origin, Pipeline as ActiveView, PipelineItem, State};
+use putio_sync_subtitles::opensubtitles::{OpenSubtitles, SubtitleSearch};
 use putio_sync_subtitles::SubtitleSource;
 use tokio::sync::{Notify, Semaphore};
 use tracing::{debug, info, warn};
@@ -112,6 +114,12 @@ pub(crate) struct Inner {
     pub gate: Gate,
     /// Where Put.io's subtitles come from; none until the daemon sets it
     pub source: RwLock<Option<Arc<dyn SubtitleSource>>>,
+    /// OpenSubtitles (feature 050), built from the settings while a key is set
+    pub search: RwLock<Option<Arc<dyn SubtitleSearch>>>,
+    /// Set when a test gave the search: the settings no longer replace it
+    pub search_fixed: std::sync::atomic::AtomicBool,
+    /// The ids the *arr history holds; none until the daemon sets it
+    pub media: RwLock<Option<Arc<dyn MediaLookup>>>,
     /// Live translation settings and the in-flight limit
     pub translator: Arc<putio_sync_translation::Translator>,
     /// Transcriptions run one at a time, whatever the item
@@ -153,6 +161,12 @@ impl Pipeline {
                 cancels: Mutex::new(HashMap::new()),
                 gate: Gate::default(),
                 source: RwLock::new(None),
+                search: RwLock::new(
+                    OpenSubtitles::from_config(&config.subtitles.opensubtitles)
+                        .map(|c| Arc::new(c) as Arc<dyn SubtitleSearch>),
+                ),
+                search_fixed: std::sync::atomic::AtomicBool::new(false),
+                media: RwLock::new(None),
                 translator: Arc::new(putio_sync_translation::Translator::new(&config.translation)),
                 transcribing: Semaphore::new(1),
                 manual: tokio::sync::Mutex::new(()),
@@ -172,6 +186,16 @@ impl Pipeline {
             }
         }
         self.inner.translator.configure(&settings.translation);
+        // A new client starts with a fresh login and forgets a refused key
+        if !self
+            .inner
+            .search_fixed
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            *self.inner.search.write().unwrap() =
+                OpenSubtitles::from_config(&settings.subtitles.opensubtitles)
+                    .map(|c| Arc::new(c) as Arc<dyn SubtitleSearch>);
+        }
         if let Ok(mut s) = self.inner.settings.write() {
             *s = settings;
         }
@@ -216,6 +240,19 @@ impl Pipeline {
     /// Where Put.io's subtitles come from (the daemon gives the real client, tests a fake)
     pub fn set_subtitle_source(&self, source: Arc<dyn SubtitleSource>) {
         *self.inner.source.write().unwrap() = Some(source);
+    }
+
+    /// Search OpenSubtitles through `search` instead of the client the settings describe (tests)
+    pub fn set_subtitle_search(&self, search: Arc<dyn SubtitleSearch>) {
+        self.inner
+            .search_fixed
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        *self.inner.search.write().unwrap() = Some(search);
+    }
+
+    /// Where the IDs of an *arr download come from (the daemon gives the history reader)
+    pub fn set_media_lookup(&self, media: Arc<dyn MediaLookup>) {
+        *self.inner.media.write().unwrap() = Some(media);
     }
 
     /// The gate for Radarr and Sonarr

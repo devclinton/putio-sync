@@ -818,3 +818,149 @@ mod modes {
         assert!(!out.contains('['), "no mode label for the default: {out}");
     }
 }
+
+/// Feature 050: the OpenSubtitles pass inside the pipeline, with a fake search and a fake *arr
+mod opensubtitles {
+    use super::*;
+    use putio_sync_core::media::{MediaInfo, MediaKind, MediaLookup, MediaRequest};
+    use putio_sync_subtitles::opensubtitles::{Hit, Quota, SearchError, SubtitleSearch};
+
+    struct Search {
+        hits: Vec<Hit>,
+        calls: Mutex<Vec<Vec<(String, String)>>>,
+    }
+
+    impl SubtitleSearch for Search {
+        fn search<'a>(
+            &'a self,
+            params: &'a [(String, String)],
+        ) -> BoxFut<'a, Result<Vec<Hit>, SearchError>> {
+            self.calls.lock().unwrap().push(params.to_vec());
+            let hits = self.hits.clone();
+            Box::pin(async move { Ok(hits) })
+        }
+        fn download<'a>(&'a self, _: i64) -> BoxFut<'a, Result<Vec<u8>, SearchError>> {
+            Box::pin(async { Ok(SRT.as_bytes().to_vec()) })
+        }
+        fn quota(&self) -> Quota {
+            Quota::default()
+        }
+    }
+
+    struct Arr(Option<MediaInfo>);
+
+    impl MediaLookup for Arr {
+        fn lookup<'a>(&'a self, _: MediaRequest<'a>) -> BoxFut<'a, Option<MediaInfo>> {
+            let r = self.0.clone();
+            Box::pin(async move { r })
+        }
+    }
+
+    fn search(release: &str) -> Arc<Search> {
+        Arc::new(Search {
+            hits: vec![Hit {
+                file_id: 1,
+                language: "en".into(),
+                release: release.into(),
+                title: "Movie".into(),
+                year: Some(2024),
+                ..Default::default()
+            }],
+            calls: Mutex::default(),
+        })
+    }
+
+    const RELEASE: &str = "Movie.2024.1080p.WEB-DL.x264-GRP";
+
+    #[tokio::test]
+    async fn a_download_with_ids_in_the_arr_is_matched_by_them_when_put_io_has_nothing() {
+        let env = env_subs(subs(&["en"], &[])).await;
+        let video = env.dir.path().join(format!("{RELEASE}.mkv"));
+        big_file(&video, BIG);
+        downloaded(&env, 5, &video).await;
+        downloaded_item(&env, "file:5", &video).await;
+        env.pipeline.set_subtitle_source(Fake::offering(&[]));
+        let s = search(RELEASE);
+        env.pipeline.set_subtitle_search(s.clone());
+        env.pipeline.set_media_lookup(Arc::new(Arr(Some(MediaInfo {
+            kind: Some(MediaKind::Movie),
+            imdb_id: Some("903747".into()),
+            ..Default::default()
+        }))));
+        env.pipeline.run_due().await;
+        assert!(env.dir.path().join(format!("{RELEASE}.en.srt")).exists());
+        let t = env.pipeline.timeline("file:5").await.unwrap();
+        let out = &t.stages[3].steps[1].attempts[0].output;
+        assert!(out.contains("en: os_ids"), "{out}");
+        assert!(s
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|p| p.iter().any(|(k, v)| k == "imdb_id" && v == "903747")));
+        // Recorded where it came from
+        let saved = env.dir.path().join(format!("{RELEASE}.en.srt"));
+        let size = std::fs::metadata(&saved).unwrap().len() as i64;
+        let p = env
+            .store
+            .provenance(&saved.to_string_lossy(), Some(size))
+            .await
+            .unwrap()
+            .expect("provenance recorded");
+        // The table keeps the origin (OpenSubtitles), not the matching level
+        assert_eq!(p.source, "opensubtitles");
+    }
+
+    #[tokio::test]
+    async fn put_io_comes_first_and_stops_the_pass() {
+        let env = env_subs(subs(&["en"], &[])).await;
+        let video = env.dir.path().join("Movie.mkv");
+        big_file(&video, BIG);
+        downloaded(&env, 5, &video).await;
+        downloaded_item(&env, "file:5", &video).await;
+        env.pipeline.set_subtitle_source(Fake::offering(&["en"]));
+        let s = search(RELEASE);
+        env.pipeline.set_subtitle_search(s.clone());
+        env.pipeline.run_due().await;
+        assert!(env.dir.path().join("Movie.en.srt").exists());
+        assert!(s.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_manual_item_with_no_ids_is_matched_by_its_file_name() {
+        let env = env_subs(subs(&["en"], &[])).await;
+        let video = env.dir.path().join(format!("{RELEASE}.mkv"));
+        big_file(&video, BIG);
+        env.pipeline.set_subtitle_source(Fake::offering(&[]));
+        let s = search(RELEASE);
+        env.pipeline.set_subtitle_search(s.clone());
+        let key = env.pipeline.start_manual_subtitles(&video).await.unwrap();
+        env.pipeline.run_due().await;
+        assert!(env.dir.path().join(format!("{RELEASE}.en.srt")).exists());
+        let t = env.pipeline.timeline(&key).await.unwrap();
+        assert_eq!(t.state, ItemState::Done);
+        let out = t
+            .stages
+            .iter()
+            .flat_map(|s| &s.steps)
+            .flat_map(|s| &s.attempts)
+            .map(|a| a.output.as_str())
+            .collect::<String>();
+        assert!(out.contains("os_name"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn without_a_key_nothing_is_searched_and_the_language_stays_missing() {
+        let env = env_subs(subs(&["en"], &[])).await;
+        let video = env.dir.path().join("Movie.mkv");
+        big_file(&video, BIG);
+        downloaded(&env, 5, &video).await;
+        downloaded_item(&env, "file:5", &video).await;
+        env.pipeline.set_subtitle_source(Fake::offering(&[]));
+        env.pipeline.run_due().await;
+        assert!(!env.dir.path().join("Movie.en.srt").exists());
+        let t = env.pipeline.timeline("file:5").await.unwrap();
+        let out = &t.stages[3].steps[1].attempts[0].output;
+        assert!(out.contains("en: missing"), "{out}");
+    }
+}
