@@ -201,3 +201,31 @@ roots working.
 
 - MVP = Phases 1–4 (US1 + US2). Confinement ships with the first release (spec US2).
 - Then US3, then US4.
+
+## Deviations
+
+Where the build differed from the plan, and why.
+
+- **mockito, not wiremock** (T001, T030, T031): the repo's tests all use `mockito`, so
+  the new tests do too.
+- **Put.io failure on Browse is fault 720, not an empty root** (T030): `contracts/upnp.md`
+  says `720` for a Put.io failure; the contract wins over the task text. Downloads still browse
+  and play, and a stream request still answers `502`.
+- **Listing cache tested with a short TTL** (T030): `Options.putio_ttl` (default 60 s) is set
+  to 600 ms in the test and the test sleeps, instead of pausing tokio time (the mock server
+  and the HTTP stack need real time).
+- **Each Put.io call is capped at 10 s** (T032, T033): the client retries 5xx and network errors
+  with backoff for about a minute, longer than any player waits. The cap turns that into a
+  fault (Browse) or a `502` (stream) at once.
+- **`bind` entries carry a port that is ignored** (T003): the `[api] bind` syntax needs one, but
+  the media server always listens on `dlna.port`; only the host part of each entry is used.
+- **Under `server` the settings are saved but nothing starts** (T024): `AppState.media_server` is
+  attached only by `daemon`, so `PUT /settings/media-server` there saves and says so; the
+  status reads `off`.
+- **The configuration assistant does not list the group** (T024): `POST
+  /settings/media-server/preview` works, but `GET /settings/assistant` still lists its twelve
+  groups; adding a thirteenth is a separate change to its help and defaults tables.
+- **Dev-dependencies** (T001): `quick-xml`, `tracing-subscriber` and `putio-sync-telemetry`
+  were added for the tests, and `wiremock` was left out.
+- **Real-player checks (quickstart §3 to §5) are the operator's**: nothing here can drive VLC,
+  Kodi or a TV.
