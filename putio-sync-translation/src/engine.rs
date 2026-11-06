@@ -105,3 +105,27 @@ pub async fn translate_with_call(
         stats: translated.stats,
     })
 }
+
+/// A subtitle that came back from a callback service (research R6, R9): parsed, held to the
+/// source's cue count and given exactly the source's times. The count of cues whose times
+/// the service changed is `realigned`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checked {
+    /// The cues to save
+    pub cues: Vec<Cue>,
+    /// Cues that had other times in the result than in the source
+    pub realigned: usize,
+}
+
+/// Check a callback service's SRT or VTT text against the `source` cues
+pub fn check_result(source: &[Cue], text: &str) -> Result<Checked, TranslateError> {
+    let result = putio_sync_subtitles::srt::parse(text);
+    let aligned =
+        align::realign(source, &result).map_err(|e| TranslateError::Refused(e.to_string()))?;
+    align::verify_same_timing(source, &aligned.cues)
+        .map_err(|e| TranslateError::Refused(e.to_string()))?;
+    Ok(Checked {
+        cues: aligned.cues,
+        realigned: aligned.realigned,
+    })
+}

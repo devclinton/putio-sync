@@ -66,8 +66,8 @@ the same numbers and timestamps, in more than one request.
 - [x] T039 [US1] Record metrics and structured logs (`translation done`, `translation chunk retry`, `translation failed`) in `putio-sync-translation/src/engine.rs` and `putio-sync-pipeline/src/translate.rs`; the key is registered with `log_redact::set_secrets` and never a field
 - [x] T040 [US1] Settings routes `GET`/`PUT /settings/translation`, `configure_translation`, group registration in `putio-sync-api/src/routes/system/translation.rs`, `settings.rs`, `assistant.rs`
 - [x] T041 [US1] Implement `POST /settings/translation/test` chat mode (sample, problem classes, `GET <base>/models` on model errors, 15 s limit) in `putio-sync-api/src/routes/system/translation.rs`
-- [ ] T042 [P] [US1] Translation settings card (kind selector, chat fields, extra instruction, in-flight, chunk size, Test button with the named problem) in `putio-sync-api/ui/settings/integrations.js`, register in `putio-sync-api/ui/settings/sections.js`; extend `putio-sync-api/tests/ui/settings_sections.test.mjs`
-- [ ] T043 [P] [US1] Show `translate` step names, language branches and the step message in the timeline UI; extend `putio-sync-api/tests/ui/timeline.test.mjs`
+- [x] T042 [P] [US1] Translation settings card (kind selector, chat fields, extra instruction, in-flight, chunk size, Test button with the named problem) in `putio-sync-api/ui/settings/integrations.js`, register in `putio-sync-api/ui/settings/sections.js`; extend `putio-sync-api/tests/ui/settings_sections.test.mjs`
+- [x] T043 [P] [US1] Show `translate` step names, language branches and the step message in the timeline UI; extend `putio-sync-api/tests/ui/timeline.test.mjs`
 
 **Checkpoint**: US1 works alone against mocks.
 
@@ -79,8 +79,8 @@ wrong or reused token is refused.
 
 ### Tests for US2 (write first, must fail)
 
-- [ ] T044 [P] [US2] Outbound client tests with mockito in `putio-sync-translation/tests/callback_client.rs`: body fields (`job_id`, `source_lang`, `target_lang`, `video_name` without directories, `srt`, `callback_url`), configured headers sent, `200` text, `200` JSON, `202`, `3xx` not followed, `4xx`/`5xx` with scrubbed message, timeout, header values never in errors
-- [ ] T045 [P] [US2] Engine tests in `putio-sync-translation/tests/callback_engine.rs`: immediate `200` result checked and saved; equal count with different times is re-aligned from the source; different count refused; empty cue refused; the result is never written when `verify_same_timing` fails
+- [x] T044 [P] [US2] Outbound client tests with mockito in `putio-sync-translation/tests/callback_client.rs`: body fields (`job_id`, `source_lang`, `target_lang`, `video_name` without directories, `srt`, `callback_url`), configured headers sent, `200` text, `200` JSON, `202`, `3xx` not followed, `4xx`/`5xx` with scrubbed message, timeout, header values never in errors
+- [x] T045 [P] [US2] Engine tests in `putio-sync-translation/tests/callback_engine.rs`: immediate `200` result checked and saved; equal count with different times is re-aligned from the source; different count refused; empty cue refused; the result is never written when `verify_same_timing` fails
 - [ ] T046 [P] [US2] Pipeline tests in `putio-sync-pipeline/tests/translate_callback.rs`: `202` parks the step (state `running`, attempt open, job row `waiting`, item permit released, other branches continue); a valid callback completes the step and the item goes on; unknown, used, expired and wrong-job tokens refused and nothing saved; `{"error"}` body fails the step; result for a changed source refused; restart keeps a waiting job and does not re-send it (`interrupt_running` carve-out) while a chat step mid-run becomes `interrupted`; timeout fails the step without an automatic retry, event `pipeline.step_failed` fired, item `done_with_warnings`; callback arriving before the `202` reply is read still completes once; cancelled item expires its jobs; single use under two concurrent callbacks
 - [ ] T047 [P] [US2] API tests for `POST /translate/callback/{token}` in `putio-sync-api/tests/translate_callback.rs`: works without the API token, text and JSON bodies, `422` for a bad subtitle, identical `404` body for unknown, expired, used and malformed tokens, failures counted by the limiter and `429` with `Retry-After`, `413` over 4 MiB, a captured-log test proving the token and callback URL never appear in logs or the trace span
 - [ ] T048 [P] [US2] API tests in `putio-sync-api/tests/translation_test_route.rs` and `translation_settings.rs`: `PUT` with kind callback and no `callback_base_url` is refused with the field named (FR-016), Test callback mode (`immediate`, `will_call_back`, `base_url_reachable_from_here`, `problem: callback_base_url`, header values not echoed, no `translation_callbacks` row created)
@@ -88,7 +88,7 @@ wrong or reused token is refused.
 
 ### Implementation for US2
 
-- [ ] T050 [US2] Implement the outbound `submit_callback` (job id, token, request, reply classes, `Immediate`/`Accepted`/`Failed`) in `putio-sync-translation/src/callback.rs` and `engine.rs`, reusing `align.rs`
+- [x] T050 [US2] Implement the outbound `submit_callback` (job id, token, request, reply classes, `Immediate`/`Accepted`/`Failed`) in `putio-sync-translation/src/callback.rs` and `engine.rs`, reusing `align.rs`
 - [ ] T051 [US2] Add callback queries to `putio-sync-pipeline/src/store.rs` (`insert_job`, atomic `claim(token_hash, now)`, `get`, `expire_due(now)`, `expire_for_item`, `expire_for_step`), and change `interrupt_running` to leave steps that have a `waiting` job (and their open attempts) alone
 - [ ] T052 [US2] Implement parking, `accept_callback(token, body, ip)`, `expire_callbacks(now)` (attempt `timeout`, no auto retry), the `Parked` outcome handling in `advance()` and the post-`202` re-read, and `wake()` in `putio-sync-pipeline/src/translate.rs`, `runner.rs`, `lib.rs`
 - [ ] T053 [US2] Call `expire_callbacks` each tick, mark leftover `waiting` rows of interrupted steps `expired` at start, and connect `wake` to the tick loop in `putio-sync-daemon/src/daemon.rs`

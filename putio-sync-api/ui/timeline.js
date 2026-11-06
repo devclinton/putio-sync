@@ -36,6 +36,8 @@ export const SKIP_LABEL = {
 export function stepTitle(step) {
   if (step.kind === "subtitle_scan") return "Find videos";
   if (step.kind === "subtitles") return `Subtitles for ${String(step.name).split("/").pop()}`;
+  if (step.kind === "translate_scan") return "Find subtitles to translate";
+  if (step.kind === "translate") return `${String(step.name).split("/").pop()}${step.branch ? ` (${step.branch})` : ""}`;
   return step.name;
 }
 
@@ -50,7 +52,8 @@ export function stepLine(step, itemState) {
   if (itemState === "waiting_for_operator" || step.state === "failed") return `Needs you: ${title} failed`;
   const stage = STAGE_LABEL[step.stage] || step.stage;
   if (step.stage === "subtitles" && step.state === "waiting") return "Waiting for subtitles";
-  return step.stage === "subtitles" ? title : `${stage}: ${title}`;
+  const waiting = step.waiting && step.waiting.for === "callback" ? ", waiting for callback" : "";
+  return step.stage === "subtitles" ? title : `${stage}: ${title}${waiting}`;
 }
 
 /** Whole seconds from `from` to `to` (SQLite or RFC 3339 UTC text); null when either is missing. */

@@ -158,6 +158,94 @@ pub fn scrub(text: &str, secrets: &[String], max: usize) -> String {
     }
 }
 
+/// The service's HTTP endpoint and the headers sent with every job
+#[derive(Clone)]
+pub struct CallbackClient {
+    http: reqwest::Client,
+    url: String,
+    headers: reqwest::header::HeaderMap,
+    timeout_secs: u64,
+    secrets: Vec<String>,
+}
+
+impl CallbackClient {
+    /// A client for `url`. Header values are secrets: they never appear in a message.
+    pub fn new(
+        url: &str,
+        headers: &std::collections::BTreeMap<String, String>,
+        timeout_secs: u64,
+    ) -> Result<CallbackClient, String> {
+        let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(timeout_secs.max(1)))
+            .user_agent(concat!("putio-sync/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let mut map = reqwest::header::HeaderMap::new();
+        for (name, value) in headers {
+            let n = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|_| format!("\"{name}\" is not a valid header name"))?;
+            let mut v = reqwest::header::HeaderValue::from_str(value)
+                .map_err(|_| format!("the value of header \"{name}\" is not valid"))?;
+            v.set_sensitive(true);
+            map.insert(n, v);
+        }
+        Ok(CallbackClient {
+            http,
+            url: url.to_string(),
+            headers: map,
+            timeout_secs,
+            secrets: headers.values().cloned().collect(),
+        })
+    }
+
+    fn scrub(&self, text: &str) -> String {
+        let text = text.replace(self.url.as_str(), "<url>");
+        scrub(&text, &self.secrets, MAX_ERROR_CHARS)
+    }
+
+    /// POST the job and classify the answer. Redirects are not followed.
+    pub async fn submit(&self, job: &JobRequest<'_>) -> Reply {
+        let sent = self
+            .http
+            .post(&self.url)
+            .headers(self.headers.clone())
+            .json(job)
+            .send()
+            .await;
+        let resp = match sent {
+            Ok(r) => r,
+            Err(e) if e.is_timeout() => {
+                return Reply::Failed(format!("timeout after {} s", self.timeout_secs))
+            }
+            Err(e) => {
+                let mut text = e.to_string();
+                if let Some(url) = e.url() {
+                    text = text.replace(url.as_str(), "<url>");
+                }
+                return Reply::Failed(format!("unreachable: {}", self.scrub(&text)));
+            }
+        };
+        let status = resp.status().as_u16();
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let body = match resp.text().await {
+            Ok(b) => b,
+            Err(e) if e.is_timeout() => {
+                return Reply::Failed(format!("timeout after {} s", self.timeout_secs))
+            }
+            Err(e) => return Reply::Failed(format!("unreachable: {}", self.scrub(&e.to_string()))),
+        };
+        // The body is scrubbed before it is cut, so a secret split by the cut still goes
+        let message = self.scrub(&crate::chat::error_message(&body));
+        classify_reply(status, content_type.as_deref(), &body, &message)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

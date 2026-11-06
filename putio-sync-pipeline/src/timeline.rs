@@ -25,6 +25,10 @@ pub struct StepView {
     pub id: i64,
     pub name: String,
     pub kind: &'static str,
+    /// The language of a translation step; the step is also listed under this name in
+    /// `branches`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     pub required: bool,
     /// The step's state, or `not_reached` for a waiting step of an item that stopped
     pub state: &'static str,
@@ -61,6 +65,9 @@ pub struct Timeline {
 pub struct StepSummary {
     pub stage: Stage,
     pub name: String,
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     pub state: &'static str,
     pub progress: Option<f64>,
 }
@@ -75,6 +82,7 @@ fn view(step: &StepRow, attempts: &[AttemptRow], stopped: bool) -> StepView {
         id: step.id,
         name: step.name.clone(),
         kind: step.kind.as_str(),
+        branch: step.branch.clone(),
         required: step.required,
         state,
         skip_reason: step.skip_reason.map(|r| r.as_str()),
@@ -151,6 +159,8 @@ pub fn summary(item: &ItemRow, steps: &[StepRow]) -> Option<StepSummary> {
     Some(StepSummary {
         stage: pick.stage,
         name: pick.name.clone(),
+        kind: pick.kind.as_str(),
+        branch: pick.branch.clone(),
         state: pick.state.as_str(),
         progress: pick.progress,
     })
