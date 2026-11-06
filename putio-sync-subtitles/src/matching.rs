@@ -103,7 +103,7 @@ struct Pass<'a, 'r> {
 /// What happened to one candidate
 enum Next {
     Saved,
-    TryNext,
+    Another,
     Stop,
 }
 
@@ -261,7 +261,7 @@ impl Pass<'_, '_> {
             for (score, hit) in scored {
                 match self.save(&lang, hit, &score).await {
                     Next::Saved | Next::Stop => break,
-                    Next::TryNext => {}
+                    Next::Another => {}
                 }
             }
         }
@@ -291,7 +291,7 @@ impl Pass<'_, '_> {
                 self.transient
                     .get_or_insert(format!("opensubtitles: {why}"));
                 self.out.warnings.push(format!("{lang}: {why}"));
-                return Next::TryNext;
+                return Next::Another;
             }
             Err(e) => {
                 self.failed(e);
@@ -305,7 +305,7 @@ impl Pass<'_, '_> {
                 self.out
                     .warnings
                     .push(format!("{lang}: unusable subtitle: {e}"));
-                return Next::TryNext;
+                return Next::Another;
             }
         };
         let slot = Slot::main(lang);

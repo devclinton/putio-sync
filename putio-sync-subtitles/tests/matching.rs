@@ -144,7 +144,7 @@ async fn a_result_under_the_threshold_is_not_saved_and_is_reported() {
     assert_eq!(out.missing, ["en"] as [&str; 1]);
     assert!(matches!(
         out.skipped[0].reason,
-        SkipReason::BelowThreshold(s) if s >= 60 && s < 65
+        SkipReason::BelowThreshold(s) if (60..65).contains(&s)
     ));
     assert!(
         out.message().contains("below threshold"),

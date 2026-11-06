@@ -130,7 +130,28 @@ OpenSubtitles key), then US3. Tune the default threshold (65) on a real library 
 
 ## Deviations
 
-(none yet)
+- T021: the hash test vectors are computed independently of the code (and checked by hand),
+  not the published breakdance sample, which is not in the repository.
+- The step message adds the mode as a ` [mode]` suffix, only when the plan differs from the
+  025 behaviour, so a default config's messages are unchanged.
+- T013: the UI helper tests are in `putio-sync-api/tests/ui/subtitle_modes.test.mjs`; the
+  OpenSubtitles field helper test (T039) is in the same file, not `subtitles_opensubtitles.test.mjs`.
+- T036/T037: the pipeline builds the OpenSubtitles client from the settings itself (in `new`
+  and `configure`, so a save resets a refused key); only the `MediaLookup` is injected. The
+  adapter is attached in `AppState::with_pipeline` (`putio-sync-api/src/lib.rs`), where the
+  `ArrService` is built, not in the daemon crate. `Pipeline::set_subtitle_search` is the test
+  override.
+- Whisper only and Both skip transcription for a language whose target file already exists.
+- Provenance (026): OpenSubtitles matches are recorded as `opensubtitles` whatever the level
+  (`os_hash`, `os_ids`, `os_name`), because the table's CHECK allows only the 026 values; a
+  migration would buy nothing, since translation only separates transcribed from the rest.
+- T038: `AppState::opensubtitles_url` is a test seam so the Test route can be checked against
+  a mock; `OpenSubtitlesConfig::validate_login` is public for the same route.
+- T039: the UI section is deliberately small (key, login, threshold, Test); the 480 KiB cap
+  was not raised.
+- T055 (live check with a real key and a real *arr) was not done: nothing here may call real
+  services. The Radarr/Sonarr history query (`/api/v3/history?downloadId=...`) and the
+  OpenSubtitles response shapes follow the contracts and the fixtures, unverified live.
 
 ## Follow-up after 026 merges
 

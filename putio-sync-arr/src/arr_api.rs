@@ -706,6 +706,31 @@ impl ArrApi {
     }
 }
 
+/// Fill `info` from a history record's `movie` or `series` object
+fn read_feature(info: &mut MediaInfo, feature: Option<&Value>, kind: MediaKind) {
+    let Some(f) = feature else { return };
+    info.kind = Some(kind);
+    if info.title.is_none() {
+        info.title = f.get("title").and_then(Value::as_str).map(str::to_string);
+    }
+    if info.year.is_none() {
+        info.year = f
+            .get("year")
+            .and_then(Value::as_u64)
+            .and_then(|y| u16::try_from(y).ok())
+            .filter(|y| *y > 0);
+    }
+    if info.imdb_id.is_none() {
+        info.imdb_id = f
+            .get("imdbId")
+            .and_then(Value::as_str)
+            .and_then(imdb_digits);
+    }
+    if info.tmdb_id.is_none() {
+        info.tmdb_id = f.get("tmdbId").and_then(Value::as_u64).filter(|id| *id > 0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -963,30 +988,5 @@ mod tests {
         for e in errors {
             assert!(!e.to_string().contains(KEY));
         }
-    }
-}
-
-/// Fill `info` from a history record's `movie` or `series` object
-fn read_feature(info: &mut MediaInfo, feature: Option<&Value>, kind: MediaKind) {
-    let Some(f) = feature else { return };
-    info.kind = Some(kind);
-    if info.title.is_none() {
-        info.title = f.get("title").and_then(Value::as_str).map(str::to_string);
-    }
-    if info.year.is_none() {
-        info.year = f
-            .get("year")
-            .and_then(Value::as_u64)
-            .and_then(|y| u16::try_from(y).ok())
-            .filter(|y| *y > 0);
-    }
-    if info.imdb_id.is_none() {
-        info.imdb_id = f
-            .get("imdbId")
-            .and_then(Value::as_str)
-            .and_then(imdb_digits);
-    }
-    if info.tmdb_id.is_none() {
-        info.tmdb_id = f.get("tmdbId").and_then(Value::as_u64).filter(|id| *id > 0);
     }
 }
