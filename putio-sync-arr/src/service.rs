@@ -1618,7 +1618,12 @@ impl ArrService {
                 speed_bps: speed.max(0.0) as u64,
                 paused,
             };
-            out.push(view::torrent(item, &local, &self.target, self.gated(item).is_some()));
+            out.push(view::torrent(
+                item,
+                &local,
+                &self.target,
+                self.gated(item).is_some(),
+            ));
         }
         Ok(out)
     }

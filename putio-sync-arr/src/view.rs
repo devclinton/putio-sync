@@ -166,7 +166,12 @@ mod tests {
 
     #[test]
     fn on_putio_counts_half() {
-        let v = torrent(&item(ArrState::Putio), &LocalProgress::default(), target(), false);
+        let v = torrent(
+            &item(ArrState::Putio),
+            &LocalProgress::default(),
+            target(),
+            false,
+        );
         assert_eq!(v["leftUntilDone"], 750);
         assert_eq!(v["percentDone"], 0.25);
         assert_eq!(v["status"], STATUS_DOWNLOADING);
@@ -245,7 +250,12 @@ mod tests {
 
     #[test]
     fn done_and_failed() {
-        let v = torrent(&item(ArrState::Done), &LocalProgress::default(), target(), false);
+        let v = torrent(
+            &item(ArrState::Done),
+            &LocalProgress::default(),
+            target(),
+            false,
+        );
         assert_eq!(v["leftUntilDone"], 0);
         assert_eq!(v["percentDone"], 1.0);
         assert_eq!(v["isFinished"], true);
@@ -266,7 +276,12 @@ mod tests {
         let mut i = item(ArrState::Putio);
         i.category = String::new();
         i.total_size = 0;
-        let v = torrent(&i, &LocalProgress::default(), Path::new("/downloads"), false);
+        let v = torrent(
+            &i,
+            &LocalProgress::default(),
+            Path::new("/downloads"),
+            false,
+        );
         assert_eq!(v["downloadDir"], "/downloads");
         assert_eq!(v["percentDone"], 0.0);
         assert_eq!(v["labels"], json!([]));
