@@ -322,6 +322,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- `cargo build --release` (and so `make ci`) failed on macOS after the October
+  2026 Command Line Tools update: the stripped `sqlx` proc macro would not load.
+  Proc macros and build scripts are no longer stripped; shipped binaries still
+  are.
 - The word "null" showed on the page in History › Verification, Settings ›
   Tailscale › This machine and the Put.io storage card, and could show in the
   Settings › Network list, the Radarr/Sonarr setup plan and test result, and
