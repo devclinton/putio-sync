@@ -178,8 +178,8 @@ roots working.
 
 ## Phase 7: Polish
 
-- [ ] T035 [P] Update `README.md` (a Media server section) and `INSTALLATION.md` (Docker `network_mode: host` for discovery; manual `description.xml` URL with bridge networking)
-- [ ] T036 [P] Add a `CHANGELOG.md` entry under Unreleased › Added
+- [x] T035 [P] Update `README.md` (a Media server section) and `INSTALLATION.md` (Docker `network_mode: host` for discovery; manual `description.xml` URL with bridge networking)
+- [x] T036 [P] Add a `CHANGELOG.md` entry under Unreleased › Added
 - [ ] T037 Run `make ci` and fix everything it reports
 - [ ] T038 Run quickstart §2 locally with curl, and §3 with VLC; note results in the spec status
 

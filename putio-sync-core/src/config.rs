@@ -4929,9 +4929,11 @@ mod dlna_tests {
 
     #[test]
     fn bind_entries_are_checked() {
-        assert!(parse("[dlna]\nbind = [\"192.168.1.5:8200\", \"eth0:8200\"]\n")
-            .validate()
-            .is_ok());
+        assert!(
+            parse("[dlna]\nbind = [\"192.168.1.5:8200\", \"eth0:8200\"]\n")
+                .validate()
+                .is_ok()
+        );
         let msg = error("[dlna]\nbind = [\"nonsense\"]\n");
         assert!(msg.contains("dlna.bind"), "{msg}");
     }
@@ -4950,7 +4952,9 @@ mod dlna_tests {
         assert!(r.enabled);
         assert_eq!(r.name, "from env");
         assert_eq!(r.port, 8300);
-        let r = with_env(&[("PUTIO_SYNC_DLNA_NAME", "")], || c.resolve_dlna().unwrap());
+        let r = with_env(&[("PUTIO_SYNC_DLNA_NAME", "")], || {
+            c.resolve_dlna().unwrap()
+        });
         assert_eq!(r.name, "file");
         assert!(!r.enabled);
     }

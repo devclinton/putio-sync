@@ -22,17 +22,23 @@ impl Telemetry {
 
     /// A stream started (`root_kind` is `local` or `putio`).
     pub fn dlna_stream_started(&self, root_kind: &str) {
-        self.dlna_streams_active.with_label_values(&[root_kind]).inc();
+        self.dlna_streams_active
+            .with_label_values(&[root_kind])
+            .inc();
     }
 
     /// A stream ended.
     pub fn dlna_stream_ended(&self, root_kind: &str) {
-        self.dlna_streams_active.with_label_values(&[root_kind]).dec();
+        self.dlna_streams_active
+            .with_label_values(&[root_kind])
+            .dec();
     }
 
     /// Count bytes sent to players.
     pub fn dlna_bytes(&self, root_kind: &str, bytes: u64) {
-        self.dlna_bytes_sent.with_label_values(&[root_kind]).inc_by(bytes);
+        self.dlna_bytes_sent
+            .with_label_values(&[root_kind])
+            .inc_by(bytes);
     }
 }
 
