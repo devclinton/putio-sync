@@ -131,3 +131,7 @@ OpenSubtitles key), then US3. Tune the default threshold (65) on a real library 
 ## Deviations
 
 (none yet)
+
+## Follow-up after 026 merges
+
+- [ ] T057 Once 026 (translation) is on main, record every transcription this feature writes (all modes, `.whisper.srt` or not) in 026's `subtitle_provenance` table, so translation can pick transcribed sources without relying on the file name; add a test in `putio-sync-pipeline/tests/subtitles.rs`

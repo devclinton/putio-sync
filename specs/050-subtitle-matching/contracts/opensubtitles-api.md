@@ -5,7 +5,7 @@ Base: `https://api.opensubtitles.com/api/v1`. Every request sends `Api-Key: <key
 `Authorization: Bearer <jwt>`.
 
 Marks: **[C]** field or parameter name seen in the Stoplight reference page; **[U]** unconfirmed (general knowledge or
-secondary sources), to be checked with a live key (task T070). The parser treats everything but the file ID as optional.
+secondary sources), to be checked with a live key (task T055). The parser treats everything but the file ID as optional.
 
 ## Search: `GET /subtitles`
 

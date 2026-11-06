@@ -22,7 +22,7 @@ roadmap calls Put.io's lookup), and the exact-file match against OpenSubtitles i
 
 **Rationale for computing locally**: the OpenSubtitles hash is the file size plus the 64-bit little-endian sums of the
 first and last 64 KiB (the standard OpenSubtitles algorithm, from general knowledge, not re-fetched; a known-answer
-unit test with a published sample vector is part of T012). Computing it costs two 64 KiB reads, needs no Put.io call (the existing
+unit test with a published sample vector is part of T021). Computing it costs two 64 KiB reads, needs no Put.io call (the existing
 `FileEntry` would need a `GET /files/{id}` per video, and the file is often deleted), works for Local files
 (044) and for files outside Put.io, and the result equals Put.io's value for the same bytes. Files under 128 KiB are
 skipped.
@@ -69,7 +69,7 @@ Test button shows what the service says.
 
 **Fallbacks**: every response field except the file ID is optional in the parser (`#[serde(default)]`), so a
 renamed field gives fewer signals and a lower score, not a failure. The `contracts/opensubtitles-api.md` fixtures are
-the single place to correct once the real shape is seen against a live key (task T070).
+the single place to correct once the real shape is seen against a live key (task T055).
 
 **Alternatives**: The legacy `rest.opensubtitles.org` API (deprecated, user-agent registration, no per-user
 quota, being retired). A third-party crate for the API (small, unmaintained, would still need the above; the
@@ -301,7 +301,7 @@ with a recorded reason.
 ## Open questions (collected unconfirmed items and decisions for the maintainer)
 
 1. OpenSubtitles API: exact response and error shapes, download quota with and without login, `base_url` after
-   login, whether `imdb_id` takes `tt` (task T070 against a live key; fixtures are the contract).
+   login, whether `imdb_id` takes `tt` (task T055 against a live key; fixtures are the contract).
 2. Radarr/Sonarr history parameters and embedded fields on current versions (R3 fallbacks exist).
 3. Whether Put.io's list is matched by hash inside Put.io (R1): not needed for this feature to work.
 4. Provenance of transcriptions in Download then Whisper and Whisper only (R7): name alone does not show it.
