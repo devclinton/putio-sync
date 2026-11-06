@@ -755,6 +755,16 @@ mod modes {
         let out = &t.stages[3].steps[1].attempts[0].output;
         assert!(out.contains("en: transcribed"), "{out}");
         assert!(out.contains("[whisper_only]"), "{out}");
+        // Every transcription is recorded where it came from (feature 026 provenance)
+        let saved = env.dir.path().join("Movie.en.srt");
+        let size = std::fs::metadata(&saved).unwrap().len() as i64;
+        let p = env
+            .store
+            .provenance(&saved.to_string_lossy(), Some(size))
+            .await
+            .unwrap()
+            .expect("provenance recorded");
+        assert_eq!(p.source, "transcribed");
     }
 
     #[tokio::test]

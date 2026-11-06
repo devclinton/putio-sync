@@ -14,6 +14,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use putio_sync_core::subtitles::SubtitleMode;
 use putio_sync_pipeline::subtitles::{is_video, ManualError};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -48,6 +49,8 @@ pub struct Preflight {
     pub reason: Option<String>,
     /// `available`, `gone` or `unknown`
     pub putio: &'static str,
+    /// What the Subtitles settings do with a video outside any category (feature 050)
+    pub mode: &'static str,
     pub transcription: Transcription,
     pub languages: Vec<String>,
     pub existing: Vec<Existing>,
@@ -99,6 +102,7 @@ pub async fn preflight(
     require_file(&target.path, &target.rel)?;
     let config = state.config.read().await.subtitles.clone();
     let languages = config.wanted();
+    let mode = config.category_mode(None);
     let ffmpeg =
         putio_sync_subtitles::audio::find_ffmpeg(&config.transcription.ffmpeg_path).is_some();
     let transcription = Transcription {
@@ -134,22 +138,35 @@ pub async fn preflight(
             ),
         )
     } else {
-        let putio = putio_state(&state, &recorded).await;
         let can_transcribe = transcription.enabled && transcription.ffmpeg;
-        let reason = (putio != "available" && !can_transcribe).then(|| {
-            let why = if putio == "gone" {
-                "Put.io no longer has this file"
-            } else {
-                "Put.io cannot be asked about this file (it was not downloaded by putio-sync)"
-            };
-            format!("{why}, and transcription is off or ffmpeg is missing")
-        });
-        (putio, reason)
+        if mode == SubtitleMode::WhisperOnly {
+            // Put.io is not asked in this mode, so only transcription has to work
+            let reason =
+                (!can_transcribe).then(|| "Transcription is off or ffmpeg is missing".to_string());
+            ("unknown", reason)
+        } else {
+            let putio = putio_state(&state, &recorded).await;
+            let needs_putio = !can_transcribe || mode == SubtitleMode::DownloadOnly;
+            let reason = (putio != "available" && needs_putio).then(|| {
+                let why = if putio == "gone" {
+                    "Put.io no longer has this file"
+                } else {
+                    "Put.io cannot be asked about this file (it was not downloaded by putio-sync)"
+                };
+                if mode == SubtitleMode::DownloadOnly {
+                    why.to_string()
+                } else {
+                    format!("{why}, and transcription is off or ffmpeg is missing")
+                }
+            });
+            (putio, reason)
+        }
     };
     Ok(Json(Preflight {
         eligible: reason.is_none(),
         reason,
         putio,
+        mode: mode.as_str(),
         transcription,
         languages,
         existing,

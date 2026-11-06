@@ -237,6 +237,29 @@ async fn no_source_subtitle_means_no_steps() {
 }
 
 #[tokio::test]
+async fn a_whisper_file_beside_the_download_is_a_translation_source() {
+    let s = chat_server(&[]).await;
+    let env = env_for(&["en", "es"], chat(&s.url())).await;
+    let video = env.dir.path().join("Movie.mkv");
+    big_file(&video, BIG);
+    // Only the transcription exists (Both mode kept it apart from the main slot)
+    std::fs::write(env.dir.path().join("Movie.en.whisper.srt"), SRT).unwrap();
+    downloaded(&env, 5, &video).await;
+    downloaded_item(&env, "file:5", &video).await;
+    env.pipeline.run_due().await;
+    let all = steps(&env, "file:5").await;
+    let found: Vec<_> = translate_steps(&all)
+        .iter()
+        .map(|s| s.branch.clone().unwrap())
+        .collect();
+    assert_eq!(
+        found,
+        ["es"],
+        "en is not saved in the main slot, so it is the source"
+    );
+}
+
+#[tokio::test]
 async fn a_season_pack_gets_steps_per_video_and_no_video_skips_the_scan() {
     let s = chat_server(&[]).await;
     let env = env_for(&["en", "es"], chat(&s.url())).await;

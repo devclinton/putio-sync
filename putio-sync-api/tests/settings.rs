@@ -869,7 +869,7 @@ async fn subtitles_settings_validate_mask_the_key_and_apply_now() {
     assert_eq!(view["transcription"]["enabled"], false);
     assert_eq!(view["transcription"]["api_key"], "");
     assert!(view["known_languages"].as_array().unwrap().len() > 10);
-    assert_eq!(view["live"].as_array().unwrap().len(), 3);
+    assert_eq!(view["live"].as_array().unwrap().len(), 8);
     assert!(view["applies_now"]
         .as_str()
         .unwrap()

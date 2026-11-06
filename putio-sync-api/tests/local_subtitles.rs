@@ -186,3 +186,34 @@ async fn start_without_a_pipeline_is_a_503() {
         StatusCode::SERVICE_UNAVAILABLE
     );
 }
+
+#[tokio::test]
+async fn whisper_only_needs_no_put_io_and_download_only_needs_no_transcription() {
+    use putio_sync_core::subtitles::SubtitleMode;
+    let app = test_app_with(|c| {
+        c.subtitles.languages = vec!["en".to_string()];
+        c.subtitles.mode = Some(SubtitleMode::WhisperOnly);
+        c.subtitles.transcription.enabled = true;
+        c.subtitles.transcription.url = "http://nas:8000".to_string();
+        c.subtitles.transcription.ffmpeg_path = "/bin/sh".to_string();
+    })
+    .await;
+    video(&app, "Other.mkv");
+    let (_, body) = preflight(&app, "Other.mkv").await;
+    assert_eq!(body["mode"], "whisper_only");
+    assert_eq!(body["eligible"], true, "{body}");
+
+    // Download only: transcription being on does not make an unknown file eligible
+    let app = test_app_with(|c| {
+        c.subtitles.languages = vec!["en".to_string()];
+        c.subtitles.mode = Some(SubtitleMode::DownloadOnly);
+        c.subtitles.transcription.enabled = true;
+        c.subtitles.transcription.url = "http://nas:8000".to_string();
+        c.subtitles.transcription.ffmpeg_path = "/bin/sh".to_string();
+    })
+    .await;
+    video(&app, "Other.mkv");
+    let (_, body) = preflight(&app, "Other.mkv").await;
+    assert_eq!(body["eligible"], false);
+    assert!(!body["reason"].as_str().unwrap().contains("transcription"));
+}

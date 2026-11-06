@@ -439,15 +439,14 @@ fn masked(config: &Config) -> std::borrow::Cow<'_, Config> {
     if config.hooks.is_empty()
         && config.plugins.is_empty()
         && config.subtitles.transcription.api_key.is_empty()
+        && config.subtitles.opensubtitles.is_default()
         && config.translation.chat.api_key.is_empty()
         && config.translation.callback.headers.is_empty()
     {
         return std::borrow::Cow::Borrowed(config);
     }
     let mut config = config.clone();
-    if !config.subtitles.transcription.api_key.is_empty() {
-        config.subtitles.transcription.api_key = crate::subtitles::MASK.to_string();
-    }
+    config.subtitles = config.subtitles.masked();
     config.translation = config.translation.masked();
     config.hooks = crate::hooks::mask(&config.hooks);
     config.plugins = crate::plugins::mask(&config.plugins);
@@ -520,9 +519,7 @@ pub fn import(current: &Config, text: &str) -> CoreResult<Import> {
     config.hooks = crate::hooks::unmask(&config.hooks, &current.hooks)?;
     config.plugins = crate::plugins::unmask(&config.plugins, &current.plugins)?;
     // The transcription key reads "********" in an export; an import keeps the stored one
-    if config.subtitles.transcription.api_key == crate::subtitles::MASK {
-        config.subtitles.transcription.api_key = current.subtitles.transcription.api_key.clone();
-    }
+    config.subtitles = config.subtitles.clone().unmasked(&current.subtitles);
     config.translation = config.translation.clone().unmasked(&current.translation);
     config.expand_paths()?;
     Ok(Import {

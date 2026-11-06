@@ -5,6 +5,7 @@
 import { post } from "../api.js";
 import { h } from "../app.js";
 import { TRANSCRIPTION_FIELDS, readTranscription, testLines } from "../transcription.js";
+import { MODES, modesText, readModes } from "../subtitle_modes.js";
 import { groupCard, quiet, reason } from "./form.js";
 
 const SUBTITLES = {
@@ -42,9 +43,18 @@ function languagesExtra(data) {
     inputs[name] = () => input.value;
     return h("label", { class: "field", for: id }, h("span", { text: label }), input, h("small", { text: hint }));
   });
+  const area = (id, label, hint, value) => {
+    const input = h("textarea", { class: "input", id, rows: 3, spellcheck: "false" });
+    input.value = modesText(value);
+    return [h("label", { class: "field", for: id }, h("span", { text: label }), input, h("small", { text: hint })), input];
+  };
+  const select = h("select", { class: "input", id: "set-subtitles-mode" }, ...MODES.map(([v, l]) => h("option", { value: v, text: l })));
+  select.value = data.mode || "";
+  const [catRow, cats] = area("set-subtitles-category-modes", "Mode per category", "One per line, such as radarr = download_only. Modes: download_only, download_then_whisper, whisper_only, both", data.category_modes);
+  const [langRow, langs] = area("set-subtitles-language-modes", "Mode per language", "One per line, such as es = both. A language line wins over a category line", data.language_modes);
   const read = () => {
     const now = Object.fromEntries(Object.entries(inputs).map(([k, f]) => [k, f()]));
-    return { transcription: readTranscription(now) };
+    return { transcription: readTranscription(now), ...readModes({ mode: select.value, categories: cats.value, languages: langs.value }) };
   };
 
   const out = h("div", { class: "spaced", role: "status", "aria-live": "polite" });
@@ -66,6 +76,11 @@ function languagesExtra(data) {
     { class: "spaced" },
     h("p", { class: "muted small", text: "Each wanted language is saved as Movie.en.srt next to Movie.mkv. A file that is already there is kept." }),
     known.length ? h("details", {}, h("summary", { text: `Known languages (${known.length})` }), h("p", { class: "muted small", text: list })) : null,
+    h("h3", { text: "Source mode" }),
+    h("p", { class: "muted small", text: "Where subtitles come from. Transcribing needs the transcription server below. With Both, the transcription is saved as Movie.en.whisper.srt beside the downloaded file." }),
+    h("label", { class: "field", for: "set-subtitles-mode" }, h("span", { text: "Mode" }), select),
+    catRow,
+    langRow,
     h("h3", { text: "Transcription" }),
     h("p", { class: "muted small", text: "When Put.io has no subtitle for a wanted language, the audio can be sent to a speech to text server. Uses your own server; nothing is sent while this is off." }),
     ...rows,

@@ -56,6 +56,11 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ),
     ("subtitles.js", JS, include_bytes!("../ui/subtitles.js")),
     (
+        "subtitle_modes.js",
+        JS,
+        include_bytes!("../ui/subtitle_modes.js"),
+    ),
+    (
         "settings/media.js",
         JS,
         include_bytes!("../ui/settings/media.js"),

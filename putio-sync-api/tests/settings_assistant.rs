@@ -43,7 +43,15 @@ async fn group_body(app: &TestApp, group: &str) -> Value {
     let body = get_ok(app, &format!("/settings/{group}")).await;
     if group == "subtitles" {
         let mut body = body;
-        for extra in ["known_languages", "live", "applies_now", "ffmpeg"] {
+        for extra in [
+            "known_languages",
+            "live",
+            "applies_now",
+            "ffmpeg",
+            "effective_mode",
+            "effective_min_confidence",
+            "opensubtitles_on",
+        ] {
             body.as_object_mut().unwrap().remove(extra);
         }
         body

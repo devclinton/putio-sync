@@ -23,8 +23,11 @@ export function fetchState(entry) {
 export function fetchPlan(name, pre) {
   if (!pre.eligible) return { go: false, message: pre.reason || "Subtitles cannot be fetched for this file" };
   const parts = [];
-  const transcribes = pre.putio !== "available";
-  if (transcribes) {
+  const only = pre.mode === "whisper_only";
+  const transcribes = only || pre.mode === "both" || (pre.mode !== "download_only" && pre.putio !== "available");
+  if (only || (transcribes && pre.putio === "available")) {
+    parts.push("The audio will be sent to your transcription server. That can take several minutes.");
+  } else if (transcribes) {
     parts.push(pre.putio === "gone" ? "Put.io no longer has this file," : "Put.io cannot be asked about this file,");
     parts.push("so the audio will be sent to your transcription server. That can take several minutes.");
   }

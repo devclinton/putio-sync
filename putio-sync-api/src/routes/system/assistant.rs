@@ -277,6 +277,26 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
                 "transcription",
                 "Optional speech-to-text server that writes subtitles when none can be found",
             ),
+            (
+                "mode",
+                "Where subtitles come from: download only, download then transcribe (default), transcribe only, or both",
+            ),
+            (
+                "category_modes",
+                "A different mode for a download category, such as radarr = download_only",
+            ),
+            (
+                "language_modes",
+                "A different mode for one language; it wins over the category and the global mode",
+            ),
+            (
+                "min_confidence",
+                "OpenSubtitles matches scoring below this (0 to 100) are not saved",
+            ),
+            (
+                "opensubtitles",
+                "OpenSubtitles API key and optional login; empty key turns OpenSubtitles off",
+            ),
         ],
     ),
     (

@@ -49,3 +49,11 @@ test("translate: needs an eligible video with a missing language, and names the 
   assert.deepEqual(p.targets, ["es", "fr"]);
   assert.match(p.confirm, /into es, fr\?/);
 });
+
+test("a Whisper mode confirms transcription even when Put.io has the file", () => {
+  for (const mode of ["whisper_only", "both"]) {
+    const plan = fetchPlan("a.mkv", { eligible: true, putio: mode === "both" ? "available" : "unknown", mode, languages: ["en"], existing: [] });
+    assert.match(plan.confirm.text, /transcription server/);
+  }
+  assert.equal(fetchPlan("a.mkv", { eligible: true, putio: "available", mode: "download_only", languages: ["en"], existing: [] }).confirm, null);
+});

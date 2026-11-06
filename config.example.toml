@@ -410,6 +410,27 @@ run_at = "02:30"
 # languages = ["en", "es"]
 # Categories that skip the stage, for example when Bazarr handles them
 # excluded_categories = ["radarr"]
+# Where subtitles come from (feature 050), most specific first: a language, then a
+# category, then this global mode.
+#   download_only          Put.io and OpenSubtitles only; never transcribe
+#   download_then_whisper  transcribe only what no download covered (the default)
+#   whisper_only           transcribe every wanted language; never ask Put.io
+#   both                   download, and also transcribe into <video>.<lang>.whisper.srt
+# A Whisper mode needs [subtitles.transcription] on with a server URL.
+# mode = "download_then_whisper"
+# OpenSubtitles results scoring below this (0 to 100) are not saved
+# min_confidence = 65
+#
+# [subtitles.category_modes]            # category (case-insensitive) = mode
+# radarr = "download_only"
+# [subtitles.language_modes]            # language code = mode
+# ja = "both"
+#
+# [subtitles.opensubtitles]             # off while api_key is empty
+# api_key = ""                          # PUTIO_SYNC_OPENSUBTITLES_API_KEY overrides. Never logged
+# username = ""                         # optional; an account lifts the download quota
+# password = ""                         # PUTIO_SYNC_OPENSUBTITLES_PASSWORD overrides. Needs a username
+# user_agent = ""                       # empty sends "putio-sync <version>"
 #
 # [subtitles.transcription]
 # enabled = false                       # off by default

@@ -23,7 +23,16 @@ use serde_json::Value;
 use std::path::Path;
 
 /// The fields that apply to the next step without a restart
-const LIVE: &[&str] = &["languages", "excluded_categories", "transcription"];
+const LIVE: &[&str] = &[
+    "languages",
+    "excluded_categories",
+    "transcription",
+    "mode",
+    "category_modes",
+    "language_modes",
+    "min_confidence",
+    "opensubtitles",
+];
 const WHEN: &str = "Applies now";
 const APPLIES_NOW: &str =
     "New items and waiting steps use these settings; running steps finish as they are.";
@@ -42,11 +51,7 @@ pub(crate) fn live_subtitles() -> (&'static [&'static str], &'static str) {
 
 /// The config with a stored key shown as the mask
 pub(crate) fn subtitles_view(config: &Config) -> SubtitlesConfig {
-    let mut view = config.subtitles.clone();
-    if !view.transcription.api_key.is_empty() {
-        view.transcription.api_key = MASK.to_string();
-    }
-    view
+    config.subtitles.masked()
 }
 
 /// GET body
@@ -55,6 +60,12 @@ struct Full {
     #[serde(flatten)]
     settings: SubtitlesConfig,
     ffmpeg: Ffmpeg,
+    /// The mode that applies when nothing narrower is set, and the match threshold, spelled
+    /// out because a stored default is left out of `settings`
+    effective_mode: &'static str,
+    effective_min_confidence: u8,
+    /// Whether an OpenSubtitles key is set (here or in the environment)
+    opensubtitles_on: bool,
     known_languages: Vec<Language>,
     live: &'static [&'static str],
     applies_now: &'static str,
@@ -90,6 +101,9 @@ fn full(config: &Config, warnings: Vec<String>) -> Full {
     Full {
         settings: subtitles_view(config),
         ffmpeg: ffmpeg_info(&config.subtitles.transcription),
+        effective_mode: config.subtitles.category_mode(None).as_str(),
+        effective_min_confidence: config.subtitles.min_confidence,
+        opensubtitles_on: config.subtitles.opensubtitles.is_active(),
         known_languages: putio_sync_core::lang::known()
             .into_iter()
             .map(|(code, name)| Language { code, name })
@@ -100,15 +114,30 @@ fn full(config: &Config, warnings: Vec<String>) -> Full {
     }
 }
 
-async fn get_subtitles(State(state): State<AppState>) -> Json<Full> {
-    Json(full(&*state.config.read().await, Vec::new()))
+/// The body of `full`, with the fields a default config leaves out spelled out, so the page
+/// and the settings help can rely on them being there
+fn body_of(config: &Config, warnings: Vec<String>) -> Value {
+    let mut out = serde_json::to_value(full(config, warnings)).unwrap_or_default();
+    let s = &config.subtitles.masked();
+    for (name, value) in [
+        ("mode", serde_json::json!(s.mode)),
+        ("category_modes", serde_json::json!(s.category_modes)),
+        ("language_modes", serde_json::json!(s.language_modes)),
+        ("min_confidence", serde_json::json!(s.min_confidence)),
+        ("opensubtitles", serde_json::json!(s.opensubtitles)),
+    ] {
+        out[name] = value;
+    }
+    out
+}
+
+async fn get_subtitles(State(state): State<AppState>) -> Json<Value> {
+    Json(body_of(&*state.config.read().await, Vec::new()))
 }
 
 /// Keep the stored key when the body has the mask
 fn with_stored_key(mut settings: SubtitlesConfig, stored: &SubtitlesConfig) -> SubtitlesConfig {
-    if settings.transcription.api_key == MASK {
-        settings.transcription.api_key = stored.transcription.api_key.clone();
-    }
+    settings = settings.unmasked(stored);
     // Canonical codes, once each; a name validation will refuse stays as typed
     let mut languages: Vec<String> = Vec::new();
     for l in &settings.languages {
@@ -126,25 +155,28 @@ async fn put_subtitles(
     settings: Result<Json<SubtitlesConfig>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let settings = body(settings)?;
-    let key_before = state
-        .config
-        .read()
-        .await
-        .subtitles
-        .transcription
-        .api_key
-        .clone();
+    let before = state.config.read().await.subtitles.clone();
     let mut changed = update(&state, subtitles_view, |config| {
         config.subtitles = with_stored_key(settings, &config.subtitles);
-        Ok(())
+        // Canonical keys for the mode maps are kept, not just checked
+        config
+            .subtitles
+            .normalize()
+            .map_err(super::settings::invalid)
     })
     .await?;
     let config = state.config.read().await.clone();
     // The view shows a key as the mask, so a new key is not a visible change
-    if config.subtitles.transcription.api_key != key_before
+    if config.subtitles.transcription.api_key != before.transcription.api_key
         && !changed.iter().any(|f| f == "transcription")
     {
         changed.push("transcription".to_string());
+    }
+    if (config.subtitles.opensubtitles.api_key != before.opensubtitles.api_key
+        || config.subtitles.opensubtitles.password != before.opensubtitles.password)
+        && !changed.iter().any(|f| f == "opensubtitles")
+    {
+        changed.push("opensubtitles".to_string());
     }
     if let Some(pipeline) = &state.pipeline {
         pipeline.configure(&config);
@@ -152,7 +184,7 @@ async fn put_subtitles(
     let mut warnings = Vec::new();
     transcription_warnings(&config, &mut warnings);
     let (live, when) = live_subtitles();
-    let mut out = serde_json::to_value(full(&config, warnings)).unwrap_or_default();
+    let mut out = body_of(&config, warnings);
     out["message"] = Value::String(saved_message("Subtitles", &changed, live, when, &[]));
     Ok(Json(out))
 }
