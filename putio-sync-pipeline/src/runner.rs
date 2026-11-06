@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use putio_sync_core::events::{self, Payload, PipelineCompleted, PipelineStepFailed};
-use putio_sync_core::hooks::HookConfig;
 use putio_sync_core::log_redact;
 use putio_sync_hooks::step::{self, ItemPayload, StepResult};
 use tokio::sync::Notify;
@@ -184,13 +183,38 @@ impl Pipeline {
         self.refresh_gate().await;
     }
 
+    /// Run one step, by what kind it is
     async fn run_step(&self, item: &ItemRow, step: &StepRow) -> Outcome {
-        let store = &self.inner.store;
-        if step.kind == StepKind::Notify {
-            // Notifications go out through the event hooks; the step records the stage
-            let _ = store.set_step(step.id, StepState::Done, None, None).await;
-            return Outcome::Continue;
+        match step.kind {
+            StepKind::Notify => {
+                // Notifications go out through the event hooks; the step records the stage
+                let _ = self
+                    .inner
+                    .store
+                    .set_step(step.id, StepState::Done, None, None)
+                    .await;
+                Outcome::Continue
+            }
+            StepKind::SubtitleScan | StepKind::Subtitles => {
+                // Filled in by the subtitles runner
+                let _ = self
+                    .inner
+                    .store
+                    .set_step(
+                        step.id,
+                        StepState::Skipped,
+                        Some(SkipReason::NotConfigured),
+                        None,
+                    )
+                    .await;
+                Outcome::Continue
+            }
+            _ => self.run_hook(item, step).await,
         }
+    }
+
+    async fn run_hook(&self, item: &ItemRow, step: &StepRow) -> Outcome {
+        let store = &self.inner.store;
         let settings = self.settings();
         let Some(hook) = settings
             .hooks
@@ -296,7 +320,6 @@ impl Pipeline {
                 self.failed(
                     item,
                     step,
-                    &hook,
                     n,
                     error.unwrap_or_else(|| "failed".to_string()),
                 )
@@ -310,7 +333,6 @@ impl Pipeline {
         &self,
         item: &ItemRow,
         step: &StepRow,
-        _hook: &HookConfig,
         n: i64,
         error: String,
     ) -> Outcome {

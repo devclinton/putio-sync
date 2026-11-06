@@ -360,3 +360,37 @@ async fn the_gate_holds_a_downloaded_item_from_the_moment_its_steps_start() {
         "clear once the step is done"
     );
 }
+
+fn subtitle_step(branch: &str, position: i64) -> PlannedStep {
+    PlannedStep {
+        stage: PStage::Subtitles,
+        branch: Some(branch.to_string()),
+        position,
+        kind: StepKind::Subtitles,
+        name: format!("subtitles {branch}"),
+        required: false,
+        changes_files: false,
+        state: StepState::Waiting,
+        skip_reason: None,
+    }
+}
+
+#[tokio::test]
+async fn insert_steps_adds_in_order_with_branches_and_is_idempotent() {
+    let env = env(vec![]).await;
+    let dir = tempfile::tempdir().unwrap();
+    downloaded_item(&env, "transfer:7", dir.path()).await;
+    let before = env.store.steps("transfer:7").await.unwrap().len();
+    let steps = vec![subtitle_step("a.mkv", 0), subtitle_step("b.mkv", 1)];
+    assert_eq!(env.store.insert_steps("transfer:7", &steps).await.unwrap(), 2);
+    let rows = env.store.steps("transfer:7").await.unwrap();
+    assert_eq!(rows.len(), before + 2);
+    let added: Vec<_> = rows.iter().filter(|r| r.kind == StepKind::Subtitles).collect();
+    assert_eq!(added[0].branch.as_deref(), Some("a.mkv"));
+    assert_eq!(added[1].branch.as_deref(), Some("b.mkv"));
+    assert!(added[0].id < added[1].id);
+    assert_eq!(added[0].state, StepState::Waiting);
+    // A second scan adds nothing
+    assert_eq!(env.store.insert_steps("transfer:7", &steps).await.unwrap(), 0);
+    assert_eq!(env.store.steps("transfer:7").await.unwrap().len(), before + 2);
+}

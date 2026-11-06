@@ -78,6 +78,10 @@ pub enum StepKind {
     Hook,
     Download,
     Notify,
+    /// Finds the videos of an item and adds one `Subtitles` step for each (feature 025)
+    SubtitleScan,
+    /// Fetches or makes the subtitles of one video (feature 025)
+    Subtitles,
 }
 
 impl StepKind {
@@ -86,6 +90,8 @@ impl StepKind {
             StepKind::Hook => "hook",
             StepKind::Download => "download",
             StepKind::Notify => "notify",
+            StepKind::SubtitleScan => "subtitle_scan",
+            StepKind::Subtitles => "subtitles",
         }
     }
 
@@ -94,6 +100,8 @@ impl StepKind {
             "hook" => Some(StepKind::Hook),
             "download" => Some(StepKind::Download),
             "notify" => Some(StepKind::Notify),
+            "subtitle_scan" => Some(StepKind::SubtitleScan),
+            "subtitles" => Some(StepKind::Subtitles),
             _ => None,
         }
     }
@@ -205,6 +213,8 @@ pub enum SkipReason {
     Category,
     Operator,
     Hook,
+    /// The item has no video to make subtitles for (feature 025)
+    NoVideo,
 }
 
 impl SkipReason {
@@ -214,6 +224,7 @@ impl SkipReason {
             SkipReason::Category => "category",
             SkipReason::Operator => "operator",
             SkipReason::Hook => "hook",
+            SkipReason::NoVideo => "no_video",
         }
     }
 
@@ -223,6 +234,7 @@ impl SkipReason {
             "category" => Some(SkipReason::Category),
             "operator" => Some(SkipReason::Operator),
             "hook" => Some(SkipReason::Hook),
+            "no_video" => Some(SkipReason::NoVideo),
             _ => None,
         }
     }
@@ -281,7 +293,13 @@ mod tests {
 
     #[test]
     fn every_name_round_trips() {
-        for s in [StepKind::Hook, StepKind::Download, StepKind::Notify] {
+        for s in [
+            StepKind::Hook,
+            StepKind::Download,
+            StepKind::Notify,
+            StepKind::SubtitleScan,
+            StepKind::Subtitles,
+        ] {
             assert_eq!(StepKind::parse(s.as_str()), Some(s));
         }
         for s in [
@@ -311,6 +329,7 @@ mod tests {
             SkipReason::Category,
             SkipReason::Operator,
             SkipReason::Hook,
+            SkipReason::NoVideo,
         ] {
             assert_eq!(SkipReason::parse(s.as_str()), Some(s));
         }

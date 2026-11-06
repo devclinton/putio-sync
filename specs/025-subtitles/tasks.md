@@ -26,14 +26,14 @@
 - [x] T015 [P] Write failing mockito tests for `list_subtitles` (languages CSV, 404/402/401 mapping, lenient fields) and `download_subtitle` (text body, `url` fallback) in `putio-sync-client/tests/subtitles.rs`
 - [x] T016 Implement `list_subtitles`, `download_subtitle`, raw-text GET and models in `putio-sync-client/src/subtitles.rs` (+ `lib.rs` export)
 - [x] T017 Define the `SubtitleSource` trait and the `PutioApiClient` impl in `putio-sync-subtitles/src/lib.rs`
-- [ ] T018 [P] Write failing migration test seeding old-schema `pipeline_steps` and `pipeline_attempts` rows (attempts must survive; idempotent re-run) in `putio-sync-db/tests/pipeline_migration.rs`
-- [ ] T019 Implement the `pipeline_steps` CHECK rebuild migration and new `CREATE` text (kinds `subtitle_scan`,`subtitles`; skip reason `no_video`) in `putio-sync-db/src/schema.rs` and `putio-sync-db/src/lib.rs`
-- [ ] T020 [P] Add `pipeline_deferred_deletes` table plus store queries (insert, list, delete) and `downloads.find_by_local_path` with tests in `putio-sync-db/src/schema.rs`, `putio-sync-db/src/lib.rs`
-- [ ] T021 Add `StepKind::{SubtitleScan,Subtitles}`, `SkipReason::NoVideo`, and storage names in `putio-sync-pipeline/src/model.rs`
-- [ ] T022 [P] Write failing tests for `store.insert_steps` (order, branch, idempotence) in `putio-sync-pipeline/tests/stages.rs`
-- [ ] T023 Implement `store.insert_steps` in `putio-sync-pipeline/src/store.rs`
+- [x] T018 [P] Write failing migration test seeding old-schema `pipeline_steps` and `pipeline_attempts` rows (attempts must survive; idempotent re-run) in `putio-sync-db/tests/pipeline_migration.rs`
+- [x] T019 Implement the `pipeline_steps` CHECK rebuild migration and new `CREATE` text (kinds `subtitle_scan`,`subtitles`; skip reason `no_video`) in `putio-sync-db/src/schema.rs` and `putio-sync-db/src/lib.rs`
+- [x] T020 [P] Add `pipeline_deferred_deletes` table plus store queries (insert, list, delete) and `downloads.find_by_local_path` with tests in `putio-sync-db/src/schema.rs`, `putio-sync-db/src/lib.rs`
+- [x] T021 Add `StepKind::{SubtitleScan,Subtitles}`, `SkipReason::NoVideo`, and storage names in `putio-sync-pipeline/src/model.rs`
+- [x] T022 [P] Write failing tests for `store.insert_steps` (order, branch, idempotence) in `putio-sync-pipeline/tests/stages.rs`
+- [x] T023 Implement `store.insert_steps` in `putio-sync-pipeline/src/store.rs`
 - [x] T024 [P] Extend `KINDS` with `subtitle_scan`,`subtitles` in `putio-sync-telemetry/src/steps.rs` and add `subtitles_saved(source,language)` / `transcribed_seconds` counters in `putio-sync-telemetry/src/subtitles.rs` with tests
-- [ ] T025 Refactor `run_step` in `putio-sync-pipeline/src/runner.rs`: dispatch by kind, factor the shared attempt-finish/retry code, drop the unused `_hook` param of `failed()`; existing tests stay green
+- [x] T025 Refactor `run_step` in `putio-sync-pipeline/src/runner.rs`: dispatch by kind, factor the shared attempt-finish/retry code, drop the unused `_hook` param of `failed()`; existing tests stay green
 
 **Checkpoint**: foundation ready.
 
