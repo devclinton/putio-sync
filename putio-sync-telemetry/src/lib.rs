@@ -19,6 +19,7 @@ pub mod api;
 pub mod arr;
 pub mod cleanup;
 pub mod db;
+pub mod dlna;
 pub mod doctor;
 pub mod download;
 pub mod gauges;
@@ -140,6 +141,11 @@ pub struct Telemetry {
     pub(crate) verify_run_active: IntGauge,
     // Feature 036
     pub(crate) tailscale_identity: IntCounterVec,
+    // Feature 022
+    pub(crate) dlna_up: IntGauge,
+    pub(crate) dlna_streams_active: IntGaugeVec,
+    pub(crate) dlna_bytes_sent: IntCounterVec,
+    pub(crate) dlna_requests: IntCounterVec,
     // Feature 027
     pub(crate) events: IntCounterVec,
     pub(crate) hook_runs: IntCounterVec,
@@ -625,6 +631,35 @@ impl Telemetry {
                 &["via", "result"],
             )
             .unwrap(),
+            dlna_up: IntGauge::with_opts(opts(
+                "dlna_up",
+                "1 while the DLNA media server is running.",
+            ))
+            .unwrap(),
+            dlna_streams_active: IntGaugeVec::new(
+                opts(
+                    "dlna_streams_active",
+                    "Media streams being sent to players, by where the bytes come from.",
+                ),
+                &["root_kind"],
+            )
+            .unwrap(),
+            dlna_bytes_sent: IntCounterVec::new(
+                opts(
+                    "dlna_bytes_sent_total",
+                    "Media bytes sent to players, by where the bytes come from.",
+                ),
+                &["root_kind"],
+            )
+            .unwrap(),
+            dlna_requests: IntCounterVec::new(
+                opts(
+                    "dlna_requests_total",
+                    "Requests the DLNA media server answered, by kind and result.",
+                ),
+                &["kind", "result"],
+            )
+            .unwrap(),
             events: IntCounterVec::new(
                 opts("events_total", "Events put on the internal event bus, by type."),
                 &["type"],
@@ -802,6 +837,10 @@ impl Telemetry {
             Box::new(self.verify_read_bytes.clone()),
             Box::new(self.verify_run_active.clone()),
             Box::new(self.tailscale_identity.clone()),
+            Box::new(self.dlna_up.clone()),
+            Box::new(self.dlna_streams_active.clone()),
+            Box::new(self.dlna_bytes_sent.clone()),
+            Box::new(self.dlna_requests.clone()),
             Box::new(self.events.clone()),
             Box::new(self.hook_runs.clone()),
             Box::new(self.hook_duration.clone()),
@@ -864,6 +903,15 @@ impl Telemetry {
         for via in tailscale::VIAS {
             for result in tailscale::RESULTS {
                 self.tailscale_identity.with_label_values(&[via, result]);
+            }
+        }
+        for root_kind in dlna::ROOT_KINDS {
+            self.dlna_streams_active.with_label_values(&[root_kind]);
+            self.dlna_bytes_sent.with_label_values(&[root_kind]);
+        }
+        for kind in dlna::KINDS {
+            for result in dlna::RESULTS {
+                self.dlna_requests.with_label_values(&[kind, result]);
             }
         }
         for t in hooks::EVENT_TYPES {

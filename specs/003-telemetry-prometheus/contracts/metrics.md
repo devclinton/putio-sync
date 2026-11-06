@@ -77,6 +77,15 @@ buckets (s): 1, 5, 15, 60, 300, 900, 1800, 3600, 7200. Sync buckets (s): 1, 5, 1
 | `putio_sync_start_time_seconds` | gauge | — | Process start, Unix seconds |
 | `putio_sync_build_info` | gauge (=1) | `version`, `commit` | Build identity |
 
+### DLNA media server (feature 022)
+
+| Name | Type | Labels | Meaning |
+|---|---|---|---|
+| `putio_sync_dlna_up` | gauge | — | 1 while the media server is running |
+| `putio_sync_dlna_streams_active` | gauge | `root_kind` (`local`, `putio`) | Streams being sent to players |
+| `putio_sync_dlna_bytes_sent_total` | counter | `root_kind` | Media bytes sent to players |
+| `putio_sync_dlna_requests_total` | counter | `kind` (`ssdp`, `description`, `browse`, `stream`, `other`), `result` (`ok`, `refused`, `error`) | Requests answered |
+
 Label values are listed in [data-model.md](../data-model.md#closed-label-sets).
 
 ## Invariants (tested)
