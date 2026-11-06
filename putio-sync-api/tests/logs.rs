@@ -16,6 +16,8 @@ use futures_util::StreamExt;
 use putio_sync_core::logging::{init_logging, LoggingConfig};
 use serde_json::{json, Value};
 
+/// Every test takes its turn: the log capture, the level and the redaction
+/// secrets are process-wide, and building an app replaces the secrets.
 static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Log to a file in a temp dir (quiet), with the capture layer and a reload handle
@@ -71,6 +73,7 @@ async fn read_stream(app: &common::TestApp, query: &str, until: &str) -> String 
 
 #[tokio::test]
 async fn logs_need_a_token() {
+    let _turn = TURN.lock().await;
     let app = test_app().await;
     for path in ["/logs", "/logs/stream", "/logs/level"] {
         let res = app.req(Method::GET, path, None, None).await;
