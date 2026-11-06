@@ -326,6 +326,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   2026 Command Line Tools update: the stripped `sqlx` proc macro would not load.
   Proc macros and build scripts are no longer stripped; shipped binaries still
   are.
+- The Homebrew formula workflow is valid YAML again, so GitHub no longer reports
+  it as a failed run on every push. It still runs only when a release is
+  published or when started by hand.
 - The word "null" showed on the page in History › Verification, Settings ›
   Tailscale › This machine and the Put.io storage card, and could show in the
   Settings › Network list, the Radarr/Sonarr setup plan and test result, and
