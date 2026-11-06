@@ -273,10 +273,10 @@ async fn a_required_failure_waits_for_the_operator_who_can_retry_or_skip() {
         ]
     })
     .await;
-    downloaded_item(&env, "transfer:1", env.dir.path()).await;
+    downloaded_item(&env, "transfer:61", env.dir.path()).await;
     let mut rx = events::subscribe();
     env.pipeline.run_due().await;
-    let t = env.pipeline.timeline("transfer:1").await.unwrap();
+    let t = env.pipeline.timeline("transfer:61").await.unwrap();
     assert_eq!(t.state, ItemState::WaitingForOperator);
     assert_eq!(
         t.stages[5].steps[1].state, "waiting",
@@ -288,6 +288,9 @@ async fn a_required_failure_waits_for_the_operator_who_can_retry_or_skip() {
     let mut seen = None;
     while let Ok(event) = rx.try_recv() {
         if let Payload::PipelineStepFailed(p) = &event.payload {
+            if p.key != "transfer:61" {
+                continue;
+            }
             seen = Some(p.clone());
         }
     }
@@ -299,21 +302,21 @@ async fn a_required_failure_waits_for_the_operator_who_can_retry_or_skip() {
             failed.attempt,
             failed.required
         ),
-        ("transfer:1", "a", 1, true)
+        ("transfer:61", "a", 1, true)
     );
 
     // A step that did not fail cannot be retried or skipped
     let id_b = t.stages[5].steps[1].id;
     assert!(matches!(
-        env.pipeline.retry("transfer:1", id_b).await,
+        env.pipeline.retry("transfer:61", id_b).await,
         Err(ActionError::Conflict(_))
     ));
     assert!(matches!(
-        env.pipeline.skip("transfer:1", id_b).await,
+        env.pipeline.skip("transfer:61", id_b).await,
         Err(ActionError::Conflict(_))
     ));
     assert_eq!(
-        env.pipeline.retry("transfer:1", 9999).await,
+        env.pipeline.retry("transfer:61", 9999).await,
         Err(ActionError::NotFound)
     );
     assert_eq!(
@@ -322,9 +325,9 @@ async fn a_required_failure_waits_for_the_operator_who_can_retry_or_skip() {
     );
 
     // Skip: the item goes on and records who skipped it
-    env.pipeline.skip("transfer:1", id_a).await.unwrap();
+    env.pipeline.skip("transfer:61", id_a).await.unwrap();
     env.pipeline.run_due().await;
-    let t = env.pipeline.timeline("transfer:1").await.unwrap();
+    let t = env.pipeline.timeline("transfer:61").await.unwrap();
     assert_eq!(t.state, ItemState::Done);
     assert_eq!(t.stages[5].steps[0].state, "skipped");
     assert_eq!(t.stages[5].steps[0].skip_reason, Some("operator"));
@@ -349,11 +352,11 @@ async fn an_optional_failure_is_retried_then_given_up_and_the_item_finishes_with
         vec![h]
     })
     .await;
-    downloaded_item(&env, "transfer:1", env.dir.path()).await;
+    downloaded_item(&env, "transfer:62", env.dir.path()).await;
     let mut rx = events::subscribe();
     // optional_retries is [0, 0]: three attempts in all
     env.pipeline.run_due().await;
-    let t = env.pipeline.timeline("transfer:1").await.unwrap();
+    let t = env.pipeline.timeline("transfer:62").await.unwrap();
     assert_eq!(t.state, ItemState::DoneWithWarnings);
     assert_eq!(t.stages[5].steps[0].attempts.len(), 3);
     assert_eq!(
@@ -367,8 +370,8 @@ async fn an_optional_failure_is_retried_then_given_up_and_the_item_finishes_with
     let mut step_failed = 0;
     while let Ok(event) = rx.try_recv() {
         match &event.payload {
-            Payload::PipelineCompleted(p) => completed = Some(p.clone()),
-            Payload::PipelineStepFailed(p) if !p.required => step_failed += 1,
+            Payload::PipelineCompleted(p) if p.key == "transfer:62" => completed = Some(p.clone()),
+            Payload::PipelineStepFailed(p) if p.key == "transfer:62" => step_failed += 1,
             _ => {}
         }
     }
