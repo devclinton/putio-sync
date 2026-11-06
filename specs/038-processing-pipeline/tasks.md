@@ -85,10 +85,10 @@
   - a worker that takes due steps, under a semaphore of `concurrency` permits;
   - `configure(Config)`;
   - `startup()`, which marks running steps as interrupted.
-- [ ] T011 [US1] Call `Pipeline::on_tick` from `pipeline_tick` in
+- [x] T011 [US1] Call `Pipeline::on_tick` from `pipeline_tick` in
   `putio-sync-daemon/src/daemon.rs`, after `record_finished`. Build the `Pipeline` at start
   and hand it to the API state.
-- [ ] T012 [US1] Add `step` to the `/active` rows, the `processing` filter, and
+- [x] T012 [US1] Add `step` to the `/active` rows, the `processing` filter, and
   `GET /active/{key}/timeline` in `putio-sync-api/src/routes/active.rs`, following
   contracts/api.md. Add API tests in `putio-sync-api/tests/active.rs`.
 - [ ] T013 [US1] Build the timeline panel in `putio-sync-api/ui/` (the Active page, which

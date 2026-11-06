@@ -122,6 +122,9 @@ pub struct AppState {
     pub listening: listen::Bound,
     /// The API list `server --bind/--port` gave instead of the configured one
     pub listen_flags: Option<Vec<putio_sync_core::listen::ListenAddr>>,
+    /// The processing pipeline (feature 038); `None` until the caller's service is attached
+    /// with [`AppState::with_pipeline`]
+    pub pipeline: Option<Arc<putio_sync_pipeline::Pipeline>>,
 }
 
 /// The engine behind the API (FR-018: a save says what applies now)
@@ -183,6 +186,7 @@ impl AppState {
             plugins,
             listening: listen::Bound::default(),
             listen_flags: None,
+            pipeline: None,
             cleanup,
             storage,
             doctor,
@@ -269,6 +273,13 @@ impl AppState {
     /// reach the hooks that run
     pub fn with_hooks(mut self, hooks: Arc<HooksService>) -> AppState {
         self.hooks = hooks;
+        self
+    }
+
+    /// Use the caller's processing pipeline (feature 038), so the Active page shows its
+    /// steps and the operator can retry or skip them
+    pub fn with_pipeline(mut self, pipeline: Arc<putio_sync_pipeline::Pipeline>) -> AppState {
+        self.pipeline = Some(pipeline);
         self
     }
 
@@ -384,6 +395,18 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/active/resume",
             axum::routing::post(routes::active::resume),
+        )
+        .route(
+            "/active/:key/timeline",
+            axum::routing::get(routes::active::timeline),
+        )
+        .route(
+            "/active/:key/steps/:id/retry",
+            axum::routing::post(routes::active::retry_step),
+        )
+        .route(
+            "/active/:key/steps/:id/skip",
+            axum::routing::post(routes::active::skip_step),
         )
         .nest("/releases", routes::releases::router())
         .nest("/whats-new", routes::system::whats_new::router())

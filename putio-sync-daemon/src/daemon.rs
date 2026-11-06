@@ -150,6 +150,8 @@ pub struct PutioDaemon {
     stall_tracker: Arc<StallTracker>,
     /// Scheduled health checks (shared with the API)
     doctor: Option<Arc<Doctor>>,
+    /// The processing pipeline (feature 038), fed by the pipeline loop (shared with the API)
+    pipeline: Option<Arc<putio_sync_pipeline::Pipeline>>,
 }
 
 impl PutioDaemon {
@@ -165,6 +167,7 @@ impl PutioDaemon {
             cleanup: None,
             storage: None,
             doctor: None,
+            pipeline: None,
         }
     }
 
@@ -186,6 +189,13 @@ impl PutioDaemon {
     /// doctor should be given to the API so its page shows the scheduled runs.
     pub fn with_doctor(mut self, doctor: Arc<Doctor>) -> Self {
         self.doctor = Some(doctor);
+        self
+    }
+
+    /// Advance `pipeline` (feature 038) on every pipeline tick. The same service should be
+    /// given to the API. Call it before [`Self::start`].
+    pub fn with_pipeline(mut self, pipeline: Arc<putio_sync_pipeline::Pipeline>) -> Self {
+        self.pipeline = Some(pipeline);
         self
     }
 
@@ -368,8 +378,9 @@ impl PutioDaemon {
                     let dm_pipeline = dm.clone();
                     let tracker = self.stall_tracker.clone();
                     let retention = self.config.read().await.finished_retention_hours;
+                    let processing = self.pipeline.clone();
                     let pipeline_handle = tokio::spawn(async move {
-                        Self::run_pipeline_loop(dm_pipeline, tracker, retention).await;
+                        Self::run_pipeline_loop(dm_pipeline, tracker, retention, processing).await;
                     });
 
                     (
@@ -539,6 +550,7 @@ impl PutioDaemon {
         download_manager: Arc<DownloadManager>,
         tracker: Arc<StallTracker>,
         retention_hours: u64,
+        processing: Option<Arc<putio_sync_pipeline::Pipeline>>,
     ) {
         info!(
             tick_secs = PIPELINE_TICK.as_secs(),
@@ -547,7 +559,14 @@ impl PutioDaemon {
         let mut tick = tokio::time::interval(PIPELINE_TICK);
         loop {
             tick.tick().await;
-            if let Err(e) = pipeline_tick(&download_manager, &tracker, retention_hours).await {
+            if let Err(e) = pipeline_tick_with(
+                &download_manager,
+                &tracker,
+                retention_hours,
+                processing.as_deref(),
+            )
+            .await
+            {
                 debug!(error = %e, "Active pipeline update failed; keeping the gauge");
             }
         }
@@ -773,6 +792,17 @@ pub async fn pipeline_tick(
     tracker: &StallTracker,
     retention_hours: u64,
 ) -> DownloadResult<Counts> {
+    pipeline_tick_with(download_manager, tracker, retention_hours, None).await
+}
+
+/// [`pipeline_tick`], then hand the same list to the processing pipeline (feature 038),
+/// which follows items through their steps
+pub async fn pipeline_tick_with(
+    download_manager: &DownloadManager,
+    tracker: &StallTracker,
+    retention_hours: u64,
+    processing: Option<&putio_sync_pipeline::Pipeline>,
+) -> DownloadResult<Counts> {
     let pipeline = download_manager
         .pipeline(PIPELINE_MAX_AGE, tracker, retention_hours)
         .await?;
@@ -788,6 +818,9 @@ pub async fn pipeline_tick(
     download_manager
         .record_finished(&pipeline, retention_hours)
         .await?;
+    if let Some(processing) = processing {
+        processing.on_tick(&pipeline).await;
+    }
     Ok(pipeline.counts)
 }
 
