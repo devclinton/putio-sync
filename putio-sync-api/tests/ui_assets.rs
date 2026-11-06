@@ -178,13 +178,13 @@ async fn no_cache_header() {
 }
 
 #[tokio::test]
-async fn assets_total_under_448kb() {
+async fn assets_total_under_480kb() {
     let app = test_app().await;
     let mut total = body_text(public_get(&app, "/").await).await.len();
     for path in all_assets(&app).await {
         total += body_text(public_get(&app, &path).await).await.len();
     }
-    assert!(total < 448 * 1024, "UI is {total} bytes");
+    assert!(total < 480 * 1024, "UI is {total} bytes");
 }
 
 #[tokio::test]

@@ -818,6 +818,8 @@ H = histogram.
 | `putio_sync_transfers_stalled` | gauge | — | Put.io transfers with no new bytes for `[transfers] stall_threshold_hours` (`daemon` only) |
 | `putio_sync_pipeline_items` | gauge | `stage` (putio, nas), `state` | Items on the Active page by stage and state (`daemon` only) |
 | `putio_sync_pipeline_actions_total` | counter | `action` (pause, hold, resume) | Pause and resume actions on Active items |
+| `putio_sync_subtitles_saved_total` | counter | `source` (putio_embedded, putio_folder, opensubtitles, transcribed), `language` | Subtitles saved next to videos |
+| `putio_sync_subtitles_transcribed_seconds_total` | counter | — | Seconds of audio sent to the transcription server |
 | `putio_sync_nas_downloads_paused` | gauge | — | 1 while the Pause NAS downloads switch is on, else 0 |
 | `putio_sync_doctor_check_status` | gauge | `check` | Doctor check result: 0 ok, 1 warning, 2 problem, -1 skipped (`daemon` only) |
 | `putio_sync_doctor_check_items` | gauge | `check` | Items the check found at its last run |
@@ -1643,6 +1645,51 @@ staging = "auto"                 # auto, on or off
 The hook's input, results and the `pipeline.step_failed` and `pipeline.completed` events
 are in [EVENTS.md](EVENTS.md#pipeline-step-hooks). Settings › Integrations edits the steps
 and the pipeline settings.
+
+## Subtitles
+
+Set the languages you want and putio-sync saves subtitles next to each downloaded video,
+named `Movie.en.srt` beside `Movie.mkv`, so Radarr, Sonarr, Plex and Jellyfin pick them up.
+It looks in this order and stops at the first source that has the language:
+
+1. what Put.io has: subtitle files in the same folder, tracks embedded in the video, and
+   OpenSubtitles matches that Put.io finds for the file;
+2. your own speech to text server, when transcription is on.
+
+```toml
+[subtitles]
+languages = ["en", "es"]        # names or codes, most wanted first; empty turns it off
+excluded_categories = ["radarr"]  # categories left alone, such as ones Bazarr handles
+
+[subtitles.transcription]
+enabled = false                  # off by default
+url = "http://nas:8000"          # an OpenAI-style server: speaches, faster-whisper-server
+model = "Systran/faster-whisper-small"
+api_key = ""                     # or PUTIO_SYNC_TRANSCRIPTION_API_KEY; never logged
+chunk_secs = 600                 # audio goes in parts of this length
+```
+
+- **Where**: Settings › Downloads › Subtitles, with a **Test server** button that sends a
+  three second tone and reports whether ffmpeg is found. The Active page shows a Subtitles
+  stage with one step per video.
+- **Existing files are kept.** A file that is already there is never overwritten; forced and
+  SDH subtitles are saved under their own names (`Movie.en.forced.srt`).
+- **Transcription needs ffmpeg** (the Docker image includes it; otherwise set `ffmpeg_path`).
+  putio-sync does not run Whisper itself. It cuts the audio into parts, sends them one at a
+  time (one video at a time across the daemon) and joins the cues. Nothing is sent while it
+  is off. A silent video gets a "no speech found" note, not an empty file.
+- **Radarr and Sonarr**: turn on **Import Extra Files** with `srt` so the subtitles are
+  imported with the video. Settings › Integrations › Radarr and Sonarr offers it.
+- **Put.io deletes wait.** With deleting after download on, the file stays on Put.io until
+  the Subtitles stage ends, because Put.io can only list subtitles for a file it still has.
+  A stage that never ends releases the file after 24 hours at most.
+- **Bazarr**: list its categories under `excluded_categories` so the two do not both write
+  subtitles; each is only ever a new file next to the video.
+- **By hand**: on Local files a video row has **Fetch subtitles**. It says whether Put.io can
+  still help and asks before sending audio for transcription.
+
+Metrics: `putio_sync_subtitles_saved_total` (by `source` and `language`) and
+`putio_sync_subtitles_transcribed_seconds_total`.
 
 ## Plugins
 

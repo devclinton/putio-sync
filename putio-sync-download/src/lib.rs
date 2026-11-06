@@ -28,10 +28,10 @@ pub use files::{
     is_partial_download, valid_crc32, Crc32,
 };
 pub use manager::{
-    ActiveDownload, DownloadConfig, DownloadFile, DownloadManager, DownloadOperationResult,
-    PathRedirect, PreviewDownload, PreviewItem, RedirectFuture, RulePreview, SyncStats,
-    TransfersSnapshot, TreeDecision, TreeFile, TreeReport, VerifySettings, WorkerStats,
-    PREVIEW_DOWNLOADS, PREVIEW_ITEMS,
+    ActiveDownload, DeferFuture, DownloadConfig, DownloadFile, DownloadManager,
+    DownloadOperationResult, PathRedirect, PreviewDownload, PreviewItem, RedirectFuture,
+    RemoteDeleteGate, RemoteDeletes, RulePreview, SyncStats, TransfersSnapshot, TreeDecision,
+    TreeFile, TreeReport, VerifySettings, WorkerStats, PREVIEW_DOWNLOADS, PREVIEW_ITEMS,
 };
 pub use progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 pub use rate_limiter::RateLimiter;

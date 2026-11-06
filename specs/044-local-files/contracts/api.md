@@ -46,3 +46,10 @@ Body `{"path": "radarr/Movie.mkv", "name": "Movie (2024).mkv"}` →
 
 Body `{"path": "x.torrent.rejected"}` → `{"success": true, "message": "...", "path": "x.torrent"}`.
 Watch roots only (400 elsewhere).
+
+## GET and POST /local/files/{root}/subtitles
+
+Added by feature 025 ("Fetch subtitles" on a video row). `GET ?path=` answers whether Put.io or
+transcription can supply subtitles; `POST {"path"}` starts a `manual:<n>` pipeline item
+(`202 {"key"}`, `409` with the running item's key). The path guard is the same as above. See
+`specs/025-subtitles/contracts/api.md`.

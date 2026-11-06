@@ -5,6 +5,7 @@
 //! item that is half through.
 
 use putio_sync_core::hooks::HookConfig;
+use putio_sync_core::subtitles::SubtitlesConfig;
 
 use crate::model::{SkipReason, Stage, StepKind, StepState};
 
@@ -38,6 +39,22 @@ pub struct PlanInput<'a> {
 
 /// The ordered steps of an item
 pub fn plan(input: PlanInput<'_>, hooks: &[HookConfig]) -> Vec<PlannedStep> {
+    plan_with(input, hooks, None)
+}
+
+/// The position of the subtitles scan inside its stage: before the per-video steps it adds
+/// and before any hook of the stage
+pub const SCAN_POSITION: i64 = -2;
+/// The position of the per-video subtitles steps
+pub const VIDEO_POSITION: i64 = -1;
+
+/// Like [`plan`], with the subtitles settings: a scan step in the Subtitles stage when
+/// languages are set and the item's category is not excluded
+pub fn plan_with(
+    input: PlanInput<'_>,
+    hooks: &[HookConfig],
+    subtitles: Option<&SubtitlesConfig>,
+) -> Vec<PlannedStep> {
     let mut steps = Vec::new();
     for stage in Stage::ALL {
         match stage {
@@ -68,6 +85,26 @@ pub fn plan(input: PlanInput<'_>, hooks: &[HookConfig]) -> Vec<PlannedStep> {
                 skip_reason: None,
             }),
             _ => {
+                if stage == Stage::Subtitles {
+                    if let Some(cfg) = subtitles.filter(|c| c.is_configured()) {
+                        let excluded = input.category.is_some_and(|c| cfg.excludes(c));
+                        steps.push(PlannedStep {
+                            stage,
+                            branch: None,
+                            position: SCAN_POSITION,
+                            kind: StepKind::SubtitleScan,
+                            name: "videos".to_string(),
+                            required: false,
+                            changes_files: true,
+                            state: if excluded {
+                                StepState::Skipped
+                            } else {
+                                StepState::Waiting
+                            },
+                            skip_reason: excluded.then_some(SkipReason::Category),
+                        });
+                    }
+                }
                 let in_stage = hooks
                     .iter()
                     .filter(|h| h.enabled && h.stage.map(Stage::from) == Some(stage));
@@ -137,6 +174,30 @@ mod tests {
             has_transfer: true,
             downloaded: false,
         }
+    }
+
+    #[test]
+    fn subtitles_add_a_scan_step_unless_off_or_excluded() {
+        let on = SubtitlesConfig {
+            languages: vec!["en".to_string()],
+            excluded_categories: vec!["Radarr".to_string()],
+            ..Default::default()
+        };
+        let scan = |category, cfg: Option<&SubtitlesConfig>| {
+            plan_with(input(category), &[], cfg)
+                .into_iter()
+                .find(|s| s.kind == StepKind::SubtitleScan)
+        };
+        let tv = scan(Some("sonarr"), Some(&on)).unwrap();
+        assert_eq!(tv.stage, Stage::Subtitles);
+        assert_eq!(tv.state, StepState::Waiting);
+        assert!(!tv.required && tv.changes_files);
+        let movie = scan(Some("radarr"), Some(&on)).unwrap();
+        assert_eq!(movie.state, StepState::Skipped);
+        assert_eq!(movie.skip_reason, Some(SkipReason::Category));
+        assert_eq!(scan(None, Some(&on)).unwrap().state, StepState::Waiting);
+        assert!(scan(Some("sonarr"), Some(&SubtitlesConfig::default())).is_none());
+        assert!(scan(Some("sonarr"), None).is_none());
     }
 
     #[test]

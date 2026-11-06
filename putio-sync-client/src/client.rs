@@ -479,6 +479,14 @@ impl PutioApiClient {
         &self,
         request: Request,
     ) -> ClientResult<T> {
+        let response = self.send_with_retry(request).await?;
+        self.handle_success_response(response).await
+    }
+
+    /// Execute a request with the same retry rules and return the successful response
+    /// unread, for bodies that are not JSON. A non-success status becomes the usual
+    /// `ApiError`.
+    pub(crate) async fn send_with_retry(&self, request: Request) -> ClientResult<Response> {
         let max_attempts = self.retry_policy.max_attempts.max(1);
         let mut url = request.url().clone();
         url.set_query(None);
@@ -504,12 +512,17 @@ impl PutioApiClient {
                     trace!("Response status: {}", status);
 
                     if status.is_success() {
-                        return self.handle_success_response(response).await;
+                        return Ok(response);
                     }
                     let retryable =
                         status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS;
                     if !retryable || attempt >= max_attempts {
-                        return self.handle_error_response(response).await;
+                        return match self.handle_error_response::<()>(response).await {
+                            Err(e) => Err(e),
+                            Ok(()) => Err(ClientError::InternalError(
+                                "error response handled as success".to_string(),
+                            )),
+                        };
                     }
                     let retry_after = response
                         .headers()

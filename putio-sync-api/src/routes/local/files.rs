@@ -7,6 +7,7 @@
 //! - GET    /local/files/{root}/summary?path= - Files and bytes under an entry
 //! - DELETE /local/files/{root}?path=        - Delete a file, link or folder
 //! - POST   /local/files/{root}/rename       - `{path, name}`: rename in place
+//! - GET/POST /local/files/{root}/subtitles - Fetch subtitles for a video (025, see `subtitles.rs`)
 //! - POST   /local/files/{root}/requeue      - `{path}`: give a `.rejected` watch file its
 //!   name back so the watcher checks it again
 //!
@@ -107,14 +108,18 @@ pub fn router() -> Router<AppState> {
         .route("/:root/summary", get(summarize))
         .route("/:root/rename", post(rename_entry))
         .route("/:root/requeue", post(requeue_entry))
+        .route(
+            "/:root/subtitles",
+            get(super::subtitles::preflight).post(super::subtitles::start),
+        )
 }
 
 /// One configured root
-struct Root {
-    key: String,
-    label: String,
-    path: PathBuf,
-    watch: bool,
+pub(super) struct Root {
+    pub(super) key: String,
+    pub(super) label: String,
+    pub(super) path: PathBuf,
+    pub(super) watch: bool,
 }
 
 /// The roots from the live config: downloads, then each watch path when watching is on
@@ -161,7 +166,11 @@ fn api_error(e: LocalFileError) -> ApiError {
 }
 
 /// The root named `key` and `rel` resolved inside it
-async fn resolve(state: &AppState, key: &str, rel: &str) -> Result<(Root, Resolved), ApiError> {
+pub(super) async fn resolve(
+    state: &AppState,
+    key: &str,
+    rel: &str,
+) -> Result<(Root, Resolved), ApiError> {
     let root = find_root(state, key).await?;
     let resolved = local_files::resolve(&root.path, rel).map_err(api_error)?;
     Ok((root, resolved))

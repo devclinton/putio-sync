@@ -9,10 +9,12 @@ description = "Processing pipeline for putio-sync - the stages an item passes be
 
 [dependencies]
 # Internal dependencies
+putio-sync-client = { path = "../putio-sync-client" }
 putio-sync-core = { path = "../putio-sync-core" }
 putio-sync-db = { path = "../putio-sync-db" }
 putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-hooks = { path = "../putio-sync-hooks" }
+putio-sync-subtitles = { path = "../putio-sync-subtitles" }
 putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 
 # Async runtime

@@ -25,6 +25,73 @@ pub struct Hold {
     pub held_at: String,
 }
 
+/// A Put.io file whose delete waits for the Subtitles stage (feature 025)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeferredDelete {
+    /// Put.io file id
+    pub file_id: i64,
+    /// The pipeline item the delete waits for
+    pub item_key: String,
+    /// Unix seconds when the delete was deferred
+    pub created_at: i64,
+}
+
+/// Repository for `pipeline_deferred_deletes` (feature 025)
+pub struct DeferredDeletesRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+impl<'a> DeferredDeletesRepository<'a> {
+    /// Create a new repository
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// Defer the delete of a file. Deferring again keeps the first row.
+    pub async fn insert(&self, file_id: i64, item_key: &str, created_at: i64) -> DbResult<()> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO pipeline_deferred_deletes (file_id, item_key, created_at) \
+             VALUES (?, ?, ?)",
+        )
+        .bind(file_id)
+        .bind(item_key)
+        .bind(created_at)
+        .execute(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to defer a delete"))?;
+        Ok(())
+    }
+
+    /// Every deferred delete, oldest first
+    pub async fn list(&self) -> DbResult<Vec<DeferredDelete>> {
+        let rows = sqlx::query(
+            "SELECT file_id, item_key, created_at FROM pipeline_deferred_deletes \
+             ORDER BY created_at, file_id",
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to list deferred deletes"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| DeferredDelete {
+                file_id: r.get("file_id"),
+                item_key: r.get("item_key"),
+                created_at: r.get("created_at"),
+            })
+            .collect())
+    }
+
+    /// Forget a deferred delete (it was done, or no longer applies). Returns whether it existed.
+    pub async fn delete(&self, file_id: i64) -> DbResult<bool> {
+        let result = sqlx::query("DELETE FROM pipeline_deferred_deletes WHERE file_id = ?")
+            .bind(file_id)
+            .execute(self.pool)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to forget a deferred delete"))?;
+        Ok(result.rows_affected() > 0)
+    }
+}
+
 /// Repository for `pipeline_holds`
 pub struct HoldsRepository<'a> {
     pool: &'a SqlitePool,

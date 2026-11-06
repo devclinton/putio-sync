@@ -1,6 +1,6 @@
 //! Processing pipeline metrics (feature 038).
 //!
-//! The labels are bounded: `stage` is one of the seven stages, `kind` one of three and
+//! The labels are bounded: `stage` is one of the seven stages, `kind` one of five and
 //! `result` one of five. Hook names and item keys never become labels.
 
 use std::time::Duration;
@@ -19,7 +19,7 @@ pub const STAGES: [&str; 7] = [
 ];
 
 /// The step kinds
-pub const KINDS: [&str; 3] = ["hook", "download", "notify"];
+pub const KINDS: [&str; 5] = ["hook", "download", "notify", "subtitle_scan", "subtitles"];
 
 /// How a step run ended
 pub const RESULTS: [&str; 5] = ["done", "failed", "timeout", "skip", "interrupted"];

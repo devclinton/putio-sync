@@ -612,6 +612,35 @@ pub struct DownloadManager {
     pub(crate) verifier: crate::verify::VerifyRunner,
     /// Moves a file's folder while the processing pipeline stages it (feature 038)
     redirect: Arc<std::sync::RwLock<Option<Arc<dyn PathRedirect>>>>,
+    /// Holds back the Put.io delete of a downloaded file while the pipeline works on it
+    /// (feature 025)
+    delete_gate: Arc<std::sync::RwLock<Option<Arc<dyn RemoteDeleteGate>>>>,
+}
+
+/// What [`DownloadManager::delete_remote`] did
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RemoteDeletes {
+    /// Deleted from Put.io
+    pub deleted: Vec<i64>,
+    /// Not deleted, and never will be: the download is not completed. The caller forgets them.
+    pub refused: Vec<i64>,
+}
+
+/// The answer of [`RemoteDeleteGate::defer`]
+pub type DeferFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + 'a>>;
+
+/// Lets the processing pipeline (feature 025) hold back the delete of a file that Put.io
+/// still has to give subtitles for. `download` calls it and knows nothing of the pipeline.
+pub trait RemoteDeleteGate: Send + Sync {
+    /// `Some(item key)` when the delete of `file_id` must wait for that pipeline item, or
+    /// `None` to delete now
+    fn defer<'a>(
+        &'a self,
+        file_id: i64,
+        relative_path: &'a str,
+        filename: &'a str,
+    ) -> DeferFuture<'a>;
 }
 
 /// The answer of [`PathRedirect::redirect`]
@@ -694,6 +723,7 @@ impl DownloadManager {
             checking: Arc::new(Mutex::new(HashMap::new())),
             verifier: crate::verify::VerifyRunner::default(),
             redirect: Arc::new(std::sync::RwLock::new(None)),
+            delete_gate: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -731,6 +761,7 @@ impl DownloadManager {
             checking: Arc::new(Mutex::new(HashMap::new())),
             verifier: crate::verify::VerifyRunner::default(),
             redirect: Arc::new(std::sync::RwLock::new(None)),
+            delete_gate: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -1103,6 +1134,53 @@ impl DownloadManager {
     /// Let the processing pipeline stage watch-folder downloads (feature 038)
     pub fn set_redirect(&self, redirect: Arc<dyn PathRedirect>) {
         *self.redirect.write().unwrap() = Some(redirect);
+    }
+
+    /// Let the pipeline hold back deletes from Put.io (feature 025)
+    pub fn set_delete_gate(&self, gate: Arc<dyn RemoteDeleteGate>) {
+        *self.delete_gate.write().unwrap() = Some(gate);
+    }
+
+    /// Delete files from Put.io that the pipeline held back and now released. Each id is
+    /// checked against its `downloads` row first: a file whose download is not completed
+    /// and on disk is never deleted.
+    pub async fn delete_remote(&self, file_ids: &[i64]) -> RemoteDeletes {
+        let mut result = RemoteDeletes::default();
+        let Some(db) = self.database.as_ref() else {
+            return result;
+        };
+        let mut ok = Vec::new();
+        for id in file_ids {
+            match db.downloads().find_by_file_id(*id).await {
+                Ok(Some(d)) if d.status == "completed" && !d.local_path.is_empty() => ok.push(*id),
+                Ok(None) => {
+                    warn!(file_id = id, "Held-back delete not done: no download row")
+                }
+                Ok(Some(_)) => {
+                    warn!(
+                        file_id = id,
+                        "Held-back delete refused: the download is not completed"
+                    );
+                    result.refused.push(*id);
+                }
+                Err(e) => {
+                    warn!(file_id = id, error = %e, "Held-back delete not done: database error")
+                }
+            }
+        }
+        if ok.is_empty() {
+            return result;
+        }
+        match self.client.delete_files(ok.clone()).await {
+            Ok(_) => {
+                info!(count = ok.len(), "Deleted held-back files from Put.io");
+                result.deleted = ok;
+            }
+            Err(e) => {
+                warn!(count = ok.len(), error = %error_chain(&e), "Failed to delete held-back files from Put.io")
+            }
+        }
+        result
     }
 
     /// Download a single file
@@ -2413,19 +2491,47 @@ impl DownloadManager {
                             .delete_after_download
                             .value
                         {
-                            info!(
-                                "Deleting file from Put.io: {} (ID: {})",
-                                file_info.name, file_id
-                            );
-                            match self.client.delete_files(vec![file_id]).await {
-                                Ok(_) => {
-                                    info!("Successfully deleted from Put.io: {}", file_info.name);
+                            let gate = self.delete_gate.read().unwrap().clone();
+                            let deferred = match gate {
+                                Some(g) => {
+                                    g.defer(file_id, &queue_item.relative_path, &file_info.name)
+                                        .await
                                 }
-                                Err(e) => {
-                                    warn!(
-                                        "Failed to delete file {} from Put.io: {}",
-                                        file_info.name, e
-                                    );
+                                None => None,
+                            };
+                            if let Some(item_key) = deferred {
+                                let now = SystemTime::now()
+                                    .duration_since(SystemTime::UNIX_EPOCH)
+                                    .map(|d| d.as_secs() as i64)
+                                    .unwrap_or(0);
+                                match db.deferred_deletes().insert(file_id, &item_key, now).await {
+                                    Ok(()) => info!(
+                                        file_id, item = %item_key,
+                                        "Put.io delete waits for the subtitles stage"
+                                    ),
+                                    Err(e) => warn!(
+                                        file_id, error = %e,
+                                        "Could not defer the Put.io delete; the file stays on Put.io"
+                                    ),
+                                }
+                            } else {
+                                info!(
+                                    "Deleting file from Put.io: {} (ID: {})",
+                                    file_info.name, file_id
+                                );
+                                match self.client.delete_files(vec![file_id]).await {
+                                    Ok(_) => {
+                                        info!(
+                                            "Successfully deleted from Put.io: {}",
+                                            file_info.name
+                                        );
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Failed to delete file {} from Put.io: {}",
+                                            file_info.name, e
+                                        );
+                                    }
                                 }
                             }
                         }

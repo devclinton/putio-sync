@@ -52,6 +52,14 @@ pub async fn env(hooks: Vec<HookConfig>) -> Env {
 
 /// Like [`env`], with hooks made from the temp dir, where their scripts live
 pub async fn env_with(make: impl FnOnce(&Path) -> Vec<HookConfig>) -> Env {
+    env_custom(make, |_| {}).await
+}
+
+/// Like [`env_with`], also changing the config before the pipeline is built
+pub async fn env_custom(
+    make: impl FnOnce(&Path) -> Vec<HookConfig>,
+    change: impl FnOnce(&mut Config),
+) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let hooks = make(dir.path());
     let db = Arc::new(Database::new(&dir.path().join("t.db")).await.unwrap());
@@ -62,6 +70,7 @@ pub async fn env_with(make: impl FnOnce(&Path) -> Vec<HookConfig>) -> Env {
     config.pipeline.optional_retries = vec![0, 0];
     config.download.target_directory = dir.path().join("downloads");
     std::fs::create_dir_all(&config.download.target_directory).unwrap();
+    change(&mut config);
     let pipeline = Pipeline::new(db.clone(), &config).await;
     let store = Store::new(db.pool().clone());
     Env {
@@ -139,13 +148,14 @@ pub async fn downloaded_item(env: &Env, key: &str, dir: &Path) {
 
 /// Like [`downloaded_item`], with the item's name
 pub async fn downloaded_item_named(env: &Env, key: &str, name: &str, dir: &Path) {
-    let steps = putio_sync_pipeline::plan::plan(
+    let steps = putio_sync_pipeline::plan::plan_with(
         putio_sync_pipeline::plan::PlanInput {
             category: Some("sonarr"),
             has_transfer: true,
             downloaded: true,
         },
         &env.config.hooks,
+        Some(&env.config.subtitles),
     );
     env.store
         .insert_item(

@@ -184,6 +184,50 @@ impl Store {
         Ok(true)
     }
 
+    /// Add steps to an item that already exists (run-time expansion, such as one subtitles
+    /// step per video). A step with the same stage, branch, kind and name is not added
+    /// twice, so a scan that runs again changes nothing. Returns how many were added.
+    pub async fn insert_steps(&self, item_key: &str, steps: &[PlannedStep]) -> Result<usize> {
+        let mut tx = self.pool.begin().await?;
+        let mut added = 0;
+        for s in steps {
+            let exists: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM pipeline_steps WHERE item_key = ? AND stage = ? \
+                 AND COALESCE(branch, '') = COALESCE(?, '') AND kind = ? AND name = ?",
+            )
+            .bind(item_key)
+            .bind(s.stage.as_str())
+            .bind(&s.branch)
+            .bind(s.kind.as_str())
+            .bind(&s.name)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if exists.is_some() {
+                continue;
+            }
+            sqlx::query(
+                "INSERT INTO pipeline_steps \
+                 (item_key, stage, branch, position, kind, name, required, changes_files, state, skip_reason) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(item_key)
+            .bind(s.stage.as_str())
+            .bind(&s.branch)
+            .bind(s.position)
+            .bind(s.kind.as_str())
+            .bind(&s.name)
+            .bind(s.required)
+            .bind(s.changes_files)
+            .bind(s.state.as_str())
+            .bind(s.skip_reason.map(|r| r.as_str()))
+            .execute(&mut *tx)
+            .await?;
+            added += 1;
+        }
+        tx.commit().await?;
+        Ok(added)
+    }
+
     pub async fn item(&self, key: &str) -> Result<Option<ItemRow>> {
         Ok(sqlx::query("SELECT * FROM pipeline_items WHERE key = ?")
             .bind(key)

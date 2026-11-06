@@ -81,7 +81,9 @@ impl Settings {
             StagingMode::Off => false,
             StagingMode::On => true,
             // Every pipeline hook changes files, so any enabled one counts
-            StagingMode::Auto => self.hooks.iter().any(|h| h.enabled),
+            StagingMode::Auto => {
+                self.hooks.iter().any(|h| h.enabled) || self.subtitles.is_configured()
+            }
         }
     }
 }

@@ -47,7 +47,15 @@ release name, with a preview before anything moves and an undo.
 The same for movies: `Movie (Year)/Movie (Year).ext`, with extras and samples
 kept apart or removed.
 
-### 025 Subtitles
+### 025 Subtitles (partly done)
+
+Built so far (spec `specs/025-subtitles`): Put.io's own subtitle list for the file
+(OpenSubtitles, folder and embedded), then Whisper when no wanted language is
+found, which is the **Download, then Whisper** mode; per-category off; Fetch
+subtitles from Local files. Not built yet: the OpenSubtitles API lookup by
+IMDb/TMDb ID, the filename parse, the confidence threshold, and the other modes
+(**Download only** apart from transcription off, **Whisper only**, **Both** with
+`.whisper.srt`).
 
 Get subtitles for downloaded video in the languages the user picks, from two
 kinds of source: downloads and Whisper transcription.

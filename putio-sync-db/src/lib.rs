@@ -55,7 +55,9 @@ pub use downloads::DownloadRepository;
 pub use error::{DbError, DbResult};
 pub use held::{Held, HeldRepository, HoldStats, NewHeld};
 pub use history::{DailyTotals, HistoryRepository};
-pub use pipeline::{FinishedRepository, FlagsRepository, HoldsRepository};
+pub use pipeline::{
+    DeferredDelete, DeferredDeletesRepository, FinishedRepository, FlagsRepository, HoldsRepository,
+};
 pub use queue::{QueueRepository, QueueStats};
 pub use releases::{
     CheckState, FlagUndo, HeldSettle, NewCheck, NewReport, PendingCheck, ReleaseStats,
@@ -263,6 +265,11 @@ impl Database {
         HoldsRepository::new(&self.pool)
     }
 
+    /// Get the deferred remote deletes repository (feature 025)
+    pub fn deferred_deletes(&self) -> DeferredDeletesRepository<'_> {
+        DeferredDeletesRepository::new(&self.pool)
+    }
+
     /// Get the daemon flags repository (feature 039)
     pub fn flags(&self) -> FlagsRepository<'_> {
         FlagsRepository::new(&self.pool)
@@ -439,6 +446,11 @@ impl Database {
                 schema::CREATE_PIPELINE_ATTEMPTS_TABLE,
                 "Failed to create pipeline_attempts table",
             ),
+            // Subtitles wait for the delete (feature 025)
+            (
+                schema::CREATE_PIPELINE_DEFERRED_DELETES_TABLE,
+                "Failed to create pipeline_deferred_deletes table",
+            ),
             // Release pre-check (feature 042)
             (
                 schema::CREATE_RELEASE_CHECKS_TABLE,
@@ -487,6 +499,8 @@ impl Database {
                 .map_err(tracked(DbOp::Migrate, context))?;
         }
 
+        self.migrate_pipeline_steps_checks().await?;
+
         // Create performance indexes
         sqlx::query(schema::CREATE_INDEXES)
             .execute(&self.pool)
@@ -495,6 +509,90 @@ impl Database {
 
         info!("Database migrations completed");
 
+        Ok(())
+    }
+
+    /// Feature 025 widens the CHECK lists of `pipeline_steps` (kinds `subtitle_scan` and
+    /// `subtitles`, skip reason `no_video`). SQLite cannot alter a CHECK, so a table made by
+    /// 038 is rebuilt: new table, copy, drop, rename, in one transaction with foreign keys
+    /// off so `pipeline_attempts` is not cascade-deleted. Idempotent: a table that already
+    /// allows `subtitles` is left alone.
+    async fn migrate_pipeline_steps_checks(&self) -> DbResult<()> {
+        let stored: Option<(String,)> = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pipeline_steps'",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(tracked(
+            DbOp::Migrate,
+            "Failed to read pipeline_steps schema",
+        ))?;
+        let Some((sql,)) = stored else {
+            return Ok(());
+        };
+        if sql.contains("'subtitles'") {
+            return Ok(());
+        }
+
+        let create_new =
+            schema::CREATE_PIPELINE_STEPS_TABLE.replacen("pipeline_steps", "pipeline_steps_new", 1);
+        let cols = "id, item_key, stage, branch, position, kind, name, required, changes_files, \
+                    state, skip_reason, next_attempt_at, progress";
+        let ctx = "Failed to rebuild pipeline_steps";
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
+            .map_err(tracked(DbOp::Migrate, ctx))?;
+        // foreign_keys cannot change inside a transaction
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await
+            .map_err(tracked(DbOp::Migrate, ctx))?;
+        let result: Result<(), sqlx::Error> = async {
+            sqlx::query("BEGIN").execute(&mut *conn).await?;
+            let steps: Result<(), sqlx::Error> = async {
+                sqlx::query("DROP TABLE IF EXISTS pipeline_steps_new")
+                    .execute(&mut *conn)
+                    .await?;
+                sqlx::query(&create_new).execute(&mut *conn).await?;
+                sqlx::query(&format!(
+                    "INSERT INTO pipeline_steps_new ({cols}) SELECT {cols} FROM pipeline_steps"
+                ))
+                .execute(&mut *conn)
+                .await?;
+                sqlx::query("DROP TABLE pipeline_steps")
+                    .execute(&mut *conn)
+                    .await?;
+                sqlx::query("ALTER TABLE pipeline_steps_new RENAME TO pipeline_steps")
+                    .execute(&mut *conn)
+                    .await?;
+                let broken = sqlx::query("PRAGMA foreign_key_check")
+                    .fetch_all(&mut *conn)
+                    .await?;
+                if !broken.is_empty() {
+                    return Err(sqlx::Error::Protocol(
+                        "foreign_key_check failed after rebuilding pipeline_steps".into(),
+                    ));
+                }
+                Ok(())
+            }
+            .await;
+            match steps {
+                Ok(()) => sqlx::query("COMMIT").execute(&mut *conn).await.map(|_| ()),
+                Err(e) => {
+                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    Err(e)
+                }
+            }
+        }
+        .await;
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut *conn)
+            .await
+            .map_err(tracked(DbOp::Migrate, ctx))?;
+        result.map_err(tracked(DbOp::Migrate, ctx))?;
+        info!("Rebuilt pipeline_steps for the subtitle step kinds");
         Ok(())
     }
 

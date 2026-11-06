@@ -398,14 +398,14 @@ A file is being downloaded again after a mismatch: a new download starting over,
 
 ### `pipeline.step_failed`
 
-A processing pipeline step failed (feature 038). Sent after every failed attempt of a hook step.
+A processing pipeline step failed (feature 038). Sent after every failed attempt of a hook step or a Subtitles step (feature 025; its `stage` is `subtitles`, its `step` the video's path, and `required` is always `false`).
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `key` | string | the item key, such as `transfer:123` |
 | `name` | string | the item name |
 | `stage` | string | `pre_download`, `pre_processing`, `subtitles`, `translating`, `post_processing` or `notifications` |
-| `step` | string | the step name (the hook's name) |
+| `step` | string | the step name (the hook's name, or the video for a Subtitles step) |
 | `attempt` | integer | the attempt that failed, from 1 |
 | `required` | boolean | `true` when the item now waits for you; `false` when the step is retried or given up |
 | `error` | string | what went wrong, with secrets removed |

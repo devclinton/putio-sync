@@ -223,14 +223,25 @@ CREATE TABLE IF NOT EXISTS pipeline_steps (
     stage TEXT NOT NULL,
     branch TEXT,
     position INTEGER NOT NULL DEFAULT 0,
-    kind TEXT NOT NULL CHECK (kind IN ('hook', 'download', 'notify')),
+    kind TEXT NOT NULL CHECK (kind IN ('hook', 'download', 'notify', 'subtitle_scan', 'subtitles')),
     name TEXT NOT NULL,
     required INTEGER NOT NULL DEFAULT 1,
     changes_files INTEGER NOT NULL DEFAULT 0,
     state TEXT NOT NULL CHECK (state IN ('waiting', 'running', 'done', 'failed', 'skipped', 'interrupted')),
-    skip_reason TEXT CHECK (skip_reason IS NULL OR skip_reason IN ('not_configured', 'category', 'operator', 'hook')),
+    skip_reason TEXT CHECK (skip_reason IS NULL OR skip_reason IN ('not_configured', 'category', 'operator', 'hook', 'no_video')),
     next_attempt_at TIMESTAMP,
     progress REAL
+)
+"#;
+
+/// SQL to create the pipeline_deferred_deletes table (feature 025): Put.io files whose
+/// post-download delete waits for the Subtitles stage. Persisted so a restart neither loses
+/// the delete nor skips the wait.
+pub const CREATE_PIPELINE_DEFERRED_DELETES_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS pipeline_deferred_deletes (
+    file_id INTEGER PRIMARY KEY,
+    item_key TEXT NOT NULL,
+    created_at INTEGER NOT NULL
 )
 "#;
 

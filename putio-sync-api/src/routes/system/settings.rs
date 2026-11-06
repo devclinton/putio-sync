@@ -22,6 +22,8 @@
 //! - PUT  /settings/plugins - Replace them; checked against the manifests, applied now
 //! - GET  /settings/putio - Get the Put.io app ID and where the one in use comes from
 //! - PUT  /settings/putio - Update the Put.io app ID; refused while PUTIO_SYNC_APP_ID sets it
+//! - GET/PUT /settings/subtitles - Wanted subtitle languages and transcription (feature 025,
+//!   in `subtitles.rs`)
 //! - GET/PUT /settings/network - The listen addresses (feature 037, in `network.rs`)
 //! - POST /settings/{group}/preview - What a PUT of that body would do, without saving
 //!   (feature 015; the assistant, export and import routes are in `assistant.rs`)
@@ -152,7 +154,7 @@ pub(crate) struct GroupInfo {
     pub when: &'static str,
 }
 
-/// The thirteen groups. Defaults are the default config's, with the current download
+/// The fourteen groups. Defaults are the default config's, with the current download
 /// folder kept: resetting it is almost never what a user means.
 pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
     let mut defaults = Config::default();
@@ -232,6 +234,13 @@ pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
             "putio",
             json(serde_json::to_value(putio_view(&defaults))),
             live_putio(),
+        ),
+        group(
+            "subtitles",
+            json(serde_json::to_value(super::subtitles::subtitles_view(
+                &defaults,
+            ))),
+            super::subtitles::live_subtitles(),
         ),
     ]
 }
@@ -645,6 +654,7 @@ pub fn router() -> Router<AppState> {
         .route("/plugins/preview", post(preview_plugins))
         .route("/putio/preview", post(preview_putio))
         .merge(super::network::settings_router())
+        .merge(super::subtitles::settings_router())
         .merge(assistant::router())
 }
 

@@ -120,6 +120,18 @@ impl<'a> DownloadRepository<'a> {
         Ok(download)
     }
 
+    /// The download whose finished file is at `local_path` (feature 025: Local files page
+    /// to Put.io id)
+    pub async fn find_by_local_path(&self, local_path: &str) -> DbResult<Option<Download>> {
+        sqlx::query_as::<_, Download>(
+            "SELECT * FROM downloads WHERE local_path = ? ORDER BY id DESC LIMIT 1",
+        )
+        .bind(local_path)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(tracked(DbOp::History, "Failed to find download by path"))
+    }
+
     /// Find a download by file ID, filename, and size
     pub async fn find_by_file(
         &self,
@@ -329,6 +341,25 @@ mod tests {
             .unwrap();
 
         assert!(id > 0);
+    }
+
+    #[tokio::test]
+    async fn test_find_by_local_path() {
+        let (_temp_dir, db) = setup_test_db().await;
+        let repo = DownloadRepository::new(db.pool());
+        repo.insert(1, "a.mkv", 10, "/d/a.mkv", DownloadStatus::Completed)
+            .await
+            .unwrap();
+        repo.insert(2, "a.mkv", 10, "/d/a.mkv", DownloadStatus::Completed)
+            .await
+            .unwrap();
+        let found = repo.find_by_local_path("/d/a.mkv").await.unwrap().unwrap();
+        assert_eq!(found.file_id, 2, "the newest row wins");
+        assert!(repo
+            .find_by_local_path("/d/none.mkv")
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]

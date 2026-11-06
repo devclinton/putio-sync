@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { attemptLabel, seconds, skipReason, splitStages, stepActions, stepLine, stepSeconds } from "../../ui/timeline.js";
+import { attemptLabel, seconds, skipReason, splitStages, stepActions, stepLine, stepSeconds, stepTitle } from "../../ui/timeline.js";
 
 test("the row line names the stage, or says the item needs you", () => {
   assert.equal(stepLine(null, "running"), null);
@@ -49,4 +49,16 @@ test("skip reasons and the buttons a step gets", () => {
   assert.deepEqual(stepActions({ state: "failed" }), { retry: true, skip: true });
   assert.deepEqual(stepActions({ state: "interrupted" }), { retry: true, skip: false });
   assert.deepEqual(stepActions({ state: "running" }), { retry: false, skip: false });
+});
+
+test("subtitle steps are named after what they work on", () => {
+  const scan = { stage: "subtitles", kind: "subtitle_scan", name: "videos", state: "running" };
+  const video = { stage: "subtitles", kind: "subtitles", name: "Movie (2024)/Movie.2024.1080p.mkv", state: "running" };
+  assert.equal(stepTitle(scan), "Find videos");
+  assert.equal(stepTitle(video), "Subtitles for Movie.2024.1080p.mkv");
+  assert.equal(stepTitle({ kind: "hook", name: "tidy" }), "tidy");
+  assert.equal(stepLine(video, "running"), "Subtitles for Movie.2024.1080p.mkv");
+  assert.equal(stepLine({ ...video, state: "waiting" }, "running"), "Waiting for subtitles");
+  assert.equal(stepLine({ ...video, state: "failed" }, "running"), "Needs you: Subtitles for Movie.2024.1080p.mkv failed");
+  assert.equal(skipReason({ state: "skipped", skip_reason: "no_video" }), "no video in this item");
 });

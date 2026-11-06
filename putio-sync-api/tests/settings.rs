@@ -862,6 +862,124 @@ async fn pipeline_settings_validate_and_apply_now() {
 }
 
 #[tokio::test]
+async fn subtitles_settings_validate_mask_the_key_and_apply_now() {
+    let app = test_app().await;
+    let view = get_ok(&app, "/settings/subtitles").await;
+    assert_eq!(view["languages"], json!([]));
+    assert_eq!(view["transcription"]["enabled"], false);
+    assert_eq!(view["transcription"]["api_key"], "");
+    assert!(view["known_languages"].as_array().unwrap().len() > 10);
+    assert_eq!(view["live"].as_array().unwrap().len(), 3);
+    assert!(view["applies_now"]
+        .as_str()
+        .unwrap()
+        .contains("waiting steps"));
+
+    let mut body = json!({
+        "languages": ["EN", "es"],
+        "excluded_categories": ["radarr"],
+        "transcription": {"enabled": true, "url": "http://nas:8000", "api_key": "whisper-secret-key",
+                          "model": "m", "timeout_secs": 900, "chunk_secs": 600},
+    });
+    let (status, saved_body) = put(&app, "/settings/subtitles", body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{saved_body}");
+    assert!(
+        saved_body["message"]
+            .as_str()
+            .unwrap()
+            .contains("Applies now"),
+        "{saved_body}"
+    );
+    assert!(
+        !saved_body.to_string().contains("whisper-secret-key"),
+        "{saved_body}"
+    );
+    let view = get_ok(&app, "/settings/subtitles").await;
+    assert_eq!(view["languages"], json!(["en", "es"]));
+    assert_eq!(view["transcription"]["api_key"], "********");
+    assert_eq!(
+        saved(&app).subtitles.transcription.api_key,
+        "whisper-secret-key"
+    );
+
+    // The page sends the mask back: the stored key stays
+    body["transcription"]["api_key"] = json!("********");
+    body["transcription"]["model"] = json!("m2");
+    let (status, _) = put(&app, "/settings/subtitles", body.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        saved(&app).subtitles.transcription.api_key,
+        "whisper-secret-key"
+    );
+    assert_eq!(saved(&app).subtitles.transcription.model, "m2");
+
+    // An empty key clears it
+    body["transcription"]["api_key"] = json!("");
+    let (status, _) = put(&app, "/settings/subtitles", body.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved(&app).subtitles.transcription.api_key, "");
+
+    for bad in [
+        json!({"languages": ["xx-not-a-language"]}),
+        json!({"languages": ["en","fr","de","es","it","pt","nl","sv","da","no","fi"]}),
+        json!({"transcription": {"enabled": true, "url": "ftp://nas"}}),
+        json!({"transcription": {"chunk_secs": 5}}),
+        json!({"transcription": {"timeout_secs": 1}}),
+    ] {
+        let (status, body) = put(&app, "/settings/subtitles", bad.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+        assert!(
+            body["error"].as_str().unwrap().contains("subtitles"),
+            "{body}"
+        );
+    }
+    assert_eq!(
+        saved(&app).subtitles.languages,
+        ["en", "es"],
+        "refused saves change nothing"
+    );
+}
+
+#[tokio::test]
+async fn subtitles_preview_lists_changes_and_file_names() {
+    let app = test_app().await;
+    let (status, body) = put(&app, "/settings/subtitles", json!({"languages": ["en"]})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let response = app
+        .post_json(
+            "/settings/subtitles/preview",
+            json!({"video": "Movie.2024.1080p.mkv", "settings": {"languages": ["en", "es"]}}),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let preview = body_json(response).await;
+    assert_eq!(preview["valid"], true, "{preview}");
+    assert_eq!(preview["changes"][0]["key"], "languages", "{preview}");
+    assert_eq!(
+        preview["files"],
+        json!(["Movie.2024.1080p.en.srt", "Movie.2024.1080p.es.srt"])
+    );
+    assert!(preview["forced_sdh_note"]
+        .as_str()
+        .unwrap()
+        .contains("forced"));
+    assert_eq!(
+        saved(&app).subtitles.languages,
+        ["en"],
+        "a preview saves nothing"
+    );
+
+    let response = app
+        .post_json(
+            "/settings/subtitles/preview",
+            json!({"settings": {"languages": ["zz-nope"]}}),
+        )
+        .await;
+    let preview = body_json(response).await;
+    assert_eq!(preview["valid"], false, "{preview}");
+}
+
+#[tokio::test]
 async fn a_bad_hook_is_400_naming_hook_and_field() {
     let app = test_app().await;
     let mut hook = url_hook();

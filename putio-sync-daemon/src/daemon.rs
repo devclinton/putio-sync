@@ -820,6 +820,13 @@ pub async fn pipeline_tick_with(
         .await?;
     if let Some(processing) = processing {
         processing.on_tick(&pipeline).await;
+        // Put.io deletes held back for the Subtitles stage go once it has ended (feature 025)
+        let ready = processing.releasable_deletes().await;
+        if !ready.is_empty() {
+            let done = download_manager.delete_remote(&ready).await;
+            processing.mark_deleted(&done.deleted).await;
+            processing.mark_deleted(&done.refused).await;
+        }
     }
     Ok(pipeline.counts)
 }

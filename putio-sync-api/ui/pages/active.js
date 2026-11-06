@@ -11,7 +11,7 @@ import { get, post } from "../api.js";
 import { confirm, empty, fill, h, nasBanner, poll, setNasPaused, toast } from "../app.js";
 import { bytes, dateTime, duration, percent, relative, speed, utc } from "../format.js";
 import { selection } from "../select.js";
-import { STAGE_LABEL, STEP_STATE_LABEL, attemptLabel, seconds, skipReason, splitStages, stepActions, stepLine, stepSeconds } from "../timeline.js";
+import { STAGE_LABEL, STEP_STATE_LABEL, attemptLabel, seconds, skipReason, splitStages, stepActions, stepLine, stepSeconds, stepTitle } from "../timeline.js";
 
 const REFRESH_MS = 5000;
 
@@ -486,7 +486,7 @@ function stepView(t, step) {
     h(
       "div",
       { class: "badges" },
-      h("strong", { text: step.name }),
+      h("strong", { text: stepTitle(step), title: step.name }),
       h("span", { class: `badge ${tone}`, text: STEP_STATE_LABEL[step.state] || step.state }),
       step.required === false ? h("span", { class: "badge", text: "Optional" }) : null,
       took != null ? h("small", { class: "muted", text: took < 1 ? "<1s" : duration(took) }) : null,

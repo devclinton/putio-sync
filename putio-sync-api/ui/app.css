@@ -267,6 +267,7 @@ main { max-width: 1160px; margin: 0 auto; padding: 40px 40px 80px; outline: none
 .notice { padding: var(--s-4); border-radius: var(--r-md); background: var(--surface-2); color: var(--muted); }
 
 .error-text { color: var(--bad); word-break: break-word; }
+.ok-text { color: var(--ok); word-break: break-word; }
 .warn-text { color: var(--warn); }
 .spaced { margin-top: 10px !important; }
 

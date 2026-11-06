@@ -26,14 +26,31 @@ export const SKIP_LABEL = {
   category: "not for this category",
   operator: "skipped by you",
   hook: "the hook asked to skip",
+  no_video: "no video in this item",
 };
 
-/** The line on an Active row: "Post-processing: tidy", or "Needs you: tidy failed". */
+/**
+ * What a step is called (feature 025): the subtitle steps are named after what they work on,
+ * the scan "videos" and each video by its path; show the file name, not the whole path.
+ */
+export function stepTitle(step) {
+  if (step.kind === "subtitle_scan") return "Find videos";
+  if (step.kind === "subtitles") return `Subtitles for ${String(step.name).split("/").pop()}`;
+  return step.name;
+}
+
+/**
+ * The line on an Active row: "Post-processing: tidy", or "Needs you: tidy failed". While a
+ * subtitle step has not started the item is waiting for subtitles; its Put.io files are not
+ * deleted until the stage ends.
+ */
 export function stepLine(step, itemState) {
   if (!step) return null;
-  if (itemState === "waiting_for_operator" || step.state === "failed") return `Needs you: ${step.name} failed`;
+  const title = stepTitle(step);
+  if (itemState === "waiting_for_operator" || step.state === "failed") return `Needs you: ${title} failed`;
   const stage = STAGE_LABEL[step.stage] || step.stage;
-  return `${stage}: ${step.name}`;
+  if (step.stage === "subtitles" && step.state === "waiting") return "Waiting for subtitles";
+  return step.stage === "subtitles" ? title : `${stage}: ${title}`;
 }
 
 /** Whole seconds from `from` to `to` (SQLite or RFC 3339 UTC text); null when either is missing. */
