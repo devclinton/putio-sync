@@ -1,0 +1,38 @@
+[package]
+name = "putio-sync-archive"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Long-term archive of putio-sync metrics, database copies and usage summaries"
+
+[dependencies]
+putio-sync-core = { path = "../putio-sync-core" }
+putio-sync-db = { path = "../putio-sync-db" }
+
+# HTTP client (Prometheus API)
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+flate2 = "1"
+
+# Async runtime
+tokio = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+mockito = "1.2"
+tempfile = "3.8"
+tokio = { workspace = true, features = ["test-util"] }

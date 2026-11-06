@@ -54,7 +54,7 @@ pub use decisions::{RuleDecisionRecord, RuleDecisionsRepository};
 pub use downloads::DownloadRepository;
 pub use error::{DbError, DbResult};
 pub use held::{Held, HeldRepository, HoldStats, NewHeld};
-pub use history::HistoryRepository;
+pub use history::{DailyTotals, HistoryRepository};
 pub use pipeline::{FinishedRepository, FlagsRepository, HoldsRepository};
 pub use queue::{QueueRepository, QueueStats};
 pub use releases::{
@@ -147,6 +147,44 @@ impl Database {
         info!("Database initialized at: {}", path.display());
 
         Ok(db)
+    }
+
+    /// Open an existing database read-only, without migrating it or touching its files
+    /// (the archive commands, feature 041). Writes through the handle fail.
+    pub async fn open_read_only<P: AsRef<Path>>(path: P) -> DbResult<Self> {
+        let path = path.as_ref();
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .read_only(true)
+            .busy_timeout(Duration::from_secs(10));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(options)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to open database read-only"))?;
+        Ok(Database {
+            pool,
+            path: path.to_path_buf(),
+        })
+    }
+
+    /// Write a consistent, compact copy of this database to `dest` with `VACUUM INTO` and
+    /// return the number of download history rows in it. `dest` must not exist. Safe while
+    /// other connections write; the source is not changed (feature 041).
+    pub async fn snapshot_to(&self, dest: &Path) -> DbResult<i64> {
+        let quoted = dest.to_string_lossy().replace('\'', "''");
+        sqlx::query(&format!("VACUUM INTO '{quoted}'"))
+            .execute(&self.pool)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to copy the database"))?;
+
+        let copy = Database::open_read_only(dest).await?;
+        let rows = sqlx::query_scalar("SELECT COUNT(*) FROM download_history")
+            .fetch_one(copy.pool())
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to count the copied history"));
+        copy.close().await?;
+        rows
     }
 
     /// Get the underlying connection pool
@@ -523,6 +561,77 @@ mod tests {
         assert!(db_path.exists());
 
         db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn snapshot_copies_history_while_another_connection_writes() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("live.db");
+        let daemon = Database::new(&db_path).await.unwrap();
+        for id in 1..=3 {
+            daemon
+                .history()
+                .insert(
+                    id,
+                    "a.mkv",
+                    10,
+                    models::HistoryAction::Downloaded,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+
+        // The archive command's own read-only handle, with the daemon's still open
+        let reader = Database::open_read_only(&db_path).await.unwrap();
+        daemon
+            .history()
+            .insert(
+                4,
+                "b.mkv",
+                10,
+                models::HistoryAction::Downloaded,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let copy_path = temp_dir.path().join("copy.sqlite");
+        assert_eq!(reader.snapshot_to(&copy_path).await.unwrap(), 4);
+
+        let copy = Database::open_read_only(&copy_path).await.unwrap();
+        assert_eq!(copy.history().count(None, None).await.unwrap(), 4);
+        assert_eq!(daemon.history().count(None, None).await.unwrap(), 4);
+    }
+
+    #[tokio::test]
+    async fn read_only_handle_cannot_write_or_create() {
+        let temp_dir = TempDir::new().unwrap();
+        assert!(Database::open_read_only(temp_dir.path().join("missing.db"))
+            .await
+            .is_err());
+
+        let db_path = temp_dir.path().join("live.db");
+        Database::new(&db_path)
+            .await
+            .unwrap()
+            .close()
+            .await
+            .unwrap();
+        let reader = Database::open_read_only(&db_path).await.unwrap();
+        let wrote = reader
+            .history()
+            .insert(
+                1,
+                "a.mkv",
+                10,
+                models::HistoryAction::Downloaded,
+                None,
+                None,
+            )
+            .await;
+        assert!(wrote.is_err());
     }
 
     #[tokio::test]

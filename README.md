@@ -896,6 +896,56 @@ The "Use by activity" row and the per-MB/s panel read 5-minute recording rules
 (`putio_sync:*:*5m`, feature 041) and stay empty without them; the other panels need
 only the raw scrape.
 
+### Long-term archive
+
+Prometheus keeps what it scrapes for a limited time. `putio-sync archive` keeps the
+5-minute resource series, a copy of the download database and a usage summary in a folder
+you control, so a year of CPU, memory and download history survives. It is a one-shot
+command: run it from cron or the Unraid User Scripts plugin; the daemon does not need to
+stop.
+
+```bash
+putio-sync archive metrics --prometheus http://192.168.1.60:9090   # one file per finished UTC day
+putio-sync archive db                                              # a copy of .putiosync.db
+putio-sync archive summary --prometheus http://192.168.1.60:9090   # CSV and text usage report
+```
+
+| Command | Saves | Where (under the archive folder) |
+|---|---|---|
+| `metrics` | the `putio_sync:*:*5m` recording rules of each finished UTC day not yet saved, as gzipped OpenMetrics (288 points a day; short days are marked `partial`; days without data are retried next run) | `metrics/putio-sync-metrics-<day>.om.gz` |
+| `db` | a consistent snapshot of the database (`VACUUM INTO`, safe while the daemon runs), once per day | `db/putio-sync-db-<day>.sqlite.gz` |
+| `summary` | downloads, bytes, speed, and, with `--prometheus`, CPU and memory by activity per day and month | `summary/usage-daily.csv`, `usage-monthly.csv`, `usage-latest-month.txt` |
+
+The folder is `--dir` or `PUTIO_SYNC_ARCHIVE_DIR`, by default `archive` next to the config
+file (`/config/archive` in Docker). `--prometheus` can also be set with
+`PUTIO_SYNC_ARCHIVE_PROMETHEUS_URL`; `--instance` (`PUTIO_SYNC_ARCHIVE_INSTANCE`) picks the
+scrape target when Prometheus has more than one `app="putio-sync"` instance.
+`--keep-days N` (`PUTIO_SYNC_ARCHIVE_KEEP_DAYS`) deletes archive files older than N days;
+without it nothing is deleted, and only files the command wrote are ever removed.
+`--require-manifest` refuses to run when the folder has no `manifest.jsonl`, which stops a
+share that failed to mount from silently filling the wrong disk. Files are written to a
+temp name and renamed, so a crash leaves no half-written archive. No token is read or
+printed. Exit codes: 0 done, 1 bad arguments or config, 2 Prometheus, 3 database, 4
+archive folder.
+
+**Unraid.** Install the User Scripts plugin, add a script with the contents of
+[`scripts/archive/unraid-user-script.sh`](scripts/archive/unraid-user-script.sh) (set `P`
+to your Prometheus address) and schedule it as Custom `30 3 * * *`. It saves metrics and the
+summary daily and the database on Mondays. Run the three commands once by hand first (the
+script passes `--require-manifest`, which needs the first run to have created the folder
+and manifest).
+
+**Restore** a day into a Prometheus you run yourself with promtool:
+
+```bash
+gunzip -k metrics/putio-sync-metrics-2026-11-01.om.gz
+promtool tsdb create-blocks-from openmetrics metrics/putio-sync-metrics-2026-11-01.om ./data
+# move the blocks into Prometheus's data directory and restart it
+```
+
+To restore the database, `gunzip` the `db/` file and use it as `.putiosync.db` with the
+daemon stopped.
+
 ## Web UI
 
 `daemon` serves a browser UI and the JSON API on one port, by default

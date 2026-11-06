@@ -19,7 +19,7 @@ touch the NAS. Deploying is the operator's step in quickstart §4 and §6.
 
 ## Phase 1: Setup
 
-- [ ] T001 *(Deferred to US4: nothing before T021 uses the crate, and an empty crate would add `flate2`
+- [X] T001 *(Deferred to US4: nothing before T021 uses the crate, and an empty crate would add `flate2`
   unused.)* Create crate `putio-sync-archive`:
   - `Cargo.toml` deps: putio-sync-core, putio-sync-db, reqwest, serde, serde_json, chrono,
     tokio, tracing, thiserror, uuid, `flate2 = "1"` (default backend); dev deps: mockito,
@@ -182,7 +182,7 @@ Unraid wrapper.
 
 **Independent test**: `cargo test -p putio-sync-archive`, then quickstart §6 and §7.
 
-- [ ] T021 [P] [US4] Test, then write `putio-sync-archive/src/files.rs`:
+- [X] T021 [P] [US4] Test, then write `putio-sync-archive/src/files.rs`:
   - atomic write: `<name>.tmp` in the same dir, fsync, rename;
   - sweep leftover `*.tmp` at the start of each run;
   - `manifest.jsonl` append and read, with line shapes as in data-model.md;
@@ -192,7 +192,7 @@ Unraid wrapper.
   - dir create-if-missing.
 
   Use tempfile tests, including a "foreign file untouched" case.
-- [ ] T022 [P] [US4] Test, then write `putio-sync-archive/src/prom.rs`:
+- [X] T022 [P] [US4] Test, then write `putio-sync-archive/src/prom.rs`:
   - a range-selector instant query for the selector and time in contracts/archive-cli.md
     `archive metrics` (R9);
   - keep samples in `[day, day+1)`;
@@ -200,7 +200,7 @@ Unraid wrapper.
   - map errors to the Prometheus variant.
 
   Use mockito tests for: normal, empty, HTTP 500, unreachable, and two instances.
-- [ ] T023 [P] [US4] Test, then write `putio-sync-archive/src/openmetrics.rs`:
+- [X] T023 [P] [US4] Test, then write `putio-sync-archive/src/openmetrics.rs`:
   - one `# TYPE <name> gauge` per family;
   - samples sorted by name, then labels, then time;
   - timestamps in seconds;
@@ -208,7 +208,7 @@ Unraid wrapper.
 
   A golden-file test feeds the output through `promtool tsdb create-blocks-from openmetrics`.
   Run that by hand, noted in the test's doc comment.
-- [ ] T024 [US4] Test, then write `putio-sync-archive/src/metrics.rs` (`archive metrics`):
+- [X] T024 [US4] Test, then write `putio-sync-archive/src/metrics.rs` (`archive metrics`):
   - it covers every finished UTC day from `--since` (default 366 days back) to yesterday that
     is not in the manifest;
   - it writes `metrics/putio-sync-metrics-<day>.om.gz` with gzip;
@@ -219,11 +219,11 @@ Unraid wrapper.
 
   Tests: a second run does nothing; a partial day; a gap day; a Prometheus outage gives exit
   2 and changes nothing.
-- [ ] T025 [P] [US4] Test, then add `daily_totals(from, to)` to
+- [X] T025 [P] [US4] Test, then add `daily_totals(from, to)` to
   `putio-sync-db/src/history.rs`. It returns, per UTC day: `downloads`, `bytes`,
   `download_seconds` and `avg_speed_bytes_per_s`, from download history rows. Use temp SQLite
   tests that cross a UTC midnight.
-- [ ] T026 [US4] Test, then write `putio-sync-archive/src/db.rs` (`archive db`):
+- [X] T026 [US4] Test, then write `putio-sync-archive/src/db.rs` (`archive db`):
   - `VACUUM INTO '<dir>/db/.tmp-<uuid>.sqlite'`;
   - gzip to `db/putio-sync-db-<today>.sqlite.gz` through temp and rename, then delete the temp
     copy;
@@ -233,7 +233,7 @@ Unraid wrapper.
 
   Tests: run it while another connection writes; the gunzipped copy opens and its row count
   matches.
-- [ ] T027 [US4] Test, then write `putio-sync-archive/src/summary.rs` (`archive summary`):
+- [X] T027 [US4] Test, then write `putio-sync-archive/src/summary.rs` (`archive summary`):
   - write `summary/usage-daily.csv`, `summary/usage-monthly.csv` and
     `summary/usage-latest-month.txt` with the columns in data-model.md#usage-summary-row;
   - state seconds = points per state × 300;
@@ -248,7 +248,7 @@ Unraid wrapper.
 
   Tests: a golden CSV from a mockito Prometheus plus temp SQLite; `--prometheus` omitted; two
   runs compared with `cmp`.
-- [ ] T028 [US4] Add the `archive` subcommand in `putio-sync-cli/src/cli.rs`, with a new
+- [X] T028 [US4] Add the `archive` subcommand in `putio-sync-cli/src/cli.rs`, with a new
   `putio-sync-cli/src/commands/archive.rs` registered in `commands/mod.rs`:
   - flags and env vars exactly as in the contracts/archive-cli.md tables;
   - the default dir is `<config dir>/archive`;
@@ -258,9 +258,9 @@ Unraid wrapper.
 
   Add a test that no token appears in any output or file (FR-018), reusing the redaction
   helper.
-- [ ] T029 [P] [US4] Write `scripts/archive/unraid-user-script.sh` exactly as in
+- [X] T029 [P] [US4] Write `scripts/archive/unraid-user-script.sh` exactly as in
   contracts/archive-cli.md#unraid-wrapper, then run `shellcheck` on it.
-- [ ] T030 [P] [US4] Document the archive commands in `README.md` (FR-022): what each saves,
+- [X] T030 [P] [US4] Document the archive commands in `README.md` (FR-022): what each saves,
   where, the schedule on Unraid (plugin required), keep-days, and restore with promtool. Also
   add a comment-only pointer in `config.example.toml`.
 

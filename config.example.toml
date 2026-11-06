@@ -786,3 +786,7 @@ caches = ["https://itorrents.net/torrent/{HASH}.torrent"]
 # [watch]
 # refresh_cycle = 30
 # paths = ["~/Downloads/torrents", "/Volumes/Media/torrents"]
+
+# Long-term archive of resource telemetry and the download database: not a config section.
+# Run `putio-sync archive metrics|db|summary` (see README "Long-term archive"); the archive
+# folder, Prometheus URL and keep-days come from flags or PUTIO_SYNC_ARCHIVE_* variables.

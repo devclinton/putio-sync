@@ -1,5 +1,6 @@
 //! Command implementations for putio-sync CLI
 
+pub mod archive;
 pub mod clean_empty;
 pub mod create;
 pub mod daemon;
@@ -18,6 +19,7 @@ pub mod stat;
 pub mod status;
 pub mod transfers;
 
+pub use archive::execute_archive;
 pub use clean_empty::execute_clean_empty;
 pub use create::execute_create;
 pub use daemon::execute_daemon;

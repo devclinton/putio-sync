@@ -9,7 +9,7 @@ mod logging;
 use putio_sync_cli::commands;
 
 use chrono::Utc;
-use cli::{Cli, Commands, QueueCommands, TransfersCommands};
+use cli::{ArchiveCommands, Cli, Commands, QueueCommands, TransfersCommands};
 use putio_sync_core::config::{Config, ExistingFile};
 use tracing::{debug, error, info};
 
@@ -116,7 +116,7 @@ async fn main() {
     // Initialize logging system. The doctor's stdout is its report, so its logs go to stderr.
     if matches!(
         args.command,
-        Commands::Doctor { .. } | Commands::Setup { .. }
+        Commands::Doctor { .. } | Commands::Setup { .. } | Commands::Archive(_)
     ) {
         logging::init_stderr(&config.logging.level);
     } else if let Err(e) = putio_sync_core::logging::init_logging(&config.logging) {
@@ -446,6 +446,41 @@ async fn main() {
                 yes,
             };
             let code = commands::execute_setup(setup_args, args.config).await;
+            let _ = std::io::stdout().flush();
+            std::process::exit(code);
+        }
+        Commands::Archive(job) => {
+            let job = match job {
+                ArchiveCommands::Metrics {
+                    common,
+                    prometheus,
+                    keep_days,
+                    since,
+                } => commands::archive::ArchiveJob::Metrics {
+                    common: common.into(),
+                    prometheus: prometheus.prometheus,
+                    instance: prometheus.instance,
+                    keep_days,
+                    since,
+                },
+                ArchiveCommands::Db { common, keep_days } => commands::archive::ArchiveJob::Db {
+                    common: common.into(),
+                    keep_days,
+                },
+                ArchiveCommands::Summary {
+                    common,
+                    prometheus,
+                    from,
+                    to,
+                } => commands::archive::ArchiveJob::Summary {
+                    common: common.into(),
+                    prometheus: prometheus.prometheus,
+                    instance: prometheus.instance,
+                    from,
+                    to,
+                },
+            };
+            let code = commands::execute_archive(job, args.config).await;
             let _ = std::io::stdout().flush();
             std::process::exit(code);
         }
