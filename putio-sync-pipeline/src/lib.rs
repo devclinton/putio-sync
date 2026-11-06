@@ -41,7 +41,7 @@ pub mod staging;
 pub mod store;
 pub mod subtitles;
 pub mod timeline;
-mod translate;
+pub mod translate;
 
 pub use gate::Gate;
 pub use model::{ItemState, Stage, StepState};
@@ -647,7 +647,21 @@ impl Pipeline {
         for s in &steps {
             attempts.extend(store.attempts(s.id).await.ok()?);
         }
-        Some(timeline::timeline(&item, &steps, &attempts))
+        let mut view = timeline::timeline(&item, &steps, &attempts);
+        let jobs = store.waiting_jobs().await.unwrap_or_default();
+        if !jobs.is_empty() {
+            let steps_of = view.stages.iter_mut().flat_map(|s| {
+                s.steps
+                    .iter_mut()
+                    .chain(s.branches.iter_mut().flat_map(|b| b.values_mut().flatten()))
+            });
+            for step in steps_of {
+                if let Some(job) = jobs.iter().find(|j| j.step_id == step.id) {
+                    step.waiting = Some(timeline::Waiting::from_job(job));
+                }
+            }
+        }
+        Some(view)
     }
 
     /// The item finished with warnings (an optional step gave up)
@@ -662,12 +676,17 @@ impl Pipeline {
     pub async fn summaries(&self) -> HashMap<String, StepSummary> {
         let mut out = HashMap::new();
         let store = &self.inner.store;
+        let jobs = store.waiting_jobs().await.unwrap_or_default();
         for item in store.items().await.unwrap_or_default() {
             if item.state.is_terminal() {
                 continue;
             }
             let steps = store.steps(&item.key).await.unwrap_or_default();
-            if let Some(summary) = timeline::summary(&item, &steps) {
+            if let Some(mut summary) = timeline::summary(&item, &steps) {
+                summary.waiting = jobs
+                    .iter()
+                    .find(|j| j.step_id == summary.id)
+                    .map(timeline::Waiting::from_job);
                 out.insert(item.key, summary);
             }
         }

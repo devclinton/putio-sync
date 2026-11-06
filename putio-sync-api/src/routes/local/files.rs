@@ -7,6 +7,7 @@
 //! - GET    /local/files/{root}/summary?path= - Files and bytes under an entry
 //! - DELETE /local/files/{root}?path=        - Delete a file, link or folder
 //! - POST   /local/files/{root}/rename       - `{path, name}`: rename in place
+//! - GET/POST /local/files/{root}/translate - Translate a video's subtitle (026, see `translate.rs`)
 //! - GET/POST /local/files/{root}/subtitles - Fetch subtitles for a video (025, see `subtitles.rs`)
 //! - POST   /local/files/{root}/requeue      - `{path}`: give a `.rejected` watch file its
 //!   name back so the watcher checks it again
@@ -111,6 +112,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/:root/subtitles",
             get(super::subtitles::preflight).post(super::subtitles::start),
+        )
+        .route(
+            "/:root/translate",
+            get(super::translate::preflight).post(super::translate::start),
         )
 }
 

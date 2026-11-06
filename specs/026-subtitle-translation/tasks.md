@@ -81,23 +81,23 @@ wrong or reused token is refused.
 
 - [x] T044 [P] [US2] Outbound client tests with mockito in `putio-sync-translation/tests/callback_client.rs`: body fields (`job_id`, `source_lang`, `target_lang`, `video_name` without directories, `srt`, `callback_url`), configured headers sent, `200` text, `200` JSON, `202`, `3xx` not followed, `4xx`/`5xx` with scrubbed message, timeout, header values never in errors
 - [x] T045 [P] [US2] Engine tests in `putio-sync-translation/tests/callback_engine.rs`: immediate `200` result checked and saved; equal count with different times is re-aligned from the source; different count refused; empty cue refused; the result is never written when `verify_same_timing` fails
-- [ ] T046 [P] [US2] Pipeline tests in `putio-sync-pipeline/tests/translate_callback.rs`: `202` parks the step (state `running`, attempt open, job row `waiting`, item permit released, other branches continue); a valid callback completes the step and the item goes on; unknown, used, expired and wrong-job tokens refused and nothing saved; `{"error"}` body fails the step; result for a changed source refused; restart keeps a waiting job and does not re-send it (`interrupt_running` carve-out) while a chat step mid-run becomes `interrupted`; timeout fails the step without an automatic retry, event `pipeline.step_failed` fired, item `done_with_warnings`; callback arriving before the `202` reply is read still completes once; cancelled item expires its jobs; single use under two concurrent callbacks
-- [ ] T047 [P] [US2] API tests for `POST /translate/callback/{token}` in `putio-sync-api/tests/translate_callback.rs`: works without the API token, text and JSON bodies, `422` for a bad subtitle, identical `404` body for unknown, expired, used and malformed tokens, failures counted by the limiter and `429` with `Retry-After`, `413` over 4 MiB, a captured-log test proving the token and callback URL never appear in logs or the trace span
-- [ ] T048 [P] [US2] API tests in `putio-sync-api/tests/translation_test_route.rs` and `translation_settings.rs`: `PUT` with kind callback and no `callback_base_url` is refused with the field named (FR-016), Test callback mode (`immediate`, `will_call_back`, `base_url_reachable_from_here`, `problem: callback_base_url`, header values not echoed, no `translation_callbacks` row created)
-- [ ] T049 [P] [US2] UI logic tests for the callback section (base URL required, "Use this address" fills from the page origin, header value masking) and the "waiting for callback" label in `putio-sync-api/tests/ui/settings_sections.test.mjs` and `timeline.test.mjs`
+- [x] T046 [P] [US2] Pipeline tests in `putio-sync-pipeline/tests/translate_callback.rs`: `202` parks the step (state `running`, attempt open, job row `waiting`, item permit released, other branches continue); a valid callback completes the step and the item goes on; unknown, used, expired and wrong-job tokens refused and nothing saved; `{"error"}` body fails the step; result for a changed source refused; restart keeps a waiting job and does not re-send it (`interrupt_running` carve-out) while a chat step mid-run becomes `interrupted`; timeout fails the step without an automatic retry, event `pipeline.step_failed` fired, item `done_with_warnings`; callback arriving before the `202` reply is read still completes once; cancelled item expires its jobs; single use under two concurrent callbacks
+- [x] T047 [P] [US2] API tests for `POST /translate/callback/{token}` in `putio-sync-api/tests/translate_callback.rs`: works without the API token, text and JSON bodies, `422` for a bad subtitle, identical `404` body for unknown, expired, used and malformed tokens, failures counted by the limiter and `429` with `Retry-After`, `413` over 4 MiB, a captured-log test proving the token and callback URL never appear in logs or the trace span
+- [x] T048 [P] [US2] API tests in `putio-sync-api/tests/translation_test_route.rs` and `translation_settings.rs`: `PUT` with kind callback and no `callback_base_url` is refused with the field named (FR-016), Test callback mode (`immediate`, `will_call_back`, `base_url_reachable_from_here`, `problem: callback_base_url`, header values not echoed, no `translation_callbacks` row created)
+- [x] T049 [P] [US2] UI logic tests for the callback section (base URL required, "Use this address" fills from the page origin, header value masking) and the "waiting for callback" label in `putio-sync-api/tests/ui/settings_sections.test.mjs` and `timeline.test.mjs`
 
 ### Implementation for US2
 
 - [x] T050 [US2] Implement the outbound `submit_callback` (job id, token, request, reply classes, `Immediate`/`Accepted`/`Failed`) in `putio-sync-translation/src/callback.rs` and `engine.rs`, reusing `align.rs`
-- [ ] T051 [US2] Add callback queries to `putio-sync-pipeline/src/store.rs` (`insert_job`, atomic `claim(token_hash, now)`, `get`, `expire_due(now)`, `expire_for_item`, `expire_for_step`), and change `interrupt_running` to leave steps that have a `waiting` job (and their open attempts) alone
-- [ ] T052 [US2] Implement parking, `accept_callback(token, body, ip)`, `expire_callbacks(now)` (attempt `timeout`, no auto retry), the `Parked` outcome handling in `advance()` and the post-`202` re-read, and `wake()` in `putio-sync-pipeline/src/translate.rs`, `runner.rs`, `lib.rs`
-- [ ] T053 [US2] Call `expire_callbacks` each tick, mark leftover `waiting` rows of interrupted steps `expired` at start, and connect `wake` to the tick loop in `putio-sync-daemon/src/daemon.rs`
-- [ ] T054 [US2] Add the public route `POST /translate/callback/:token` (4 MiB `DefaultBodyLimit`, limiter `check` and `record_failure`, uniform `404`, `422`, `200 {"ok": true}`) in `putio-sync-api/src/routes/translate_callback.rs` and register it in `public_routes()` in `putio-sync-api/src/lib.rs`
-- [ ] T055 [US2] Replace `TraceLayer::new_for_http()` in `router()` with a `make_span_with` that records `/translate/callback/<redacted>` for that path, in `putio-sync-api/src/lib.rs`
-- [ ] T056 [US2] Callback validation (`callback_base_url` required for kind callback) in the `PUT` handler, callback mode of the Test route (base URL check, sample job without a real token), and the `callback_url_form` in GET, in `putio-sync-api/src/routes/system/translation.rs`
-- [ ] T057 [US2] Add `waiting` (`for`, `since`, `expires_at`) to timeline steps in `putio-sync-pipeline/src/timeline.rs` and `putio-sync-api/src/routes/active.rs`; update the `callbacks_waiting` gauge and the refused-callback metric with reasons in `putio-sync-translation` and the route
-- [ ] T058 [P] [US2] Callback section of the Translation card (URL, headers, base URL with "Use this address", timeout, callback URL form, Test result) in `putio-sync-api/ui/settings/integrations.js`
-- [ ] T059 [P] [US2] Active row label "Translating: <video> (<lang>), waiting for callback" in `putio-sync-api/ui/pages/active.js`
+- [x] T051 [US2] Add callback queries to `putio-sync-pipeline/src/store.rs` (`insert_job`, atomic `claim(token_hash, now)`, `get`, `expire_due(now)`, `expire_for_item`, `expire_for_step`), and change `interrupt_running` to leave steps that have a `waiting` job (and their open attempts) alone
+- [x] T052 [US2] Implement parking, `accept_callback(token, body, ip)`, `expire_callbacks(now)` (attempt `timeout`, no auto retry), the `Parked` outcome handling in `advance()` and the post-`202` re-read, and `wake()` in `putio-sync-pipeline/src/translate.rs`, `runner.rs`, `lib.rs`
+- [x] T053 [US2] Call `expire_callbacks` each tick, mark leftover `waiting` rows of interrupted steps `expired` at start, and connect `wake` to the tick loop in `putio-sync-daemon/src/daemon.rs`
+- [x] T054 [US2] Add the public route `POST /translate/callback/:token` (4 MiB `DefaultBodyLimit`, limiter `check` and `record_failure`, uniform `404`, `422`, `200 {"ok": true}`) in `putio-sync-api/src/routes/translate_callback.rs` and register it in `public_routes()` in `putio-sync-api/src/lib.rs`
+- [x] T055 [US2] Replace `TraceLayer::new_for_http()` in `router()` with a `make_span_with` that records `/translate/callback/<redacted>` for that path, in `putio-sync-api/src/lib.rs`
+- [x] T056 [US2] Callback validation (`callback_base_url` required for kind callback) in the `PUT` handler, callback mode of the Test route (base URL check, sample job without a real token), and the `callback_url_form` in GET, in `putio-sync-api/src/routes/system/translation.rs`
+- [x] T057 [US2] Add `waiting` (`for`, `since`, `expires_at`) to timeline steps in `putio-sync-pipeline/src/timeline.rs` and `putio-sync-api/src/routes/active.rs`; update the `callbacks_waiting` gauge and the refused-callback metric with reasons in `putio-sync-translation` and the route
+- [x] T058 [P] [US2] Callback section of the Translation card (URL, headers, base URL with "Use this address", timeout, callback URL form, Test result) in `putio-sync-api/ui/settings/integrations.js`
+- [x] T059 [P] [US2] Active row label "Translating: <video> (<lang>), waiting for callback" in `putio-sync-api/ui/pages/active.js`
 
 **Checkpoint**: US1 and US2 work independently.
 
@@ -108,24 +108,24 @@ wrong or reused token is refused.
 
 ### Tests for US3 (write first, must fail)
 
-- [ ] T060 [P] [US3] Planner test: an excluded category gives the stage skipped `category` ("not for this category"), matching is case-insensitive, other categories still translate, in `putio-sync-pipeline/tests/translate.rs`
-- [ ] T061 [P] [US3] Manual-item tests: `manual` source, one `translate` step per target with branch = language, size and sample rules bypassed, existing target refused, duplicate gives 409 data, result message names the saved file, in `putio-sync-pipeline/tests/translate.rs`
-- [ ] T062 [P] [US3] API tests: preflight (eligible, no source, no translator, not a video, existing targets flagged), POST `202`/`409`/`400`/`404`, path guard, more than 10 targets, in `putio-sync-api/tests/local_translate.rs`
+- [x] T060 [P] [US3] Planner test: an excluded category gives the stage skipped `category` ("not for this category"), matching is case-insensitive, other categories still translate, in `putio-sync-pipeline/tests/translate.rs`
+- [x] T061 [P] [US3] Manual-item tests: `manual` source, one `translate` step per target with branch = language, size and sample rules bypassed, existing target refused, duplicate gives 409 data, result message names the saved file, in `putio-sync-pipeline/tests/translate.rs`
+- [x] T062 [P] [US3] API tests: preflight (eligible, no source, no translator, not a video, existing targets flagged), POST `202`/`409`/`400`/`404`, path guard, more than 10 targets, in `putio-sync-api/tests/local_translate.rs`
 - [ ] T063 [P] [US3] UI logic test for the target chooser (existing targets disabled, none selected disables the button) and the poll-until-done flow in `putio-sync-api/tests/ui/files_translate.test.mjs`
 
 ### Implementation for US3
 
-- [ ] T064 [US3] Excluded-categories field in the Translation card in `putio-sync-api/ui/settings/integrations.js` (the planner side is T034)
-- [ ] T065 [US3] Add `Pipeline::start_manual_translation(path, targets)` using `register_manual_item` in `putio-sync-pipeline/src/translate.rs`, `lib.rs`
-- [ ] T066 [US3] Implement preflight and POST in `putio-sync-api/src/routes/local/translate.rs`, register next to the 044 and 025 routes in `putio-sync-api/src/routes/local/files.rs`/`mod.rs`
-- [ ] T067 [US3] "Translate subtitles" row action with the target chooser, polling `GET /active/{key}/timeline` every 3 s, result message and listing refresh in `putio-sync-api/ui/pages/files.js`
-- [ ] T068 [P] [US3] Add a pointer to the new routes in `specs/044-local-files/contracts/api.md`
+- [x] T064 [US3] Excluded-categories field in the Translation card in `putio-sync-api/ui/settings/integrations.js` (the planner side is T034)
+- [x] T065 [US3] Add `Pipeline::start_manual_translation(path, targets)` using `register_manual_item` in `putio-sync-pipeline/src/translate.rs`, `lib.rs`
+- [x] T066 [US3] Implement preflight and POST in `putio-sync-api/src/routes/local/translate.rs`, register next to the 044 and 025 routes in `putio-sync-api/src/routes/local/files.rs`/`mod.rs`
+- [x] T067 [US3] "Translate subtitles" row action with the target chooser, polling `GET /active/{key}/timeline` every 3 s, result message and listing refresh in `putio-sync-api/ui/pages/files.js`
+- [x] T068 [P] [US3] Add a pointer to the new routes in `specs/044-local-files/contracts/api.md`
 
 ## Phase 6: Polish
 
-- [ ] T069 [P] README section (Translation card, Ollama and hosted examples, `num_ctx` note, callback mode and base URL, the unauthenticated callback route and its token rules) in `README.md`
-- [ ] T070 [P] CHANGELOG entry under Unreleased in `CHANGELOG.md`; add the translation step failures to `EVENTS.md` if the 038 docs list step kinds
-- [ ] T071 [P] Mark roadmap item 026 and note deviations in `ROADMAP.md` and a "Deviations" section at the end of this file (callback timeout without auto retry, no-letter cues not sent, positional numbering)
+- [x] T069 [P] README section (Translation card, Ollama and hosted examples, `num_ctx` note, callback mode and base URL, the unauthenticated callback route and its token rules) in `README.md`
+- [x] T070 [P] CHANGELOG entry under Unreleased in `CHANGELOG.md`; add the translation step failures to `EVENTS.md` if the 038 docs list step kinds
+- [x] T071 [P] Mark roadmap item 026 and note deviations in `ROADMAP.md` and a "Deviations" section at the end of this file (callback timeout without auto retry, no-letter cues not sent, positional numbering)
 - [ ] T072 Reconcile with 025 as implemented: names of `srt`, `lang`, `naming`, `insert_steps`, `register_manual_item`, the migration helper and the settings pattern; fix the design docs or code where they differ
 - [ ] T073 Run `make ci` and fix findings
 - [ ] T074 Manual run per `quickstart.md` against a real Ollama (and a hosted API if available); record real error bodies and the context-length behaviour in `specs/026-subtitle-translation/contracts/chat.md` and research Q1/Q3/Q4
@@ -148,3 +148,24 @@ wrong or reused token is refused.
 ## Implementation strategy
 
 MVP is Phase 1, Phase 2 and US1 (chat translation, Ollama). Ship it, then US2 (callback), then US3.
+
+## Deviations
+
+Where the code as built (025, 038) showed a task was wrong or needless, this is what was done instead.
+
+- **T038**: no daemon change. The `Pipeline` builds its own `Translator` from the config, and the settings routes call `pipeline.configure` after a save, so nothing is injected.
+- **T036**: the gate kinds (`translate_scan`, `translate`) are added in `refresh_gate` in `putio-sync-pipeline/src/lib.rs`.
+- **T035**: the scan adds `translate` steps only for languages that have a source subtitle when the scan runs.
+- **T014**: the duplicate check in `register_manual_item` is per path and stage, so a running manual subtitles item does not block a manual translation of the same video.
+- **T031**: the 15 s chat timeout case is not tested, because the test would take 15 s.
+- **T053**: no daemon change. The pipeline worker loop calls `expire_callbacks` each pass and `startup()` expires orphaned jobs.
+- **T052**: parking keeps the step `running` with its attempt open and a `waiting` job row; there is no new step state and `advance()` needed no `Parked` outcome (a running step is not due, so the task just ends and frees its permit).
+- **`interrupt_running`** (038) only interrupted hook steps, which left running subtitle and translation steps stuck after a restart. It now covers hook, subtitle_scan, subtitles, translate_scan and translate, except steps with a waiting job.
+- **Timeouts** of a callback job fail the step with attempt result `timeout` and are not retried by themselves (`give_up`). A callback answer that is rejected (bad cues, changed source, error body) fails normally and follows the step's retries with a new job.
+- **`StepSummary`** gained `kind`, `branch` and `waiting`, and `StepView` gained `branch` and `waiting`, so the Active row can name a translation and say it waits for a callback. `waiting` is added in `Pipeline::timeline()` / `summaries()`, not in `routes/active.rs`.
+- **T058/T059**: the callback section is in `ui/settings/translation.js` (the card lives there, not in `integrations.js`); the Active row label comes from `stepLine` in `ui/timeline.js`, and the timeline shows when a waiting step gives up.
+- **T063/T067**: the Files action is one **Translate** button that confirms the languages still missing (wanted languages without a subtitle) instead of a target chooser, and does not poll the timeline; the toast links to the Active page. The pure logic is `translatePlan` in `ui/subtitles.js`, tested in `files_subtitles.test.mjs`. This keeps the UI under its size cap.
+- **T056**: the Test route for a callback service sends a sample job with a well-formed token that matches no job, so no `translation_callbacks` row is created.
+- **T060/T061**: planner and manual-item cases live in `translate.rs` (`an_excluded_category_skips_the_scan`, `a_manual_translation_runs_one_branch_per_language`) and `local_translate.rs`.
+- **T072 (reconcile)**: names checked against the code as built: `srt::{parse, render, decode_bytes}`, `lang::lookup`, `naming::{sidecar_path, Slot}`, `register_manual_item` and the settings pattern match the design docs. The design docs said `accept_callback(token, body, ip)`; the limiter lives in the route, so it is `accept_callback(token, content_type, body)`.
+- **T074, T075**: not run. No real Ollama, hosted API or callback service was available in this environment. The chat flow and the callback flow are covered against mock servers in `putio-sync-pipeline/tests/translate.rs`, `translate_callback.rs` and the API tests; real error bodies and the context-length behaviour are unverified.

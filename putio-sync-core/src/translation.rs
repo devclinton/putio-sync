@@ -478,7 +478,8 @@ mod tests {
 
     #[test]
     fn ranges_are_enforced() {
-        let cases: Vec<Box<dyn Fn(&mut TranslationConfig)>> = vec![
+        type Edit = Box<dyn Fn(&mut TranslationConfig)>;
+        let cases: Vec<Edit> = vec![
             Box::new(|c| c.max_in_flight = 0),
             Box::new(|c| c.max_in_flight = 9),
             Box::new(|c| c.timeout_secs = 9),

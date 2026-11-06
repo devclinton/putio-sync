@@ -10,3 +10,4 @@ pub mod putio;
 pub mod releases;
 pub mod setup;
 pub mod system;
+pub mod translate_callback;

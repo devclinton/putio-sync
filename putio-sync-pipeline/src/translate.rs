@@ -470,3 +470,41 @@ pub(crate) fn translate_step(language: &str, relative: &str) -> PlannedStep {
         skip_reason: None,
     }
 }
+
+/// The most languages one manual translation may ask for
+pub const MANUAL_MAX_TARGETS: usize = 10;
+
+impl Pipeline {
+    /// Translate the subtitle of one video on disk into `targets`, by hand (feature 026,
+    /// Local files). A `manual:<n>` item with one `translate` step per language, run in
+    /// parallel like the automatic ones. A source subtitle is looked for when each step
+    /// runs. One that is still running for the same video is a duplicate.
+    pub async fn start_manual_translation(
+        &self,
+        video: &Path,
+        targets: &[String],
+    ) -> Result<String, crate::subtitles::ManualError> {
+        use crate::subtitles::{is_video, ManualError};
+        let name = video
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if !is_video(&name) {
+            return Err(ManualError::NotAVideo);
+        }
+        let mut seen = Vec::<String>::new();
+        for t in targets {
+            if !seen.contains(t) {
+                seen.push(t.clone());
+            }
+        }
+        if seen.is_empty() || seen.len() > MANUAL_MAX_TARGETS {
+            return Err(ManualError::Failed(format!(
+                "choose from 1 to {MANUAL_MAX_TARGETS} languages"
+            )));
+        }
+        let steps = seen.iter().map(|t| translate_step(t, &name)).collect();
+        self.register_manual_item(video, Stage::Translating, steps)
+            .await
+    }
+}

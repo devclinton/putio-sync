@@ -62,13 +62,14 @@ putio-sync does not run Whisper itself; it calls any server with the
 OpenAI-style transcription API (faster-whisper-server/speaches, whisper.cpp's
 server), set by URL. Subtitles are saved next to the video as `.<lang>.srt`.
 
-### 026 Subtitle translation
+### 026 Subtitle translation (done)
 
 Translate subtitles into the languages wanted through an LLM: a base URL,
 model and optional API key, using the OpenAI-compatible chat API so Ollama,
 Open WebUI, LM Studio and hosted APIs all work. Subtitles are translated in
 chunks with timestamps kept exactly, and a test button checks the connection
-and model.
+and model. A user-supplied service that answers now or calls back is supported too.
+See `specs/026-subtitle-translation/tasks.md` for the deviations.
 
 ### 028 Lua plugins: sync extension points
 

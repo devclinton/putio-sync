@@ -14,6 +14,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Subtitle translation. When a wanted language has no subtitle, the new Translating stage
+  makes one from a subtitle the video already has, through a chat model you run (Ollama,
+  LM Studio, a hosted API) or your own service that answers now or calls back later at a
+  one-time address. Set it up in **Settings › Downloads › Translation**, with a test button
+  for each. **Translate** on Local files does it for a video already on the NAS. Timestamps
+  are always kept from the source, and an existing subtitle is never overwritten.
 - Subtitles. Set the languages you want in **Settings › Downloads › Subtitles** and each
   downloaded video gets `Movie.en.srt` files next to it, from what Put.io has (folder files,
   embedded tracks, OpenSubtitles) and, when you turn it on, from your own Whisper-style

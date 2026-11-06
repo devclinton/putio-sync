@@ -19,6 +19,50 @@ pub struct AttemptView {
     pub output: String,
 }
 
+/// A step that is parked until a translation service calls back (feature 026)
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Waiting {
+    /// What the step waits for: `callback`
+    #[serde(rename = "for")]
+    pub for_: &'static str,
+    /// RFC 3339, UTC
+    pub since: String,
+    /// RFC 3339, UTC: when the step gives up
+    pub expires_at: String,
+}
+
+impl Waiting {
+    pub fn from_job(job: &crate::store::CallbackJob) -> Self {
+        Self {
+            for_: "callback",
+            since: rfc3339(job.created_at),
+            expires_at: rfc3339(job.expires_at),
+        }
+    }
+}
+
+/// Unix seconds as `YYYY-MM-DDTHH:MM:SSZ`
+pub fn rfc3339(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    // civil-from-days (Howard Hinnant)
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
+}
+
 /// One step, as the API shows it
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct StepView {
@@ -35,6 +79,9 @@ pub struct StepView {
     pub skip_reason: Option<&'static str>,
     pub next_attempt_at: Option<String>,
     pub progress: Option<f64>,
+    /// Set while the step waits for a translation callback
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<Waiting>,
     pub attempts: Vec<AttemptView>,
 }
 
@@ -63,6 +110,8 @@ pub struct Timeline {
 /// The step on an Active row
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct StepSummary {
+    #[serde(skip)]
+    pub id: i64,
     pub stage: Stage,
     pub name: String,
     pub kind: &'static str,
@@ -70,6 +119,8 @@ pub struct StepSummary {
     pub branch: Option<String>,
     pub state: &'static str,
     pub progress: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<Waiting>,
 }
 
 fn view(step: &StepRow, attempts: &[AttemptRow], stopped: bool) -> StepView {
@@ -88,6 +139,7 @@ fn view(step: &StepRow, attempts: &[AttemptRow], stopped: bool) -> StepView {
         skip_reason: step.skip_reason.map(|r| r.as_str()),
         next_attempt_at: step.next_attempt_at.clone(),
         progress: step.progress,
+        waiting: None,
         attempts: attempts
             .iter()
             .filter(|a| a.step_id == step.id)
@@ -157,6 +209,8 @@ pub fn summary(item: &ItemRow, steps: &[StepRow]) -> Option<StepSummary> {
             })
         })?;
     Some(StepSummary {
+        id: pick.id,
+        waiting: None,
         stage: pick.stage,
         name: pick.name.clone(),
         kind: pick.kind.as_str(),
@@ -164,4 +218,16 @@ pub fn summary(item: &ItemRow, steps: &[StepRow]) -> Option<StepSummary> {
         state: pick.state.as_str(),
         progress: pick.progress,
     })
+}
+
+#[cfg(test)]
+mod waiting_tests {
+    use super::rfc3339;
+
+    #[test]
+    fn unix_seconds_format_as_rfc_3339() {
+        assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
+        assert_eq!(rfc3339(1_709_210_096), "2024-02-29T12:34:56Z");
+        assert_eq!(rfc3339(951_782_400), "2000-02-29T00:00:00Z");
+    }
 }

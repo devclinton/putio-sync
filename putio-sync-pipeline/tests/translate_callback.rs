@@ -118,6 +118,23 @@ async fn a_202_parks_the_step_and_the_callback_finishes_it_once() {
     assert_eq!(step.state, StepState::Running, "parked, not failed");
     let t = env.pipeline.timeline("file:5").await.unwrap();
     assert_ne!(t.state, ItemState::Done);
+    let parked: Vec<_> = t
+        .stages
+        .iter()
+        .flat_map(|s| s.branches.iter().flat_map(|b| b.values().flatten()))
+        .filter(|s| s.waiting.is_some())
+        .collect();
+    assert_eq!(parked.len(), 1, "the parked step says what it waits for");
+    let w = parked[0].waiting.as_ref().unwrap();
+    assert_eq!(w.for_, "callback");
+    assert!(w.expires_at > w.since);
+    let row = env.pipeline.summaries().await;
+    assert_eq!(
+        row.get("file:5")
+            .and_then(|s| s.waiting.as_ref())
+            .map(|w| w.for_),
+        Some("callback")
+    );
     let sent = seen.lock().unwrap()[0].clone();
     assert_eq!(sent["video_name"], "Movie.2020.mkv");
     assert_eq!(sent["target_lang"], "es");

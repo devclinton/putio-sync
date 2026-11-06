@@ -34,3 +34,10 @@ export function fetchPlan(name, pre) {
   const langs = (pre.languages || []).join(", ");
   return { go: true, confirm: { title: `Fetch subtitles for ${name}`, text: `${parts.join(" ")} Languages: ${langs}.`, verb: "Fetch" } };
 }
+
+/** What the Translate action does for a preflight answer: {go, targets, confirm} or {go: false, message}. */
+export function translatePlan(name, pre) {
+  if (!pre.eligible) return { go: false, message: pre.reason || `${name} cannot be translated` };
+  if (!pre.missing.length) return { go: false, message: `${name} already has a subtitle in every wanted language` };
+  return { go: true, targets: pre.missing, confirm: `Translate the subtitle of ${name} into ${pre.missing.join(", ")}?` };
+}

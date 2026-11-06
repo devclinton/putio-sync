@@ -39,3 +39,13 @@ test("an ineligible file stops with the reason", () => {
   assert.deepEqual(fetchPlan("a.mkv", { eligible: false, reason: "No subtitle languages are set" }), { go: false, message: "No subtitle languages are set" });
   assert.match(fetchPlan("a.mkv", { eligible: false }).message, /cannot be fetched/);
 });
+
+import { translatePlan } from "../../ui/subtitles.js";
+
+test("translate: needs an eligible video with a missing language, and names the languages", () => {
+  assert.equal(translatePlan("a.mkv", { eligible: false, reason: "No translator" }).message, "No translator");
+  assert.equal(translatePlan("a.mkv", { eligible: true, missing: [] }).go, false);
+  const p = translatePlan("a.mkv", { eligible: true, missing: ["es", "fr"] });
+  assert.deepEqual(p.targets, ["es", "fr"]);
+  assert.match(p.confirm, /into es, fr\?/);
+});

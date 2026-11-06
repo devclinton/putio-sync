@@ -53,3 +53,12 @@ Added by feature 025 ("Fetch subtitles" on a video row). `GET ?path=` answers wh
 transcription can supply subtitles; `POST {"path"}` starts a `manual:<n>` pipeline item
 (`202 {"key"}`, `409` with the running item's key). The path guard is the same as above. See
 `specs/025-subtitles/contracts/api.md`.
+
+## GET and POST /local/files/{root}/translate
+
+Added by feature 026 ("Translate" on a video row). `GET ?path=` answers whether a translator is
+set up and a subtitle exists to translate from, with the wanted languages that are still
+missing; `POST {"path", "targets": [...]}` (1 to 10 languages) starts a `manual:<n>` pipeline
+item with one translation per language (`202 {"key"}`, `409` with the running item's key,
+`400` for a bad target or no translator). The path guard is the same as above. See
+`specs/026-subtitle-translation/contracts/api.md`.

@@ -9,7 +9,7 @@
 
 import { del, get, post, startVerify } from "../api.js";
 import { confirm, empty, h, navigate, poll, toast } from "../app.js";
-import { fetchPlan, fetchState } from "../subtitles.js";
+import { fetchPlan, fetchState, translatePlan } from "../subtitles.js";
 import { bytes, dateTime } from "../format.js";
 import { listControls } from "../listctl.js";
 import { selection } from "../select.js";
@@ -181,6 +181,23 @@ async function onFetchSubtitles(button, e) {
   }
 }
 
+/** Ask what could be translated, confirm the languages, then start the item */
+async function onTranslate(button, e) {
+  button.disabled = true;
+  const base = `/local/files/${encodeURIComponent(root)}/translate`;
+  try {
+    const plan = translatePlan(e.name, await get(`${base}?path=${encodeURIComponent(e.path)}`));
+    if (!plan.go) return toast(plan.message, "error");
+    if (!(await confirm(plan.confirm))) return;
+    const r = await post(base, { path: e.path, targets: plan.targets });
+    toast(`Translating ${e.name}`, "ok", `Follow it on the Active page as ${r.key}`);
+  } catch (err) {
+    if (!quiet(err)) toast(`Couldn't translate ${e.name}`, "error", reason(err));
+  } finally {
+    if (button.isConnected) button.disabled = false;
+  }
+}
+
 function onRename(e) {
   editing = e.path;
   const input = h("input", { class: "input", value: e.name, "aria-label": `New name for ${e.name}` });
@@ -326,6 +343,7 @@ function row(current, e) {
     const fetch = fetchState(e);
     if (fetch.show) {
       actions.push(h("button", { type: "button", class: "btn btn-small", "aria-label": `Fetch subtitles for ${e.name}`, disabled: fetch.disabled, title: fetch.why || "Get subtitles for this video", onclick: (ev) => onFetchSubtitles(ev.currentTarget, e) }, "Fetch subtitles"));
+      actions.push(h("button", { type: "button", class: "btn btn-small", "aria-label": `Translate subtitles of ${e.name}`, disabled: fetch.disabled, title: "Translate this video's subtitle into the wanted languages", onclick: (ev) => onTranslate(ev.currentTarget, e) }, "Translate"));
     }
     actions.push(
       h("button", { type: "button", class: "btn btn-small", "aria-label": `Rename ${e.name}`, onclick: () => onRename(e) }, "Rename"),

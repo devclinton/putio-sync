@@ -31,3 +31,23 @@ test("a format problem shows the raw reply lines", () => {
 test("the chat object is trimmed text", () => {
   assert.deepEqual(readChat({ base_url: " http://x ", model: "m ", api_key: undefined }), { base_url: "http://x", model: "m", api_key: "" });
 });
+
+import { callbackLines, headerText, parseHeaders } from "../../ui/translation.js";
+
+test("header lines round trip and a line without a colon is refused", () => {
+  const h = parseHeaders("X-Api-Key: abc\n\n Authorization : Bearer a:b ");
+  assert.deepEqual(h, { "X-Api-Key": "abc", Authorization: "Bearer a:b" });
+  assert.equal(headerText({ A: "1", B: "2" }), "A: 1\nB: 2");
+  assert.throws(() => parseHeaders("nonsense"), /not "Name: value"/);
+  assert.deepEqual(parseHeaders(""), {});
+});
+
+test("callback test lines name the result and the callback address", () => {
+  const ok = callbackLines({ ok: true, result: "will_call_back", service: { took_ms: 12 }, base_url_reachable_from_here: { checked: true, status: 200 } });
+  assert.equal(ok[0].ok, true);
+  assert.match(ok[0].text, /will call back/);
+  assert.equal(ok[1].ok, true);
+  const bad = callbackLines({ ok: false, problem: "headers", error: "HTTP 401: no", service: { took_ms: 3 }, base_url_reachable_from_here: { checked: true, status: null, error: "refused" } });
+  assert.match(bad[0].text, /rejected the headers/);
+  assert.equal(bad[1].ok, false);
+});

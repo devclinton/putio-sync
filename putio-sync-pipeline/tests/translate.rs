@@ -385,3 +385,31 @@ async fn staging_writes_inside_the_staging_folder_and_provenance_follows_the_ren
         .unwrap();
     assert_eq!(p.map(|p| p.source), Some("translated".to_string()));
 }
+
+#[tokio::test]
+async fn a_manual_translation_runs_one_branch_per_language() {
+    let s = chat_server(&[]).await;
+    let env = env_for(&["en"], chat(&s.url())).await;
+    let video = env.dir.path().join("Movie.2020.mkv");
+    big_file(&video, 10);
+    std::fs::write(env.dir.path().join("Movie.2020.en.srt"), SRT).unwrap();
+    let key = env
+        .pipeline
+        .start_manual_translation(&video, &["es".to_string(), "fr".to_string()])
+        .await
+        .unwrap();
+    assert!(key.starts_with("manual:"));
+    env.pipeline.run_due().await;
+    for code in ["es", "fr"] {
+        let text =
+            std::fs::read_to_string(env.dir.path().join(format!("Movie.2020.{code}.srt"))).unwrap();
+        assert!(text.contains(&format!("{code} Hello there")), "{text}");
+    }
+    let t = env.pipeline.timeline(&key).await.unwrap();
+    assert_eq!(t.state, ItemState::Done);
+    assert!(env
+        .pipeline
+        .start_manual_translation(&video, &[])
+        .await
+        .is_err());
+}

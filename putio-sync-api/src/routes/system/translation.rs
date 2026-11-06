@@ -207,8 +207,124 @@ async fn test_translation(
             out["kind"] = Value::String("chat".to_string());
             Ok(Json(out))
         }
-        TranslatorKind::Callback => Err(ApiError::BadRequest(
-            "testing a callback service is not available yet".to_string(),
-        )),
+        TranslatorKind::Callback => Ok(Json(callback_test(&cfg, &target).await)),
+    }
+}
+
+/// How long the test waits for the service and for the address check
+const TEST_SECS: u64 = 15;
+
+/// Send one sample cue to the callback service with a callback address that was never
+/// issued (no job is recorded), and check that this machine's own address answers
+async fn callback_test(cfg: &TranslationConfig, target: &str) -> Value {
+    use putio_sync_translation::callback::{self, CallbackClient, JobRequest, Reply};
+    let c = &cfg.callback;
+    let reachable = base_url_check(&c.callback_base_url).await;
+    let mut out = serde_json::json!({
+        "kind": "callback",
+        "ok": false,
+        "result": Value::Null,
+        "problem": Value::Null,
+        "error": Value::Null,
+        "service": {"status": Value::Null, "took_ms": 0, "error": Value::Null},
+        "base_url_reachable_from_here": reachable,
+    });
+    let client = match CallbackClient::new(&c.url, &c.headers, TEST_SECS) {
+        Ok(client) => client,
+        Err(e) => {
+            out["problem"] = "url".into();
+            out["error"] = e.to_string().into();
+            return out;
+        }
+    };
+    // A well-formed token that matches no job: a service that calls back gets a 404
+    let url = callback::callback_url(&c.callback_base_url, &"0".repeat(64));
+    let sample = "1\n00:00:01,000 --> 00:00:03,000\nGood morning.\n\n2\n00:00:04,000 --> 00:00:06,000\nWhere are you going?\n\n";
+    let started = std::time::Instant::now();
+    let reply = client
+        .submit(&JobRequest {
+            job_id: "test",
+            source_lang: "en",
+            target_lang: target,
+            video_name: "Sample.mkv",
+            srt: sample,
+            callback_url: &url,
+        })
+        .await;
+    out["service"]["took_ms"] = (started.elapsed().as_millis() as u64).into();
+    match reply {
+        Reply::Immediate(text) => {
+            out["service"]["status"] = 200.into();
+            let cues = putio_sync_subtitles::srt::parse(&text);
+            if cues.len() == 2 {
+                out["ok"] = true.into();
+                out["result"] = "immediate".into();
+            } else {
+                out["problem"] = "format".into();
+                out["error"] = format!("the reply had {} cues, 2 were sent", cues.len()).into();
+                out["service"]["error"] = out["error"].clone();
+            }
+        }
+        Reply::Accepted => {
+            out["service"]["status"] = 202.into();
+            out["ok"] = true.into();
+            out["result"] = "will_call_back".into();
+        }
+        Reply::Failed(message) => {
+            let (problem, status) = classify_failure(&message);
+            out["problem"] = problem.into();
+            out["service"]["status"] = status.map(Value::from).unwrap_or(Value::Null);
+            out["service"]["error"] = message.clone().into();
+            out["error"] = message.into();
+        }
+    }
+    if out["ok"] == true && reachable["checked"] == true && reachable["status"].is_null() {
+        out["ok"] = false.into();
+        out["problem"] = "callback_base_url".into();
+        out["error"] =
+            "the service accepted the job, but the callback address does not answer from here"
+                .into();
+    }
+    out
+}
+
+/// Name what went wrong from the client's message
+fn classify_failure(message: &str) -> (&'static str, Option<u16>) {
+    let status = message
+        .strip_prefix("HTTP ")
+        .and_then(|r| r.get(..3))
+        .and_then(|n| n.parse::<u16>().ok());
+    let problem = match status {
+        Some(401 | 403) => "headers",
+        Some(404 | 405) => "url",
+        Some(_) => "server",
+        None if message.starts_with("timeout") => "timeout",
+        None if message.starts_with("unreachable") => "url",
+        None => "format",
+    };
+    (problem, status)
+}
+
+/// Whether `GET <base>/health` answers from here. This is the address the service is told,
+/// so it only proves the address works from this machine, not from the service's.
+async fn base_url_check(base: &str) -> Value {
+    let url = format!("{}/health", base.trim().trim_end_matches('/'));
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(TEST_SECS))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return serde_json::json!({"checked": false, "status": null, "error": e.to_string()})
+        }
+    };
+    match client.get(&url).send().await {
+        Ok(r) => serde_json::json!({"checked": true, "status": r.status().as_u16(), "error": null}),
+        Err(e) => serde_json::json!({
+            "checked": true,
+            "status": null,
+            "error": putio_sync_core::log_redact::redact(&e.without_url().to_string()),
+        }),
     }
 }

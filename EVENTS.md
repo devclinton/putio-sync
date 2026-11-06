@@ -398,7 +398,7 @@ A file is being downloaded again after a mismatch: a new download starting over,
 
 ### `pipeline.step_failed`
 
-A processing pipeline step failed (feature 038). Sent after every failed attempt of a hook step or a Subtitles step (feature 025; its `stage` is `subtitles`, its `step` the video's path, and `required` is always `false`).
+A processing pipeline step failed (feature 038). Sent after every failed attempt of a hook step a Subtitles step (feature 025; its `stage` is `subtitles`, its `step` the video's path, and `required` is always `false`) or a translation step (feature 026; its `stage` is `translating`, its `step` the video's path). A translation whose callback never arrives sends it once, with `error` "no callback within N s".
 
 | Field | Type | Notes |
 |-------|------|-------|
