@@ -504,3 +504,27 @@ include it. Nothing else receives it, hooks included.
   }
 }
 ```
+
+## Pipeline step hooks
+
+A hook with a `stage` is not an event hook: it is a step that runs once for an item in
+that stage (feature 038). It gets no event; it gets the item.
+
+- **Command.** The environment has `PUTIO_SYNC_ITEM_KEY`, `PUTIO_SYNC_ITEM_NAME`,
+  `PUTIO_SYNC_ITEM_CATEGORY`, `PUTIO_SYNC_ITEM_SOURCE` (`arr`, `watch` or `sync`),
+  `PUTIO_SYNC_ITEM_DIR` and `PUTIO_SYNC_ITEM_STAGE`, and `PUTIO_SYNC_ITEM_JSON`, the path of a
+  temp file with the item as JSON, removed after the run. Standard input is empty.
+- **Webhook.** A POST with the same JSON as the body.
+- **The item JSON** has `key`, `name`, `category`, `source`, `dir`, `stage`, `transfer_id`
+  and `files`, a list of `{relative_path, size, putio_id}` with the paths relative to `dir`.
+- **Result.** Exit 0 or a 2xx answer is done. Anything else is a failure, and a command
+  that runs past `timeout_secs` is a timeout. In `pre_download` only, exit 10 or a 2xx
+  answer with the body `{"action":"skip"}` skips the item: its queued files are removed.
+  Elsewhere that result counts as done.
+- **After a failure.** A required step (the default) stops the item and waits for you to
+  Retry or Skip it on the Active page. An optional step is retried after each wait in
+  `[pipeline] optional_retries`, then given up, and the item finishes with a warning.
+  Each failed attempt sends `pipeline.step_failed`; `pipeline.completed` is sent only
+  when the item ends with warnings.
+- **Idempotent, please.** A step can run again: after a restart that interrupted it, or
+  when you press Retry. Write it so that running it twice leaves the same files.

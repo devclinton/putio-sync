@@ -157,23 +157,23 @@
 
 ## Phase 6: User Story 4 – Retry, skip, give up (P2)
 
-- [ ] T024 [P] [US4] Write `putio-sync-pipeline/tests/retry.rs`:
+- [x] T024 [P] [US4] Write `putio-sync-pipeline/tests/retry.rs`:
   - a failed required step moves the item to `waiting_for_operator`. Retry after a fix makes
     the item complete. Skip records `operator` and goes on;
   - an optional step that keeps failing, with `optional_retries = [1, 1, 1]` and paused tokio
     time, gives up after 3 retries. The item ends `done_with_warnings`, and one
     `pipeline.completed` event lists the step;
   - each attempt is listed on the timeline.
-- [ ] T025 [US4] Write retry, skip and give-up in `putio-sync-pipeline/src/lib.rs`, using
+- [x] T025 [US4] Write retry, skip and give-up in `putio-sync-pipeline/src/lib.rs`, using
   `next_attempt_at`. Emit the events `pipeline.step_failed` and `pipeline.completed` through
   the core events bus, and document them in `EVENTS.md`.
-- [ ] T026 [US4] Add `POST /active/{key}/steps/{id}/retry` and `/skip` (202, 409, 404) in
+- [x] T026 [US4] Add `POST /active/{key}/steps/{id}/retry` and `/skip` (202, 409, 404) in
   `putio-sync-api/src/routes/active.rs`, with tests. In the UI timeline, failed steps get
   Retry and Skip buttons, and Skip asks for confirmation.
 
 ## Phase 7: User Story 5 – Per category (P3)
 
-- [ ] T027 [US5] Show the category skip reason ("not for this category") in the timeline. Add
+- [x] T027 [US5] Show the category skip reason ("not for this category") in the timeline. Add
   a planner hook point in `putio-sync-pipeline/src/plan.rs` that later step kinds (025, 026)
   use to opt out per category. Add tests.
 
@@ -181,7 +181,7 @@
 
 - [x] T028 [P] Add the `GET`/`PUT /settings/pipeline` routes and the Settings › Pipeline group
   in `putio-sync-api/ui/`.
-- [ ] T029 [P] Update `README.md` (Pipeline section), `EVENTS.md` (pipeline hooks: input, exit
+- [x] T029 [P] Update `README.md` (Pipeline section), `EVENTS.md` (pipeline hooks: input, exit
   codes, the idempotency note) and `CHANGELOG.md` (Unreleased › Added).
 - [ ] T030 Run `make ci`, and run quickstart §2–§5 locally.
 
@@ -202,3 +202,42 @@
 
 - The MVP is US1 + US2 + US3, which together make the pipeline useful and safe for the arrs.
 - Then US4, then US5.
+
+## Deviations
+
+Where the build differs from the spec, plan or contracts, and why.
+
+- The pipeline crate depends on `putio-sync-download` (it reads the Active view and the
+  downloads table, and implements `download`'s `PathRedirect`). `arr` and `download` do not
+  depend on `pipeline`; `arr` sees it through the core `PipelineGate` trait.
+- A hold (`pipeline_holds`) has no reason column. A pre-download hold is told apart from an
+  operator's by the pipeline item's state.
+- The timeline gives every step an `attempts` array, also for steps that ran once.
+- A stage with no steps has no step rows and is marked `skipped: "not_configured"`.
+- Pre-download hooks apply only to items with a transfer id (`transfer:<id>`). A `file:` or
+  `folder:` item skips them as `not_configured`.
+- A URL hook skips an item with a 2xx answer whose body is `{"action":"skip"}`, not with
+  "204 with a body". Exit 10 or that body counts as done outside `pre_download`.
+- `pipeline.completed` is sent only when the item ends with warnings, so people with no
+  steps see no new events.
+- Radarr/Sonarr could see a transfer as complete if it downloads and finishes entirely
+  between two pipeline ticks (10 s), before the gate knows the item. Pipeline items are
+  registered when they first appear on the Active list, which closes this for normal
+  transfers.
+- Processing items are merged into the `/active` rows with `stage: "processing"`, and
+  `counts.processing` was added.
+- Rows in Recently finished gained `warnings`, for items that finished with warnings.
+- No new pause path exists for post-download items. FR-017 is implemented through holds
+  only: a hold sets the item to `held` between steps, and release returns it to `running`.
+- Staging redirects a file only when a pipeline item row for its transfer already exists
+  and the file's download source has origin `watch`. A file that starts before the item
+  appears on the Active list lands in place, unstaged.
+- The `st_dev` check looks at existing `.putio-sync-staging` folders under the download
+  folder and one level down, at startup (staging then stays off until a restart) and on
+  `PUT /settings/pipeline` (refused with a 400 naming `staging`).
+- The Pipeline settings card is under Settings › Integrations, not a separate section, and
+  the form gained an `ln` field kind (one number per line) for `optional_retries`.
+- The order of steps inside a stage is the order of the hooks list, edited with Up and Down
+  buttons instead of drag and drop.
+- Staging is not reflected for `file:` items whose name has no matching path component other
+  than the file itself: the staging folder is then the category's `.putio-sync-staging`.

@@ -14,6 +14,14 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- A processing pipeline. A hook with a `stage` is a step that runs for a download before it
+  counts as finished: before the files start (holding the transfer), or on the NAS before
+  and after processing. The Active page lists each item's steps and attempts with **Retry**
+  and **Skip**; a required step that fails waits for you, an optional one is retried and
+  then given up with a warning. Radarr and Sonarr see an item as 99% done until its steps
+  pass, and watch-folder downloads are built in a hidden `.putio-sync-staging` folder and
+  moved into place with one rename. Settings › Integrations has the steps and a Processing
+  pipeline card. With no steps, nothing changes.
 - Plugins have their own page, **Settings › Plugins**. Each plugin that is on has a tab
   with its settings, buttons, test event and last run, marked **!** when it is broken,
   waits for approval or needs settings. Plugins that are off are one short list with

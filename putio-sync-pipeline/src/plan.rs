@@ -72,11 +72,7 @@ pub fn plan(input: PlanInput<'_>, hooks: &[HookConfig]) -> Vec<PlannedStep> {
                     .iter()
                     .filter(|h| h.enabled && h.stage.map(Stage::from) == Some(stage));
                 for (position, hook) in in_stage.enumerate() {
-                    // An unknown category is judged when the step is about to run
-                    let wrong_category = !hook.categories.is_empty()
-                        && input.category.is_some_and(|c| {
-                            !hook.categories.iter().any(|h| h.eq_ignore_ascii_case(c))
-                        });
+                    let wrong_category = !applies_to(&hook.categories, input.category);
                     let no_gate = stage == Stage::PreDownload && !input.has_transfer;
                     let skip = if wrong_category {
                         Some(SkipReason::Category)
@@ -105,6 +101,15 @@ pub fn plan(input: PlanInput<'_>, hooks: &[HookConfig]) -> Vec<PlannedStep> {
         }
     }
     steps
+}
+
+/// Whether a step limited to `categories` runs for an item of `category`. An empty list
+/// runs for every item, and so does an item whose category is not known yet: it is judged
+/// when the step is about to run. Step kinds added later (subtitles, translation) opt out
+/// of a category through this one place.
+pub fn applies_to(categories: &[String], category: Option<&str>) -> bool {
+    categories.is_empty()
+        || category.is_none_or(|c| categories.iter().any(|h| h.eq_ignore_ascii_case(c)))
 }
 
 /// Whether any enabled hook changes files, which is what turns staging on in `auto`
@@ -212,5 +217,14 @@ mod tests {
             ..Default::default()
         };
         assert!(!changes_files(&[event_hook]));
+    }
+
+    #[test]
+    fn applies_to_matches_case_insensitively_and_waits_for_an_unknown_category() {
+        let only = vec!["Sonarr".to_string()];
+        assert!(applies_to(&[], Some("radarr")));
+        assert!(applies_to(&only, Some("sonarr")));
+        assert!(!applies_to(&only, Some("radarr")));
+        assert!(applies_to(&only, None));
     }
 }
