@@ -91,7 +91,7 @@
 - [x] T012 [US1] Add `step` to the `/active` rows, the `processing` filter, and
   `GET /active/{key}/timeline` in `putio-sync-api/src/routes/active.rs`, following
   contracts/api.md. Add API tests in `putio-sync-api/tests/active.rs`.
-- [ ] T013 [US1] Build the timeline panel in `putio-sync-api/ui/` (the Active page, which
+- [x] T013 [US1] Build the timeline panel in `putio-sync-api/ui/` (the Active page, which
   Recently finished rows link to):
   - stages run left to right, and stack on narrow screens;
   - skipped stages fold under "show skipped";

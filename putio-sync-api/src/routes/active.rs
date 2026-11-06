@@ -58,6 +58,9 @@ pub struct FinishedItem {
     pub waiting_seconds: Option<i64>,
     /// First file queued to done
     pub nas_seconds: Option<i64>,
+    /// The item finished its processing steps with warnings (feature 038); its timeline
+    /// has the detail
+    pub warnings: bool,
 }
 
 /// A stored time: SQLite's `YYYY-MM-DD HH:MM:SS`, or Put.io's `YYYY-MM-DDTHH:MM:SS`, UTC
@@ -86,6 +89,7 @@ fn finished_item(row: FinishedRow) -> FinishedItem {
         putio_seconds: between(&added, &putio_done),
         waiting_seconds: between(&putio_done, &queued),
         nas_seconds: between(&queued, &done),
+        warnings: false,
         done_at: done.map_or(row.done_at, |t| {
             t.and_utc().to_rfc3339_opts(SecondsFormat::Secs, true)
         }),
@@ -114,7 +118,7 @@ pub async fn get_active(State(state): State<AppState>) -> ApiResult<Json<ActiveR
             e => ApiError::InternalError(e.to_string()),
         })?;
     let nas_paused = state.download_manager.nas_paused().await;
-    let recently_finished = db
+    let mut recently_finished: Vec<FinishedItem> = db
         .finished()
         .list()
         .await
@@ -122,6 +126,11 @@ pub async fn get_active(State(state): State<AppState>) -> ApiResult<Json<ActiveR
         .into_iter()
         .map(finished_item)
         .collect();
+    if let Some(pipeline) = &state.pipeline {
+        for item in &mut recently_finished {
+            item.warnings = pipeline.has_warnings(&item.key).await;
+        }
+    }
     let pipeline = with_processing(&state, pipeline).await;
     Ok(Json(ActiveResponse {
         pipeline,

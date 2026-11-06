@@ -567,6 +567,14 @@ impl Pipeline {
         Some(timeline::timeline(&item, &steps, &attempts))
     }
 
+    /// The item finished with warnings (an optional step gave up)
+    pub async fn has_warnings(&self, key: &str) -> bool {
+        matches!(
+            self.inner.store.item(key).await,
+            Ok(Some(item)) if item.state == ItemState::DoneWithWarnings
+        )
+    }
+
     /// The step line of an item's Active row, by key
     pub async fn summaries(&self) -> HashMap<String, StepSummary> {
         let mut out = HashMap::new();
