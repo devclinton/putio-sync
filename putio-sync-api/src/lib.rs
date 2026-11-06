@@ -125,6 +125,9 @@ pub struct AppState {
     /// The processing pipeline (feature 038); `None` until the caller's service is attached
     /// with [`AppState::with_pipeline`]
     pub pipeline: Option<Arc<putio_sync_pipeline::Pipeline>>,
+    /// Where the OpenSubtitles Test button connects; `None` is the real service. Tests point
+    /// it at a mock server.
+    pub opensubtitles_url: Option<String>,
     /// The DLNA media server (feature 022); `None` unless the daemon's is attached with
     /// [`AppState::with_media_server`]
     pub media_server: Option<Arc<putio_sync_dlna::MediaServer>>,
@@ -190,6 +193,7 @@ impl AppState {
             listening: listen::Bound::default(),
             listen_flags: None,
             pipeline: None,
+            opensubtitles_url: None,
             media_server: None,
             cleanup,
             storage,
@@ -295,8 +299,16 @@ impl AppState {
         // Radarr and Sonarr wait for the steps that change files (R4)
         if let Some(arr) = &self.arr {
             arr.service.set_gate(pipeline.gate());
+            // Subtitle matching reads the ids from the *arr history (feature 050)
+            pipeline.set_media_lookup(Arc::new(putio_sync_arr::ArrMedia::new(arr.service.clone())));
         }
         self.pipeline = Some(pipeline);
+        self
+    }
+
+    /// Test the OpenSubtitles settings against `url` instead of the real service
+    pub fn with_opensubtitles_url(mut self, url: &str) -> AppState {
+        self.opensubtitles_url = Some(url.to_string());
         self
     }
 

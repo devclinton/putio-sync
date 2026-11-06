@@ -4,6 +4,7 @@
 //!   server, the API key masked
 //! - PUT  /settings/subtitles - replace them; they apply now. A masked key keeps the stored one
 //! - POST /settings/subtitles/preview - what a PUT would do, and the file names a video would get
+//! - POST /settings/subtitles/opensubtitles/test - log in and make one search (feature 050)
 //! - POST /settings/subtitles/test - send a short tone to the transcription server and look
 //!   for ffmpeg
 
@@ -43,6 +44,7 @@ pub(crate) fn settings_router() -> Router<AppState> {
         .route("/subtitles", get(get_subtitles).put(put_subtitles))
         .route("/subtitles/preview", post(preview_subtitles))
         .route("/subtitles/test", post(test_subtitles))
+        .route("/subtitles/opensubtitles/test", post(test_opensubtitles))
 }
 
 pub(crate) fn live_subtitles() -> (&'static [&'static str], &'static str) {
@@ -301,6 +303,90 @@ async fn test_subtitles(
         ok: server.ok,
         ffmpeg,
         server,
+    }))
+}
+
+#[derive(Serialize)]
+struct OpenSubtitlesAnswer {
+    ok: bool,
+    /// Whether an account login was part of the test
+    logged_in: bool,
+    /// Downloads left today, when the service said
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remaining: Option<u32>,
+    /// Downloads allowed a day, when the service said
+    #[serde(skip_serializing_if = "Option::is_none")]
+    allowed: Option<u32>,
+    message: String,
+}
+
+/// POST /settings/subtitles/opensubtitles/test
+///
+/// The body is optional: `{"opensubtitles": {...}}` tests unsaved settings, and a masked key
+/// or password stands for the stored one. Logs in when a username is set and makes one search.
+/// A completed test is always 200; no key is 400.
+async fn test_opensubtitles(
+    State(state): State<AppState>,
+    raw: Bytes,
+) -> Result<Json<OpenSubtitlesAnswer>, ApiError> {
+    #[derive(Deserialize, Default)]
+    #[serde(default)]
+    struct TestBody {
+        opensubtitles: Option<putio_sync_core::subtitles::OpenSubtitlesConfig>,
+    }
+    let parsed: TestBody = if raw.iter().all(u8::is_ascii_whitespace) {
+        TestBody::default()
+    } else {
+        serde_json::from_slice(&raw)
+            .map_err(|e| ApiError::BadRequest(format!("invalid body: {e}")))?
+    };
+    let stored = state.config.read().await.subtitles.opensubtitles.clone();
+    let mut cfg = parsed.opensubtitles.unwrap_or_else(|| stored.clone());
+    if cfg.api_key == MASK {
+        cfg.api_key = stored.api_key.clone();
+    }
+    if cfg.password == MASK {
+        cfg.password = stored.password.clone();
+    }
+    cfg.validate_login().map_err(super::settings::invalid)?;
+    let client = match &state.opensubtitles_url {
+        Some(url) => cfg.is_active().then(|| {
+            putio_sync_subtitles::opensubtitles::OpenSubtitles::new(
+                url,
+                cfg.effective_api_key().trim(),
+                cfg.username.trim(),
+                &cfg.effective_password(),
+                &cfg.effective_user_agent(),
+                std::time::Duration::ZERO,
+            )
+        }),
+        None => putio_sync_subtitles::opensubtitles::OpenSubtitles::from_config(&cfg),
+    };
+    let Some(client) = client else {
+        return Err(ApiError::BadRequest(
+            "set an OpenSubtitles API key first".to_string(),
+        ));
+    };
+    let logged_in = !cfg.username.trim().is_empty();
+    Ok(Json(match client.check().await {
+        Ok(quota) => OpenSubtitlesAnswer {
+            ok: true,
+            logged_in,
+            remaining: quota.remaining,
+            allowed: quota.allowed,
+            message: match (quota.remaining, quota.allowed) {
+                (Some(r), Some(a)) => format!("Connected: {r} of {a} downloads left today"),
+                (Some(r), None) => format!("Connected: {r} downloads left today"),
+                _ => "Connected".to_string(),
+            },
+        },
+        Err(e) => OpenSubtitlesAnswer {
+            ok: false,
+            logged_in,
+            remaining: None,
+            allowed: None,
+            message: e.to_string(),
+        },
     }))
 }
 

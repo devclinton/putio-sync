@@ -94,3 +94,67 @@ async fn the_opensubtitles_key_and_password_are_masked_and_kept() {
     let export = body_text(app.get("/settings/export").await).await;
     assert!(!export.contains(KEY) && !export.contains(PASS), "{export}");
 }
+
+fn os_body(key: &str) -> Value {
+    json!({"opensubtitles": {"api_key": key, "username": "", "password": "", "user_agent": ""}})
+}
+
+async fn with_mock(app: &mut common::TestApp, url: &str) {
+    app.state = app.state.clone().with_opensubtitles_url(url);
+    app.router = putio_sync_api::router(app.state.clone());
+}
+
+#[tokio::test]
+async fn the_test_button_reports_the_quota_for_unsaved_settings() {
+    let mut app = test_app().await;
+    let mut os = mockito::Server::new_async().await;
+    os.mock("GET", "/subtitles")
+        .match_query(mockito::Matcher::Any)
+        .match_header("api-key", "TYPED-KEY")
+        .with_status(200)
+        .with_header("x-ratelimit-remaining-day", "18")
+        .with_body(r#"{"data":[]}"#)
+        .create_async()
+        .await;
+    with_mock(&mut app, &os.url()).await;
+    let r = app
+        .post_json(
+            "/settings/subtitles/opensubtitles/test",
+            os_body("TYPED-KEY"),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
+    let v = body_json(r).await;
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(v["logged_in"], false);
+}
+
+#[tokio::test]
+async fn the_test_button_says_when_the_key_is_refused() {
+    let mut app = test_app().await;
+    let mut os = mockito::Server::new_async().await;
+    os.mock("GET", "/subtitles")
+        .match_query(mockito::Matcher::Any)
+        .with_status(401)
+        .with_body(r#"{"message":"You cannot consume this service"}"#)
+        .create_async()
+        .await;
+    with_mock(&mut app, &os.url()).await;
+    let r = app
+        .post_json("/settings/subtitles/opensubtitles/test", os_body("BAD-KEY"))
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
+    let v = body_json(r).await;
+    assert_eq!(v["ok"], false, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("rejected"), "{v}");
+    assert!(!v.to_string().contains("BAD-KEY"));
+}
+
+#[tokio::test]
+async fn the_test_button_without_a_key_is_a_bad_request() {
+    let app = test_app().await;
+    let r = app
+        .post_json("/settings/subtitles/opensubtitles/test", os_body(""))
+        .await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+}

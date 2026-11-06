@@ -188,6 +188,11 @@ impl OpenSubtitlesConfig {
         }
     }
 
+    /// The login fields are consistent (a password needs a username)
+    pub fn validate_login(&self) -> CoreResult<()> {
+        self.validate()
+    }
+
     fn validate(&self) -> CoreResult<()> {
         if !self.password.is_empty() && self.username.trim().is_empty() {
             return Err(err(

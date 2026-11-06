@@ -161,6 +161,7 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         get("/settings/subtitles"),
         (Method::PUT, "/settings/subtitles", Some(json!({}))),
         post("/settings/subtitles/preview"),
+        post("/settings/subtitles/opensubtitles/test"),
         get("/settings/translation"),
         (Method::PUT, "/settings/translation", Some(json!({}))),
         post("/settings/translation/preview"),
@@ -780,6 +781,80 @@ async fn no_transcription_key_in_responses_or_logs() {
     let logs = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
     for text in texts.iter().chain([&logs]) {
         assert!(!text.contains(KEY), "{KEY} in {text}");
+    }
+}
+
+/// The OpenSubtitles key, password and login token never come back from the settings routes,
+/// the export, the doctor, the metrics, the test route or a log line (feature 050)
+#[tokio::test]
+async fn no_opensubtitles_secrets_in_responses_or_logs() {
+    const KEY: &str = "OSKEY0123456789";
+    const PASSWORD: &str = "OSPASSWORD0123456";
+    const TOKEN: &str = "OSJWTTOKEN0123456";
+    let logs = captured_logs();
+    let mut app = common::test_app_with(|config| {
+        config.subtitles.languages = vec!["en".to_string()];
+        config.subtitles.opensubtitles.api_key = KEY.to_string();
+        config.subtitles.opensubtitles.username = "me".to_string();
+        config.subtitles.opensubtitles.password = PASSWORD.to_string();
+    })
+    .await;
+    let mut os = mockito::Server::new_async().await;
+    os.mock("POST", "/login")
+        .with_status(200)
+        .with_body(format!(r#"{{"token":"{TOKEN}","status":200}}"#))
+        .create_async()
+        .await;
+    os.mock("GET", "/subtitles")
+        .match_query(mockito::Matcher::Any)
+        .with_status(200)
+        .with_body(r#"{"data":[]}"#)
+        .create_async()
+        .await;
+    app.state = app.state.clone().with_opensubtitles_url(&os.url());
+    app.router = putio_sync_api::router(app.state.clone());
+
+    let mut texts = Vec::new();
+    for path in [
+        "/settings/subtitles",
+        "/settings/export",
+        "/settings/assistant",
+        "/doctor",
+        "/metrics",
+    ] {
+        texts.push(body_text(app.get(path).await).await);
+    }
+    let settings: Value = serde_json::from_str(&texts[0]).unwrap();
+    assert_eq!(settings["opensubtitles"]["api_key"], "********");
+    assert_eq!(settings["opensubtitles"]["password"], "********");
+    // The Test button with the masks the page was given uses the stored values
+    let tested = app
+        .post_json(
+            "/settings/subtitles/opensubtitles/test",
+            json!({"opensubtitles": settings["opensubtitles"]}),
+        )
+        .await;
+    assert_eq!(tested.status(), StatusCode::OK);
+    let tested = body_text(tested).await;
+    assert!(tested.contains("\"ok\":true"), "{tested}");
+    texts.push(tested);
+    let response = app
+        .req(
+            Method::PUT,
+            "/settings/subtitles",
+            Some(&app.token),
+            Some(settings),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    texts.push(body_text(response).await);
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let logs = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
+    for text in texts.iter().chain([&logs]) {
+        for secret in [KEY, PASSWORD, TOKEN] {
+            assert!(!text.contains(secret), "{secret} in {text}");
+        }
     }
 }
 

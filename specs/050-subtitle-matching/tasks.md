@@ -72,8 +72,8 @@
 - [X] T034 [US2] Implement the matching levels (fingerprint, IDs) in `putio-sync-subtitles/src/matching.rs`: build the search, convert results to scored candidates in `candidates.rs`, pick the best at or above the threshold per language, try the next on a bad download, record `SkipNote`s (depends on T027-T029, T031-T032)
 - [X] T035 [US2] Hook the OpenSubtitles pass into `fetch_for_video` after the Put.io pass for languages that download and are still missing, honouring `Skipped(quota)`, in `putio-sync-subtitles/src/engine.rs`; saved files use sources `os_hash` and `os_ids`; step message shows level and score
 - [X] T036 [US2] Pass the `SubtitleSearch` client and `Arc<dyn MediaLookup>` into the pipeline and the engine request (file ID, category, hash path) in `putio-sync-pipeline/src/subtitles.rs` and `putio-sync-pipeline/src/lib.rs`
-- [ ] T037 [US2] Build the client and the `ArrMedia` adapter and rebuild them on settings change in `putio-sync-daemon/src/daemon.rs`
-- [ ] T038 [US2] Add the `opensubtitles` fields and `POST /settings/subtitles/opensubtitles/test` (unsaved input allowed, masked values keep stored ones) in `putio-sync-api/src/routes/system/subtitles.rs`; extend the secrets sweep test to the new fields and the JWT
+- [X] T037 [US2] Build the client and the `ArrMedia` adapter and rebuild them on settings change in `putio-sync-daemon/src/daemon.rs`
+- [X] T038 [US2] Add the `opensubtitles` fields and `POST /settings/subtitles/opensubtitles/test` (unsaved input allowed, masked values keep stored ones) in `putio-sync-api/src/routes/system/subtitles.rs`; extend the secrets sweep test to the new fields and the JWT
 - [ ] T039 [P] [US2] Add the OpenSubtitles section (key, login, threshold, Test, quota text) to `putio-sync-api/ui/settings/subtitles.js` and logic tests in `putio-sync-api/tests/ui/subtitles_opensubtitles.test.mjs`
 - [ ] T040 [P] [US2] Document `[subtitles.opensubtitles]` in `config.example.toml`
 - [ ] T041 [US2] Verify US2 acceptance 1-8 against the mocks; run `cargo test -p putio-sync-subtitles -p putio-sync-arr -p putio-sync-pipeline -p putio-sync-api`
