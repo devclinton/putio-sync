@@ -142,7 +142,12 @@ by activity" section.
 
 **Independent test**: quickstart §5 and home-network `make check`.
 
-- [ ] T017 [US2] Write `packaging/grafana/putio-sync-resources.json`:
+- [X] T017 [US2] *(Annotations use the same raw-or-thinned pattern, so they work before US3.
+  Version marks key on `version` and `commit`, since main builds all report `0.0.1`, and fire
+  only for a pair not seen in the day before. "Use by activity" has fixed rows for idle,
+  syncing and downloading 1–8; Grafana can't loop to the observed max, and absent states show
+  no row. The `host` variable reads `up{app="putio-sync"}` so the importable copy needs no
+  `job` name.)* Write `packaging/grafana/putio-sync-resources.json`:
   - uid `putio-sync-resources`, the same `host` variable as the `putio-sync` dashboard, and a
     link back to it;
   - rows and panels exactly as the table in contracts/long-term.md#dashboard. Over-time panels
@@ -151,20 +156,22 @@ by activity" section.
   - restart and version annotations;
   - "use by activity" table and the per-MB/s panel, read from the thinned series only;
   - `maxDataPoints` and `$__rate_interval` set, so a 1-year range stays quick (FR-008).
-- [ ] T018 [US2] Write `scripts/check-grafana-dashboard.sh`:
+- [X] T018 [US2] Write `scripts/check-grafana-dashboard.sh`:
   - it checks the JSON is valid (`jq`);
   - it checks every panel query names `app="putio-sync"`;
   - if the path in `HOME_NETWORK_DIR` exists, it compares the file with the home-network copy,
     ignoring Jinja raw markers;
   - it is wired into `make ci` (or `scripts/ci-local.sh`) with the compare skipped when that
     dir is missing.
-- [ ] T019 [US2] (HN) Add the dashboard copy and its provisioning:
+- [X] T019 [US2] (HN) *(Branch `feat/putio-sync-resources-dashboard`. home-network's main
+  had none of the putio-sync scrape job, alerts, dashboard or app page; they were uncommitted
+  in the main checkout. The branch's first commit takes those parts unchanged.)* Add the dashboard copy and its provisioning:
   - `roles/monitoring_grafana/templates/putio-sync-resources-dashboard.json.j2` holds the
     copy, wrapped so Jinja leaves `{{` alone;
   - `roles/monitoring_grafana/tasks/main.yml` provisions it beside the existing putio-sync
     dashboard;
   - the existing `putio-sync` dashboard gets a link to the new one.
-- [ ] T020 [US2] (HN) Update `apps/putio-sync.md` with the bullets in
+- [X] T020 [US2] (HN) Update `apps/putio-sync.md` with the bullets in
   contracts/long-term.md#app-page (FR-011): retention, disk estimate, checks, recovery and
   archive pointers.
 

@@ -1,0 +1,1154 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    }
+  ],
+  "uid": "putio-sync-resources",
+  "title": "putio-sync resources",
+  "description": "CPU, memory, threads, open files and disk use of putio-sync, next to what it was doing. Source: packaging/grafana/putio-sync-resources.json in putio-sync.",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "tags": [
+    "putio-sync",
+    "nas"
+  ],
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "title": "putio-sync",
+      "type": "link",
+      "url": "/d/putio-sync",
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false,
+      "tooltip": "Syncs, downloads and errors"
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "host",
+        "label": "Host",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "query": "label_values(up{app=\"putio-sync\"}, host)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Restarts",
+        "enable": true,
+        "iconColor": "orange",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "expr": "changes(putio_sync_start_time_seconds{app=\"putio-sync\",host=~\"$host\"}[10m]) > 0 or on(instance) changes(putio_sync:start_time_seconds:max5m{app=\"putio-sync\",host=~\"$host\"}[10m]) > 0",
+        "step": "5m",
+        "titleFormat": "Restart",
+        "textFormat": "{{host}}"
+      },
+      {
+        "name": "Version changes",
+        "enable": true,
+        "iconColor": "purple",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "expr": "max by (instance, host, version, commit) (putio_sync_build_info{app=\"putio-sync\",host=~\"$host\"}) unless max by (instance, host, version, commit) (max_over_time(putio_sync_build_info{app=\"putio-sync\",host=~\"$host\"}[1d] offset 10m)) or on(instance) max by (instance, host, version, commit) (putio_sync:build_info:max5m{app=\"putio-sync\",host=~\"$host\"}) unless max by (instance, host, version, commit) (max_over_time(putio_sync:build_info:max5m{app=\"putio-sync\",host=~\"$host\"}[1d] offset 10m))",
+        "step": "5m",
+        "titleFormat": "Version {{version}} ({{commit}})",
+        "textFormat": "{{host}}"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Now",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Memory in use",
+      "description": "Resident memory (RSS) right now.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "putio_sync_process_resident_memory_bytes{app=\"putio-sync\",host=~\"$host\"}",
+          "legendFormat": "{{host}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "CPU",
+      "description": "CPU time per second; 1 = one core busy.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(putio_sync_process_cpu_seconds_total{app=\"putio-sync\",host=~\"$host\"}[$__rate_interval])",
+          "legendFormat": "{{host}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Threads",
+      "description": "OS threads in the process.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "putio_sync_process_threads{app=\"putio-sync\",host=~\"$host\"}",
+          "legendFormat": "{{host}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Open files",
+      "description": "Open file descriptors and the soft limit. The limit is absent when unlimited.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "putio_sync_process_open_fds{app=\"putio-sync\",host=~\"$host\"}",
+          "legendFormat": "open ({{host}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "putio_sync_process_max_fds{app=\"putio-sync\",host=~\"$host\"}",
+          "legendFormat": "limit ({{host}})"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Open files of limit",
+      "description": "Open files as a share of the soft limit. Empty when the limit is unlimited.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.6
+              },
+              {
+                "color": "red",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "putio_sync_process_open_fds{app=\"putio-sync\",host=~\"$host\"} / on(instance) putio_sync_process_max_fds{app=\"putio-sync\",host=~\"$host\"}",
+          "legendFormat": "{{host}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Uptime",
+      "description": "Time since the process started.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "time() - putio_sync_start_time_seconds{app=\"putio-sync\",host=~\"$host\"}",
+          "legendFormat": "{{host}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Over time",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU (avg and peak)",
+      "description": "CPU time per second; 1 = one core busy. Raw data inside the main Prometheus retention (30 days); older points come from the 5-minute thinned copy.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "maxDataPoints": 500,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(putio_sync_process_cpu_seconds_total{app=\"putio-sync\",host=~\"$host\"}[$__rate_interval]) or on(instance) last_over_time(putio_sync:process_cpu_usage:avg5m{app=\"putio-sync\",host=~\"$host\"}[10m])",
+          "legendFormat": "avg ({{host}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max_over_time(rate(putio_sync_process_cpu_seconds_total{app=\"putio-sync\",host=~\"$host\"}[1m])[$__rate_interval:15s]) or on(instance) last_over_time(putio_sync:process_cpu_usage:max5m{app=\"putio-sync\",host=~\"$host\"}[10m])",
+          "legendFormat": "peak ({{host}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory",
+      "description": "In use is resident memory (RSS); reserved is virtual size. Raw data inside the main Prometheus retention (30 days); older points come from the 5-minute thinned copy.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "maxDataPoints": 500,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "putio_sync_process_resident_memory_bytes{app=\"putio-sync\",host=~\"$host\"} or on(instance) last_over_time(putio_sync:process_resident_memory_bytes:avg5m{app=\"putio-sync\",host=~\"$host\"}[10m])",
+          "legendFormat": "in use ({{host}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max_over_time(putio_sync_process_resident_memory_bytes{app=\"putio-sync\",host=~\"$host\"}[$__rate_interval]) or on(instance) last_over_time(putio_sync:process_resident_memory_bytes:max5m{app=\"putio-sync\",host=~\"$host\"}[10m])",
+          "legendFormat": "in use, peak ({{host}})"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "putio_sync_process_virtual_memory_bytes{app=\"putio-sync\",host=~\"$host\"} or on(instance) last_over_time(putio_sync:process_virtual_memory_bytes:max5m{app=\"putio-sync\",host=~\"$host\"}[10m])",
+          "legendFormat": "reserved ({{host}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Threads",
+      "description": "OS threads. Raw data inside the main Prometheus retention (30 days); older points come from the 5-minute thinned copy.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 8,
+        "h": 8
+      },
+      "maxDataPoints": 500,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "putio_sync_process_threads{app=\"putio-sync\",host=~\"$host\"} or on(instance) last_over_time(putio_sync:process_threads:avg5m{app=\"putio-sync\",host=~\"$host\"}[10m])",
+          "legendFormat": "avg ({{host}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max_over_time(putio_sync_process_threads{app=\"putio-sync\",host=~\"$host\"}[$__rate_interval]) or on(instance) last_over_time(putio_sync:process_threads:max5m{app=\"putio-sync\",host=~\"$host\"}[10m])",
+          "legendFormat": "peak ({{host}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Open files vs limit",
+      "description": "Open file descriptors against the soft limit. Raw data inside the main Prometheus retention (30 days); older points come from the 5-minute thinned copy.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 14,
+        "w": 8,
+        "h": 8
+      },
+      "maxDataPoints": 500,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "putio_sync_process_open_fds{app=\"putio-sync\",host=~\"$host\"} or on(instance) last_over_time(putio_sync:process_open_fds:avg5m{app=\"putio-sync\",host=~\"$host\"}[10m])",
+          "legendFormat": "open ({{host}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max_over_time(putio_sync_process_open_fds{app=\"putio-sync\",host=~\"$host\"}[$__rate_interval]) or on(instance) last_over_time(putio_sync:process_open_fds:max5m{app=\"putio-sync\",host=~\"$host\"}[10m])",
+          "legendFormat": "open, peak ({{host}})"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "putio_sync_process_max_fds{app=\"putio-sync\",host=~\"$host\"} or on(instance) last_over_time(putio_sync:process_max_fds:last5m{app=\"putio-sync\",host=~\"$host\"}[10m])",
+          "legendFormat": "limit ({{host}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Disk read and write",
+      "description": "Bytes per second the process read from and wrote to storage. Raw data inside the main Prometheus retention (30 days); older points come from the 5-minute thinned copy.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 14,
+        "w": 8,
+        "h": 8
+      },
+      "maxDataPoints": 500,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(putio_sync_process_disk_read_bytes_total{app=\"putio-sync\",host=~\"$host\"}[$__rate_interval]) or on(instance) last_over_time(putio_sync:process_disk_read_bytes:increase5m{app=\"putio-sync\",host=~\"$host\"}[10m]) / 300",
+          "legendFormat": "read ({{host}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(putio_sync_process_disk_written_bytes_total{app=\"putio-sync\",host=~\"$host\"}[$__rate_interval]) or on(instance) last_over_time(putio_sync:process_disk_written_bytes:increase5m{app=\"putio-sync\",host=~\"$host\"}[10m]) / 300",
+          "legendFormat": "write ({{host}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Activity",
+      "description": "What putio-sync was doing, on the same time axis as the panels above. Syncing is 1 while a sync run is in progress (a share of the time on thinned points). Raw data inside the main Prometheus retention (30 days); older points come from the 5-minute thinned copy.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 8
+      },
+      "maxDataPoints": 500,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "Bps"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "putio_sync_downloads_active{app=\"putio-sync\",host=~\"$host\"} or on(instance) last_over_time(putio_sync:downloads_active:avg5m{app=\"putio-sync\",host=~\"$host\"}[10m])",
+          "legendFormat": "downloads running ({{host}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "putio_sync_sync_in_progress{app=\"putio-sync\",host=~\"$host\"} or on(instance) last_over_time(putio_sync:sync_in_progress:avg5m{app=\"putio-sync\",host=~\"$host\"}[10m])",
+          "legendFormat": "syncing ({{host}})"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(putio_sync_downloaded_bytes_total{app=\"putio-sync\",host=~\"$host\"}[$__rate_interval]) or on(instance) last_over_time(putio_sync:downloaded_bytes:increase5m{app=\"putio-sync\",host=~\"$host\"}[10m]) / 300",
+          "legendFormat": "download speed ({{host}})"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Use by activity",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Use by activity",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Time in each state over the dashboard range, with CPU and memory while in it. Always read from the 5-minute thinned copy, so it means the same thing at every range. Downloading N means N downloads at once on average over the 5 minutes; rows show only states that occurred.",
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 16,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #A"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #D"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #E"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Time",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_replace(count_over_time((putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 0)[$__range:5m]) * 300, \"state\", \"idle\", \"\", \"\") or label_replace(count_over_time((putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == -1)[$__range:5m]) * 300, \"state\", \"syncing\", \"\", \"\") or label_replace(count_over_time((putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 1)[$__range:5m]) * 300, \"state\", \"downloading 1\", \"\", \"\") or label_replace(count_over_time((putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 2)[$__range:5m]) * 300, \"state\", \"downloading 2\", \"\", \"\") or label_replace(count_over_time((putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 3)[$__range:5m]) * 300, \"state\", \"downloading 3\", \"\", \"\") or label_replace(count_over_time((putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 4)[$__range:5m]) * 300, \"state\", \"downloading 4\", \"\", \"\") or label_replace(count_over_time((putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 5)[$__range:5m]) * 300, \"state\", \"downloading 5\", \"\", \"\") or label_replace(count_over_time((putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 6)[$__range:5m]) * 300, \"state\", \"downloading 6\", \"\", \"\") or label_replace(count_over_time((putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 7)[$__range:5m]) * 300, \"state\", \"downloading 7\", \"\", \"\") or label_replace(count_over_time((putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 8)[$__range:5m]) * 300, \"state\", \"downloading 8\", \"\", \"\")",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_replace(avg_over_time((putio_sync:process_cpu_usage:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 0))[$__range:5m]), \"state\", \"idle\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_cpu_usage:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == -1))[$__range:5m]), \"state\", \"syncing\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_cpu_usage:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 1))[$__range:5m]), \"state\", \"downloading 1\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_cpu_usage:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 2))[$__range:5m]), \"state\", \"downloading 2\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_cpu_usage:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 3))[$__range:5m]), \"state\", \"downloading 3\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_cpu_usage:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 4))[$__range:5m]), \"state\", \"downloading 4\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_cpu_usage:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 5))[$__range:5m]), \"state\", \"downloading 5\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_cpu_usage:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 6))[$__range:5m]), \"state\", \"downloading 6\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_cpu_usage:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 7))[$__range:5m]), \"state\", \"downloading 7\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_cpu_usage:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 8))[$__range:5m]), \"state\", \"downloading 8\", \"\", \"\")",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_replace(max_over_time((putio_sync:process_cpu_usage:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 0))[$__range:5m]), \"state\", \"idle\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_cpu_usage:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == -1))[$__range:5m]), \"state\", \"syncing\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_cpu_usage:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 1))[$__range:5m]), \"state\", \"downloading 1\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_cpu_usage:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 2))[$__range:5m]), \"state\", \"downloading 2\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_cpu_usage:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 3))[$__range:5m]), \"state\", \"downloading 3\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_cpu_usage:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 4))[$__range:5m]), \"state\", \"downloading 4\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_cpu_usage:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 5))[$__range:5m]), \"state\", \"downloading 5\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_cpu_usage:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 6))[$__range:5m]), \"state\", \"downloading 6\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_cpu_usage:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 7))[$__range:5m]), \"state\", \"downloading 7\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_cpu_usage:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 8))[$__range:5m]), \"state\", \"downloading 8\", \"\", \"\")",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_replace(avg_over_time((putio_sync:process_resident_memory_bytes:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 0))[$__range:5m]), \"state\", \"idle\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_resident_memory_bytes:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == -1))[$__range:5m]), \"state\", \"syncing\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_resident_memory_bytes:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 1))[$__range:5m]), \"state\", \"downloading 1\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_resident_memory_bytes:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 2))[$__range:5m]), \"state\", \"downloading 2\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_resident_memory_bytes:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 3))[$__range:5m]), \"state\", \"downloading 3\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_resident_memory_bytes:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 4))[$__range:5m]), \"state\", \"downloading 4\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_resident_memory_bytes:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 5))[$__range:5m]), \"state\", \"downloading 5\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_resident_memory_bytes:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 6))[$__range:5m]), \"state\", \"downloading 6\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_resident_memory_bytes:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 7))[$__range:5m]), \"state\", \"downloading 7\", \"\", \"\") or label_replace(avg_over_time((putio_sync:process_resident_memory_bytes:avg5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 8))[$__range:5m]), \"state\", \"downloading 8\", \"\", \"\")",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_replace(max_over_time((putio_sync:process_resident_memory_bytes:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 0))[$__range:5m]), \"state\", \"idle\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_resident_memory_bytes:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == -1))[$__range:5m]), \"state\", \"syncing\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_resident_memory_bytes:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 1))[$__range:5m]), \"state\", \"downloading 1\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_resident_memory_bytes:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 2))[$__range:5m]), \"state\", \"downloading 2\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_resident_memory_bytes:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 3))[$__range:5m]), \"state\", \"downloading 3\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_resident_memory_bytes:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 4))[$__range:5m]), \"state\", \"downloading 4\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_resident_memory_bytes:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 5))[$__range:5m]), \"state\", \"downloading 5\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_resident_memory_bytes:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 6))[$__range:5m]), \"state\", \"downloading 6\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_resident_memory_bytes:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 7))[$__range:5m]), \"state\", \"downloading 7\", \"\", \"\") or label_replace(max_over_time((putio_sync:process_resident_memory_bytes:max5m{app=\"putio-sync\",host=~\"$host\"} and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} == 8))[$__range:5m]), \"state\", \"downloading 8\", \"\", \"\")",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "app": true,
+              "instance": true,
+              "job": true
+            },
+            "indexByName": {
+              "host": 0,
+              "state": 1,
+              "Value #A": 2,
+              "Value #B": 3,
+              "Value #C": 4,
+              "Value #D": 5,
+              "Value #E": 6
+            },
+            "renameByName": {
+              "host": "Host",
+              "state": "State",
+              "Value #A": "Time",
+              "Value #B": "CPU avg",
+              "Value #C": "CPU peak",
+              "Value #D": "Memory avg",
+              "Value #E": "Memory peak"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Per MB/s of download speed",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Average CPU and memory per MB/s of download speed, over 5-minute points while downloading. Points with no bytes downloaded are skipped. Read from the thinned copy.",
+      "gridPos": {
+        "x": 16,
+        "y": 31,
+        "w": 8,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "decimals": 3
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "avg_over_time(((putio_sync:process_cpu_usage:avg5m{app=\"putio-sync\",host=~\"$host\"} / ((putio_sync:downloaded_bytes:increase5m{app=\"putio-sync\",host=~\"$host\"} / 300 / 1e6) > 0)) and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} >= 1))[$__range:5m])",
+          "legendFormat": "CPU per MB/s ({{host}})",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "avg_over_time(((putio_sync:process_resident_memory_bytes:avg5m{app=\"putio-sync\",host=~\"$host\"} / ((putio_sync:downloaded_bytes:increase5m{app=\"putio-sync\",host=~\"$host\"} / 300 / 1e6) > 0)) and on(instance) (putio_sync:activity_state:5m{app=\"putio-sync\",host=~\"$host\"} >= 1))[$__range:5m])",
+          "legendFormat": "memory per MB/s ({{host}})",
+          "instant": true
+        }
+      ]
+    }
+  ]
+}

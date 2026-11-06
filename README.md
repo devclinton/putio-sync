@@ -876,6 +876,26 @@ Label values are fixed sets, listed in
 | CPU in use (cores) | `rate(putio_sync_process_cpu_seconds_total[5m])` |
 | Memory in use | `putio_sync_process_resident_memory_bytes` |
 
+### Grafana dashboard
+
+[`packaging/grafana/putio-sync-resources.json`](packaging/grafana/putio-sync-resources.json)
+is a `putio-sync resources` dashboard: CPU, memory in use and reserved, threads, open
+files against the limit, disk read and write, and uptime, with restarts and new builds
+marked, next to downloads and syncs. Import it in Grafana (Dashboards → New → Import)
+and pick your Prometheus data source. Every query filters on `app="putio-sync"` and a
+`host` variable, so give the scrape job those labels:
+
+```yaml
+- job_name: putio_sync
+  static_configs:
+    - targets: ["<nas>:9742"]
+      labels: {app: "putio-sync", host: "<nas>"}
+```
+
+The "Use by activity" row and the per-MB/s panel read 5-minute recording rules
+(`putio_sync:*:*5m`, feature 041) and stay empty without them; the other panels need
+only the raw scrape.
+
 ## Web UI
 
 `daemon` serves a browser UI and the JSON API on one port, by default

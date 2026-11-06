@@ -273,6 +273,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - Metrics for putio-sync's own CPU, memory, threads, open files and disk I/O
   (`putio_sync_process_*`, Linux and Docker only), and
   `putio_sync_sync_in_progress`, which is 1 while a sync runs (feature 041).
+- A Grafana dashboard for those figures,
+  `packaging/grafana/putio-sync-resources.json` (`putio-sync resources`): CPU,
+  memory, threads, open files against the limit, disk read and write and uptime,
+  with restarts and new builds marked, next to downloads and syncs. Import it and
+  pick your Prometheus data source; see README → Grafana dashboard (feature 041).
 - A choice for files already on disk, `[download] on_existing`: resume
   (the default) continues partial files and skips complete ones, checked
   against Put.io's CRC32; overwrite replaces the old file once the new copy
