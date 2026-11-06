@@ -102,11 +102,11 @@
 
 ## Phase 6: Polish and cross-cutting
 
-- [ ] T049 [P] Update `README.md` (modes, OpenSubtitles key and quota, `.whisper.srt`, thresholds) and `INSTALLATION.md` if it lists subtitle settings
-- [ ] T050 [P] Add the `CHANGELOG.md` entry for 050 (required per change)
-- [ ] T051 [P] Update `ROADMAP.md` entry 025: move built parts out of "Not built yet" (the maintainer's text; keep wording, edit only the status note)
-- [ ] T052 Check the UI bundle size test (`assets_total_under_480kb`); raise the cap only with a recorded reason in `putio-sync-api/tests/` and Deviations below
-- [ ] T053 Add the new metrics to the dashboard/docs list where 025 listed its metrics (search `subtitles_saved_total` in docs and `Resources/`)
+- [X] T049 [P] Update `README.md` (modes, OpenSubtitles key and quota, `.whisper.srt`, thresholds) and `INSTALLATION.md` if it lists subtitle settings
+- [X] T050 [P] Add the `CHANGELOG.md` entry for 050 (required per change)
+- [X] T051 [P] Update `ROADMAP.md` entry 025: move built parts out of "Not built yet" (the maintainer's text; keep wording, edit only the status note)
+- [X] T052 Check the UI bundle size test (`assets_total_under_480kb`); raise the cap only with a recorded reason in `putio-sync-api/tests/` and Deviations below
+- [X] T053 Add the new metrics to the dashboard/docs list where 025 listed its metrics (search `subtitles_saved_total` in docs and `Resources/`)
 - [ ] T054 Run `make ci` locally (fmt, clippy -D warnings, tests, release build)
 - [ ] T055 Live check by the maintainer (not CI): a real OpenSubtitles key, one Radarr and one Sonarr history call; correct `contracts/opensubtitles-api.md`, `contracts/media-lookup.md` and the fixtures where they differ, and record the real quota figures
 - [ ] T056 Run `/speckit-analyze` and record Deviations here

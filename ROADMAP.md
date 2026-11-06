@@ -51,11 +51,12 @@ kept apart or removed.
 
 Built so far (spec `specs/025-subtitles`): Put.io's own subtitle list for the file
 (OpenSubtitles, folder and embedded), then Whisper when no wanted language is
-found, which is the **Download, then Whisper** mode; per-category off; Fetch
-subtitles from Local files. Not built yet: the OpenSubtitles API lookup by
-IMDb/TMDb ID, the filename parse, the confidence threshold, and the other modes
-(**Download only** apart from transcription off, **Whisper only**, **Both** with
-`.whisper.srt`).
+found; per-category off; Fetch subtitles from Local files. Built in 050
+(`specs/050-subtitle-matching`): the four modes (**Download only**, **Download,
+then Whisper**, **Whisper only**, **Both** with `.whisper.srt`), the OpenSubtitles
+API lookup by fingerprint, by IMDb/TMDb ID and by the parsed file name, and the
+confidence threshold. Not checked against the live services yet: the 050 tasks
+list a maintainer check with a real key.
 
 Get subtitles for downloaded video in the languages the user picks, from two
 kinds of source: downloads and Whisper transcription.

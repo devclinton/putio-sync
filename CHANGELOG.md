@@ -14,6 +14,16 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Subtitle source modes and OpenSubtitles matching. Choose per category or language whether
+  subtitles are downloaded only, downloaded then transcribed if missing (the default,
+  unchanged), transcribed only, or both (the transcription is saved as `Movie.en.whisper.srt`
+  beside the downloaded `Movie.en.srt`). With your own OpenSubtitles API key, what Put.io
+  lacks is looked up by the file's fingerprint, then by the IMDb or TMDb id Radarr or Sonarr
+  recorded, then by the title in the file name. Each match is scored and one under the
+  threshold (`min_confidence`, default 65) is not saved; the step shows the score or how close
+  the best match came. Set it in **Settings › Downloads › Subtitles**, which also has a
+  **Test OpenSubtitles** button. New metrics: `putio_sync_subtitles_skipped_total` and
+  `putio_sync_opensubtitles_requests_total`.
 - Keep folders out of the empty-folder cleanup. **Keep folder** on a folder's rule card on
   the Put.io page (or **Keep out of cleanup** in the rule editor, `keep = true` in a
   folder rule) keeps it and everything below it; **Keep patterns** in Settings › Put.io ›

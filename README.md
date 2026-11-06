@@ -819,7 +819,9 @@ H = histogram.
 | `putio_sync_transfers_stalled` | gauge | — | Put.io transfers with no new bytes for `[transfers] stall_threshold_hours` (`daemon` only) |
 | `putio_sync_pipeline_items` | gauge | `stage` (putio, nas), `state` | Items on the Active page by stage and state (`daemon` only) |
 | `putio_sync_pipeline_actions_total` | counter | `action` (pause, hold, resume) | Pause and resume actions on Active items |
-| `putio_sync_subtitles_saved_total` | counter | `source` (putio_embedded, putio_folder, opensubtitles, transcribed), `language` | Subtitles saved next to videos |
+| `putio_sync_subtitles_saved_total` | counter | `source` (putio_embedded, putio_folder, opensubtitles, os_hash, os_ids, os_name, transcribed), `language` | Subtitles saved next to videos |
+| `putio_sync_subtitles_skipped_total` | counter | `reason` (below_threshold, quota, no_result, no_ids, no_name, not_configured) | Wanted subtitles that OpenSubtitles did not fill |
+| `putio_sync_opensubtitles_requests_total` | counter | `endpoint` (search, download, login), `result` (ok, rate_limited, quota, error) | Calls to the OpenSubtitles API |
 | `putio_sync_subtitles_transcribed_seconds_total` | counter | — | Seconds of audio sent to the transcription server |
 | `putio_sync_nas_downloads_paused` | gauge | — | 1 while the Pause NAS downloads switch is on, else 0 |
 | `putio_sync_doctor_check_status` | gauge | `check` | Doctor check result: 0 ok, 1 warning, 2 problem, -1 skipped (`daemon` only) |
@@ -1690,7 +1692,10 @@ It looks in this order and stops at the first source that has the language:
 
 1. what Put.io has: subtitle files in the same folder, tracks embedded in the video, and
    OpenSubtitles matches that Put.io finds for the file;
-2. your own speech to text server, when transcription is on.
+2. OpenSubtitles with your own free API key, when one is set: by the file's fingerprint,
+   then by the IMDb or TMDb id that Radarr or Sonarr recorded for the download, then by the
+   title read from the file name;
+3. your own speech to text server, when transcription is on.
 
 ```toml
 [subtitles]
@@ -1703,6 +1708,17 @@ url = "http://nas:8000"          # an OpenAI-style server: speaches, faster-whis
 model = "Systran/faster-whisper-small"
 api_key = ""                     # or PUTIO_SYNC_TRANSCRIPTION_API_KEY; never logged
 chunk_secs = 600                 # audio goes in parts of this length
+
+mode = "download_then_whisper"   # download_only, download_then_whisper, whisper_only, both
+min_confidence = 65              # 0 to 100: a match scoring less is not saved
+
+[subtitles.category_modes]       # a category's mode beats the global one
+radarr = "download_only"
+
+[subtitles.opensubtitles]
+api_key = ""                     # or PUTIO_SYNC_OPENSUBTITLES_API_KEY; never logged
+username = ""                    # optional: a login raises the daily download limit
+password = ""                    # or PUTIO_SYNC_OPENSUBTITLES_PASSWORD
 ```
 
 - **Where**: Settings › Downloads › Subtitles, with a **Test server** button that sends a
@@ -1714,6 +1730,21 @@ chunk_secs = 600                 # audio goes in parts of this length
   putio-sync does not run Whisper itself. It cuts the audio into parts, sends them one at a
   time (one video at a time across the daemon) and joins the cues. Nothing is sent while it
   is off. A silent video gets a "no speech found" note, not an empty file.
+- **Modes**: *Download, then transcribe if missing* (the default) tries the download sources and
+  transcribes only what is still missing. *Download only* never transcribes. *Transcribe only*
+  never asks Put.io or OpenSubtitles and saves the transcription as `Movie.en.srt`. *Both*
+  downloads and always transcribes, saving the transcription as `Movie.en.whisper.srt` so the
+  downloaded `Movie.en.srt` stays the one players use. Set a mode globally, per category
+  (`category_modes`) or per language (`language_modes`); the language beats the category.
+- **OpenSubtitles**: create a free account and API consumer at opensubtitles.com, paste the
+  key in Settings › Downloads › Subtitles and press **Test OpenSubtitles**. Each match is
+  scored from 0 to 100: a fingerprint match is 100; an id match is 60 plus points for the
+  same release group, source, resolution and codec; a name match is capped at 90 and needs
+  a similar title. A match under `min_confidence` is not saved, and the step says how close
+  the best one came. Machine translated, AI and hearing impaired results are never used for
+  the main file. The free key allows a small number of downloads a day (a login raises it);
+  when it runs out the step says so and the rest wait until it resets. putio-sync sends the
+  file's fingerprint, ids and name to OpenSubtitles, never the video.
 - **Radarr and Sonarr**: turn on **Import Extra Files** with `srt` so the subtitles are
   imported with the video. Settings › Integrations › Radarr and Sonarr offers it.
 - **Put.io deletes wait.** With deleting after download on, the file stays on Put.io until
@@ -1724,8 +1755,9 @@ chunk_secs = 600                 # audio goes in parts of this length
 - **By hand**: on Local files a video row has **Fetch subtitles**. It says whether Put.io can
   still help and asks before sending audio for transcription.
 
-Metrics: `putio_sync_subtitles_saved_total` (by `source` and `language`) and
-`putio_sync_subtitles_transcribed_seconds_total`.
+Metrics: `putio_sync_subtitles_saved_total` (by `source` and `language`),
+`putio_sync_subtitles_skipped_total` (by `reason`), `putio_sync_opensubtitles_requests_total`
+and `putio_sync_subtitles_transcribed_seconds_total`.
 
 ## Subtitle translation
 
