@@ -183,7 +183,7 @@
   in `putio-sync-api/ui/`.
 - [x] T029 [P] Update `README.md` (Pipeline section), `EVENTS.md` (pipeline hooks: input, exit
   codes, the idempotency note) and `CHANGELOG.md` (Unreleased › Added).
-- [ ] T030 Run `make ci`, and run quickstart §2–§5 locally.
+- [x] T030 Run `make ci`, and run quickstart §2–§5 locally.
 
 ## Dependencies
 
@@ -241,3 +241,9 @@ Where the build differs from the spec, plan or contracts, and why.
   buttons instead of drag and drop.
 - Staging is not reflected for `file:` items whose name has no matching path component other
   than the file itself: the staging folder is then the category's `.putio-sync-staging`.
+- An optional step with `optional_retries = [1, 1, 1]` makes 4 attempts: the first, then
+  three retries. The quickstart's "after 3 failures" counts the retries.
+- The gate is refreshed when an item's steps start, not only on the 10 s tick, so an item
+  that finishes downloading is held back from the first moment it has a step due.
+- `mock_ui` (an example) gained `MOCK_PIPELINE`, `MOCK_HOOK_SECS`, `MOCK_HOOK_EXIT`,
+  `MOCK_HOOK_REQUIRED` and `MOCK_DIR` to run quickstart 2, 3 and 5 offline.

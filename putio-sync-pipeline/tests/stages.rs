@@ -330,3 +330,33 @@ async fn a_hold_pauses_the_item_between_steps_and_release_goes_on() {
         ItemState::Done
     );
 }
+
+#[tokio::test]
+async fn the_gate_holds_a_downloaded_item_from_the_moment_its_steps_start() {
+    let env = env_with(|dir| {
+        vec![hook(
+            "slow",
+            HookStage::PostProcessing,
+            script(dir, "slow", "sleep 1"),
+        )]
+    })
+    .await;
+    downloaded_item(&env, "transfer:4", env.dir.path()).await;
+    let gate = env.pipeline.gate();
+    assert_eq!(gate.pending("transfer:4"), None, "nothing refreshed it yet");
+    let running = tokio::spawn({
+        let pipeline = env.pipeline.clone();
+        async move { pipeline.run_due().await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert_eq!(
+        gate.pending("transfer:4").as_deref(),
+        Some("post_processing: slow")
+    );
+    running.await.unwrap();
+    assert_eq!(
+        gate.pending("transfer:4"),
+        None,
+        "clear once the step is done"
+    );
+}

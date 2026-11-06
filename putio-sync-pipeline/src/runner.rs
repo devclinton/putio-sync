@@ -62,6 +62,8 @@ impl Pipeline {
     /// Run what can run for `key`, stage by stage, until it waits, stops or finishes
     async fn advance(&self, key: &str) {
         let store = &self.inner.store;
+        // The gate must know the item has steps due before the first one starts
+        self.refresh_gate().await;
         loop {
             let Ok(Some(item)) = store.item(key).await else {
                 return;
