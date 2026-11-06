@@ -186,6 +186,9 @@ pub struct Config {
     /// Processing pipeline: what runs after a download (feature 038)
     #[serde(default)]
     pub pipeline: PipelineConfig,
+    /// Subtitles: wanted languages and optional transcription (feature 025)
+    #[serde(default)]
+    pub subtitles: crate::subtitles::SubtitlesConfig,
     /// Radarr/Sonarr download client (Transmission RPC)
     #[serde(default)]
     pub arr: ArrConfig,
@@ -1564,6 +1567,7 @@ impl Config {
         self.arr.validate()?;
         self.transfers.validate()?;
         self.pipeline.validate()?;
+        self.subtitles.validate()?;
         self.precheck.validate(&self.watch.paths)?;
         self.storage.validate()?;
         self.tailscale.validate()?;
@@ -1813,6 +1817,7 @@ impl ConfigBuilder {
             cleanup: CleanupConfig::default(),
             transfers: TransfersConfig::default(),
             pipeline: PipelineConfig::default(),
+            subtitles: Default::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
             putio: PutioConfig::default(),
@@ -2870,6 +2875,7 @@ mod tests {
             cleanup: CleanupConfig::default(),
             transfers: TransfersConfig::default(),
             pipeline: PipelineConfig::default(),
+            subtitles: Default::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
             putio: PutioConfig::default(),

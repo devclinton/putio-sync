@@ -43,6 +43,12 @@ pub mod hooks;
 /// Lua plugin settings: validation and secret masking (feature 028)
 pub mod plugins;
 
+/// Language codes for subtitle names (feature 025)
+pub mod lang;
+
+/// `[subtitles]` settings: validation and key masking (feature 025)
+pub mod subtitles;
+
 /// Listen addresses: `ip:port`, `[v6]:port`, `eth0:port`, `tailnet:port` (feature 037)
 pub mod listen;
 

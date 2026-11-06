@@ -33,6 +33,7 @@ pub mod server;
 pub mod setup;
 pub mod steps;
 pub mod storage;
+pub mod subtitles;
 pub mod sync;
 pub mod tailscale;
 pub mod transfers;
@@ -150,6 +151,9 @@ pub struct Telemetry {
     pub(crate) hook_runs: IntCounterVec,
     pub(crate) hook_duration: HistogramVec,
     pub(crate) hook_dropped: IntCounterVec,
+    // Feature 025
+    pub(crate) subtitles_saved: IntCounterVec,
+    pub(crate) subtitles_transcribed_seconds: IntCounter,
     // Feature 028
     pub(crate) plugin_runs: IntCounterVec,
     pub(crate) plugin_duration: HistogramVec,
@@ -660,6 +664,19 @@ impl Telemetry {
                 &["type"],
             )
             .unwrap(),
+            subtitles_saved: IntCounterVec::new(
+                opts(
+                    "subtitles_saved_total",
+                    "Subtitles saved next to videos, by source and language.",
+                ),
+                &["source", "language"],
+            )
+            .unwrap(),
+            subtitles_transcribed_seconds: IntCounter::with_opts(opts(
+                "subtitles_transcribed_seconds_total",
+                "Seconds of audio sent to the transcription server.",
+            ))
+            .unwrap(),
             hook_runs: IntCounterVec::new(
                 opts(
                     "hook_runs_total",
@@ -837,6 +854,8 @@ impl Telemetry {
             Box::new(self.tailscale_identity.clone()),
             Box::new(self.events.clone()),
             Box::new(self.hook_runs.clone()),
+            Box::new(self.subtitles_saved.clone()),
+            Box::new(self.subtitles_transcribed_seconds.clone()),
             Box::new(self.hook_duration.clone()),
             Box::new(self.hook_dropped.clone()),
             Box::new(self.plugin_runs.clone()),

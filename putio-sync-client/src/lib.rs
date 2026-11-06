@@ -75,6 +75,7 @@ pub mod models;
 pub mod oob;
 pub mod path;
 pub mod probe;
+pub mod subtitles;
 pub mod transfers;
 pub mod walk;
 
@@ -90,5 +91,6 @@ pub use models::{
     FilesListResponse, Transfer, TransferResponse, TransfersListResponse,
 };
 pub use probe::AccountProbe;
+pub use subtitles::{PutioSubtitle, SubtitleList};
 pub use transfers::{ReaddError, Readded};
 pub use walk::{FileWalk, WalkError, WalkedFile};

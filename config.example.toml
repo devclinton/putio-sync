@@ -389,6 +389,30 @@ run_at = "02:30"
 # staging = "auto"
 
 # ============================================================================
+# Subtitles (feature 025)
+# ============================================================================
+# The Subtitles stage of the pipeline saves <video>.<lang>.srt next to each
+# downloaded video: first from Put.io (folder, embedded, OpenSubtitles), then,
+# when no wanted language was found and transcription is on, from a Whisper
+# server. Existing subtitle files are never overwritten. With post-download
+# delete on, the Put.io file stays until the stage ends (24 hours at most).
+# [subtitles]
+# Ordered wanted languages: ISO codes or English names. Empty turns the stage off.
+# languages = ["en", "es"]
+# Categories that skip the stage, for example when Bazarr handles them
+# excluded_categories = ["radarr"]
+#
+# [subtitles.transcription]
+# enabled = false                       # off by default
+# url = "http://nas:8000"               # OpenAI-style server (speaches); whisper.cpp: "http://nas:8080/inference"
+# model = "Systran/faster-whisper-small"
+# api_key = ""                          # Bearer token; PUTIO_SYNC_TRANSCRIPTION_API_KEY overrides. Never logged
+# timeout_secs = 900                    # per request, 10 to 7200
+# language = ""                         # optional hint, e.g. "en"; empty lets the server detect
+# chunk_secs = 600                      # audio sent in parts of this length, 60 to 1800
+# ffmpeg_path = ""                      # empty searches PATH. Needed for transcription only
+
+# ============================================================================
 # Lua plugins (feature 028)
 # ============================================================================
 # Sandboxed Lua scripts run on the same events as hooks. ntfy, discord,
