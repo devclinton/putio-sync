@@ -14,6 +14,13 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Subtitles. Set the languages you want in **Settings › Downloads › Subtitles** and each
+  downloaded video gets `Movie.en.srt` files next to it, from what Put.io has (folder files,
+  embedded tracks, OpenSubtitles) and, when you turn it on, from your own Whisper-style
+  speech to text server (needs ffmpeg; the Docker image has it). Existing subtitle files are
+  never overwritten, a category can be left out, and the Put.io file is kept until the
+  Subtitles stage ends (24 hours at most). **Fetch subtitles** on Local files does it for a
+  video already on the NAS.
 - A processing pipeline. A hook with a `stage` is a step that runs for a download before it
   counts as finished: before the files start (holding the transfer), or on the NAS before
   and after processing. The Active page lists each item's steps and attempts with **Retry**

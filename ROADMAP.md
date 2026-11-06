@@ -53,7 +53,7 @@ release name, with a preview before anything moves and an undo.
 The same for movies: `Movie (Year)/Movie (Year).ext`, with extras and samples
 kept apart or removed.
 
-### 025 Subtitles
+### 025 Subtitles (done)
 
 Fetch subtitles for downloaded video in the languages the user picks: first
 from what Put.io already finds on OpenSubtitles, then, when none exist and

@@ -49,7 +49,7 @@
 - [x] T028 [P] [US1] Pipeline tests: no languages gives stage skipped `not_configured`; excluded category gives `category`; season pack gives one step per video; samples and files under 100 MB skipped; zero videos gives `no_video`, in `putio-sync-pipeline/tests/subtitles.rs`
 - [x] T029 [P] [US1] Pipeline tests: Subtitles step failure retries per `optional_retries` then item is `done_with_warnings`; gate keeps Radarr/Sonarr pending until the stage ends; staging mode writes inside the staging folder, in `putio-sync-pipeline/tests/subtitles.rs`
 - [x] T030 [P] [US1] Delete-wait tests: gate defers, row persisted, not released before the stage ends, released after, released by the 24 h failsafe, restart keeps the row, `delete_remote` refuses a download not completed, in `putio-sync-pipeline/tests/deferred_delete.rs`
-- [ ] T031 [P] [US1] Config/API tests: GET/PUT `/settings/subtitles` (validation, masked key, applies now), preview, secrets sweep covers the key, in `putio-sync-api/tests/settings.rs` and `putio-sync-api/tests/secrets_sweep.rs`
+- [x] T031 [P] [US1] Config/API tests: GET/PUT `/settings/subtitles` (validation, masked key, applies now), preview, secrets sweep covers the key, in `putio-sync-api/tests/settings.rs` and `putio-sync-api/tests/secrets_sweep.rs`
 
 ### Implementation for US1
 
@@ -62,9 +62,9 @@
 - [x] T038 [US1] Implement the gate in the pipeline plus `releasable_deletes()`/`mark_deleted` in `putio-sync-pipeline/src/deletes.rs`
 - [x] T039 [US1] Wire the source, the gate and the per-tick release into `pipeline_tick_with` in `putio-sync-daemon/src/daemon.rs`
 - [x] T040 [US1] Record metrics and structured logs (saved, candidate failed) in the engine; key never logged
-- [ ] T041 [US1] Settings routes `GET/PUT /settings/subtitles` and `POST /settings/subtitles/preview`, `configure_subtitles`, group registration in `putio-sync-api/src/routes/system/subtitles.rs`, `settings.rs`, `assistant.rs`
-- [ ] T042 [P] [US1] Subtitles settings card (languages, excluded categories) in `putio-sync-api/ui/settings/integrations.js`, register in `putio-sync-api/ui/settings/sections.js`; extend `putio-sync-api/tests/ui/settings_sections.test.mjs`
-- [ ] T043 [P] [US1] Show subtitle step names, sources and "Waiting for subtitles" in the timeline UI; extend `putio-sync-api/tests/ui/timeline.test.mjs`
+- [x] T041 [US1] Settings routes `GET/PUT /settings/subtitles` and `POST /settings/subtitles/preview`, `configure_subtitles`, group registration in `putio-sync-api/src/routes/system/subtitles.rs`, `settings.rs`, `assistant.rs`
+- [x] T042 [P] [US1] Subtitles settings card (languages, excluded categories) in `putio-sync-api/ui/settings/integrations.js`, register in `putio-sync-api/ui/settings/sections.js`; extend `putio-sync-api/tests/ui/settings_sections.test.mjs`
+- [x] T043 [P] [US1] Show subtitle step names, sources and "Waiting for subtitles" in the timeline UI; extend `putio-sync-api/tests/ui/timeline.test.mjs`
 
 **Checkpoint**: US1 works alone against mocks.
 
@@ -75,21 +75,21 @@
 
 ### Tests for US2 (write first, must fail)
 
-- [ ] T044 [P] [US2] Audio tests with a fake `ffmpeg`/`ffprobe` shell script: discovery (config path, PATH, missing), command argv, chunk plan, temp cleanup on error, in `putio-sync-subtitles/tests/audio.rs`
-- [ ] T045 [P] [US2] Transcribe tests with mockito: multipart fields, Bearer only when set, endpoint rule, verbose_json to SRT, SRT-body fallback, no-language error, empty speech, non-2xx scrubbed, timeout, in `putio-sync-subtitles/tests/transcribe.rs`
-- [ ] T046 [P] [US2] Chunk-join tests: 3 chunks, shifted times, no gaps or overlaps, language reused from chunk 1, in `putio-sync-subtitles/tests/transcribe.rs`
-- [ ] T047 [P] [US2] Engine tests: transcribe only when no wanted-language subtitle exists, saved under detected language even if unwanted, transcription off gives "none found", existing file never overwritten, in `putio-sync-subtitles/tests/transcription_pass.rs`
-- [ ] T048 [P] [US2] Pipeline tests: server down gives retries then `done_with_warnings`; cancel kills ffmpeg; progress updates per chunk; global one-at-a-time, in `putio-sync-pipeline/tests/subtitles.rs`
-- [ ] T049 [P] [US2] API tests for `POST /settings/subtitles/test` (ok, empty text ok, server error, unreachable, ffmpeg missing, masked key keeps stored key, key not in response) in `putio-sync-api/tests/subtitles_test_route.rs`
+- [x] T044 [P] [US2] Audio tests with a fake `ffmpeg`/`ffprobe` shell script: discovery (config path, PATH, missing), command argv, chunk plan, temp cleanup on error, in `putio-sync-subtitles/tests/audio.rs`
+- [x] T045 [P] [US2] Transcribe tests with mockito: multipart fields, Bearer only when set, endpoint rule, verbose_json to SRT, SRT-body fallback, no-language error, empty speech, non-2xx scrubbed, timeout, in `putio-sync-subtitles/tests/transcribe.rs`
+- [x] T046 [P] [US2] Chunk-join tests: 3 chunks, shifted times, no gaps or overlaps, language reused from chunk 1, in `putio-sync-subtitles/tests/transcribe.rs`
+- [x] T047 [P] [US2] Engine tests: transcribe only when no wanted-language subtitle exists, saved under detected language even if unwanted, transcription off gives "none found", existing file never overwritten, in `putio-sync-subtitles/tests/transcription_pass.rs`
+- [x] T048 [P] [US2] Pipeline tests: server down gives retries then `done_with_warnings`; cancel kills ffmpeg; progress updates per chunk; global one-at-a-time, in `putio-sync-pipeline/tests/subtitles.rs`
+- [x] T049 [P] [US2] API tests for `POST /settings/subtitles/test` (ok, empty text ok, server error, unreachable, ffmpeg missing, masked key keeps stored key, key not in response) in `putio-sync-api/tests/subtitles_test_route.rs`
 
 ### Implementation for US2
 
-- [ ] T050 [US2] Implement `audio.rs` (ffmpeg/ffprobe discovery, duration, chunk extraction with `kill_on_drop`, test-tone WAV generator)
-- [ ] T051 [US2] Implement `transcribe.rs` (multipart client, parsing, mapper use, chunk join)
-- [ ] T052 [US2] Add the transcription pass and `transcribed` outcomes to `putio-sync-subtitles/src/engine.rs`
-- [ ] T053 [US2] Add global `Semaphore(1)`, `set_progress` per chunk and cancel wiring in `putio-sync-pipeline/src/subtitles.rs`; transcribed-seconds metric
-- [ ] T054 [US2] Implement `POST /settings/subtitles/test` and the `ffmpeg` block of GET in `putio-sync-api/src/routes/system/subtitles.rs`
-- [ ] T055 [P] [US2] Transcription section and Test button in the Subtitles card (`putio-sync-api/ui/settings/integrations.js`); extend `putio-sync-api/tests/ui/settings_sections.test.mjs`
+- [x] T050 [US2] Implement `audio.rs` (ffmpeg/ffprobe discovery, duration, chunk extraction with `kill_on_drop`, test-tone WAV generator)
+- [x] T051 [US2] Implement `transcribe.rs` (multipart client, parsing, mapper use, chunk join)
+- [x] T052 [US2] Add the transcription pass and `transcribed` outcomes to `putio-sync-subtitles/src/engine.rs`
+- [x] T053 [US2] Add global `Semaphore(1)`, `set_progress` per chunk and cancel wiring in `putio-sync-pipeline/src/subtitles.rs`; transcribed-seconds metric
+- [x] T054 [US2] Implement `POST /settings/subtitles/test` and the `ffmpeg` block of GET in `putio-sync-api/src/routes/system/subtitles.rs`
+- [x] T055 [P] [US2] Transcription section and Test button in the Subtitles card (`putio-sync-api/ui/settings/subtitles.js`, helpers in `ui/transcription.js`); extend `putio-sync-api/tests/ui/settings_sections.test.mjs`
 
 **Checkpoint**: US1 and US2 work independently.
 
@@ -100,21 +100,21 @@
 
 ### Tests for US3 (write first, must fail)
 
-- [ ] T056 [P] [US3] Manual-item tests: `insert_item` source `manual`, one step, size/sample rules bypassed, duplicate gives 409 data, in `putio-sync-pipeline/tests/subtitles.rs`
-- [ ] T057 [P] [US3] API tests: preflight (`available`/`gone`/`unknown`, not a video, impossible), POST 202/409/400/404, path guard, in `putio-sync-api/tests/local_subtitles.rs`
-- [ ] T058 [P] [US3] UI logic test for the confirm-before-transcription prompt and disabled states in `putio-sync-api/tests/ui/files_subtitles.test.mjs`
+- [x] T056 [P] [US3] Manual-item tests: `insert_item` source `manual`, one step, size/sample rules bypassed, duplicate gives 409 data, in `putio-sync-pipeline/tests/subtitles.rs`
+- [x] T057 [P] [US3] API tests: preflight (`available`/`gone`/`unknown`, not a video, impossible), POST 202/409/400/404, path guard, in `putio-sync-api/tests/local_subtitles.rs`
+- [x] T058 [P] [US3] UI logic test for the confirm-before-transcription prompt and disabled states in `putio-sync-api/tests/ui/files_subtitles.test.mjs`
 
 ### Implementation for US3
 
-- [ ] T059 [US3] Add manual item registration (`Pipeline::start_manual_subtitles`) in `putio-sync-pipeline/src/subtitles.rs`, `lib.rs`
-- [ ] T060 [US3] Implement preflight and POST in `putio-sync-api/src/routes/local/subtitles.rs`, register next to the 044 routes in `putio-sync-api/src/routes/local/files.rs`/`mod.rs`
-- [ ] T061 [US3] "Fetch subtitles" row action on video rows with the preflight prompt in `putio-sync-api/ui/pages/files.js`
-- [ ] T062 [P] [US3] Add a pointer to the new routes in `specs/044-local-files/contracts/api.md`
+- [x] T059 [US3] Add manual item registration (`Pipeline::start_manual_subtitles`) in `putio-sync-pipeline/src/subtitles.rs`, `lib.rs`
+- [x] T060 [US3] Implement preflight and POST in `putio-sync-api/src/routes/local/subtitles.rs`, register next to the 044 routes in `putio-sync-api/src/routes/local/files.rs`/`mod.rs`
+- [x] T061 [US3] "Fetch subtitles" row action on video rows with the preflight prompt in `putio-sync-api/ui/pages/files.js`
+- [x] T062 [P] [US3] Add a pointer to the new routes in `specs/044-local-files/contracts/api.md`
 
 ## Phase 6: Polish
 
-- [ ] T063 [P] README section (settings, ffmpeg, Radarr/Sonarr "Import Extra Files", Bazarr note, delete-wait behavior and the 24 h failsafe) in `README.md`
-- [ ] T064 [P] CHANGELOG entry under Unreleased in `CHANGELOG.md`; add the Subtitles step events to `EVENTS.md` if the 038 docs list them
+- [x] T063 [P] README section (settings, ffmpeg, Radarr/Sonarr "Import Extra Files", Bazarr note, delete-wait behavior and the 24 h failsafe) in `README.md`
+- [x] T064 [P] CHANGELOG entry under Unreleased in `CHANGELOG.md`; add the Subtitles step events to `EVENTS.md` if the 038 docs list them
 - [ ] T065 [P] Mark roadmap item 025 and note deviations in `ROADMAP.md` and a "Deviations" section at the end of this file
 - [ ] T066 Run `make ci` and fix findings
 - [ ] T067 Measure the ffmpeg image size increase with `docker build`, record it in `specs/025-subtitles/research.md` (R2)
@@ -141,3 +141,27 @@ MVP is Phase 1, Phase 2 and US1 (Put.io only, no ffmpeg). Ship it, then US2, the
 ## Counts
 
 Setup 3, Foundational 22, US1 18, US2 12, US3 7, Polish 6. Total 68.
+
+## Deviations
+
+- T046: the chunk-join tests are unit tests inside `putio-sync-subtitles/src/transcribe.rs` (they test the pure `join`
+  function), not in `tests/transcribe.rs`.
+- T055: the transcription section is in the Subtitles card itself (`ui/settings/subtitles.js`), not in
+  `integrations.js`; its pure helpers are in `ui/transcription.js`.
+- The Subtitles card sits in the Downloads section of Settings (card id `subtitles`).
+- `PUT /settings/subtitles` returns the GET view plus `message`. The preview route accepts either the bare settings
+  or `{video, settings}` (the generic settings tests post the GET body).
+- `ExistingFile`-style keep-on-mask: a masked transcription key (`********`) keeps the stored key in PUT, in the
+  preview, in the test route and in the settings import.
+- Eligibility for "Fetch subtitles" needs at least one wanted language (a transcription alone cannot name the
+  output file); the contract's "no wanted languages and no transcription" is therefore "no wanted languages".
+- A deferred Put.io delete for a `folder:` or `file:` item whose pipeline item key never matches is bounded only by
+  the 24 h failsafe.
+- On the timeline an excluded category shows as a skipped scan step with `skip_reason: category`.
+- The 044 preflight asks Put.io about a file only when a download record for its path exists (`GET /files/<id>`:
+  200 `available`, 404 `gone`, anything else `unknown`).
+- `on_tick` ignores items with source `manual`: they never appear on the Active list, so the departed-item logic
+  must not apply to them.
+- T067 (Docker image size with ffmpeg) and T068 (run against the real Put.io API) were not done: no Docker build and
+  no real Put.io token in this run. Real subtitle `source` strings, the subtitle download path and forced/SDH names
+  are still the ones in `contracts/putio-subtitles.md`, marked unconfirmed there.
