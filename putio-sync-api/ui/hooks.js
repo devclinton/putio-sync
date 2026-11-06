@@ -16,6 +16,8 @@ export const EVENTS = [
   ["verify.passed", "Download verified"],
   ["verify.failed", "Verification failed"],
   ["verify.redownload", "Re-downloading after a mismatch"],
+  ["pipeline.step_failed", "Pipeline step failed"],
+  ["pipeline.completed", "Pipeline finished with warnings"],
 ];
 
 /** An editor row for a new hook */

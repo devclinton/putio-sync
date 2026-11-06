@@ -65,6 +65,38 @@ pub struct HookConfig {
     /// Longest a run (each webhook attempt) may take, 1..=600
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
+    /// Set: a pipeline hook that runs as a step of this stage, not for events (feature 038)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<HookStage>,
+    /// Pipeline hooks: a failure holds the item (`true`) or is retried and then given up
+    #[serde(default = "default_true")]
+    pub required: bool,
+    /// Pipeline hooks: categories to run for; empty means all
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<String>,
+}
+
+/// The pipeline stages a hook can run in (feature 038)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookStage {
+    /// Before the local download starts
+    PreDownload,
+    /// After the download, before subtitles
+    PreProcessing,
+    /// After subtitles and translation, before notifications
+    PostProcessing,
+}
+
+impl HookStage {
+    /// The config and API name
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HookStage::PreDownload => "pre_download",
+            HookStage::PreProcessing => "pre_processing",
+            HookStage::PostProcessing => "post_processing",
+        }
+    }
 }
 
 impl Default for HookConfig {
@@ -78,6 +110,9 @@ impl Default for HookConfig {
             headers: BTreeMap::new(),
             env: BTreeMap::new(),
             timeout_secs: default_timeout(),
+            stage: None,
+            required: true,
+            categories: Vec::new(),
         }
     }
 }
@@ -119,7 +154,7 @@ impl HookConfig {
     /// Whether the hook runs for `event_type`. `*` matches all but `hook.test` and
     /// `plugin.test`, which only the test buttons send.
     pub fn matches(&self, event_type: EventType) -> bool {
-        if event_type.is_test() {
+        if event_type.is_test() || self.stage.is_some() {
             return false;
         }
         self.events
@@ -180,9 +215,24 @@ impl HookConfig {
                 }
             }
         }
-        if self.events.is_empty() {
+        if self.stage.is_some() {
+            if !self.events.is_empty() {
+                return bad(format!(
+                    "{}.events: a pipeline hook (stage set) runs as a step, not for events",
+                    hook
+                ));
+            }
+            if self.categories.iter().any(|c| c.trim().is_empty()) {
+                return bad(format!("{}.categories: entries must not be empty", hook));
+            }
+        } else if self.events.is_empty() {
             return bad(format!(
                 "{}.events: list at least one event, or \"*\" for all",
+                hook
+            ));
+        } else if !self.categories.is_empty() {
+            return bad(format!(
+                "{}.categories: only for pipeline hooks (set stage)",
                 hook
             ));
         }
@@ -248,7 +298,10 @@ impl HookConfig {
                     hook, name
                 ));
             }
-            if name.starts_with("PUTIO_SYNC_EVENT_") || RESERVED_ENV.contains(&name.as_str()) {
+            if name.starts_with("PUTIO_SYNC_EVENT_")
+                || name.starts_with("PUTIO_SYNC_ITEM_")
+                || RESERVED_ENV.contains(&name.as_str())
+            {
                 return bad(format!("{}.env: {} is set by putio-sync", hook, name));
             }
             if value == MASK {
@@ -381,6 +434,48 @@ mod tests {
         assert!(hook.enabled);
         assert_eq!(hook.timeout_secs, 30);
         hook.validate(0).unwrap();
+    }
+
+    fn stage_hook() -> HookConfig {
+        HookConfig {
+            name: "tidy".to_string(),
+            stage: Some(HookStage::PostProcessing),
+            command: Some(vec!["/config/tidy.sh".to_string()]),
+            ..Default::default()
+        }
+    }
+
+    /// Feature 038: a stage hook takes no events, and its extra fields are checked
+    #[test]
+    fn pipeline_hooks_are_checked() {
+        stage_hook().validate(0).unwrap();
+        let hook: HookConfig = toml::from_str(
+            "name = \"t\"\nstage = \"pre_download\"\nrequired = false\ncategories = [\"sonarr\"]\ncommand = [\"/a\"]",
+        )
+        .unwrap();
+        assert_eq!(hook.stage, Some(HookStage::PreDownload));
+        assert!(!hook.required);
+        hook.validate(0).unwrap();
+        assert!(stage_hook().required, "required defaults to true");
+
+        let mut h = stage_hook();
+        h.events = vec!["*".to_string()];
+        assert!(err(h).contains("runs as a step, not for events"));
+        let mut h = stage_hook();
+        h.categories = vec!["tv".to_string(), " ".to_string()];
+        assert!(err(h).contains("categories: entries must not be empty"));
+        let mut h = command_hook();
+        h.categories = vec!["tv".to_string()];
+        assert!(err(h).contains("categories: only for pipeline hooks"));
+        let mut h = stage_hook();
+        h.env = BTreeMap::from([("PUTIO_SYNC_ITEM_KEY".to_string(), "x".to_string())]);
+        assert!(err(h).contains("is set by putio-sync"));
+        let mut h = stage_hook();
+        h.stage = Some(HookStage::PreProcessing);
+        assert!(toml::from_str::<HookConfig>("name = \"t\"\nstage = \"subtitles\"").is_err());
+        // An event hook never matches as a step, and a step never matches an event
+        h.events.clear();
+        assert!(!h.matches(EventType::DownloadFinished));
     }
 
     #[test]

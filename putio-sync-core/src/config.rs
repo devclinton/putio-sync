@@ -183,6 +183,9 @@ pub struct Config {
     /// Put.io transfer monitoring (stall detection)
     #[serde(default)]
     pub transfers: TransfersConfig,
+    /// Processing pipeline: what runs after a download (feature 038)
+    #[serde(default)]
+    pub pipeline: PipelineConfig,
     /// Radarr/Sonarr download client (Transmission RPC)
     #[serde(default)]
     pub arr: ArrConfig,
@@ -617,6 +620,64 @@ impl Default for TransfersConfig {
             stall_check_interval_secs: 600,
             finished_retention_hours: 24,
         }
+    }
+}
+
+/// `[pipeline]`: how the steps after a download run (feature 038)
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct PipelineConfig {
+    /// Items whose steps run at once (1–16)
+    pub concurrency: usize,
+    /// Seconds to wait before each retry of a failing optional step (at most 10 entries)
+    pub optional_retries: Vec<u64>,
+    /// Watch-folder staging: `auto` (on while a file-changing step is configured), `on`, `off`
+    pub staging: StagingMode,
+}
+
+/// `[pipeline] staging`
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum StagingMode {
+    /// On while a pipeline hook exists
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl Default for PipelineConfig {
+    fn default() -> Self {
+        Self {
+            concurrency: 2,
+            optional_retries: vec![60, 300, 600],
+            staging: StagingMode::Auto,
+        }
+    }
+}
+
+/// Most entries in `[pipeline] optional_retries`
+pub const MAX_OPTIONAL_RETRIES: usize = 10;
+/// Most items whose steps run at once
+pub const MAX_PIPELINE_CONCURRENCY: usize = 16;
+
+impl PipelineConfig {
+    /// Check `concurrency` and `optional_retries`
+    pub fn validate(&self) -> CoreResult<()> {
+        if !(1..=MAX_PIPELINE_CONCURRENCY).contains(&self.concurrency) {
+            return Err(CoreError::ConfigError(format!(
+                "pipeline concurrency must be from 1 to {}, got {}",
+                MAX_PIPELINE_CONCURRENCY, self.concurrency
+            )));
+        }
+        if self.optional_retries.len() > MAX_OPTIONAL_RETRIES {
+            return Err(CoreError::ConfigError(format!(
+                "pipeline optional_retries has at most {} entries, got {}",
+                MAX_OPTIONAL_RETRIES,
+                self.optional_retries.len()
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -1500,6 +1561,7 @@ impl Config {
         self.cleanup.validate()?;
         self.arr.validate()?;
         self.transfers.validate()?;
+        self.pipeline.validate()?;
         self.precheck.validate(&self.watch.paths)?;
         self.storage.validate()?;
         self.tailscale.validate()?;
@@ -1748,6 +1810,7 @@ impl ConfigBuilder {
             metrics: MetricsConfig::default(),
             cleanup: CleanupConfig::default(),
             transfers: TransfersConfig::default(),
+            pipeline: PipelineConfig::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
             putio: PutioConfig::default(),
@@ -2769,6 +2832,7 @@ mod tests {
             metrics: MetricsConfig::default(),
             cleanup: CleanupConfig::default(),
             transfers: TransfersConfig::default(),
+            pipeline: PipelineConfig::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
             putio: PutioConfig::default(),

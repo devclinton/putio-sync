@@ -396,6 +396,65 @@ A file is being downloaded again after a mismatch: a new download starting over,
 }
 ```
 
+### `pipeline.step_failed`
+
+A processing pipeline step failed (feature 038). Sent after every failed attempt of a hook step.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `key` | string | the item key, such as `transfer:123` |
+| `name` | string | the item name |
+| `stage` | string | `pre_download`, `pre_processing`, `subtitles`, `translating`, `post_processing` or `notifications` |
+| `step` | string | the step name (the hook's name) |
+| `attempt` | integer | the attempt that failed, from 1 |
+| `required` | boolean | `true` when the item now waits for you; `false` when the step is retried or given up |
+| `error` | string | what went wrong, with secrets removed |
+
+```json
+{
+  "schema_version": 1,
+  "id": "c5f1e4d3-7a8b-4c9d-8e1f-2a3b4c5d6e7f",
+  "type": "pipeline.step_failed",
+  "occurred_at": "2026-11-05T09:12:33.095Z",
+  "source": { "app": "putio-sync", "version": "0.1.1", "host": "nas01" },
+  "data": {
+    "key": "transfer:991",
+    "name": "Some.Show.S01E01.1080p",
+    "stage": "post_processing",
+    "step": "tidy",
+    "attempt": 1,
+    "required": true,
+    "error": "exited with code 3"
+  }
+}
+```
+
+### `pipeline.completed`
+
+An item finished its pipeline and at least one optional step was given up (feature 038). Items that
+pass cleanly send no event, so nothing changes for people who set no pipeline steps.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `key` | string | the item key |
+| `name` | string | the item name |
+| `warnings` | array of string | the optional steps that were given up |
+
+```json
+{
+  "schema_version": 1,
+  "id": "d6a2f5e4-8b9c-4dae-9f20-3b4c5d6e7f80",
+  "type": "pipeline.completed",
+  "occurred_at": "2026-11-05T09:20:01.412Z",
+  "source": { "app": "putio-sync", "version": "0.1.1", "host": "nas01" },
+  "data": {
+    "key": "transfer:991",
+    "name": "Some.Show.S01E01.1080p",
+    "warnings": ["tidy"]
+  }
+}
+```
+
 ### `hook.test`
 
 Sent only to one hook, by the **Send test event** button in Settings › Integrations › Event hooks or

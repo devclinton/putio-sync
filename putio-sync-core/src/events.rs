@@ -48,6 +48,10 @@ pub enum EventType {
     VerifyFailed,
     /// A file is being downloaded again after a mismatch
     VerifyRedownload,
+    /// A processing pipeline step failed (feature 038)
+    PipelineStepFailed,
+    /// An item finished its processing pipeline with warnings (feature 038)
+    PipelineCompleted,
     /// Sent by the "send test event" button only
     HookTest,
     /// Sent by a plugin's "send test event" button only
@@ -56,7 +60,7 @@ pub enum EventType {
 
 impl EventType {
     /// Every type, in documentation order.
-    pub const ALL: [EventType; 12] = [
+    pub const ALL: [EventType; 14] = [
         EventType::DownloadFinished,
         EventType::DownloadFailed,
         EventType::TransferAdded,
@@ -67,6 +71,8 @@ impl EventType {
         EventType::VerifyPassed,
         EventType::VerifyFailed,
         EventType::VerifyRedownload,
+        EventType::PipelineStepFailed,
+        EventType::PipelineCompleted,
         EventType::HookTest,
         EventType::PluginTest,
     ];
@@ -84,6 +90,8 @@ impl EventType {
             EventType::VerifyPassed => "verify.passed",
             EventType::VerifyFailed => "verify.failed",
             EventType::VerifyRedownload => "verify.redownload",
+            EventType::PipelineStepFailed => "pipeline.step_failed",
+            EventType::PipelineCompleted => "pipeline.completed",
             EventType::HookTest => "hook.test",
             EventType::PluginTest => "plugin.test",
         }
@@ -232,6 +240,12 @@ pub enum Payload {
     /// `verify.redownload`
     #[serde(rename = "verify.redownload")]
     VerifyRedownload(VerifyRedownload),
+    /// `pipeline.step_failed`
+    #[serde(rename = "pipeline.step_failed")]
+    PipelineStepFailed(PipelineStepFailed),
+    /// `pipeline.completed`
+    #[serde(rename = "pipeline.completed")]
+    PipelineCompleted(PipelineCompleted),
     /// `hook.test`
     #[serde(rename = "hook.test")]
     HookTest(HookTest),
@@ -254,6 +268,8 @@ impl Payload {
             Payload::VerifyPassed(_) => EventType::VerifyPassed,
             Payload::VerifyFailed(_) => EventType::VerifyFailed,
             Payload::VerifyRedownload(_) => EventType::VerifyRedownload,
+            Payload::PipelineStepFailed(_) => EventType::PipelineStepFailed,
+            Payload::PipelineCompleted(_) => EventType::PipelineCompleted,
             Payload::HookTest(_) => EventType::HookTest,
             Payload::PluginTest(_) => EventType::PluginTest,
         }
@@ -274,6 +290,7 @@ impl Payload {
                     cut(e)
                 }
             }
+            Payload::PipelineStepFailed(p) => cut(&mut p.error),
             _ => {}
         }
     }
@@ -459,6 +476,36 @@ pub struct VerifyRedownload {
     pub trigger: String,
 }
 
+/// `pipeline.step_failed` (feature 038)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineStepFailed {
+    /// The item key, such as `transfer:123`
+    pub key: String,
+    /// The item name
+    pub name: String,
+    /// The stage, such as `post_processing`
+    pub stage: String,
+    /// The step name, such as the hook's name
+    pub step: String,
+    /// The attempt that failed, from 1
+    pub attempt: u32,
+    /// Whether the item waits for the operator (`true`) or the step is retried and given up
+    pub required: bool,
+    /// What went wrong, secret-free
+    pub error: String,
+}
+
+/// `pipeline.completed` (feature 038)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineCompleted {
+    /// The item key
+    pub key: String,
+    /// The item name
+    pub name: String,
+    /// The optional steps that were given up
+    pub warnings: Vec<String>,
+}
+
 /// `hook.test`
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HookTest {
@@ -589,6 +636,20 @@ pub fn samples() -> Vec<Payload> {
             attempt: 2,
             max_redownloads: 2,
             trigger: "download".to_string(),
+        }),
+        Payload::PipelineStepFailed(PipelineStepFailed {
+            key: "transfer:991".to_string(),
+            name: "Some.Show.S01E01.1080p".to_string(),
+            stage: "post_processing".to_string(),
+            step: "tidy".to_string(),
+            attempt: 1,
+            required: true,
+            error: "exited with code 3".to_string(),
+        }),
+        Payload::PipelineCompleted(PipelineCompleted {
+            key: "transfer:991".to_string(),
+            name: "Some.Show.S01E01.1080p".to_string(),
+            warnings: vec!["tidy".to_string()],
         }),
         Payload::HookTest(HookTest {
             hook: "home-assistant".to_string(),
