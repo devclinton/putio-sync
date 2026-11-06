@@ -105,24 +105,24 @@ Done before US2 because the dashboard reads these series.
 
 **Independent test**: quickstart §3 and §4.
 
-- [ ] T012 [US3] (HN) Write `roles/monitoring_prometheus/templates/putio-sync-recording.yml.j2`
+- [X] T012 [US3] (HN) Write `roles/monitoring_prometheus/templates/putio-sync-recording.yml.j2`
   with group `putio-sync-5m`, `interval: 5m`, and every rule in
   contracts/long-term.md#recording-rules in that order. Fill in the rules shown there as "and
   :max5m". The activity-state rule must be exactly the 3-part `or` expression in the contract.
-- [ ] T013 [US3] (HN) Add the long-term instance:
+- [X] T013 [US3] (HN) Add the long-term instance:
   - `defaults/main.yml`: `prometheus_longterm_listen: 127.0.0.1:9092`,
     `prometheus_longterm_retention_time: "1y"`, and a data dir of
     `{{ prometheus_data_dir }}-longterm`;
   - `tasks/main.yml`: data dir, config file (`global:` only), and a second
     LaunchDaemon/LaunchAgent copied from the main one with the flags in the contract table.
-- [ ] T014 [US3] (HN) In `roles/monitoring_prometheus/templates/prometheus.yml.j2` add:
+- [X] T014 [US3] (HN) In `roles/monitoring_prometheus/templates/prometheus.yml.j2` add:
   - `rule_files` entry;
   - `remote_write` with the keep regex `putio_sync:.+:[a-z]*5m`;
   - `remote_read` with `read_recent: false` and `required_matchers: {app: putio-sync}`;
   - scrape job `prometheus_longterm` for `127.0.0.1:9092`.
 
   Everything is copied from contracts/long-term.md.
-- [ ] T015 [US3] Write promtool tests in `specs/041-resource-telemetry-archive/alert-tests.yml`
+- [X] T015 [US3] Write promtool tests in `specs/041-resource-telemetry-archive/alert-tests.yml`
   for the recording rules, using made-up 15 s input:
   - avg and max values;
   - `rate` across a counter reset;
@@ -132,7 +132,7 @@ Done before US2 because the dashboard reads these series.
   - downloading wins over syncing.
 
   Run `promtool check rules` and `promtool test rules` against the rendered template.
-- [ ] T016 [US3] (HN) Run `make check` in home-network. Fix any lint issues in the new
+- [X] T016 [US3] (HN) Run `make check` in home-network. Fix any lint issues in the new
   templates.
 
 ## Phase 5: User Story 2 — CPU and memory over months in Grafana (P1)
@@ -271,17 +271,17 @@ Unraid wrapper.
 **Independent test**: `promtool test rules` firing and silent cases, and home-network
 `make check`.
 
-- [ ] T031 [US5] (HN) Add the 6 alerts in contracts/long-term.md#alerts to the `putio-sync`
+- [X] T031 [US5] (HN) Add the 6 alerts in contracts/long-term.md#alerts to the `putio-sync`
   group in `roles/monitoring_prometheus/templates/alerts.yml.j2`. Use exact expressions, `for`
   values and severities, with a summary and description that match the existing alerts. Do not
   add a disk alert; `DiskSpaceLow` already covers FR-012.
-- [ ] T032 [US5] Extend `specs/041-resource-telemetry-archive/alert-tests.yml` with a firing and
+- [X] T032 [US5] Extend `specs/041-resource-telemetry-archive/alert-tests.yml` with a firing and
   a silent case for each alert. Include `MemoryGrowing` staying silent across a restart, and
   `LongTermDown` staying silent at 1 h. Run `promtool test rules`.
 
 ## Phase 8: Polish
 
-- [ ] T033 Add a `CHANGELOG.md` line under Unreleased covering the process figures, the
+- [X] T033 Add a `CHANGELOG.md` line under Unreleased covering the process figures, the
   resources dashboard and `putio-sync archive`. Run `scripts/check-changelog.sh`.
 - [ ] T034 Run `make ci` and quickstart §1–§3 locally. Record any manual-only steps (§4–§7) as
   unchecked items for the operator in the PR description.

@@ -278,6 +278,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   memory, threads, open files against the limit, disk read and write and uptime,
   with restarts and new builds marked, next to downloads and syncs. Import it and
   pick your Prometheus data source; see README → Grafana dashboard (feature 041).
+- `putio-sync archive` keeps a copy of your history outside Prometheus:
+  `archive metrics` saves each day's 5-minute CPU, memory and activity figures
+  as an OpenMetrics file, `archive db` saves a compressed copy of the database,
+  and `archive summary` writes daily and monthly usage CSVs. Files go in
+  `<config dir>/archive`; `scripts/archive/unraid-user-script.sh` runs them on a
+  schedule. See README → Long-term archive (feature 041).
 - A choice for files already on disk, `[download] on_existing`: resume
   (the default) continues partial files and skips complete ones, checked
   against Put.io's CRC32; overwrite replaces the old file once the new copy
