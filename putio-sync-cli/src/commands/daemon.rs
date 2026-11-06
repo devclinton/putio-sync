@@ -270,6 +270,17 @@ pub async fn execute_daemon(
         daemon = daemon.with_doctor(doctor.clone());
     }
 
+    // One media server for the daemon (it says goodbye on shutdown) and the API (its
+    // Settings page applies changes), feature 022
+    let media_server = Arc::new(putio_sync_dlna::MediaServer::new(
+        daemon.get_client(),
+        config_file_path
+            .parent()
+            .unwrap_or(std::path::Path::new(".")),
+    ));
+    media_server.update(&config).await;
+    daemon = daemon.with_media_server(media_server.clone());
+
     // API and web UI on the daemon's own engine (feature 004). Needs a local download
     // manager, so it is skipped when downloads are delegated to a remote API.
     match (daemon.get_client(), daemon.get_download_manager()) {
@@ -298,7 +309,8 @@ pub async fn execute_daemon(
             };
             let state = state
                 .with_hooks(hooks.clone())
-                .with_plugins(plugins.clone());
+                .with_plugins(plugins.clone())
+                .with_media_server(media_server.clone());
             crate::api_listener::start(&config, state).await?;
         }
         _ => warn!("API listener not started: no local download manager (api.enabled is set)"),

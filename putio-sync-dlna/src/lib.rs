@@ -66,6 +66,8 @@ pub struct Shared {
     pub roots: Vec<SharedRoot>,
     pub update_id: u32,
     pub putio: Option<Arc<PutioRoot>>,
+    /// Put.io is shared in the settings, though it may be unavailable (no login)
+    pub wants_putio: bool,
 }
 
 impl Shared {
@@ -367,6 +369,7 @@ impl MediaServer {
             roots: Vec::new(),
             update_id: 1,
             putio: None,
+            wants_putio: false,
         };
         MediaServer {
             inner: Arc::new(Inner {
@@ -396,7 +399,7 @@ impl MediaServer {
             if state == State::Off {
                 PutioHealth::Off
             } else if shared.root("putio").is_none() {
-                if self.inner.client.is_none() && shared.putio.is_none() && self.wants_putio() {
+                if shared.wants_putio && self.inner.client.is_none() {
                     PutioHealth::Error("No Put.io login".to_string())
                 } else {
                     PutioHealth::Off
@@ -425,12 +428,6 @@ impl MediaServer {
             players_last_hour,
             putio,
         }
-    }
-
-    fn wants_putio(&self) -> bool {
-        self.inner.status.lock().unwrap().0 != State::Off
-            && self.inner.shared.read().unwrap().putio.is_none()
-            && self.inner.client.is_none()
     }
 
     fn set_status(&self, state: State, reason: Option<String>, addresses: Vec<String>) {
@@ -469,6 +466,7 @@ impl MediaServer {
             roots,
             update_id: self.inner.update_id.fetch_add(1, Ordering::Relaxed) + 1,
             putio,
+            wants_putio: dlna.shares_putio(),
         }
     }
 

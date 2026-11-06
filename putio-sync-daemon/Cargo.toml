@@ -14,6 +14,7 @@ putio-sync-core = { path = "../putio-sync-core" }
 putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 putio-sync-db = { path = "../putio-sync-db" }
 putio-sync-download = { path = "../putio-sync-download" }
+putio-sync-dlna = { path = "../putio-sync-dlna" }
 putio-sync-doctor = { path = "../putio-sync-doctor" }
 putio-sync-file-manager = { path = "../putio-sync-file-manager" }
 putio-sync-precheck = { path = "../putio-sync-precheck" }

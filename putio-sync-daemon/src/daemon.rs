@@ -11,6 +11,7 @@ use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::PrecheckConfig;
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::Database;
+use putio_sync_dlna::MediaServer;
 use putio_sync_doctor::Doctor;
 use putio_sync_download::pipeline::Counts;
 use putio_sync_download::{DownloadConfig, DownloadManager, DownloadResult};
@@ -150,6 +151,8 @@ pub struct PutioDaemon {
     stall_tracker: Arc<StallTracker>,
     /// Scheduled health checks (shared with the API)
     doctor: Option<Arc<Doctor>>,
+    /// DLNA media server, stopped on shutdown so players hear the goodbye (feature 022)
+    media_server: Option<Arc<MediaServer>>,
 }
 
 impl PutioDaemon {
@@ -165,6 +168,7 @@ impl PutioDaemon {
             cleanup: None,
             storage: None,
             doctor: None,
+            media_server: None,
         }
     }
 
@@ -186,6 +190,13 @@ impl PutioDaemon {
     /// doctor should be given to the API so its page shows the scheduled runs.
     pub fn with_doctor(mut self, doctor: Arc<Doctor>) -> Self {
         self.doctor = Some(doctor);
+        self
+    }
+
+    /// Stop `media_server` when the daemon shuts down, so it announces that it is leaving.
+    /// The same handle should be given to the API.
+    pub fn with_media_server(mut self, media_server: Arc<MediaServer>) -> Self {
+        self.media_server = Some(media_server);
         self
     }
 
@@ -500,6 +511,10 @@ impl PutioDaemon {
         })?;
 
         info!("Received shutdown signal");
+
+        if let Some(media_server) = &self.media_server {
+            media_server.stop().await;
+        }
 
         // Tasks will be automatically cancelled when dropped
         if let Some(task) = watch_task {
