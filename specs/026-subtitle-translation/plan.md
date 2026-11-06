@@ -118,7 +118,7 @@ Dockerfile, Cargo.toml, config.example.toml, README.md, CHANGELOG.md
 | Item | Why needed | Simpler alternative rejected because |
 |---|---|---|
 | New crate | Chat client, prompt/validation and callback client are a separate concern; 025's crate is in flight on another branch | Adding to `putio-sync-subtitles` couples the two branches and puts two more HTTP clients in a codec crate; in `pipeline` it mixes HTTP into a scheduler |
-| Unauthenticated `/translate/callback/{token}` | FR-015: the service cannot hold the API token | Requiring the API token would put the operator's master credential in a third-party service. Mitigation: 256-bit random single-use token, hash only stored, expiry, rate limit on failures, constant refusal body |
+| Unauthenticated `/translate/callback/{token}` (allowed by constitution 1.1.0, Principle VI) | FR-015: the service cannot hold the API token | Requiring the API token would put the operator's master credential in a third-party service. Mitigation: 256-bit random single-use token, hash only stored, expiry, rate limit on failures, constant refusal body |
 | `translation_callbacks` table | FR-017: jobs survive restarts | In-memory map loses the job and the file (the service has already done the work) |
 | Second `pipeline_steps` CHECK rebuild | New kinds `translate_scan`, `translate` | Free-text kinds lose validation (same reasoning as 025 R13) |
 | `subtitle_provenance` table | FR-003 needs to know which sidecar was transcribed, and a machine translation must not become the source for another language; 025's design does not record provenance | Guessing from the language list is wrong when wanted languages overlap with what was transcribed |
