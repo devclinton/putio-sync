@@ -12,9 +12,10 @@ import * as downloads from "../settings/downloads.js";
 import * as filters from "../settings/filters.js";
 import * as integrations from "../settings/integrations.js";
 import * as plugins from "../settings/plugins.js";
+import * as media from "../settings/media.js";
 import { advancedCards, networkCards } from "../settings/advanced.js";
 
-const BUILD = { general: general.cards, putio: putio.cards, downloads: downloads.cards, rules: filters.cards, integrations: integrations.cards, plugins: plugins.cards, network: networkCards, advanced: advancedCards };
+const BUILD = { general: general.cards, putio: putio.cards, downloads: downloads.cards, rules: filters.cards, integrations: integrations.cards, plugins: plugins.cards, "media-server": media.cards, network: networkCards, advanced: advancedCards };
 const ADV_KEY = "putio-sync.settings.advanced";
 
 let seq = 0;

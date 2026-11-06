@@ -40,6 +40,12 @@ export const SECTIONS = [
     cards: [["plugins", "Plugins"]],
   },
   {
+    id: "media-server",
+    title: "Media server",
+    help: "Show downloaded files, and optionally a Put.io folder, to TVs and players on your home network (DLNA / UPnP): which folders, the name players see, and whether it is working.",
+    cards: [["media-server", "Media server"]],
+  },
+  {
     id: "network",
     title: "Network and access",
     help: "Which addresses the web UI, API and metrics listen on, and signing in with Tailscale.",
@@ -59,7 +65,7 @@ export const sectionOf = (id) => SECTIONS.find((s) => s.id === id) || SECTIONS[0
 export const settingsHref = (section, field) => `#/settings/${section}${field ? `?field=${field}` : ""}`;
 
 // Config section → UI group, where they differ; keys edited in a card rather than a field
-const GROUP = { watch: "watcher" };
+const GROUP = { watch: "watcher", dlna: "media-server" };
 const ALIAS = { "download.rules": "card-folder-rules", hooks: "card-hooks", plugins: "card-plugins", arr: "card-arr" };
 
 /** `group.name` → the input's id `set-group-name`; anything else is an element id already */
@@ -83,6 +89,7 @@ const KEY_SECTION = {
   plugins: "plugins",
   arr: "integrations",
   network: "network",
+  dlna: "media-server",
   tailscale: "network",
   api: "network",
   logging: "advanced",

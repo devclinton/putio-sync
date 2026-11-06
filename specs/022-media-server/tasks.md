@@ -107,7 +107,7 @@ sees only finished media, and gets the right bytes for a range.
   - the UUID is loaded from or created in `<config dir>/dlna-uuid`;
   - binds through the `[dlna] bind` entries;
   - a bind error → `failed(reason)`, logged, and the daemon keeps running
-- [ ] T021 [US1] Start it in `putio-sync-daemon/src/daemon.rs`: build the `MediaServer` from config (off → idle handle), hand it to API state, call `stop()` on shutdown so byebye goes out
+- [x] T021 [US1] Start it in `putio-sync-daemon/src/daemon.rs`: build the `MediaServer` from config (off → idle handle), hand it to API state, call `stop()` on shutdown so byebye goes out
 
 **Checkpoint**: US1 tests pass. VLC finds and plays from Downloads (quickstart §3).
 
@@ -124,12 +124,12 @@ sees only finished media, and gets the right bytes for a range.
   - an ID from a root that was unshared after `update()`;
   - each refused with fault 701 or 404, a WARN, and no file bytes
 - [x] T023 [US2] Make `update()` in `putio-sync-dlna/src/lib.rs` swap the roots atomically, bump `SystemUpdateID`, and make every request check the current roots (no cache of resolved paths)
-- [ ] T024 [US2] Add `GET`/`PUT /settings/media-server` and `POST /settings/media-server/preview` in `putio-sync-api/src/routes/system/media_server.rs`:
+- [x] T024 [US2] Add `GET`/`PUT /settings/media-server` and `POST /settings/media-server/preview` in `putio-sync-api/src/routes/system/media_server.rs`:
   - the view with `available_roots` per contracts/api.md;
   - validate via `Config::validate`, save, then call `MediaServer::update`;
   - register in `putio-sync-api/src/routes/system/mod.rs`
-- [ ] T025 [P] [US2] Write API tests in `putio-sync-api/tests/media_server.rs`: auth is required; `available_roots` lists Downloads, the category folders and watch paths only when watching is on; a bad port, an unknown root or a missing `putio_folder` → 400 naming the field; a save applies without a restart
-- [ ] T026 [US2] Add the UI section Settings › Media server in `putio-sync-api/ui/`:
+- [x] T025 [P] [US2] Write API tests in `putio-sync-api/tests/media_server.rs`: auth is required; `available_roots` lists Downloads, the category folders and watch paths only when watching is on; a bad port, an unknown root or a missing `putio_folder` → 400 naming the field; a save applies without a restart
+- [x] T026 [US2] Add the UI section Settings › Media server in `putio-sync-api/ui/`:
   - toggle, name, port, the bind editor from 037, shared-folder checkboxes from `available_roots`;
   - the warning "Anyone on your home network can browse and play what you share here.";
   - UI tests next to the other settings sections
@@ -138,14 +138,14 @@ sees only finished media, and gets the right bytes for a range.
 
 ## Phase 5: User Story 3 – See that it works (P2)
 
-- [ ] T027 [P] [US3] Write tests in `putio-sync-dlna/tests/discovery.rs` and `putio-sync-api/tests/media_server.rs`:
+- [x] T027 [P] [US3] Write tests in `putio-sync-dlna/tests/discovery.rs` and `putio-sync-api/tests/media_server.rs`:
   - a taken port → `failed` with the reason, and the daemon state is still healthy;
   - after freeing the port and calling `update`, the state is `running`;
   - `streams_active` is 1 during a stream;
   - `players_last_hour` counts distinct peers;
   - no metric label carries a name or path
-- [ ] T028 [US3] Add `GET /media-server/status` in `putio-sync-api/src/routes/system/media_server.rs`, returning `state`, `reason`, `addresses`, `streams_active`, `players_last_hour`, `putio`; set the warning "No LAN interface: players can't find it. Use host networking." when only bridges exist
-- [ ] T029 [US3] Add the status line to the Media server UI section in `putio-sync-api/ui/`, polled every 5 s while open
+- [x] T028 [US3] Add `GET /media-server/status` in `putio-sync-api/src/routes/system/media_server.rs`, returning `state`, `reason`, `addresses`, `streams_active`, `players_last_hour`, `putio`; set the warning "No LAN interface: players can't find it. Use host networking." when only bridges exist
+- [x] T029 [US3] Add the status line to the Media server UI section in `putio-sync-api/ui/`, polled every 5 s while open
 
 ## Phase 6: User Story 4 – Stream what is still on Put.io (P2)
 
@@ -174,7 +174,7 @@ roots working.
   - an authenticated request with the player's `Range`, following redirects server-side, a fresh request per range;
   - pass back the status and range headers; the body is counted as `root_kind="putio"`;
   - the log has `version=mp4|original` and redacts links
-- [ ] T034 [US4] Add the Put.io folder picker to the Media server UI section in `putio-sync-api/ui/`, using the existing Put.io browse routes, and the `putio` state on the status line
+- [x] T034 [US4] Add the Put.io folder picker to the Media server UI section in `putio-sync-api/ui/`, using the existing Put.io browse routes, and the `putio` state on the status line
 
 ## Phase 7: Polish
 

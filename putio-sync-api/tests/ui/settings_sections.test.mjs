@@ -8,7 +8,7 @@ import { SECTIONS, fieldId, linkParts, sectionOf, sectionOfKey, settingsHref } f
 test("every card is in exactly one section", () => {
   const ids = SECTIONS.flatMap((s) => s.cards.map(([id]) => id));
   assert.equal(new Set(ids).size, ids.length);
-  assert.deepEqual(SECTIONS.map((s) => s.id), ["general", "putio", "downloads", "rules", "integrations", "plugins", "network", "advanced"]);
+  assert.deepEqual(SECTIONS.map((s) => s.id), ["general", "putio", "downloads", "rules", "integrations", "plugins", "media-server", "network", "advanced"]);
   assert.ok(SECTIONS.every((s) => s.help.length > 20));
 });
 
@@ -39,6 +39,7 @@ test("config keys map to sections", () => {
   assert.equal(sectionOfKey("logging.level"), "advanced");
   assert.equal(sectionOfKey("notifications.enabled"), "general");
   assert.equal(sectionOfKey("tailscale.socket"), "network");
+  assert.equal(sectionOfKey("dlna.port"), "media-server");
   assert.equal(sectionOfKey("precheck.enabled"), "rules");
   assert.equal(sectionOfKey("mystery.key"), "general");
 });
