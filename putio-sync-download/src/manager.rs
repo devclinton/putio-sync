@@ -1153,7 +1153,10 @@ impl DownloadManager {
         for id in file_ids {
             match db.downloads().find_by_file_id(*id).await {
                 Ok(Some(d)) if d.status == "completed" && !d.local_path.is_empty() => ok.push(*id),
-                Ok(_) => {
+                Ok(None) => {
+                    warn!(file_id = id, "Held-back delete not done: no download row")
+                }
+                Ok(Some(_)) => {
                     warn!(
                         file_id = id,
                         "Held-back delete refused: the download is not completed"
@@ -1161,7 +1164,7 @@ impl DownloadManager {
                     result.refused.push(*id);
                 }
                 Err(e) => {
-                    warn!(file_id = id, error = %e, "Held-back delete not done: no download row")
+                    warn!(file_id = id, error = %e, "Held-back delete not done: database error")
                 }
             }
         }
