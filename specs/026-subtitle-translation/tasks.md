@@ -33,9 +33,9 @@ from a branch that has 025 merged; tasks that touch 025's code say so (gaps G1 t
 - [x] T020 Implement the token, hash, URL builder, reply classifier and inbound body parser in `putio-sync-translation/src/callback.rs`
 - [x] T021 [P] Write failing tests in `putio-sync-core/src/log_redact.rs`: the segment after `/translate/callback/` is masked in a message, in a field value and inside a longer URL; other paths are unchanged
 - [x] T022 Add the callback-path rule to `putio-sync-core/src/log_redact.rs`
-- [ ] T023 [P] Write failing tests then implement provenance queries (`upsert`, `get`, `rekey_prefix`, prune older than 90 days) in `putio-sync-pipeline/src/store.rs` and `putio-sync-pipeline/tests/provenance.rs`
-- [ ] T024 Record provenance for each file 025's per-video step saves (the `SavedSubtitle.source` it already holds) in `putio-sync-pipeline/src/subtitles.rs`, with a test in `putio-sync-pipeline/tests/subtitles.rs` (gap G1; edits 025 code)
-- [ ] T025 Factor 025's video scan into `scan_videos(item)` and its manual-item registration into `register_manual_item(path, stage, steps)` in `putio-sync-pipeline/src/subtitles.rs` (gaps G2, G3); 025's tests must stay green
+- [x] T023 [P] Write failing tests then implement provenance queries (`upsert`, `get`, `rekey_prefix`, prune older than 90 days) in `putio-sync-pipeline/src/store.rs` and `putio-sync-pipeline/tests/provenance.rs`
+- [x] T024 Record provenance for each file 025's per-video step saves (the `SavedSubtitle.source` it already holds) in `putio-sync-pipeline/src/subtitles.rs`, with a test in `putio-sync-pipeline/tests/subtitles.rs` (gap G1; edits 025 code)
+- [x] T025 Factor 025's video scan into `scan_videos(item)` and its manual-item registration into `register_manual_item(path, stage, steps)` in `putio-sync-pipeline/src/subtitles.rs` (gaps G2, G3); 025's tests must stay green
 
 **Checkpoint**: foundation ready.
 

@@ -40,6 +40,19 @@ pub struct NewItem {
     pub state: ItemState,
 }
 
+/// Provenance rows older than this many days are pruned
+pub const PROVENANCE_DAYS: i64 = 90;
+
+/// Where a saved subtitle file came from
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Provenance {
+    pub path: String,
+    pub language: String,
+    /// `putio_embedded`, `putio_folder`, `opensubtitles`, `transcribed` or `translated`
+    pub source: String,
+    pub bytes: i64,
+}
+
 /// One planned step and where it is
 #[derive(Debug, Clone, PartialEq)]
 pub struct StepRow {
@@ -432,16 +445,77 @@ impl Store {
         .collect())
     }
 
+    /// Remember where a saved sidecar came from (features 025 and 026). Saving over the
+    /// same path replaces the row.
+    pub async fn upsert_provenance(&self, row: &Provenance) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO subtitle_provenance (path, language, source, bytes, created_at) \
+             VALUES (?, ?, ?, ?, strftime('%s','now')) \
+             ON CONFLICT(path) DO UPDATE SET language = excluded.language, \
+             source = excluded.source, bytes = excluded.bytes, created_at = excluded.created_at",
+        )
+        .bind(&row.path)
+        .bind(&row.language)
+        .bind(&row.source)
+        .bind(row.bytes)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Where the sidecar at `path` came from. A row whose recorded size differs from
+    /// `bytes` is stale (the file was replaced by hand) and counts as unknown.
+    pub async fn provenance(&self, path: &str, bytes: Option<i64>) -> Result<Option<Provenance>> {
+        let row = sqlx::query(
+            "SELECT path, language, source, bytes FROM subtitle_provenance WHERE path = ?",
+        )
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row
+            .map(|r| Provenance {
+                path: r.get("path"),
+                language: r.get("language"),
+                source: r.get("source"),
+                bytes: r.get("bytes"),
+            })
+            .filter(|p| bytes.is_none_or(|b| b == p.bytes)))
+    }
+
+    /// Staging rename: rows whose path starts with `from` now live under `to`. Returns how
+    /// many were re-keyed.
+    pub async fn rekey_provenance(&self, from: &str, to: &str) -> Result<u64> {
+        let from = from.trim_end_matches('/');
+        let to = to.trim_end_matches('/');
+        Ok(sqlx::query(
+            "UPDATE OR REPLACE subtitle_provenance SET path = ? || substr(path, ?) \
+             WHERE path = ? OR substr(path, 1, ?) = ? || '/'",
+        )
+        .bind(to)
+        .bind(from.chars().count() as i64 + 1)
+        .bind(from)
+        .bind(from.chars().count() as i64 + 1)
+        .bind(from)
+        .execute(&self.pool)
+        .await?
+        .rows_affected())
+    }
+
     /// Drop finished items older than `hours`, with their steps and attempts
     pub async fn prune(&self, hours: u64) -> Result<u64> {
-        Ok(sqlx::query(
+        let n = sqlx::query(
             "DELETE FROM pipeline_items WHERE finished_at IS NOT NULL \
              AND finished_at < datetime('now', '-' || ? || ' hours')",
         )
         .bind(hours as i64)
         .execute(&self.pool)
         .await?
-        .rows_affected())
+        .rows_affected();
+        sqlx::query("DELETE FROM subtitle_provenance WHERE created_at < strftime('%s','now') - ?")
+            .bind(PROVENANCE_DAYS * 86_400)
+            .execute(&self.pool)
+            .await?;
+        Ok(n)
     }
 }
 

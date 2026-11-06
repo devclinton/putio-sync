@@ -202,6 +202,27 @@ async fn a_subtitle_is_saved_next_to_the_video() {
 }
 
 #[tokio::test]
+async fn each_saved_subtitle_is_recorded_with_its_source() {
+    let env = env_subs(subs(&["en"], &[])).await;
+    let video = env.dir.path().join("Movie.2020.mkv");
+    big_file(&video, BIG);
+    downloaded(&env, 5, &video).await;
+    downloaded_item(&env, "file:5", &video).await;
+    env.pipeline.set_subtitle_source(Fake::offering(&["en"]));
+    env.pipeline.run_due().await;
+    let saved = env.dir.path().join("Movie.2020.en.srt");
+    let size = std::fs::metadata(&saved).unwrap().len() as i64;
+    let got = env
+        .store
+        .provenance(&saved.to_string_lossy(), Some(size))
+        .await
+        .unwrap()
+        .expect("a provenance row");
+    assert_eq!(got.language, "en");
+    assert_eq!(got.source, "opensubtitles");
+}
+
+#[tokio::test]
 async fn a_failing_step_is_retried_then_the_item_finishes_with_warnings() {
     let env = env_subs(subs(&["en"], &[])).await;
     let video = env.dir.path().join("Movie.mkv");
