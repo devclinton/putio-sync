@@ -21,12 +21,15 @@ use std::time::Duration;
 use putio_sync_core::config::{Config, PipelineConfig};
 use putio_sync_core::hooks::HookConfig;
 use putio_sync_core::pipeline_gate::PipelineGate;
+use putio_sync_core::subtitles::SubtitlesConfig;
 use putio_sync_db::pipeline::{FinishedOutcome, FinishedRow};
 use putio_sync_db::Database;
 use putio_sync_download::pipeline::{Origin, Pipeline as ActiveView, PipelineItem, State};
+use putio_sync_subtitles::SubtitleSource;
 use tokio::sync::{Notify, Semaphore};
 use tracing::{debug, info, warn};
 
+pub mod deletes;
 pub mod gate;
 pub mod locate;
 pub mod model;
@@ -34,6 +37,7 @@ pub mod plan;
 mod runner;
 pub mod staging;
 pub mod store;
+pub mod subtitles;
 pub mod timeline;
 
 pub use gate::Gate;
@@ -42,7 +46,7 @@ pub use store::{ItemRow, StepRow, Store};
 pub use timeline::{StepSummary, Timeline};
 
 use model::StepKind;
-use plan::{plan, PlanInput};
+use plan::{plan_with, PlanInput};
 use store::NewItem;
 
 /// How many ticks an item may be missing from Put.io, with no finished row, before it is
@@ -66,6 +70,7 @@ pub(crate) struct Settings {
     pub hooks: Vec<HookConfig>,
     pub target: PathBuf,
     pub retention_hours: u64,
+    pub subtitles: SubtitlesConfig,
 }
 
 impl Settings {
@@ -80,6 +85,7 @@ impl Settings {
                 .collect(),
             target: config.download.target_directory.clone(),
             retention_hours: config.transfers.finished_retention_hours,
+            subtitles: config.subtitles.clone(),
         }
     }
 }
@@ -96,6 +102,10 @@ pub(crate) struct Inner {
     /// Cancels the running step of an item
     pub cancels: Mutex<HashMap<String, Arc<Notify>>>,
     pub gate: Gate,
+    /// Where Put.io's subtitles come from; none until the daemon sets it
+    pub source: RwLock<Option<Arc<dyn SubtitleSource>>>,
+    /// Transcriptions run one at a time, whatever the item
+    pub transcribing: Semaphore,
     /// Ticks an item has been missing without a finished row
     pub missed: Mutex<HashMap<String, u32>>,
     /// The database's clock when the service was built; only later finishes are picked up
@@ -130,6 +140,8 @@ impl Pipeline {
                 busy: Mutex::new(HashSet::new()),
                 cancels: Mutex::new(HashMap::new()),
                 gate: Gate::default(),
+                source: RwLock::new(None),
+                transcribing: Semaphore::new(1),
                 missed: Mutex::new(HashMap::new()),
                 started_at,
                 staging_off: std::sync::atomic::AtomicBool::new(false),
@@ -165,6 +177,11 @@ impl Pipeline {
             .read()
             .map(|s| s.clone())
             .expect("settings lock")
+    }
+
+    /// Where Put.io's subtitles come from (the daemon gives the real client, tests a fake)
+    pub fn set_subtitle_source(&self, source: Arc<dyn SubtitleSource>) {
+        *self.inner.source.write().unwrap() = Some(source);
     }
 
     /// The gate for Radarr and Sonarr
@@ -293,13 +310,14 @@ impl Pipeline {
             _ => "sync",
         };
         let hooks = &settings.hooks;
-        let steps = plan(
+        let steps = plan_with(
             PlanInput {
                 category: category.as_deref(),
                 has_transfer: item.transfer_id.is_some() && item.key.starts_with("transfer:"),
                 downloaded: false,
             },
             hooks,
+            Some(&settings.subtitles),
         );
         let has_gate = steps
             .iter()
@@ -367,13 +385,14 @@ impl Pipeline {
             &paths.iter().map(|(_, p)| p.clone()).collect::<Vec<_>>(),
             &settings.target,
         );
-        let steps = plan(
+        let steps = plan_with(
             PlanInput {
                 category: loc.category.as_deref(),
                 has_transfer: transfer_id.is_some(),
                 downloaded: true,
             },
             &settings.hooks,
+            Some(&settings.subtitles),
         );
         let new = NewItem {
             key: row.key.clone(),
@@ -536,8 +555,10 @@ impl Pipeline {
             }
             let steps = self.inner.store.steps(&item.key).await.unwrap_or_default();
             let open = steps.iter().find(|s| {
-                s.kind == StepKind::Hook
-                    && !s.state.is_settled()
+                matches!(
+                    s.kind,
+                    StepKind::Hook | StepKind::SubtitleScan | StepKind::Subtitles
+                ) && !s.state.is_settled()
                     && (s.state != StepState::Failed || s.required)
             });
             let holding = matches!(item.state, ItemState::Held | ItemState::WaitingForOperator);

@@ -12,6 +12,7 @@ use std::pin::Pin;
 use putio_sync_client::{ClientError, PutioApiClient, PutioSubtitle, SubtitleList};
 
 pub mod candidates;
+pub mod engine;
 pub mod naming;
 pub mod srt;
 

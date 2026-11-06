@@ -13,6 +13,7 @@ putio-sync-core = { path = "../putio-sync-core" }
 putio-sync-db = { path = "../putio-sync-db" }
 putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-hooks = { path = "../putio-sync-hooks" }
+putio-sync-subtitles = { path = "../putio-sync-subtitles" }
 putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 
 # Async runtime
@@ -36,4 +37,5 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3.8"
+putio-sync-client = { path = "../putio-sync-client" }
 mockito = "1.2"

@@ -22,9 +22,22 @@ use crate::model::{AttemptResult, ItemState, SkipReason, Stage, StepKind, StepSt
 use crate::store::{ItemRow, StepRow};
 use crate::Pipeline;
 
+/// How one attempt at a step ended
+pub(crate) struct Ended {
+    pub attempt_id: i64,
+    pub n: i64,
+    /// The metrics `kind` label
+    pub kind: &'static str,
+    pub result: AttemptResult,
+    pub code: Option<i32>,
+    pub output: String,
+    pub error: Option<String>,
+    pub took: std::time::Duration,
+}
+
 /// What running one step meant for its item
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Outcome {
+pub(crate) enum Outcome {
     /// The item goes on, or waits for a retry time
     Continue,
     /// The item ended or stopped: skipped, cancelled, or waiting for the operator
@@ -152,7 +165,13 @@ impl Pipeline {
         }
         let warnings: Vec<String> = steps
             .iter()
-            .filter(|s| s.kind == StepKind::Hook && s.state == StepState::Failed)
+            .filter(|s| {
+                s.state == StepState::Failed
+                    && matches!(
+                        s.kind,
+                        StepKind::Hook | StepKind::SubtitleScan | StepKind::Subtitles
+                    )
+            })
             .map(|s| s.name.clone())
             .collect();
         let state = if warnings.is_empty() {
@@ -195,20 +214,8 @@ impl Pipeline {
                     .await;
                 Outcome::Continue
             }
-            StepKind::SubtitleScan | StepKind::Subtitles => {
-                // Filled in by the subtitles runner
-                let _ = self
-                    .inner
-                    .store
-                    .set_step(
-                        step.id,
-                        StepState::Skipped,
-                        Some(SkipReason::NotConfigured),
-                        None,
-                    )
-                    .await;
-                Outcome::Continue
-            }
+            StepKind::SubtitleScan => self.run_subtitle_scan(item, step).await,
+            StepKind::Subtitles => self.run_subtitles(item, step).await,
             _ => self.run_hook(item, step).await,
         }
     }
@@ -294,8 +301,51 @@ impl Pipeline {
             }
         }
         let code = run.exit_code.or(run.http_status.map(i32::from));
+        self.conclude(
+            item,
+            step,
+            Ended {
+                attempt_id,
+                n,
+                kind: "hook",
+                result,
+                code,
+                output,
+                error,
+                took,
+            },
+        )
+        .await
+    }
+
+    /// The cancel signal of an item's running step
+    pub(crate) fn cancel_of(&self, key: &str) -> Arc<Notify> {
+        self.inner
+            .cancels
+            .lock()
+            .unwrap()
+            .entry(key.to_string())
+            .or_insert_with(|| Arc::new(Notify::new()))
+            .clone()
+    }
+
+    /// Record how an attempt ended and decide what the step does next: done, a hook's skip,
+    /// or a failure with its retries. Shared by every kind of step.
+    pub(crate) async fn conclude(&self, item: &ItemRow, step: &StepRow, e: Ended) -> Outcome {
+        let store = &self.inner.store;
+        let Ended {
+            attempt_id,
+            n,
+            kind,
+            result,
+            code,
+            output,
+            error,
+            took,
+        } = e;
+        let stage = step.stage.as_str();
         let _ = store.end_attempt(attempt_id, result, code, &output).await;
-        putio_sync_telemetry::steps::step(stage, "hook", result.as_str(), took);
+        putio_sync_telemetry::steps::step(stage, kind, result.as_str(), took);
         info!(
             key = %item.key, stage, step = %step.name, attempt = n,
             result = result.as_str(), duration_ms = took.as_millis() as u64,
@@ -317,25 +367,14 @@ impl Pipeline {
                 Outcome::Continue
             }
             _ => {
-                self.failed(
-                    item,
-                    step,
-                    n,
-                    error.unwrap_or_else(|| "failed".to_string()),
-                )
-                .await
+                self.failed(item, step, n, error.unwrap_or_else(|| "failed".to_string()))
+                    .await
             }
         }
     }
 
     /// A step failed or timed out
-    async fn failed(
-        &self,
-        item: &ItemRow,
-        step: &StepRow,
-        n: i64,
-        error: String,
-    ) -> Outcome {
+    async fn failed(&self, item: &ItemRow, step: &StepRow, n: i64, error: String) -> Outcome {
         let store = &self.inner.store;
         events::emit(Payload::PipelineStepFailed(PipelineStepFailed {
             key: item.key.clone(),
