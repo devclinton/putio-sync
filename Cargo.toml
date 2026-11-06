@@ -59,3 +59,10 @@ sysinfo = "0.31"
 
 # CLI
 clap = { version = "4.5", features = ["derive", "env"] }
+
+# Proc macros and build scripts are never shipped, so don't strip them. On
+# macOS, Command Line Tools' ld-27106 (October 2026) leaves a stripped
+# proc-macro dylib that dlopen refuses ("mis-aligned LINKEDIT string pool"),
+# which breaks `cargo build --release`. Shipped binaries are still stripped.
+[profile.release.build-override]
+strip = "none"
