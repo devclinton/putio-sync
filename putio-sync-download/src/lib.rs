@@ -29,8 +29,9 @@ pub use files::{
 };
 pub use manager::{
     ActiveDownload, DownloadConfig, DownloadFile, DownloadManager, DownloadOperationResult,
-    PreviewDownload, PreviewItem, RulePreview, SyncStats, TransfersSnapshot, TreeDecision,
-    TreeFile, TreeReport, VerifySettings, WorkerStats, PREVIEW_DOWNLOADS, PREVIEW_ITEMS,
+    PathRedirect, PreviewDownload, PreviewItem, RedirectFuture, RulePreview, SyncStats,
+    TransfersSnapshot, TreeDecision, TreeFile, TreeReport, VerifySettings, WorkerStats,
+    PREVIEW_DOWNLOADS, PREVIEW_ITEMS,
 };
 pub use progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 pub use rate_limiter::RateLimiter;

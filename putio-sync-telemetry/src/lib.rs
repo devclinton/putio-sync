@@ -31,6 +31,7 @@ pub mod precheck;
 pub mod process;
 pub mod server;
 pub mod setup;
+pub mod steps;
 pub mod storage;
 pub mod sync;
 pub mod tailscale;
@@ -102,6 +103,10 @@ pub struct Telemetry {
     // Feature 039
     pub(crate) pipeline_items: IntGaugeVec,
     pub(crate) pipeline_actions: IntCounterVec,
+    // Feature 038
+    pub(crate) pipeline_steps: IntCounterVec,
+    pub(crate) pipeline_step_seconds: HistogramVec,
+    pub(crate) pipeline_items_waiting: IntGaugeVec,
     pub(crate) nas_downloads_paused: IntGauge,
 
     // Feature 010; absent until the first doctor run
@@ -292,6 +297,31 @@ impl Telemetry {
                     "Pause, hold and resume actions on active transfers.",
                 ),
                 &["action"],
+            )
+            .unwrap(),
+            pipeline_steps: IntCounterVec::new(
+                opts(
+                    "pipeline_steps_total",
+                    "Processing pipeline step runs, by stage, kind and result.",
+                ),
+                &["stage", "kind", "result"],
+            )
+            .unwrap(),
+            pipeline_step_seconds: HistogramVec::new(
+                hopts(
+                    "pipeline_step_seconds",
+                    "How long processing pipeline steps took.",
+                    HOOK_BUCKETS,
+                ),
+                &["stage", "kind"],
+            )
+            .unwrap(),
+            pipeline_items_waiting: IntGaugeVec::new(
+                opts(
+                    "pipeline_items_waiting",
+                    "Items waiting for the operator at a processing pipeline stage.",
+                ),
+                &["stage"],
             )
             .unwrap(),
             nas_downloads_paused: IntGauge::with_opts(opts(
@@ -771,6 +801,9 @@ impl Telemetry {
             Box::new(self.setup_required.clone()),
             Box::new(self.pipeline_items.clone()),
             Box::new(self.pipeline_actions.clone()),
+            Box::new(self.pipeline_steps.clone()),
+            Box::new(self.pipeline_step_seconds.clone()),
+            Box::new(self.pipeline_items_waiting.clone()),
             Box::new(self.nas_downloads_paused.clone()),
             Box::new(self.doctor_check_status.clone()),
             Box::new(self.doctor_check_items.clone()),
@@ -889,6 +922,16 @@ impl Telemetry {
         }
         for a in PipelineAction::ALL {
             self.pipeline_actions.with_label_values(&[a.as_str()]);
+        }
+        for stage in steps::STAGES {
+            self.pipeline_items_waiting.with_label_values(&[stage]);
+            for kind in steps::KINDS {
+                self.pipeline_step_seconds.with_label_values(&[stage, kind]);
+                for result in steps::RESULTS {
+                    self.pipeline_steps
+                        .with_label_values(&[stage, kind, result]);
+                }
+            }
         }
         for o in BlocklistOutcome::ALL {
             self.arr_blocklist.with_label_values(&[o.as_str()]);

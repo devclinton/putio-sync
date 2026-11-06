@@ -4,11 +4,14 @@
 // old, and marked out of date while Put.io isn't answering. Rows can be paused and
 // resumed one at a time or in bulk, and the Pause NAS downloads switch is here too. The
 // page adds no retry, cancel or remove of its own: each row links to the page that has them.
+// Feature 038: past the NAS an item is "processing"; a row shows the step it is at, and
+// opens a timeline of its stages and steps, with Retry and Skip on a failed step.
 
 import { get, post } from "../api.js";
-import { empty, fill, h, nasBanner, poll, setNasPaused, toast } from "../app.js";
+import { confirm, empty, fill, h, nasBanner, poll, setNasPaused, toast } from "../app.js";
 import { bytes, dateTime, duration, percent, relative, speed, utc } from "../format.js";
 import { selection } from "../select.js";
+import { STAGE_LABEL, STEP_STATE_LABEL, attemptLabel, seconds, skipReason, splitStages, stepActions, stepLine, stepSeconds } from "../timeline.js";
 
 const REFRESH_MS = 5000;
 
@@ -28,10 +31,15 @@ const STATES = {
     ["paused", "Paused"],
     ["failed", "Failed"],
   ],
+  processing: [
+    ["running", "Running"],
+    ["held", "Held"],
+    ["waiting_for_operator", "Needs you"],
+  ],
 };
-export const STAGES = { putio: "Put.io", nas: "NAS" };
+export const STAGES = { putio: "Put.io", nas: "NAS", processing: "Processing" };
 export const LABEL = Object.fromEntries(Object.values(STATES).flat());
-export const BADGE = { downloading: "active", finishing: "active", stalled: "warn", waiting_for_sync: "warn", paused: "warn", error: "bad", failed: "bad" };
+export const BADGE = { downloading: "active", finishing: "active", stalled: "warn", waiting_for_sync: "warn", paused: "warn", error: "bad", failed: "bad", running: "active", held: "warn", waiting_for_operator: "bad" };
 const ON_HOLD = "on_hold";
 
 let timer = null;
@@ -44,6 +52,9 @@ let shownCounts = null;
 let filter = null;
 let sel = null;
 let banner = null;
+// Rows whose timeline is open, by key, and the timelines last fetched for them
+let open = new Set();
+let timelines = new Map();
 
 // What each pause or resume result reads like in the toast
 const RESULT = { paused: "paused", held: "held (Put.io keeps downloading)", resumed: "resumed", already: "already so", not_found: "not found" };
@@ -53,6 +64,8 @@ export function mount(el) {
   shown = null;
   shownCounts = null;
   filter = null;
+  open = new Set();
+  timelines = new Map();
   // Built once: a poll redraws only the counts, the heading and the rows, so the name
   // filter keeps its focus while someone types
   sel = selection({
@@ -116,7 +129,31 @@ async function load() {
   }
   if (mine !== seq || !els) return;
   data = res;
+  await loadTimelines(mine);
+  if (mine !== seq || !els) return;
   draw(false);
+}
+
+/** Fetch the timeline of every open row, so a running step shows its progress. */
+async function loadTimelines(mine) {
+  await Promise.all(
+    [...open].map(async (key) => {
+      try {
+        const t = await get(`/active/${encodeURIComponent(key)}/timeline`);
+        if (mine === seq) timelines.set(key, t);
+      } catch (e) {
+        if (e.status === 404) timelines.set(key, null);
+      }
+    }),
+  );
+}
+
+/** Open or close the timeline of `key`. */
+async function toggle(key) {
+  if (open.has(key)) open.delete(key);
+  else open.add(key);
+  if (open.has(key)) await loadTimelines(seq);
+  draw(true);
 }
 
 // ---- Rendering --------------------------------------------------------------
@@ -124,7 +161,7 @@ async function load() {
 /** Redraw; `force` after a filter change, else only when the response changed. */
 function draw(force) {
   if (!els || !data) return;
-  const text = JSON.stringify(data);
+  const text = JSON.stringify([data, [...timelines]]);
   if (!force && shown === text) return;
   shown = text;
 
@@ -181,7 +218,7 @@ function draw(force) {
                 h("th", { class: "right", text: "Actions" }),
               ),
             ),
-            h("tbody", {}, rows.map(row)),
+            h("tbody", {}, rows.flatMap((i) => [row(i), open.has(i.key) ? timelineRow(i.key, 8) : null])),
           ),
         ],
   );
@@ -192,7 +229,7 @@ function draw(force) {
 
 /** Rows that can be paused: not a Put.io error or a failed file (those are retried on Transfers or Queue) */
 function actionable(item) {
-  return item.state !== "error" && item.state !== "failed";
+  return item.stage !== "processing" && item.state !== "error" && item.state !== "failed";
 }
 
 async function onSwitch() {
@@ -251,19 +288,26 @@ function drawFinished(list) {
           h(
             "tbody",
             {},
-            list.map((f) => {
+            list.flatMap((f) => {
               const [tone, label] = OUTCOME[f.outcome] || ["", f.outcome];
-              return h(
+              const tr = h(
                 "tr",
                 {},
-                h("td", { class: "name-cell name", "data-label": "Name" }, f.name, f.reason ? h("small", { class: f.outcome === "failed" ? "error-text block" : "muted block", text: f.reason }) : null),
-                h("td", { "data-label": "Outcome" }, h("span", { class: `badge ${tone}`, text: label })),
+                h(
+                  "td",
+                  { class: "name-cell name", "data-label": "Name" },
+                  f.name,
+                  f.reason ? h("small", { class: f.outcome === "failed" ? "error-text block" : "muted block", text: f.reason }) : null,
+                  f.warnings ? h("button", { type: "button", class: "btn btn-small btn-quiet", "aria-expanded": String(open.has(f.key)), onclick: () => toggle(f.key) }, open.has(f.key) ? "Hide steps" : "Show steps") : null,
+                ),
+                h("td", { "data-label": "Outcome" }, h("span", { class: `badge ${tone}`, text: label }), f.warnings ? h("span", { class: "badge warn", text: "With warnings" }) : null),
                 h("td", { "data-label": "Finished", title: f.done_at ? dateTime(utc(f.done_at)) : "", text: f.done_at ? relative(f.done_at) : "—" }),
                 h("td", { class: "num right", "data-label": "Total", text: took(f.total_seconds) }),
                 h("td", { class: "num right", "data-label": "On Put.io", text: took(f.putio_seconds) }),
                 h("td", { class: "num right", "data-label": "Waiting", text: took(f.waiting_seconds) }),
                 h("td", { class: "num right", "data-label": "On the NAS", text: took(f.nas_seconds) }),
               );
+              return [tr, f.warnings && open.has(f.key) ? timelineRow(f.key, 7) : null];
             }),
           ),
         ),
@@ -299,6 +343,7 @@ function drawCounts(counts, items) {
   els.counts.replaceChildren(
     line("putio"),
     line("nas"),
+    counts.processing ? line("processing") : null,
     h(
       "div",
       { class: "chips" },
@@ -332,6 +377,7 @@ function row(i) {
     i.reason ? h("small", { class: "error-text block", text: i.reason }) : null,
     i.note ? h("small", { class: "muted block", text: i.note }) : null,
     i.held ? h("small", { class: "muted block", text: "Put.io keeps downloading; NAS download held" }) : null,
+    i.step ? h("small", { class: i.state === "waiting_for_operator" || i.step.state === "failed" ? "error-text block" : "muted block", text: stepLine(i.step, i.state) }) : null,
   ];
   return h(
     "tr",
@@ -356,8 +402,14 @@ function row(i) {
     h("td", { class: "num right", "data-label": "Size", text: bytes(i.size) }),
     h("td", { class: "num right", "data-label": "Speed", text: !i.paused && i.speed_bps ? speed(i.speed_bps) : "—" }),
     h("td", { class: "num right", "data-label": "Time left", text: i.paused && i.stage === "nas" ? "Paused" : i.eta_seconds != null && i.eta_seconds > 0 ? duration(i.eta_seconds) : "—" }),
-    h("td", { class: "actions-cell", "data-label": "Actions" }, h("div", { class: "row-actions" }, pauseButton(i), links(i))),
+    h("td", { class: "actions-cell", "data-label": "Actions" }, h("div", { class: "row-actions" }, pauseButton(i), stepsButton(i), links(i))),
   );
+}
+
+function stepsButton(i) {
+  if (!i.step && i.stage !== "processing") return null;
+  const on = open.has(i.key);
+  return h("button", { type: "button", class: "btn btn-small", "aria-expanded": String(on), "aria-label": `${on ? "Hide" : "Show"} the steps of ${i.name}`, onclick: () => toggle(i.key) }, on ? "Hide steps" : "Steps");
 }
 
 function pauseButton(i) {
@@ -378,4 +430,103 @@ function links(i) {
     l.transfers ? h("a", { class: "btn btn-small", href: l.transfers, "aria-label": `Open ${i.name} on Transfers` }, "Transfers") : null,
     files && l.queue ? h("a", { class: "btn btn-small", href: l.queue, "aria-label": `Open the files of ${i.name} on Queue` }, "Queue") : null,
   ];
+}
+
+// ---- Timeline (feature 038) -------------------------------------------------
+
+/** The expanded row under an item: its stages left to right, steps with attempts. */
+function timelineRow(key, span) {
+  const t = timelines.get(key);
+  const body =
+    t === undefined
+      ? h("p", { class: "muted", text: "Loading…" })
+      : t === null
+        ? h("p", { class: "muted", text: "No steps were recorded for this item." })
+        : timelineView(t);
+  return h("tr", { class: "timeline-row" }, h("td", { colspan: String(span) }, body));
+}
+
+function timelineView(t) {
+  const { shown, skipped } = splitStages(t.stages);
+  return h(
+    "div",
+    { class: "timeline", "data-key": t.key },
+    h("div", { class: "timeline-stages" }, shown.map((stage) => stageView(t, stage))),
+    skipped.length
+      ? h(
+          "details",
+          { class: "timeline-skipped" },
+          h("summary", { text: `Show skipped (${skipped.length})` }),
+          skipped.map((stage) => stageView(t, stage)),
+        )
+      : null,
+  );
+}
+
+function stageView(t, stage) {
+  const lines = [{ title: null, steps: stage.steps || [] }, ...Object.entries(stage.branches || {}).map(([title, steps]) => ({ title, steps }))].filter((l) => l.steps.length > 0);
+  return h(
+    "section",
+    { class: "timeline-stage" },
+    h("h3", { text: STAGE_LABEL[stage.stage] || stage.stage }),
+    stage.skipped || lines.length === 0
+      ? h("p", { class: "muted", text: "Skipped: not configured" })
+      : h("div", { class: "timeline-branches" }, lines.map((l) => h("div", { class: "timeline-branch" }, l.title ? h("small", { class: "muted block", text: l.title }) : null, l.steps.map((step) => stepView(t, step))))),
+  );
+}
+
+function stepView(t, step) {
+  const took = stepSeconds(step);
+  const act = stepActions(step);
+  const tone = { done: "ok", failed: "bad", running: "active", interrupted: "warn", skipped: "", waiting: "", not_reached: "" }[step.state] || "";
+  const tries = step.attempts || [];
+  return h(
+    "div",
+    { class: `timeline-step ${step.state}` },
+    h(
+      "div",
+      { class: "badges" },
+      h("strong", { text: step.name }),
+      h("span", { class: `badge ${tone}`, text: STEP_STATE_LABEL[step.state] || step.state }),
+      step.required === false ? h("span", { class: "badge", text: "Optional" }) : null,
+      took != null ? h("small", { class: "muted", text: took < 1 ? "<1s" : duration(took) }) : null,
+      step.progress != null && step.state === "running" ? h("small", { class: "muted", text: percent(step.progress) }) : null,
+    ),
+    skipReason(step) ? h("small", { class: "muted block", text: skipReason(step) }) : null,
+    step.next_attempt_at && step.state === "waiting" ? h("small", { class: "muted block", text: `Next try ${relative(step.next_attempt_at.replace(" ", "T") + "Z")}` }) : null,
+    tries.map((a) =>
+      h(
+        "details",
+        { class: "timeline-attempt" },
+        h("summary", { text: `${attemptLabel(a)}${seconds(a.started_at, a.ended_at) != null ? ` · ${duration(seconds(a.started_at, a.ended_at))}` : ""}` }),
+        h("pre", { class: "timeline-output", text: a.output || "(no output)" }),
+      ),
+    ),
+    act.retry || act.skip
+      ? h(
+          "div",
+          { class: "row-actions" },
+          act.retry ? h("button", { type: "button", class: "btn btn-small", onclick: (ev) => stepAction(t, step, "retry", ev.currentTarget) }, "Retry") : null,
+          act.skip ? h("button", { type: "button", class: "btn btn-small", onclick: (ev) => stepAction(t, step, "skip", ev.currentTarget) }, "Skip") : null,
+        )
+      : null,
+  );
+}
+
+/** Retry or skip a step; skipping asks first, since the item goes on without it. */
+async function stepAction(t, step, verb, button) {
+  if (verb === "skip") {
+    const ok = await confirm({ title: `Skip ${step.name}?`, text: `${t.name} goes on without this step.`, verb: "Skip step" });
+    if (!ok) return;
+  }
+  button.disabled = true;
+  try {
+    await post(`/active/${encodeURIComponent(t.key)}/steps/${step.id}/${verb}`, {});
+    toast(verb === "retry" ? `Retrying ${step.name}` : `Skipped ${step.name}`, "ok");
+  } catch (e) {
+    if (e.status !== 401 && e.status !== 429) toast(`Couldn't ${verb} ${step.name}`, "error", e.details ? `${e.error}: ${e.details}` : e.error);
+  } finally {
+    if (button.isConnected) button.disabled = false;
+  }
+  if (timer) timer.now();
 }

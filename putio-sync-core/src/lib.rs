@@ -64,6 +64,9 @@ pub mod path_utils;
 /// Saved file patterns with AND, OR and NOT (feature 020)
 pub mod pattern;
 
+/// Question the Radarr/Sonarr view asks the processing pipeline (feature 038)
+pub mod pipeline_gate;
+
 /// Shortened forms of values that may carry secrets (feature 027)
 pub mod redact;
 

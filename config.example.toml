@@ -368,6 +368,36 @@ run_at = "02:30"
 # enabled = false                       # keep it without running it
 
 # ============================================================================
+# Processing pipeline (feature 038)
+# ============================================================================
+# A hook with a `stage` is a step of an item's life, not an event hook: it runs
+# when the item reaches that stage, in the order the hooks are listed. It gets
+# the item as PUTIO_SYNC_ITEM_* variables and as JSON in the file named by
+# PUTIO_SYNC_ITEM_JSON. Exit 0 (or a 2xx) is done; anything else is a failure.
+# In pre_download only, exit 10 (or a 2xx with {"action": "skip"}) skips the item.
+# Stages: pre_download (holds the Put.io transfer until the hook passes),
+# pre_processing and post_processing (after the files are on the NAS).
+# A stage hook takes no `events`.
+# [[hooks]]
+# name = "tidy"
+# stage = "post_processing"
+# command = ["/config/hooks/tidy.sh"]
+# required = true                       # a failure holds the item for you to retry or skip. Default: true
+# categories = ["radarr", "sonarr"]     # only for these Arr categories; empty means all
+# timeout_secs = 120
+
+[pipeline]
+# Items whose steps run at once, 1 to 16. Default: 2
+# concurrency = 2
+# Seconds to wait before each retry of a failing optional (required = false)
+# step; it is given up after the last, and the item ends "with warnings".
+# At most 10 entries. Default: [60, 300, 600]
+# optional_retries = [60, 300, 600]
+# Keep a watch-folder download out of sight (in .putio-sync-staging beside it)
+# until its steps are done: "auto" (on while a stage hook exists), "on" or "off"
+# staging = "auto"
+
+# ============================================================================
 # Lua plugins (feature 028)
 # ============================================================================
 # Sandboxed Lua scripts run on the same events as hooks. ntfy, discord,

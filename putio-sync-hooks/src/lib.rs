@@ -5,12 +5,16 @@
 //! Each hook has its own queue and runs one event at a time, so a slow hook never holds
 //! up another or the sync itself. Runs are logged, counted in the metrics and kept (the
 //! last 20 per hook) for the API and the doctor.
+//!
+//! Pipeline hooks (feature 038, those with a `stage`) never run for events; [`step`] runs them
+//! as steps of one item.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 pub mod command;
 mod service;
+pub mod step;
 pub mod webhook;
 
 pub use service::{HookStatus, HooksService, TestError};

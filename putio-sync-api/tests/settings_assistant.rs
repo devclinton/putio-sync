@@ -20,6 +20,7 @@ const GROUPS: &[&str] = &[
     "tailscale",
     "network",
     "hooks",
+    "pipeline",
     "plugins",
     "putio",
 ];

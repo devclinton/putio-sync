@@ -30,8 +30,8 @@ export const SECTIONS = [
   {
     id: "integrations",
     title: "Integrations",
-    help: "Other programs putio-sync works with: Radarr and Sonarr, and hooks that run a command or call a webhook on each event.",
-    cards: [["arr", "Radarr / Sonarr"], ["hooks", "Event hooks"]],
+    help: "Other programs putio-sync works with: Radarr and Sonarr, and hooks that run a command or call a webhook on each event or as a step after a download.",
+    cards: [["arr", "Radarr / Sonarr"], ["hooks", "Event hooks"], ["pipeline", "Processing pipeline"]],
   },
   {
     id: "plugins",
@@ -80,6 +80,7 @@ const KEY_SECTION = {
   storage: "putio",
   putio: "putio",
   hooks: "integrations",
+  pipeline: "integrations",
   plugins: "plugins",
   arr: "integrations",
   network: "network",

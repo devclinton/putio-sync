@@ -1608,6 +1608,42 @@ the hook and field named. Up to 32 hooks.
 The doctor's Event hooks check reports a command hook whose program is missing or not
 executable, and a hook whose last run failed in the last day.
 
+## Processing pipeline
+
+A download can pass through your own steps before it counts as finished. Give a hook a
+`stage` and it becomes a step instead of an event hook: `pre_download` runs before the
+files start and holds the transfer until it passes, `pre_processing` and `post_processing`
+run once the files are on the NAS. The Active page shows each item's steps and their
+attempts, with Retry and Skip for a failed one.
+
+```toml
+[[hooks]]
+name = "tidy"
+stage = "post_processing"        # pre_download, pre_processing or post_processing
+command = ["/config/hooks/tidy.sh"]
+required = true                  # a failure waits for you; false retries, then warns
+categories = ["sonarr"]          # empty runs for every item
+timeout_secs = 120
+
+[pipeline]
+concurrency = 2                  # items running steps at once, 1 to 16
+optional_retries = [60, 300, 600]   # seconds before each retry of an optional step
+staging = "auto"                 # auto, on or off
+```
+
+- **Radarr and Sonarr import only finished items.** While an item still has a step to
+  run, the download client reports it as 99% downloaded, so they wait.
+- **Watch folders stage.** A watch-folder download is built in `.putio-sync-staging` next to
+  where it will live and moved into place with one rename after its last step. The
+  folders must be on one filesystem; a save that would break that is refused. An existing
+  item of the same name becomes `<name> (2)`.
+- **A hold pauses it.** Holding a transfer pauses its steps between steps; releasing goes on.
+- **No steps, no change.** With no `stage` hooks nothing is held back, staged or renamed.
+
+The hook's input, results and the `pipeline.step_failed` and `pipeline.completed` events
+are in [EVENTS.md](EVENTS.md#pipeline-step-hooks). Settings › Integrations edits the steps
+and the pipeline settings.
+
 ## Plugins
 
 Plugins are small Lua scripts that run inside putio-sync on the same events as hooks,

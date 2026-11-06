@@ -33,6 +33,7 @@ putio-sync-file-manager = { path = "../putio-sync-file-manager" }
 putio-sync-daemon = { path = "../putio-sync-daemon" }
 putio-sync-doctor = { path = "../putio-sync-doctor" }
 putio-sync-hooks = { path = "../putio-sync-hooks" }
+putio-sync-pipeline = { path = "../putio-sync-pipeline" }
 putio-sync-plugins = { path = "../putio-sync-plugins" }
 putio-sync-storage = { path = "../putio-sync-storage" }
 

@@ -396,6 +396,65 @@ A file is being downloaded again after a mismatch: a new download starting over,
 }
 ```
 
+### `pipeline.step_failed`
+
+A processing pipeline step failed (feature 038). Sent after every failed attempt of a hook step.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `key` | string | the item key, such as `transfer:123` |
+| `name` | string | the item name |
+| `stage` | string | `pre_download`, `pre_processing`, `subtitles`, `translating`, `post_processing` or `notifications` |
+| `step` | string | the step name (the hook's name) |
+| `attempt` | integer | the attempt that failed, from 1 |
+| `required` | boolean | `true` when the item now waits for you; `false` when the step is retried or given up |
+| `error` | string | what went wrong, with secrets removed |
+
+```json
+{
+  "schema_version": 1,
+  "id": "c5f1e4d3-7a8b-4c9d-8e1f-2a3b4c5d6e7f",
+  "type": "pipeline.step_failed",
+  "occurred_at": "2026-11-05T09:12:33.095Z",
+  "source": { "app": "putio-sync", "version": "0.1.1", "host": "nas01" },
+  "data": {
+    "key": "transfer:991",
+    "name": "Some.Show.S01E01.1080p",
+    "stage": "post_processing",
+    "step": "tidy",
+    "attempt": 1,
+    "required": true,
+    "error": "exited with code 3"
+  }
+}
+```
+
+### `pipeline.completed`
+
+An item finished its pipeline and at least one optional step was given up (feature 038). Items that
+pass cleanly send no event, so nothing changes for people who set no pipeline steps.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `key` | string | the item key |
+| `name` | string | the item name |
+| `warnings` | array of string | the optional steps that were given up |
+
+```json
+{
+  "schema_version": 1,
+  "id": "d6a2f5e4-8b9c-4dae-9f20-3b4c5d6e7f80",
+  "type": "pipeline.completed",
+  "occurred_at": "2026-11-05T09:20:01.412Z",
+  "source": { "app": "putio-sync", "version": "0.1.1", "host": "nas01" },
+  "data": {
+    "key": "transfer:991",
+    "name": "Some.Show.S01E01.1080p",
+    "warnings": ["tidy"]
+  }
+}
+```
+
 ### `hook.test`
 
 Sent only to one hook, by the **Send test event** button in Settings › Integrations › Event hooks or
@@ -445,3 +504,27 @@ include it. Nothing else receives it, hooks included.
   }
 }
 ```
+
+## Pipeline step hooks
+
+A hook with a `stage` is not an event hook: it is a step that runs once for an item in
+that stage (feature 038). It gets no event; it gets the item.
+
+- **Command.** The environment has `PUTIO_SYNC_ITEM_KEY`, `PUTIO_SYNC_ITEM_NAME`,
+  `PUTIO_SYNC_ITEM_CATEGORY`, `PUTIO_SYNC_ITEM_SOURCE` (`arr`, `watch` or `sync`),
+  `PUTIO_SYNC_ITEM_DIR` and `PUTIO_SYNC_ITEM_STAGE`, and `PUTIO_SYNC_ITEM_JSON`, the path of a
+  temp file with the item as JSON, removed after the run. Standard input is empty.
+- **Webhook.** A POST with the same JSON as the body.
+- **The item JSON** has `key`, `name`, `category`, `source`, `dir`, `stage`, `transfer_id`
+  and `files`, a list of `{relative_path, size, putio_id}` with the paths relative to `dir`.
+- **Result.** Exit 0 or a 2xx answer is done. Anything else is a failure, and a command
+  that runs past `timeout_secs` is a timeout. In `pre_download` only, exit 10 or a 2xx
+  answer with the body `{"action":"skip"}` skips the item: its queued files are removed.
+  Elsewhere that result counts as done.
+- **After a failure.** A required step (the default) stops the item and waits for you to
+  Retry or Skip it on the Active page. An optional step is retried after each wait in
+  `[pipeline] optional_retries`, then given up, and the item finishes with a warning.
+  Each failed attempt sends `pipeline.step_failed`; `pipeline.completed` is sent only
+  when the item ends with warnings.
+- **Idempotent, please.** A step can run again: after a restart that interrupted it, or
+  when you press Retry. Write it so that running it twice leaves the same files.

@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MASK, blankHook, eventChoices, fromSettings, runLabel, targetLabel, toSettings } from "../../ui/hooks.js";
+import { MASK, blankHook, eventChoices, fromSettings, moveRow, runLabel, stagePosition, targetLabel, toSettings } from "../../ui/hooks.js";
 
 test("runs read as people say them", () => {
   assert.equal(runLabel(null), "Not run yet");
@@ -53,4 +53,41 @@ test("url hooks round trip, and All events is a star", () => {
   const cmd = toSettings({ ...row, kind: "command", program: "/bin/x", args: "" });
   assert.deepEqual(cmd.command, ["/bin/x"]);
   assert.ok(!("url" in cmd) && !("headers" in cmd));
+});
+
+test("a pipeline step round-trips with its stage, required flag and categories", () => {
+  const step = { name: "tidy", enabled: true, events: [], command: ["/bin/tidy"], timeout_secs: 60, stage: "post_processing", required: false, categories: ["radarr", "sonarr"] };
+  const row = fromSettings(step);
+  assert.equal(row.stage, "post_processing");
+  assert.equal(row.required, false);
+  assert.equal(row.categories, "radarr, sonarr");
+  const out = toSettings(row);
+  assert.equal(out.stage, "post_processing");
+  assert.equal(out.required, false);
+  assert.deepEqual(out.categories, ["radarr", "sonarr"]);
+  assert.deepEqual(out.events, []);
+});
+
+test("an event hook sends none of the step fields", () => {
+  const out = toSettings(blankHook());
+  assert.equal("stage" in out, false);
+  assert.equal("required" in out, false);
+  assert.equal("categories" in out, false);
+  const row = fromSettings({ name: "n", events: ["*"], command: ["/x"] });
+  assert.equal(row.stage, "");
+  assert.equal(row.required, true);
+});
+
+test("steps are reordered inside the list and numbered inside their stage", () => {
+  const rows = [
+    { ...blankHook(1), name: "a", stage: "post_processing" },
+    { ...blankHook(2), name: "b" },
+    { ...blankHook(3), name: "c", stage: "post_processing" },
+  ];
+  assert.deepEqual(moveRow(rows, 2, -1).map((r) => r.name), ["a", "c", "b"]);
+  assert.equal(moveRow(rows, 0, -1), rows);
+  assert.equal(moveRow(rows, 2, 1), rows);
+  assert.equal(stagePosition(rows, 0), "1 of 2");
+  assert.equal(stagePosition(rows, 2), "2 of 2");
+  assert.equal(stagePosition(rows, 1), "");
 });

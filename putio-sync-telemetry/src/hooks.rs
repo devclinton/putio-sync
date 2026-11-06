@@ -9,7 +9,7 @@ use crate::{global, Telemetry};
 
 /// Every event type, as on the wire. Kept equal to `putio_sync_core::events::EventType::ALL`
 /// by a test in core.
-pub const EVENT_TYPES: [&str; 12] = [
+pub const EVENT_TYPES: [&str; 14] = [
     "download.finished",
     "download.failed",
     "transfer.added",
@@ -20,6 +20,8 @@ pub const EVENT_TYPES: [&str; 12] = [
     "verify.passed",
     "verify.failed",
     "verify.redownload",
+    "pipeline.step_failed",
+    "pipeline.completed",
     "hook.test",
     "plugin.test",
 ];

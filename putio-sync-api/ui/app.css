@@ -882,3 +882,16 @@ button.brow:hover { background: var(--surface-2); }
 .log-skip { padding: 6px 0; color: var(--warn); }
 .log-overrides { margin: 10px 0; padding: 0; list-style: none; }
 .log-overrides li { display: flex; align-items: center; gap: 8px; }
+
+/* Feature 038: the pipeline timeline under an Active row */
+.timeline-row > td { background: var(--surface-2, transparent); padding: 12px 16px; }
+.timeline-stages { display: flex; gap: 16px; align-items: flex-start; overflow-x: auto; }
+.timeline-stage { min-width: 12em; flex: 1 1 12em; }
+.timeline-stage h3 { margin: 0 0 6px; font-size: var(--fs-sm); color: var(--muted); }
+.timeline-branches { display: flex; gap: 12px; flex-wrap: wrap; }
+.timeline-branch { flex: 1 1 10em; }
+.timeline-step { border: 1px solid var(--border, currentColor); border-radius: 6px; padding: 8px; margin-bottom: 6px; }
+.timeline-attempt summary { cursor: pointer; font-size: var(--fs-sm); }
+.timeline-output { max-height: 12em; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: var(--fs-sm); margin: 4px 0; }
+.timeline-skipped { margin-top: 8px; }
+@media (max-width: 720px) { .timeline-stages { flex-direction: column; } }

@@ -91,6 +91,17 @@ impl<'a> DownloadRepository<'a> {
         Ok(result.last_insert_rowid())
     }
 
+    /// Point a file's downloads at a new path (feature 038: a staged item moved into place)
+    pub async fn set_local_path(&self, file_id: i64, local_path: &str) -> DbResult<()> {
+        sqlx::query("UPDATE downloads SET local_path = ? WHERE file_id = ?")
+            .bind(local_path)
+            .bind(file_id)
+            .execute(self.pool)
+            .await
+            .map_err(tracked(DbOp::History, "Failed to move a download's path"))?;
+        Ok(())
+    }
+
     /// Find a download by file ID only
     pub async fn find_by_file_id(&self, file_id: i64) -> DbResult<Option<Download>> {
         let download = sqlx::query_as::<_, Download>(

@@ -242,6 +242,24 @@ pub async fn execute_daemon(
     let hooks = Arc::new(HooksService::new(config.hooks.clone()));
     hooks.start();
 
+    // One processing pipeline for the daemon's tick and the API (feature 038). With no
+    // `stage` hooks it only records the steps it passes through.
+    let pipeline = match daemon.get_database() {
+        Some(db) => {
+            let pipeline = Arc::new(putio_sync_pipeline::Pipeline::new(db, &config).await);
+            pipeline.startup().await;
+            pipeline.start();
+            Some(pipeline)
+        }
+        None => None,
+    };
+    if let Some(pipeline) = &pipeline {
+        daemon = daemon.with_pipeline(pipeline.clone());
+        if let Some(manager) = daemon.get_download_manager() {
+            manager.set_redirect(pipeline.clone());
+        }
+    }
+
     // One plugins service likewise (feature 028)
     let plugins = Arc::new(PluginsService::from_config(
         &config,
@@ -294,6 +312,10 @@ pub async fn execute_daemon(
             };
             let state = match &storage {
                 Some(storage) => state.with_storage(storage.clone()),
+                None => state,
+            };
+            let state = match &pipeline {
+                Some(pipeline) => state.with_pipeline(pipeline.clone()),
                 None => state,
             };
             let state = state

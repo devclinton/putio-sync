@@ -21,6 +21,8 @@
         "verify.passed",
         "verify.failed",
         "verify.redownload",
+        "pipeline.step_failed",
+        "pipeline.completed",
         "hook.test",
         "plugin.test"
       ]
@@ -48,10 +50,34 @@
     { "properties": { "type": { "const": "verify.passed" }, "data": { "$ref": "#/$defs/verify_passed" } } },
     { "properties": { "type": { "const": "verify.failed" }, "data": { "$ref": "#/$defs/verify_failed" } } },
     { "properties": { "type": { "const": "verify.redownload" }, "data": { "$ref": "#/$defs/verify_redownload" } } },
+    { "properties": { "type": { "const": "pipeline.step_failed" }, "data": { "$ref": "#/$defs/pipeline_step_failed" } } },
+    { "properties": { "type": { "const": "pipeline.completed" }, "data": { "$ref": "#/$defs/pipeline_completed" } } },
     { "properties": { "type": { "const": "hook.test" }, "data": { "$ref": "#/$defs/hook_test" } } },
     { "properties": { "type": { "const": "plugin.test" }, "data": { "$ref": "#/$defs/plugin_test" } } }
   ],
   "$defs": {
+    "pipeline_step_failed": {
+      "type": "object",
+      "required": ["key", "name", "stage", "step", "attempt", "required", "error"],
+      "properties": {
+        "key": { "type": "string", "description": "The item key, such as transfer:123." },
+        "name": { "type": "string" },
+        "stage": { "enum": ["pre_download", "pre_processing", "subtitles", "translating", "post_processing", "notifications"] },
+        "step": { "type": "string", "description": "The step name, such as the hook's name." },
+        "attempt": { "type": "integer", "description": "The attempt that failed, from 1." },
+        "required": { "type": "boolean", "description": "True when the item waits for the operator." },
+        "error": { "type": "string" }
+      }
+    },
+    "pipeline_completed": {
+      "type": "object",
+      "required": ["key", "name", "warnings"],
+      "properties": {
+        "key": { "type": "string" },
+        "name": { "type": "string" },
+        "warnings": { "type": "array", "items": { "type": "string" }, "description": "Optional steps that were given up." }
+      }
+    },
     "verify_passed": {
       "type": "object",
       "required": ["file_id", "name", "relative_path", "local_path", "size_bytes", "method", "crc32", "redownloads", "trigger"],

@@ -41,6 +41,12 @@
 //! Undo. `Shows/Example.Show.S01E01.1080p.mkv` belongs to a Sonarr item, so its Flag
 //! dialog offers "Also fail and blocklist it". History → Rejected releases offers
 //! "Not fake" on each row, and the Stats page's "Release reports" card downloads them.
+//! Feature 038: `MOCK_PIPELINE=1` adds a post-processing hook `tidy` (sleeps
+//! `MOCK_HOOK_SECS`, default 20, then exits `MOCK_HOOK_EXIT`, default 0; `MOCK_HOOK_REQUIRED=0`
+//! makes it optional with three 1 s retries) and seeds the Sonarr season pack as downloaded
+//! and waiting for it, so `#/active` shows the step and timeline, and the Sonarr view
+//! of the item (`/arr/transmission/rpc`) stays under 100% until the step is done.
+//! `MOCK_DIR=<dir>` keeps the database in a folder you give, so a restart finds it again.
 //! Feature 040: History badges some rows Saved as copy (with the `(1)` path under the
 //! name), Resumed or Overwritten; Settings has "When a file already exists" set to Keep
 //! both, and `Movies` has an Overwrite rule.
@@ -884,12 +890,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .create_async()
         .await;
 
+    // MOCK_DIR keeps the database across runs (feature 038, quickstart 5)
+    let kept = std::env::var("MOCK_DIR").ok().map(std::path::PathBuf::from);
+    if let Some(kept) = &kept {
+        std::fs::create_dir_all(kept)?;
+    }
     let dir = tempfile::tempdir()?;
+    let root = kept.clone().unwrap_or_else(|| dir.path().to_path_buf());
     let mut config = Config {
         auth: Some(AuthConfig::with_token(PUTIO_TOKEN.to_string())),
         ..Default::default()
     };
-    config.download.target_directory = dir.path().to_path_buf();
+    config.download.target_directory = root.clone();
     config.download.blocked_extensions = vec!["exe".to_string()];
     config.api.auth_token = Some(API_TOKEN.to_string());
     config.arr = ArrConfig {
@@ -952,7 +964,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
     .collect();
-    let config_path = dir.path().join("config.toml");
+    if std::env::var("MOCK_PIPELINE").is_ok() {
+        let secs = std::env::var("MOCK_HOOK_SECS").unwrap_or_else(|_| "20".to_string());
+        let code = std::env::var("MOCK_HOOK_EXIT").unwrap_or_else(|_| "0".to_string());
+        let required = std::env::var("MOCK_HOOK_REQUIRED").map_or(true, |v| v != "0");
+        config.hooks.push(putio_sync_core::hooks::HookConfig {
+            name: "tidy".to_string(),
+            stage: Some(putio_sync_core::hooks::HookStage::PostProcessing),
+            command: Some(vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                format!("sleep {secs}; echo tidying; [ {code} -ne 0 ] && {{ echo 'tidy failed' >&2; exit {code}; }}; touch \"$PUTIO_SYNC_ITEM_DIR/.tidied\""),
+            ]),
+            timeout_secs: 120,
+            required,
+            ..Default::default()
+        });
+        if !required {
+            config.pipeline.optional_retries = vec![1, 1, 1];
+        }
+    }
+    let config_path = root.join("config.toml");
     config.save(&config_path)?;
     // A comment UI saves must keep (save_keeping_file_credentials edits in place), and an
     // unknown key for the doctor's config check
@@ -962,82 +994,86 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         format!("# Seeded by mock_ui: UI saves keep this comment\nsync_everything = true\n{saved}"),
     )?;
 
-    let db = Arc::new(Database::new(dir.path().join(".putiosync.db")).await?);
-    let queue = db.queue();
-    let rows = [
-        (
-            101,
-            "Big.Buck.Bunny.2008.2160p.mkv",
-            8_589_934_592,
-            QueueStatus::Pending,
-        ),
-        (
-            201,
-            "Example.Show.S01E01.1080p.mkv",
-            1_610_612_736,
-            QueueStatus::Pending,
-        ),
-        (
-            401,
-            "Elephants.Dream.2006.1080p.mkv",
-            1_073_741_824,
-            QueueStatus::Completed,
-        ),
-        (
-            402,
-            "Tears.of.Steel.2012.720p.mkv",
-            734_003_200,
-            QueueStatus::Paused,
-        ),
-        (
-            403,
-            "Cosmos.Laundromat.2015.mkv",
-            524_288_000,
-            QueueStatus::Failed,
-        ),
-        (
-            501,
-            "Removed.Movie.2001.mkv",
-            2_147_483_648,
-            QueueStatus::Pending,
-        ),
-    ];
-    // Listed (and downloaded) highest priority first, so the first row gets the highest
-    let top = rows.len() as i64;
-    for (index, (file_id, name, size, status)) in rows.into_iter().enumerate() {
-        queue
-            .add(
-                file_id,
-                name,
-                size,
-                "http://unused",
-                "",
-                top - index as i64,
+    let db = Arc::new(Database::new(root.join(".putiosync.db")).await?);
+    // A restart on the same MOCK_DIR finds the seeded database as it was
+    if db.arr().get_by_hash("mock-sonarr-pack").await?.is_none() {
+        let queue = db.queue();
+        let rows = [
+            (
+                101,
+                "Big.Buck.Bunny.2008.2160p.mkv",
+                8_589_934_592,
                 QueueStatus::Pending,
+            ),
+            (
+                201,
+                "Example.Show.S01E01.1080p.mkv",
+                1_610_612_736,
+                QueueStatus::Pending,
+            ),
+            (
+                401,
+                "Elephants.Dream.2006.1080p.mkv",
+                1_073_741_824,
+                QueueStatus::Completed,
+            ),
+            (
+                402,
+                "Tears.of.Steel.2012.720p.mkv",
+                734_003_200,
+                QueueStatus::Paused,
+            ),
+            (
+                403,
+                "Cosmos.Laundromat.2015.mkv",
+                524_288_000,
+                QueueStatus::Failed,
+            ),
+            (
+                501,
+                "Removed.Movie.2001.mkv",
+                2_147_483_648,
+                QueueStatus::Pending,
+            ),
+        ];
+        // Listed (and downloaded) highest priority first, so the first row gets the highest
+        let top = rows.len() as i64;
+        for (index, (file_id, name, size, status)) in rows.into_iter().enumerate() {
+            queue
+                .add(
+                    file_id,
+                    name,
+                    size,
+                    "http://unused",
+                    "",
+                    top - index as i64,
+                    QueueStatus::Pending,
+                )
+                .await?;
+            if status != QueueStatus::Pending {
+                queue.update_status(file_id, status).await?;
+            }
+        }
+
+        seed_history(&db).await?;
+        seed_stats(&db).await?;
+        seed_releases(&db).await?;
+        seed_held(&db).await?;
+        seed_partial(&root)?;
+        db.rule_decisions()
+            .record(
+                102,
+                "setup.exe",
+                "Movies",
+                RuleDecision::Blocked,
+                "extension exe is blocked",
+                None,
             )
             .await?;
-        if status != QueueStatus::Pending {
-            queue.update_status(file_id, status).await?;
-        }
+
+        seed_pipeline(&db).await?;
     }
-
-    seed_history(&db).await?;
-    seed_stats(&db).await?;
-    seed_releases(&db).await?;
-    seed_held(&db).await?;
-    seed_partial(dir.path())?;
-    db.rule_decisions()
-        .record(
-            102,
-            "setup.exe",
-            "Movies",
-            RuleDecision::Blocked,
-            "extension exe is blocked",
-            None,
-        )
-        .await?;
-
-    seed_pipeline(&db).await?;
+    let processing = mock_processing(&db, &config, &root).await?;
 
     // With Put.io down, give up at once instead of retrying a 503 for ~30 s
     let mut client = PutioApiClient::with_base_url(PUTIO_TOKEN.to_string(), putio.url());
@@ -1099,6 +1135,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .with_stall_tracker(tracker)
     .with_cleanup(cleanup)
     .with_doctor(Arc::new(doctor));
+    let state = match processing {
+        Some(p) => state.with_pipeline(p),
+        None => state,
+    };
     if let Some(arr) = &state.arr {
         arr.service
             .contacts()
@@ -1288,4 +1328,69 @@ fn seeded_tracker() -> Arc<StallTracker> {
     tracker.observe(&earlier, now - std::time::Duration::from_secs(7 * 3600));
     tracker.observe(&seen, now);
     Arc::new(tracker)
+}
+
+/// Feature 038: the processing pipeline with the season pack downloaded and waiting for
+/// its steps. Seeded once: a restart on the same `MOCK_DIR` finds the item as it was.
+async fn mock_processing(
+    db: &Arc<Database>,
+    config: &Config,
+    root: &std::path::Path,
+) -> Result<Option<Arc<putio_sync_pipeline::Pipeline>>, Box<dyn std::error::Error>> {
+    if std::env::var("MOCK_PIPELINE").is_err() {
+        return Ok(None);
+    }
+    use putio_sync_pipeline::store::NewItem;
+    use putio_sync_pipeline::{ItemState, Stage};
+    let pipeline = Arc::new(putio_sync_pipeline::Pipeline::new(db.clone(), config).await);
+    pipeline.startup().await;
+    let key = format!("transfer:{SEASON_PACK}");
+    let folder = root.join("Shows").join("Some.Show.S02.1080p");
+    if pipeline.store().item(&key).await?.is_none() {
+        std::fs::create_dir_all(&folder)?;
+        std::fs::write(folder.join("Some.Show.S02E01.mkv"), b"video")?;
+        let steps = putio_sync_pipeline::plan::plan(
+            putio_sync_pipeline::plan::PlanInput {
+                category: Some("sonarr"),
+                has_transfer: true,
+                downloaded: true,
+            },
+            &config.hooks,
+        );
+        pipeline
+            .store()
+            .insert_item(
+                &NewItem {
+                    key: key.clone(),
+                    name: "Some.Show.S02.1080p".to_string(),
+                    category: Some("sonarr".to_string()),
+                    source: "arr".to_string(),
+                    dir: folder.to_string_lossy().into_owned(),
+                    transfer_id: Some(SEASON_PACK),
+                    stage: Stage::PreProcessing,
+                    state: ItemState::Running,
+                },
+                &steps,
+            )
+            .await?;
+        // The *arr item has finished downloading: only the pipeline holds it back
+        db.arr()
+            .set_local(
+                "mock-sonarr-pack",
+                801,
+                "Some.Show.S02.1080p",
+                &[(801, 1000)],
+            )
+            .await?;
+        db.arr()
+            .set_state(
+                "mock-sonarr-pack",
+                putio_sync_db::ArrState::Done,
+                None,
+                false,
+            )
+            .await?;
+    }
+    pipeline.start();
+    Ok(Some(pipeline))
 }

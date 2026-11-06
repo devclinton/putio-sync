@@ -3,7 +3,7 @@
 // Send test event button; header and env values are shown only as set, with a Replace button.
 
 import { get, post } from "../api.js";
-import { blankHook, eventChoices, fromSettings, runLabel, targetLabel, toSettings } from "../hooks.js";
+import { RUNS_AS, blankHook, eventChoices, fromSettings, moveRow, runLabel, stagePosition, targetLabel, toSettings } from "../hooks.js";
 import { h, toast } from "../app.js";
 import { relative } from "../format.js";
 import { arrCard } from "./arr.js";
@@ -11,7 +11,19 @@ import { groupCard, reason } from "./form.js";
 
 const HOOKS = { id: "hooks", key: "hooks", title: "Event hooks", fields: [], extra: hooksExtra };
 
-export const cards = (ctx) => [arrCard(ctx), groupCard(HOOKS, ctx)];
+// Feature 038: how the hooks that are pipeline steps run
+const PIPELINE = {
+  id: "pipeline",
+  key: "pipeline",
+  title: "Processing pipeline",
+  fields: [
+    ["concurrency", "Items at once", "How many items run their steps at the same time; 1 to 16", "n", 1, 16],
+    ["optional_retries", "Optional step retries (seconds)", "One per line: the wait before each retry of a failing optional step. Up to 10 lines; the step is given up after the last", "ln"],
+    ["staging", "Watch-folder staging", "Keep a watch-folder download out of sight until its steps are done", [["auto", "Auto", "On while a step could change files"], ["on", "On", "Always stage watch-folder downloads"], ["off", "Off", "Never stage"]]],
+  ],
+};
+
+export const cards = (ctx) => [arrCard(ctx), groupCard(HOOKS, ctx), groupCard(PIPELINE, ctx)];
 
 /**
  * One editor per hook: name, on/off, command or URL, headers or env, events, timeout,
@@ -110,6 +122,30 @@ function hooksExtra(data) {
     return h("div", { class: "toolbar spaced" }, h("button", { type: "button", class: "btn btn-small", onclick: send }, "Send test event"), out);
   };
 
+  // Feature 038: a hook can be a step of a pipeline stage instead of an event hook
+  const runsAs = (row) =>
+    h(
+      "select",
+      { class: "input", "aria-label": "Runs as", onchange: (ev) => ((row.stage = ev.currentTarget.value), redraw()) },
+      RUNS_AS.map(([v, t]) => h("option", { value: v, selected: row.stage === v, text: t })),
+    );
+  const stepFields = (row, i) =>
+    h(
+      "fieldset",
+      { class: "hook-events" },
+      h("legend", { text: "Pipeline step" }),
+      h("label", { class: "field check" }, h("input", { type: "checkbox", checked: row.required, onchange: (ev) => (row.required = ev.currentTarget.checked) }), h("span", { text: "Required" })),
+      h("small", { class: "muted block", text: row.required ? "A failure holds the item until you retry or skip the step." : "A failure is retried a few times, then given up; the item finishes with a warning." }),
+      field("Categories", text(row, "categories", { placeholder: "radarr, sonarr" }), "Comma-separated; empty runs for every item. Matches the Arr category."),
+      h(
+        "div",
+        { class: "toolbar" },
+        h("small", { class: "muted", text: `Runs ${stagePosition(rows, i)} in its stage` }),
+        h("button", { type: "button", class: "btn btn-small", disabled: i === 0, "aria-label": `Move ${row.name} up`, onclick: () => ((rows = moveRow(rows, i, -1)), redraw()) }, "Up"),
+        h("button", { type: "button", class: "btn btn-small", disabled: i === rows.length - 1, "aria-label": `Move ${row.name} down`, onclick: () => ((rows = moveRow(rows, i, 1)), redraw()) }, "Down"),
+      ),
+    );
+
   const card = (row, i) => {
     const kind = h(
       "select",
@@ -133,12 +169,13 @@ function hooksExtra(data) {
         "div",
         { class: "fields" },
         field("Name", text(row, "name", { "aria-label": `Hook ${i + 1} name`, pattern: "[A-Za-z0-9_\\-]{1,40}" }), "Letters, digits, - and _"),
+        field("Runs as", runsAs(row)),
         field("Runs", kind),
         ...target,
         field("Timeout (s)", timeout, "1 to 600; a webhook is tried up to 3 times"),
         enabled,
       ),
-      events(row),
+      row.stage ? stepFields(row, i) : events(row),
       pairsTable(row),
       testBox(row),
       h("div", { class: "toolbar spaced" }, h("button", { type: "button", class: "btn btn-small", onclick: () => ((rows = rows.filter((_, j) => j !== i)), redraw()) }, "Remove hook")),

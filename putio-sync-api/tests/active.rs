@@ -378,3 +378,189 @@ async fn pause_and_resume_require_auth() {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
     }
 }
+
+// Feature 038: the processing pipeline on the Active page
+
+use putio_sync_core::hooks::{HookConfig, HookStage};
+use putio_sync_pipeline::model::{ItemState, Stage as PStage, StepState};
+use putio_sync_pipeline::plan::{plan, PlanInput};
+use putio_sync_pipeline::store::NewItem;
+
+fn tidy() -> HookConfig {
+    HookConfig {
+        name: "tidy".to_string(),
+        stage: Some(HookStage::PostProcessing),
+        command: Some(vec!["/bin/true".to_string()]),
+        ..Default::default()
+    }
+}
+
+/// An item that is downloaded and waits on a failed `tidy` step; returns the step's id
+async fn seed_failed_step(pipeline: &putio_sync_pipeline::Pipeline, key: &str) -> i64 {
+    let steps = plan(
+        PlanInput {
+            category: Some("sonarr"),
+            has_transfer: true,
+            downloaded: true,
+        },
+        &[tidy()],
+    );
+    let store = pipeline.store();
+    store
+        .insert_item(
+            &NewItem {
+                key: key.to_string(),
+                name: "Show S01".to_string(),
+                category: Some("sonarr".to_string()),
+                source: "arr".to_string(),
+                dir: "/tmp/x".to_string(),
+                transfer_id: Some(9),
+                stage: PStage::PostProcessing,
+                state: ItemState::WaitingForOperator,
+            },
+            &steps,
+        )
+        .await
+        .unwrap();
+    let step = store
+        .steps(key)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == "tidy")
+        .unwrap();
+    store
+        .set_step(step.id, StepState::Failed, None, None)
+        .await
+        .unwrap();
+    step.id
+}
+
+#[tokio::test]
+async fn active_lists_processing_items_with_their_step_and_counts() {
+    let mut app = test_app().await;
+    let pipeline = app.attach_pipeline().await;
+    seed_failed_step(&pipeline, "transfer:9").await;
+    let _list = mock_transfers(
+        &mut app,
+        vec![transfer(1, "Downloading film", "DOWNLOADING")],
+    )
+    .await;
+
+    let body = body_json(app.get("/active").await).await;
+    let items = body["items"].as_array().unwrap();
+    let film = items.iter().find(|i| i["key"] == "transfer:1").unwrap();
+    assert!(
+        film["step"].is_null(),
+        "downloading items have no step: {film}"
+    );
+    let row = items
+        .iter()
+        .find(|i| i["key"] == "transfer:9")
+        .expect("processing row");
+    assert_eq!(row["stage"], "processing");
+    assert_eq!(row["state"], "waiting_for_operator");
+    assert_eq!(row["step"]["stage"], "post_processing");
+    assert_eq!(row["step"]["name"], "tidy");
+    assert_eq!(row["step"]["state"], "failed");
+    assert_eq!(
+        body["counts"]["processing"]["waiting_for_operator"], 1,
+        "{body}"
+    );
+    assert_eq!(body["counts"]["processing"]["running"], 0);
+}
+
+#[tokio::test]
+async fn timeline_has_every_stage_and_404s_for_an_unknown_key() {
+    let mut app = test_app().await;
+    let pipeline = app.attach_pipeline().await;
+    seed_failed_step(&pipeline, "transfer:9").await;
+
+    let response = app.get("/active/transfer:9/timeline").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["key"], "transfer:9");
+    assert_eq!(body["state"], "waiting_for_operator");
+    let stages = body["stages"].as_array().unwrap();
+    assert_eq!(stages.len(), 7, "{body}");
+    let post = stages
+        .iter()
+        .find(|s| s["stage"] == "post_processing")
+        .unwrap();
+    assert_eq!(post["steps"][0]["name"], "tidy");
+    assert_eq!(post["steps"][0]["state"], "failed");
+    let translating = stages.iter().find(|s| s["stage"] == "translating").unwrap();
+    assert_eq!(translating["skipped"], "not_configured");
+
+    assert_eq!(
+        app.get("/active/transfer:404/timeline").await.status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn retry_and_skip_answer_202_409_404() {
+    let mut app = test_app().await;
+    let pipeline = app.attach_pipeline().await;
+    let failed = seed_failed_step(&pipeline, "transfer:9").await;
+    let post = |path: String| {
+        let app = &app;
+        async move { app.post_json(&path, json!({})).await.status() }
+    };
+
+    assert_eq!(
+        post("/active/transfer:9/steps/999999/retry".into()).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        post("/active/transfer:none/steps/1/skip".into()).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        post(format!("/active/transfer:9/steps/{failed}/retry")).await,
+        StatusCode::ACCEPTED
+    );
+
+    // It is waiting again, so neither action applies
+    assert_eq!(
+        post(format!("/active/transfer:9/steps/{failed}/retry")).await,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        post(format!("/active/transfer:9/steps/{failed}/skip")).await,
+        StatusCode::CONFLICT
+    );
+
+    // A failed step can be skipped, and records who did
+    pipeline
+        .store()
+        .set_step(failed, StepState::Failed, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        post(format!("/active/transfer:9/steps/{failed}/skip")).await,
+        StatusCode::ACCEPTED
+    );
+    let body = body_json(app.get("/active/transfer:9/timeline").await).await;
+    let step = body["stages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["stage"] == "post_processing")
+        .unwrap()["steps"][0]
+        .clone();
+    assert_eq!(step["state"], "skipped");
+    assert_eq!(step["skip_reason"], "operator");
+}
+
+#[tokio::test]
+async fn without_a_pipeline_the_rows_have_no_step_and_the_timeline_404s() {
+    let mut app = test_app().await;
+    let _list = mock_transfers(&mut app, vec![transfer(1, "Film", "DOWNLOADING")]).await;
+    let body = body_json(app.get("/active").await).await;
+    assert!(body["counts"].get("processing").is_none() || body["counts"]["processing"].is_null());
+    assert_eq!(
+        app.get("/active/transfer:1/timeline").await.status(),
+        StatusCode::NOT_FOUND
+    );
+}

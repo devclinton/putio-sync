@@ -86,15 +86,27 @@ fn eta(item: &ArrItem, local: &LocalProgress) -> i64 {
     }
 }
 
-/// The Transmission torrent object for `torrent-get`
-pub fn torrent(item: &ArrItem, local: &LocalProgress, target: &Path) -> Value {
-    let left = left_until_done(item, local);
+/// The Transmission torrent object for `torrent-get`. `gated` is true while the processing
+/// pipeline (038) still has a step to run on the item: it then reads as 99% downloaded, so
+/// the *arr waits instead of importing a half-processed folder.
+pub fn torrent(item: &ArrItem, local: &LocalProgress, target: &Path, gated: bool) -> Value {
+    let gated = gated && matches!(item.state, ArrState::Local | ArrState::Done);
+    let left = if gated {
+        (item.total_size / 100).max(1)
+    } else {
+        left_until_done(item, local)
+    };
     let percent_done = if item.total_size > 0 {
         1.0 - left as f64 / item.total_size as f64
-    } else if item.state == ArrState::Done {
+    } else if item.state == ArrState::Done && !gated {
         1.0
     } else {
         0.0
+    };
+    let percent_done = if gated && item.total_size > 0 {
+        0.99
+    } else {
+        percent_done
     };
     let failed = item.state == ArrState::Failed;
     json!({
@@ -105,11 +117,11 @@ pub fn torrent(item: &ArrItem, local: &LocalProgress, target: &Path) -> Value {
         "totalSize": item.total_size,
         "leftUntilDone": left,
         "percentDone": percent_done,
-        "status": status(item, local),
-        "isFinished": item.state == ArrState::Done,
+        "status": if gated { STATUS_DOWNLOADING } else { status(item, local) },
+        "isFinished": item.state == ArrState::Done && !gated,
         "errorString": if failed { item.error.clone().unwrap_or_default() } else { String::new() },
         "error": if failed { ERROR_LOCAL } else { 0 },
-        "eta": eta(item, local),
+        "eta": if gated { -1 } else { eta(item, local) },
         "labels": [],
         "seedRatioMode": 0,
         "seedIdleMode": 0,
@@ -154,7 +166,12 @@ mod tests {
 
     #[test]
     fn on_putio_counts_half() {
-        let v = torrent(&item(ArrState::Putio), &LocalProgress::default(), target());
+        let v = torrent(
+            &item(ArrState::Putio),
+            &LocalProgress::default(),
+            target(),
+            false,
+        );
         assert_eq!(v["leftUntilDone"], 750);
         assert_eq!(v["percentDone"], 0.25);
         assert_eq!(v["status"], STATUS_DOWNLOADING);
@@ -170,7 +187,7 @@ mod tests {
         let mut i = item(ArrState::Putio);
         i.putio_status = Some("IN_QUEUE".into());
         i.putio_eta = None;
-        let v = torrent(&i, &LocalProgress::default(), target());
+        let v = torrent(&i, &LocalProgress::default(), target(), false);
         assert_eq!(v["status"], STATUS_QUEUED);
         assert_eq!(v["eta"], -1);
     }
@@ -182,7 +199,7 @@ mod tests {
         i.putio_status = Some(HELD.into());
         i.total_size = 0;
         i.putio_eta = None;
-        let v = torrent(&i, &LocalProgress::default(), target());
+        let v = torrent(&i, &LocalProgress::default(), target(), false);
         assert_eq!(v["status"], STATUS_QUEUED);
         assert_eq!(v["percentDone"], 0.0);
         assert_eq!(v["error"], 0);
@@ -199,7 +216,7 @@ mod tests {
             speed_bps: 100,
             ..LocalProgress::default()
         };
-        let v = torrent(&item(ArrState::Local), &local, target());
+        let v = torrent(&item(ArrState::Local), &local, target(), false);
         assert_eq!(v["leftUntilDone"], 200);
         assert_eq!(v["percentDone"], 0.8);
         assert_eq!(v["status"], STATUS_DOWNLOADING);
@@ -216,24 +233,29 @@ mod tests {
             paused: true,
             ..LocalProgress::default()
         };
-        let v = torrent(&item(ArrState::Local), &local, target());
+        let v = torrent(&item(ArrState::Local), &local, target(), false);
         assert_eq!(v["status"], STATUS_STOPPED);
         assert_eq!(v["error"], 0);
         assert_eq!(v["errorString"], "");
         assert_eq!(v["isFinished"], false);
         assert_eq!(v["leftUntilDone"], 200);
         // A transfer held on Put.io, or the NAS switch, reads the same
-        let v = torrent(&item(ArrState::Putio), &local, target());
+        let v = torrent(&item(ArrState::Putio), &local, target(), false);
         assert_eq!(v["status"], STATUS_STOPPED);
         assert_eq!(v["error"], 0);
         assert_eq!(v["isFinished"], false);
-        let v = torrent(&item(ArrState::Done), &local, target());
+        let v = torrent(&item(ArrState::Done), &local, target(), false);
         assert_eq!(v["isFinished"], true);
     }
 
     #[test]
     fn done_and_failed() {
-        let v = torrent(&item(ArrState::Done), &LocalProgress::default(), target());
+        let v = torrent(
+            &item(ArrState::Done),
+            &LocalProgress::default(),
+            target(),
+            false,
+        );
         assert_eq!(v["leftUntilDone"], 0);
         assert_eq!(v["percentDone"], 1.0);
         assert_eq!(v["isFinished"], true);
@@ -241,7 +263,7 @@ mod tests {
 
         let mut f = item(ArrState::Failed);
         f.error = Some("no files to import".into());
-        let v = torrent(&f, &LocalProgress::default(), target());
+        let v = torrent(&f, &LocalProgress::default(), target(), false);
         assert_eq!(v["leftUntilDone"], 1000);
         assert_eq!(v["error"], ERROR_LOCAL);
         assert_eq!(v["errorString"], "no files to import");
@@ -254,10 +276,48 @@ mod tests {
         let mut i = item(ArrState::Putio);
         i.category = String::new();
         i.total_size = 0;
-        let v = torrent(&i, &LocalProgress::default(), Path::new("/downloads"));
+        let v = torrent(
+            &i,
+            &LocalProgress::default(),
+            Path::new("/downloads"),
+            false,
+        );
         assert_eq!(v["downloadDir"], "/downloads");
         assert_eq!(v["percentDone"], 0.0);
         assert_eq!(v["labels"], json!([]));
         assert_eq!(v["seedRatioMode"], 0);
+    }
+
+    #[test]
+    fn a_gated_item_reads_as_not_quite_downloaded() {
+        let local = LocalProgress {
+            completed_bytes: 1000,
+            file_count: 1,
+            ..Default::default()
+        };
+        for state in [ArrState::Local, ArrState::Done] {
+            let v = torrent(&item(state), &local, target(), true);
+            assert_eq!(v["percentDone"], 0.99);
+            assert_eq!(v["leftUntilDone"], 10);
+            assert_eq!(v["status"], STATUS_DOWNLOADING);
+            assert_eq!(v["isFinished"], false);
+            assert_eq!(v["errorString"], "");
+        }
+    }
+
+    #[test]
+    fn a_cleared_gate_matches_today() {
+        let local = LocalProgress {
+            completed_bytes: 1000,
+            file_count: 1,
+            ..Default::default()
+        };
+        let v = torrent(&item(ArrState::Done), &local, target(), false);
+        assert_eq!(v["percentDone"], 1.0);
+        assert_eq!(v["leftUntilDone"], 0);
+        assert_eq!(v["isFinished"], true);
+        // A failed or still-on-Put.io item is never gated
+        let v = torrent(&item(ArrState::Putio), &local, target(), true);
+        assert_eq!(v["percentDone"], 0.25);
     }
 }

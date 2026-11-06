@@ -16,11 +16,21 @@ export const EVENTS = [
   ["verify.passed", "Download verified"],
   ["verify.failed", "Verification failed"],
   ["verify.redownload", "Re-downloading after a mismatch"],
+  ["pipeline.step_failed", "Pipeline step failed"],
+  ["pipeline.completed", "Pipeline finished with warnings"],
+];
+
+/** What a hook runs as: an event hook, or a step of a pipeline stage (feature 038) */
+export const RUNS_AS = [
+  ["", "Event hook"],
+  ["pre_download", "Pre-download step"],
+  ["pre_processing", "Pre-processing step"],
+  ["post_processing", "Post-processing step"],
 ];
 
 /** An editor row for a new hook */
 export function blankHook(n = 1) {
-  return { name: `hook-${n}`, enabled: true, kind: "command", program: "", args: "", url: "", pairs: [], all: false, events: ["download.finished"], timeout_secs: 30 };
+  return { name: `hook-${n}`, enabled: true, kind: "command", program: "", args: "", url: "", pairs: [], all: false, events: ["download.finished"], timeout_secs: 30, stage: "", required: true, categories: "" };
 }
 
 /** What a hook runs, as `GET /hooks` would show it (the program, or the URL cut down) */
@@ -80,12 +90,22 @@ export function fromSettings(hook) {
     all: (hook.events || []).includes("*"),
     events: (hook.events || []).filter((e) => e !== "*"),
     timeout_secs: hook.timeout_secs ?? 30,
+    stage: hook.stage || "",
+    required: hook.required !== false,
+    categories: (hook.categories || []).join(", "),
   };
 }
 
 /** An editor row as the `[[hooks]]` entry `PUT /settings/hooks` takes */
 export function toSettings(row) {
   const out = { name: row.name.trim(), enabled: row.enabled, events: row.all ? ["*"] : [...row.events], timeout_secs: Number(row.timeout_secs) };
+  if (row.stage) {
+    // A step takes no events; it runs when an item reaches its stage
+    out.events = [];
+    out.stage = row.stage;
+    out.required = row.required;
+    out.categories = row.categories.split(",").map((c) => c.trim()).filter(Boolean);
+  }
   const pairs = {};
   for (const p of row.pairs) if (p.key.trim()) pairs[p.key.trim()] = p.value;
   if (row.kind === "url") {
@@ -97,4 +117,21 @@ export function toSettings(row) {
     out.env = pairs;
   }
   return out;
+}
+
+/** `rows` with the one at `i` moved by `delta` places (the order inside a stage is the list order); the same rows when it can't move. */
+export function moveRow(rows, i, delta) {
+  const j = i + delta;
+  if (i < 0 || i >= rows.length || j < 0 || j >= rows.length) return rows;
+  const out = [...rows];
+  [out[i], out[j]] = [out[j], out[i]];
+  return out;
+}
+
+/** Position of a step among the hooks of its stage, as "2 of 3"; "" for an event hook. */
+export function stagePosition(rows, i) {
+  const stage = rows[i].stage;
+  if (!stage) return "";
+  const same = rows.filter((r) => r.stage === stage);
+  return `${same.indexOf(rows[i]) + 1} of ${same.length}`;
 }

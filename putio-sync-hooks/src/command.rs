@@ -17,11 +17,12 @@ use tokio::process::Command;
 use crate::{Capped, HookRun, RunResult};
 
 /// `PATH` when the daemon has none.
-const DEFAULT_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+pub(crate) const DEFAULT_PATH: &str =
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 /// How long to wait for output after the program ends, for pipes a background child
 /// keeps open.
-const DRAIN: Duration = Duration::from_secs(2);
+pub(crate) const DRAIN: Duration = Duration::from_secs(2);
 
 /// Run `hook`'s command for `event` and wait for it, at most the hook's timeout.
 pub async fn run(hook: &HookConfig, event: &Event) -> HookRun {
@@ -152,7 +153,7 @@ async fn read(mut pipe: impl AsyncRead + Unpin, into: Arc<Mutex<Capped>>) {
 
 /// Kill the program's process group, so children it started stop too.
 #[cfg(unix)]
-fn kill_group(child: &tokio::process::Child) {
+pub(crate) fn kill_group(child: &tokio::process::Child) {
     if let Some(pid) = child.id() {
         // SAFETY: killpg only sends a signal; the group id is the child's own pid,
         // set by `process_group(0)`.
@@ -163,4 +164,4 @@ fn kill_group(child: &tokio::process::Child) {
 }
 
 #[cfg(not(unix))]
-fn kill_group(_child: &tokio::process::Child) {}
+pub(crate) fn kill_group(_child: &tokio::process::Child) {}

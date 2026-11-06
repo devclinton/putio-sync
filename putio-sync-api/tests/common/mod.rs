@@ -158,6 +158,18 @@ impl TestApp {
         self.db.as_ref().expect("this test app has no database")
     }
 
+    /// Attach a processing pipeline (feature 038) over the app's database and rebuild the
+    /// router; returns it for seeding
+    pub async fn attach_pipeline(&mut self) -> Arc<putio_sync_pipeline::Pipeline> {
+        let config = self.state.config.read().await.clone();
+        let pipeline = Arc::new(
+            putio_sync_pipeline::Pipeline::new(self.db.clone().expect("a database"), &config).await,
+        );
+        self.state = self.state.clone().with_pipeline(pipeline.clone());
+        self.router = router(self.state.clone());
+        pipeline
+    }
+
     /// Send a request; `token` goes in `Authorization: Bearer`, `body` as JSON
     pub async fn req(
         &self,

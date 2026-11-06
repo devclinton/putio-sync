@@ -17,6 +17,7 @@ members = [
     "putio-sync-hooks",
     "putio-sync-plugins",
     "putio-sync-archive",
+    "putio-sync-pipeline",
 ]
 resolver = "2"
 

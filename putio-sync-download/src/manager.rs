@@ -610,6 +610,20 @@ pub struct DownloadManager {
     pub(crate) bandwidth: RateLimiter,
     /// The "verify everything" run (feature 034)
     pub(crate) verifier: crate::verify::VerifyRunner,
+    /// Moves a file's folder while the processing pipeline stages it (feature 038)
+    redirect: Arc<std::sync::RwLock<Option<Arc<dyn PathRedirect>>>>,
+}
+
+/// The answer of [`PathRedirect::redirect`]
+pub type RedirectFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + 'a>>;
+
+/// Lets the processing pipeline (feature 038) point a file at a hidden staging folder.
+/// `download` calls it and knows nothing of the pipeline.
+pub trait PathRedirect: Send + Sync {
+    /// The folder, relative to the download folder, to download file `file_id` into
+    /// instead of `relative_path`; `None` keeps it
+    fn redirect<'a>(&'a self, file_id: i64, relative_path: &'a str) -> RedirectFuture<'a>;
 }
 
 /// The cached transfer list, when it was fetched, and the last attempt
@@ -679,6 +693,7 @@ impl DownloadManager {
             paths_in_use: Arc::new(Mutex::new(HashSet::new())),
             checking: Arc::new(Mutex::new(HashMap::new())),
             verifier: crate::verify::VerifyRunner::default(),
+            redirect: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -715,6 +730,7 @@ impl DownloadManager {
             paths_in_use: Arc::new(Mutex::new(HashSet::new())),
             checking: Arc::new(Mutex::new(HashMap::new())),
             verifier: crate::verify::VerifyRunner::default(),
+            redirect: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -1084,6 +1100,11 @@ impl DownloadManager {
         info!("All workers shut down");
     }
 
+    /// Let the processing pipeline stage watch-folder downloads (feature 038)
+    pub fn set_redirect(&self, redirect: Arc<dyn PathRedirect>) {
+        *self.redirect.write().unwrap() = Some(redirect);
+    }
+
     /// Download a single file
     ///
     /// When something is already at the file's local path, what happens follows the
@@ -1121,11 +1142,17 @@ impl DownloadManager {
             callback.on_file_start(file_id, &filename, file.file_size);
         }
 
-        // Construct the folder, preserving directory structure
-        let dir = if file.relative_path.is_empty() {
+        // Construct the folder, preserving directory structure. The pipeline may stage it (038).
+        let redirect = self.redirect.read().unwrap().clone();
+        let relative_path = match redirect {
+            Some(r) => r.redirect(file_id, &file.relative_path).await,
+            None => None,
+        }
+        .unwrap_or_else(|| file.relative_path.clone());
+        let dir = if relative_path.is_empty() {
             config.target_directory.clone()
         } else {
-            config.target_directory.join(&file.relative_path)
+            config.target_directory.join(&relative_path)
         };
         if !dir.exists() {
             std::fs::create_dir_all(&dir).map_err(DownloadError::IoError)?;
