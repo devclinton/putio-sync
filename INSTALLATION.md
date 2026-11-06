@@ -299,6 +299,26 @@ docker run -d \
 
 See the main README for Docker Compose examples.
 
+### Media server (DLNA)
+
+TVs and players find putio-sync with multicast discovery, which Docker's default bridge
+network hides. To use the media server ([README](README.md#media-server)), run the container
+on the host network. In Docker Compose:
+
+```yaml
+services:
+  putio-sync:
+    image: ghcr.io/devclinton/putio-sync:latest
+    network_mode: host    # needed so players can find the media server
+    volumes:
+      - ./config:/config
+      - /path/to/downloads:/downloads
+```
+
+With `docker run`, add `--network host`. Then open port 8200 (TCP) and 1900 (UDP) on the
+host firewall for your home network only. Without host networking, Settings › Media server
+says "No LAN interface: players can't find it".
+
 ---
 
 ## Verification

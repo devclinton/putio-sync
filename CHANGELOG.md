@@ -37,6 +37,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   pass, and watch-folder downloads are built in a hidden `.putio-sync-staging` folder and
   moved into place with one rename. Settings › Integrations has the steps and a Processing
   pipeline card. With no steps, nothing changes.
+- **Media server**: putio-sync can show your downloaded files, and one Put.io folder, to
+  TVs, VLC and Kodi on your home network (DLNA / UPnP). Turn it on in **Settings › Media
+  server**, choose which folders are shared (Downloads, a category such as `radarr`, a
+  watch folder or Put.io) and see whether it is running, the address players use and how many
+  streams are playing. Players browse and seek; nothing can be changed or deleted from them.
+  Run Docker with host networking so players can find it (see INSTALLATION.md).
 - Plugins have their own page, **Settings › Plugins**. Each plugin that is on has a tab
   with its settings, buttons, test event and last run, marked **!** when it is broken,
   waits for approval or needs settings. Plugins that are off are one short list with

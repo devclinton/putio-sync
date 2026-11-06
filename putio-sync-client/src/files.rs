@@ -17,6 +17,29 @@ pub struct UploadResponse {
     pub transfer: Option<Transfer>,
 }
 
+/// A file's MP4 version on Put.io (feature 022)
+#[derive(Debug, Clone, Deserialize)]
+pub struct Mp4Status {
+    /// `NOT_AVAILABLE`, `CONVERTING`, `COMPLETED` or `ERROR`
+    pub status: String,
+    /// Size of the MP4 version in bytes, once it exists
+    #[serde(default)]
+    pub size: Option<i64>,
+}
+
+impl Mp4Status {
+    /// Whether the MP4 version can be played now
+    pub fn is_ready(&self) -> bool {
+        self.status == "COMPLETED"
+    }
+}
+
+/// `GET /files/{id}/mp4` reply
+#[derive(Debug, Deserialize)]
+struct Mp4Response {
+    mp4: Mp4Status,
+}
+
 /// `POST /files/create-folder` body
 #[derive(Debug, serde::Serialize)]
 struct CreateFolderRequest<'a> {
@@ -81,6 +104,18 @@ impl PutioApiClient {
         let path = format!("/files/{}", id);
         let response: ApiResponse<FileResponse> = self.get(&path).await?;
         Ok(response.data)
+    }
+
+    /// The MP4 version of a file and whether it is ready (`GET /files/{id}/mp4`)
+    pub async fn mp4_status(&self, id: i64) -> ClientResult<Mp4Status> {
+        let response: ApiResponse<Mp4Response> = self.get(&format!("/files/{}/mp4", id)).await?;
+        Ok(response.data.mp4)
+    }
+
+    /// The endpoint that streams a file's MP4 version. Like [`Self::get_download_url`] it
+    /// holds no credentials: the caller adds the `Authorization` header.
+    pub fn mp4_download_url(&self, id: i64) -> String {
+        format!("{}/files/{}/mp4/download", self.base_url, id)
     }
 
     /// Get download URL for a file
@@ -262,6 +297,44 @@ impl PutioApiClient {
 mod tests {
     use super::super::PutioApiClient as ApiClient;
     use mockito::Server;
+
+    #[tokio::test]
+    async fn mp4_status_reads_the_state_and_size() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/files/7/mp4")
+            .match_header("authorization", "Bearer test_token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status":"OK","mp4":{"status":"COMPLETED","size":1234}}"#)
+            .create_async()
+            .await;
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        let mp4 = client.mp4_status(7).await.unwrap();
+        assert!(mp4.is_ready());
+        assert_eq!(mp4.size, Some(1234));
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn mp4_status_not_converted_is_not_ready() {
+        let mut server = Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/files/8/mp4")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status":"OK","mp4":{"status":"NOT_AVAILABLE"}}"#)
+            .create_async()
+            .await;
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        let mp4 = client.mp4_status(8).await.unwrap();
+        assert!(!mp4.is_ready());
+        assert_eq!(mp4.size, None);
+        assert_eq!(
+            client.mp4_download_url(8),
+            format!("{}/files/8/mp4/download", server.url())
+        );
+    }
 
     #[tokio::test]
     async fn test_list_files() {

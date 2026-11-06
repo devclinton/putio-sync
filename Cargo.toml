@@ -19,6 +19,7 @@ members = [
     "putio-sync-archive",
     "putio-sync-pipeline",
     "putio-sync-subtitles",
+    "putio-sync-dlna",
 ]
 resolver = "2"
 

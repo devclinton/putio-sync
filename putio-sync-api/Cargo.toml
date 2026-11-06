@@ -25,6 +25,7 @@ putio-sync-pipeline = { path = "../putio-sync-pipeline" }
 putio-sync-subtitles = { path = "../putio-sync-subtitles" }
 putio-sync-precheck = { path = "../putio-sync-precheck" }
 putio-sync-storage = { path = "../putio-sync-storage" }
+putio-sync-dlna = { path = "../putio-sync-dlna" }
 putio-sync-tailscale = { path = "../putio-sync-tailscale" }
 
 # Web framework

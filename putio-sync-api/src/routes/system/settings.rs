@@ -655,6 +655,7 @@ pub fn router() -> Router<AppState> {
         .route("/putio/preview", post(preview_putio))
         .merge(super::network::settings_router())
         .merge(super::subtitles::settings_router())
+        .merge(super::media_server::settings_router())
         .merge(assistant::router())
 }
 

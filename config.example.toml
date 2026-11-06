@@ -487,6 +487,39 @@ allowed_users = []
 # socket = "/var/run/tailscale/tailscaled.sock"
 
 # ============================================================================
+# DLNA media server (feature 022)
+# ============================================================================
+# Shows downloaded files, and optionally one Put.io folder, to TVs and players
+# on the home network (DLNA / UPnP). Anyone on the LAN can browse what is shared
+# here: there is no login. Settings › Network and access › Media server.
+# In Docker, discovery needs network_mode: host.
+[dlna]
+# Serve media to players.
+# Default: false
+enabled = false
+
+# The name players show.
+# Default: "putio-sync"
+name = "putio-sync"
+
+# HTTP port for descriptions, browsing and streams (1900/UDP is used for
+# discovery). Must differ from the [api] and [metrics] ports.
+# Default: 8200
+port = 8200
+
+# Where to listen; the same entries as [api] bind (only the host part is used,
+# the port is `port`). Empty is every LAN IPv4 address.
+# Default: []
+bind = []
+
+# What players see: "downloads", "cat:<category>", "watch:<watch path>", "putio".
+# Default: ["downloads"]
+roots = ["downloads"]
+
+# The Put.io folder shown as "Put.io" when roots has "putio" (folder id).
+# putio_folder = 123456789
+
+# ============================================================================
 # Notification Configuration
 # ============================================================================
 [notifications]

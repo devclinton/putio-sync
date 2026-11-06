@@ -11,6 +11,7 @@ use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::PrecheckConfig;
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::Database;
+use putio_sync_dlna::MediaServer;
 use putio_sync_doctor::Doctor;
 use putio_sync_download::pipeline::Counts;
 use putio_sync_download::{DownloadConfig, DownloadManager, DownloadResult};
@@ -152,6 +153,8 @@ pub struct PutioDaemon {
     doctor: Option<Arc<Doctor>>,
     /// The processing pipeline (feature 038), fed by the pipeline loop (shared with the API)
     pipeline: Option<Arc<putio_sync_pipeline::Pipeline>>,
+    /// DLNA media server, stopped on shutdown so players hear the goodbye (feature 022)
+    media_server: Option<Arc<MediaServer>>,
 }
 
 impl PutioDaemon {
@@ -168,6 +171,7 @@ impl PutioDaemon {
             storage: None,
             doctor: None,
             pipeline: None,
+            media_server: None,
         }
     }
 
@@ -196,6 +200,13 @@ impl PutioDaemon {
     /// given to the API. Call it before [`Self::start`].
     pub fn with_pipeline(mut self, pipeline: Arc<putio_sync_pipeline::Pipeline>) -> Self {
         self.pipeline = Some(pipeline);
+        self
+    }
+
+    /// Stop `media_server` when the daemon shuts down, so it announces that it is leaving.
+    /// The same handle should be given to the API.
+    pub fn with_media_server(mut self, media_server: Arc<MediaServer>) -> Self {
+        self.media_server = Some(media_server);
         self
     }
 
@@ -511,6 +522,10 @@ impl PutioDaemon {
         })?;
 
         info!("Received shutdown signal");
+
+        if let Some(media_server) = &self.media_server {
+            media_server.stop().await;
+        }
 
         // Tasks will be automatically cancelled when dropped
         if let Some(task) = watch_task {

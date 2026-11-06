@@ -25,6 +25,7 @@ What changed in each build is in [CHANGELOG.md](CHANGELOG.md); planned work is i
 - **Post-Processing**: Archive or delete processed torrent files after upload
 - **Advanced Daemon**: Unified daemon with live log-level changes and graceful worker scaling
 - **Prometheus Metrics**: Sync, download, watch-folder, API and database metrics on `:9742/metrics`
+- **Media Server**: show downloaded files, and optionally a Put.io folder, to TVs, VLC and Kodi on your home network over DLNA / UPnP ([details](#media-server))
 - **Web UI**: status, queue, Put.io browser, transfers, history, stats and settings in the browser on `:15432`, behind a token ([Web UI](#web-ui))
 - **Statistics & History**: Track download stats and view history
 - **File Management**: List, download, and delete files on Put.io
@@ -1302,6 +1303,41 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 
 The legacy `/api/*` placeholder routes are removed, and no CORS headers are sent: the
 UI is served from the same origin, and non-browser clients are unaffected.
+
+## Media Server
+
+putio-sync can show the files it downloads to TVs and media players on your home network
+(DLNA / UPnP). Players find it by name, browse the shared folders and stream with seeking.
+It is read-only: players can't change or delete anything. It runs under `daemon`, and is off
+until you turn it on in **Settings › Media server** or in the config:
+
+```toml
+[dlna]
+enabled = true
+name = "putio-sync"                  # what players show, up to 64 characters
+port = 8200                          # not 1900, and not the API's or metrics' port
+bind = []                            # empty is every LAN IPv4 address
+roots = ["downloads", "cat:radarr"]  # downloads, cat:<folder>, watch:<path>, putio
+# putio_folder = 123456              # the Put.io folder shown as "Put.io" (for roots with putio)
+```
+
+- **Shared folders** are `downloads` (the download folder), `cat:<name>` (one subfolder, so
+  sharing `cat:radarr` hides `sonarr`), `watch:<path>` (one of `[watch] paths`) and `putio`.
+  Only video, audio and picture files are listed; hidden files, `.downloading` partials and
+  symlinks that leave the shared folder are never shown or served.
+- **Put.io** shows one Put.io folder and plays its files without downloading them first. A
+  video Put.io has converted to MP4 plays as the MP4; otherwise the original plays. If Put.io
+  can't be reached, the local folders keep working and Settings shows the error.
+- **Who can see it**: anyone on your home network can browse and play what you share. There
+  is no password in UPnP, so share only what the whole household may see.
+- **Docker**: discovery uses multicast, which bridge networking hides. Run the container
+  with `network_mode: host` (see [INSTALLATION.md](INSTALLATION.md#docker)); on a bridge the
+  status says "No LAN interface".
+- **Status**: Settings › Media server shows whether it is running, the address players use,
+  streams playing and players seen in the last hour. `GET /media-server/status` returns the
+  same, and the `putio_sync_dlna_*` metric families count requests, bytes and streams.
+- `PUTIO_SYNC_DLNA_ENABLED`, `PUTIO_SYNC_DLNA_NAME` and `PUTIO_SYNC_DLNA_PORT` override the
+  matching settings.
 
 ## Tailscale
 

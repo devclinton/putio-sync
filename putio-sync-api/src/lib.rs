@@ -125,6 +125,9 @@ pub struct AppState {
     /// The processing pipeline (feature 038); `None` until the caller's service is attached
     /// with [`AppState::with_pipeline`]
     pub pipeline: Option<Arc<putio_sync_pipeline::Pipeline>>,
+    /// The DLNA media server (feature 022); `None` unless the daemon's is attached with
+    /// [`AppState::with_media_server`]
+    pub media_server: Option<Arc<putio_sync_dlna::MediaServer>>,
 }
 
 /// The engine behind the API (FR-018: a save says what applies now)
@@ -187,6 +190,7 @@ impl AppState {
             listening: listen::Bound::default(),
             listen_flags: None,
             pipeline: None,
+            media_server: None,
             cleanup,
             storage,
             doctor,
@@ -216,6 +220,15 @@ impl AppState {
     /// Ask this Tailscale service instead (tests use a fake daemon)
     pub fn with_tailscale(mut self, tailscale: Arc<TailscaleService>) -> AppState {
         self.tailscale = tailscale;
+        self
+    }
+
+    /// Apply media server settings to this server, the one the daemon runs
+    pub fn with_media_server(
+        mut self,
+        media_server: Arc<putio_sync_dlna::MediaServer>,
+    ) -> AppState {
+        self.media_server = Some(media_server);
         self
     }
 
@@ -416,6 +429,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/whats-new", routes::system::whats_new::router())
         .nest("/tailscale", routes::system::tailscale::router())
         .nest("/logs", routes::system::logs::router())
+        .nest("/media-server", routes::system::media_server::router())
         .route(
             "/listen",
             axum::routing::get(routes::system::network::get_listen),

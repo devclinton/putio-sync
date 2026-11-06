@@ -43,6 +43,10 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_storage_freed_files_total",
     "putio_sync_storage_freed_bytes_total",
     "putio_sync_tailscale_identity_total",
+    "putio_sync_dlna_up",
+    "putio_sync_dlna_streams_active",
+    "putio_sync_dlna_bytes_sent_total",
+    "putio_sync_dlna_requests_total",
     "putio_sync_verify_total",
     "putio_sync_verify_redownloads_total",
     "putio_sync_verify_run_files_total",
@@ -281,6 +285,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v.extend(strs(FallbackResult::ALL, FallbackResult::as_str));
             v.extend(strs(HoldResult::ALL, HoldResult::as_str));
             v.extend(putio_sync_telemetry::tailscale::RESULTS);
+            v.extend(putio_sync_telemetry::dlna::RESULTS);
             v.extend(putio_sync_telemetry::hooks::RESULTS);
             v.extend(putio_sync_telemetry::verify::RESULTS);
             v.extend(putio_sync_telemetry::verify::RUN_RESULTS);
@@ -300,11 +305,13 @@ fn closed_set(label: &str) -> Vec<&'static str> {
         // Counter names a plugin chose: [a-z0-9_]{1,40}, at most 16 per plugin
         "name" => vec!["refreshes"],
         "via" => putio_sync_telemetry::tailscale::VIAS.to_vec(),
+        "root_kind" => putio_sync_telemetry::dlna::ROOT_KINDS.to_vec(),
         "kind" => {
             let mut v = strs(SyncKind::ALL, SyncKind::as_str);
             v.extend(strs(ArrSetupKind::ALL, ArrSetupKind::as_str));
             v.extend(strs(FlagKind::ALL, FlagKind::as_str));
             v.extend(putio_sync_telemetry::steps::KINDS);
+            v.extend(putio_sync_telemetry::dlna::KINDS);
             v
         }
         "state" => {

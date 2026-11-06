@@ -1153,6 +1153,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-range-header"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9171a2ea8a68358193d15dd5d70c1c10a2afc3e7e4c5bc92bc9f025cebd7359c"
+
+[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2224,6 +2230,7 @@ dependencies = [
  "putio-sync-client",
  "putio-sync-core",
  "putio-sync-db",
+ "putio-sync-dlna",
  "putio-sync-doctor",
  "putio-sync-download",
  "putio-sync-file-manager",
@@ -2321,6 +2328,7 @@ dependencies = [
  "putio-sync-core",
  "putio-sync-daemon",
  "putio-sync-db",
+ "putio-sync-dlna",
  "putio-sync-doctor",
  "putio-sync-download",
  "putio-sync-file-manager",
@@ -2402,6 +2410,7 @@ dependencies = [
  "putio-sync-client",
  "putio-sync-core",
  "putio-sync-db",
+ "putio-sync-dlna",
  "putio-sync-doctor",
  "putio-sync-download",
  "putio-sync-file-manager",
@@ -2435,6 +2444,37 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "putio-sync-dlna"
+version = "0.1.1"
+dependencies = [
+ "axum",
+ "bytes",
+ "futures-util",
+ "http-body-util",
+ "if-addrs",
+ "mime_guess",
+ "mockito",
+ "percent-encoding",
+ "putio-sync-client",
+ "putio-sync-core",
+ "putio-sync-file-manager",
+ "putio-sync-telemetry",
+ "quick-xml",
+ "rand 0.8.8",
+ "reqwest 0.12.28",
+ "serde_json",
+ "socket2 0.6.5",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tower 0.4.13",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -2643,6 +2683,15 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.37.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -3926,10 +3975,18 @@ checksum = "1e9cd434a998747dd2c4276bc96ee2e0c7a2eadf3cae88e52be55a05fa9053f5"
 dependencies = [
  "bitflags 2.13.2",
  "bytes",
+ "futures-util",
  "http 1.5.0",
  "http-body 1.1.0",
  "http-body-util",
+ "http-range-header",
+ "httpdate",
+ "mime",
+ "mime_guess",
+ "percent-encoding",
  "pin-project-lite",
+ "tokio",
+ "tokio-util",
  "tower-layer",
  "tower-service",
  "tracing",
