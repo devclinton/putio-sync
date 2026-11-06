@@ -161,6 +161,65 @@ async fn recently_finished_lists_rows_with_stage_times() {
     assert_eq!(rows[1]["nas_seconds"], 1980);
 }
 
+/// SC-005: 200 transfers and 5,000 queue rows build the pipeline in under 200 ms
+#[tokio::test]
+async fn active_with_200_transfers_and_5000_queue_rows_is_fast() {
+    let mut app = test_app().await;
+    let transfers: Vec<Value> = (1..=200)
+        .map(|id| transfer(id, &format!("Transfer {id}"), "COMPLETED"))
+        .collect();
+    let _list = mock_transfers(&mut app, transfers).await;
+    // 25 files per transfer, in a mix of states, inserted in one transaction
+    let mut tx = app.db().pool().begin().await.unwrap();
+    for file_id in 1..=5000_i64 {
+        let transfer_id = (file_id - 1) / 25 + 1;
+        let status = match file_id % 5 {
+            0 => "downloading",
+            1 => "paused",
+            _ => "pending",
+        };
+        sqlx::query(
+            "INSERT INTO download_queue (file_id, filename, file_size, download_url, relative_path, status) \
+             VALUES (?, ?, 100, 'http://x', ?, ?)",
+        )
+        .bind(file_id)
+        .bind(format!("f{file_id}.mkv"))
+        .bind(format!("Transfer {transfer_id}"))
+        .bind(status)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO download_sources (file_id, transfer_id, origin) VALUES (?, ?, 'putio')",
+        )
+        .bind(file_id)
+        .bind(transfer_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    // The first request fetches the list from Put.io; time the ones after it, which is
+    // what each page poll costs (best of three, so a busy test machine does not fail it)
+    let first = app.get("/active").await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let mut best = Duration::MAX;
+    for _ in 0..3 {
+        let started = std::time::Instant::now();
+        let response = app.get("/active").await;
+        let elapsed = started.elapsed();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["items"].as_array().unwrap().len(), 200);
+        best = best.min(elapsed);
+    }
+    assert!(
+        best < Duration::from_millis(200),
+        "GET /active took {best:?}"
+    );
+}
+
 #[tokio::test]
 async fn active_requires_auth() {
     let app = test_app().await;

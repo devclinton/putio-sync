@@ -603,6 +603,9 @@ pub struct DownloadManager {
     /// The transfer classes behind `transfer.*` events; `None` until read from the
     /// database (feature 027)
     transfer_events: Arc<tokio::sync::Mutex<Option<TransferEvents>>>,
+    /// The transfer items that were active on the last pipeline tick; `None` until the
+    /// first tick (feature 039, R6)
+    pub(crate) finish_seen: Arc<tokio::sync::Mutex<Option<crate::finished::SeenItems>>>,
     /// The one bandwidth limiter every download shares (feature 032)
     pub(crate) bandwidth: RateLimiter,
     /// The "verify everything" run (feature 034)
@@ -672,6 +675,7 @@ impl DownloadManager {
             notes: Arc::new(Mutex::new(HashMap::new())),
             transfers_cache: Arc::new(tokio::sync::Mutex::new(None)),
             transfer_events: Arc::new(tokio::sync::Mutex::new(None)),
+            finish_seen: Arc::new(tokio::sync::Mutex::new(None)),
             paths_in_use: Arc::new(Mutex::new(HashSet::new())),
             checking: Arc::new(Mutex::new(HashMap::new())),
             verifier: crate::verify::VerifyRunner::default(),
@@ -707,6 +711,7 @@ impl DownloadManager {
             notes: Arc::new(Mutex::new(HashMap::new())),
             transfers_cache: Arc::new(tokio::sync::Mutex::new(None)),
             transfer_events: Arc::new(tokio::sync::Mutex::new(None)),
+            finish_seen: Arc::new(tokio::sync::Mutex::new(None)),
             paths_in_use: Arc::new(Mutex::new(HashSet::new())),
             checking: Arc::new(Mutex::new(HashMap::new())),
             verifier: crate::verify::VerifyRunner::default(),
@@ -2927,6 +2932,15 @@ impl DownloadManager {
                 None => Err(e.into()),
             },
         }
+    }
+
+    /// The last Put.io transfer list fetched, without asking Put.io
+    pub(crate) async fn cached_transfers(&self) -> Option<Arc<Vec<Transfer>>> {
+        self.transfers_cache
+            .lock()
+            .await
+            .as_ref()
+            .map(|c| c.transfers.clone())
     }
 
     /// Compare a fresh transfer list with the last one and emit the `transfer.*` events

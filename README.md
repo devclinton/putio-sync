@@ -816,6 +816,9 @@ H = histogram.
 | `putio_sync_disk_free_bytes` | gauge | — | Free space for the download folder; absent if unreadable |
 | `putio_sync_disk_total_bytes` | gauge | — | Size of the download folder's filesystem; absent if unreadable |
 | `putio_sync_transfers_stalled` | gauge | — | Put.io transfers with no new bytes for `[transfers] stall_threshold_hours` (`daemon` only) |
+| `putio_sync_pipeline_items` | gauge | `stage` (putio, nas), `state` | Items on the Active page by stage and state (`daemon` only) |
+| `putio_sync_pipeline_actions_total` | counter | `action` (pause, hold, resume) | Pause and resume actions on Active items |
+| `putio_sync_nas_downloads_paused` | gauge | — | 1 while the Pause NAS downloads switch is on, else 0 |
 | `putio_sync_doctor_check_status` | gauge | `check` | Doctor check result: 0 ok, 1 warning, 2 problem, -1 skipped (`daemon` only) |
 | `putio_sync_doctor_check_items` | gauge | `check` | Items the check found at its last run |
 | `putio_sync_doctor_last_run_timestamp_seconds` | gauge | — | Unix time the last doctor run finished; absent until the first |
@@ -905,9 +908,11 @@ as well as a desktop. The pages:
 - **Status**: version, uptime, last and next sync, queue counts, active downloads,
   workers, watch folders, disk space and Put.io reachability. **Sync now** starts a
   folder sync at once; a second click while one runs says it is already in progress.
+- **Active**: every transfer on its way to the NAS, once each, in its Put.io or NAS stage,
+  with pause, resume and a Recently finished list ([details](#active-transfers)).
 - **Queue**: pause, resume, skip, reorder (up, down, first, last), clear completed,
   cancel a running download. Higher priority downloads first; a move renumbers the
-  whole queue.
+  whole queue. The **Pause NAS downloads** switch stops all NAS downloads at once.
 - **Put.io**: browse folders, filter by name, queue a file or a whole folder
   ("found, queued, skipped, blocked"), delete from Put.io with confirmation. Delete is
   refused for files that are queued, downloading or paused. Tick rows (or **Select
@@ -1172,7 +1177,10 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /local/sync` | Start a folder sync now: 202, 409 while one runs, 503 without a database |
 | `GET /local/queue`, `/local/queue/stats` | Queue rows and counts |
 | `POST /local/queue` | `{"file_id": 123}`: queue a file or every file under a folder → 202 with found/queued/skipped/blocked/failed, 404 if unknown |
-| `POST /local/queue/{pause,resume,clear}` | Pause all, resume all, remove completed |
+| `POST /local/queue/{pause,resume}` | Turn the Pause NAS downloads switch on or off; answers `{"nas_paused": bool}` |
+| `POST /local/queue/clear` | Remove completed |
+| `GET /active` | The Active pipeline: items by stage and state, counts, `nas_paused` and `recently_finished` |
+| `POST /active/{pause,resume}` | `{"keys": ["transfer:12", ...]}`: pause or resume items; one result per key |
 | `POST /local/queue/{file_id}/{move_up,move_down,move_first,move_last,skip}` | Reorder or skip one item |
 | `GET /local/downloads`, `DELETE /local/downloads/{id}` | Active downloads; cancel one (404 if unknown) |
 | `GET /putio/files?parent_id=`, `GET /putio/files/{id}` | Browse Put.io |
@@ -1965,6 +1973,36 @@ stall_check_interval_secs = 600  # how often the daemon lists transfers
 
 **Re-add** usually starts again from 0%. If the swarm still lacks the pieces it will
 stall again; **Copy magnet** lets you try the link in another client instead.
+
+#### Active transfers
+
+The **Active** page lists each transfer from the moment Put.io has it until its files are
+on the NAS, once, in one of two stages. In the **Put.io** stage it is queued, downloading,
+stalled, finishing or in error. In the **NAS** stage it is waiting for the next sync,
+queued, downloading, paused or failed. Counts by state filter the list, and each row links
+to its transfer and its queue rows.
+
+- **Pause** on a NAS item stops its running files and keeps what they downloaded; **Resume**
+  puts them back in the queue in their old place.
+- Put.io has no pause, so **Pause** on an item still on Put.io (or waiting for sync) puts
+  it **On hold**: Put.io keeps downloading it, nothing is sent to Put.io, and when its
+  files arrive they are queued paused. **Resume** releases the hold. A hold is dropped by
+  itself when the transfer fails or is removed from Put.io.
+- **Pause NAS downloads** (a switch on the Active and Queue pages, a banner on Status, and
+  `putio-sync queue pause` / `queue resume` with no file ids) stops every running NAS
+  download and makes the workers claim nothing until it is turned off. The stopped files go
+  back to waiting, not paused; files paused on their own stay paused. The switch survives
+  a restart. Radarr and Sonarr see paused items as stopped, not failed.
+- **Recently finished** lists items that left the list in the last
+  `[transfers] finished_retention_hours` (24 by default, 1 to 720): done, or failed for
+  good (a Put.io error on a transfer Put.io no longer has, or a transfer whose files were
+  all blocked by a rule), with how long it spent on Put.io, waiting for sync and on the NAS.
+  The `daemon` fills it; `server` has no pipeline loop, so its list stays empty.
+
+```toml
+[transfers]
+finished_retention_hours = 24    # how long Recently finished keeps an item
+```
 
 #### Worker Scaling
 

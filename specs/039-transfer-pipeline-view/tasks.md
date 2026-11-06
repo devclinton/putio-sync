@@ -313,7 +313,7 @@ on (banner on Active, Status and Queue; nothing starts; restart keeps it on), th
 **Independent test**: on the mock UI a finished fixture shows in Recently finished with stage
 times; a failed one shows its reason; rows older than the retention are gone.
 
-- [ ] T046 [US6] Tests in `putio-sync-daemon/src/daemon.rs` (or `putio-sync-daemon/tests/`): the
+- [X] T046 [US6] Tests in `putio-sync-daemon/src/daemon.rs` (or `putio-sync-daemon/tests/`): the
   first transition to done writes one `pipeline_finished` row with `outcome` `done`; a failed
   item that can still be retried (Put.io `ERROR`, NAS Failed) writes nothing and stays active;
   it writes one `failed` row (`reason` set) when its transfer is gone from Put.io while in
@@ -327,7 +327,7 @@ times; a failed one shows its reason; rows older than the retention are gone.
   rows survive reopening the database (FR-026); a finished transfer whose files were all
   blocked by a rule (feature 009), and that finished within the retention period, is recorded
   once as `failed` with "nothing to download" and the blocked extensions.
-- [ ] T047 [US6] Record transitions and prune in the pipeline loop in
+- [X] T047 [US6] Record transitions and prune in the pipeline loop in
   `putio-sync-daemon/src/daemon.rs`. Keep the previous tick's active keys in memory and write
   only items that were active then and are not now, plus the restart and blocked cases in R6.
   Columns: `added_at` = `transfer.created_at`, `putio_done_at` =
@@ -346,11 +346,11 @@ times; a failed one shows its reason; rows older than the retention are gone.
 
 ## Phase 9: Polish & cross-cutting
 
-- [ ] T050 [P] Performance test in `putio-sync-api/tests/active.rs`: 200 transfers and 5,000
+- [X] T050 [P] Performance test in `putio-sync-api/tests/active.rs`: 200 transfers and 5,000
   queue rows → `GET /active` under 200 ms.
-- [ ] T051 [P] `README.md`: the Active page, pause and hold (Put.io keeps downloading), the
+- [X] T051 [P] `README.md`: the Active page, pause and hold (Put.io keeps downloading), the
   Pause NAS downloads switch, and `finished_retention_hours`.
-- [ ] T052 [P] `CHANGELOG.md` entry, with the upgrade note: rows paused by the old Pause all
+- [X] T052 [P] `CHANGELOG.md` entry, with the upgrade note: rows paused by the old Pause all
   stay paused after the upgrade, so resume them once from the Queue page.
 - [ ] T053 Run `make ci` and fix anything it reports.
 - [ ] T054 Walk through [quickstart.md](quickstart.md) sections 2 and 3 on the mock UI (all 15

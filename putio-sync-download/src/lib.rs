@@ -7,6 +7,7 @@ pub mod blocklist;
 pub mod dry_run;
 pub mod error;
 pub mod files;
+pub mod finished;
 pub mod manager;
 pub mod pipeline;
 pub mod progress;
