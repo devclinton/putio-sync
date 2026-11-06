@@ -11,6 +11,9 @@
 //! - POST /arr/discover                - Find Radarr/Sonarr without a key (protected)
 //! - POST /arr/setup/preview           - What auto-setup would change (protected)
 //! - POST /arr/setup                   - Auto-setup (protected)
+//! - POST /arr/setup/check             - Folder mapping and recommendations (049, protected)
+//! - POST /arr/setup/mapping           - Make the proposed mapping (049, protected)
+//! - POST /arr/setup/recommendation    - Turn on one recommended setting (049, protected)
 
 use crate::error::ApiError;
 use crate::middleware::auth::token_matches;
@@ -27,6 +30,8 @@ use base64::Engine;
 use putio_sync_arr::clients::{self, ClientInfo};
 use putio_sync_arr::discovery::{self, Limits};
 use putio_sync_arr::path_check::{self, PathCheck};
+use putio_sync_arr::path_mapping::{self, FolderAnalysis, Marker, Proposal, ProposalAction};
+use putio_sync_arr::recommend;
 use putio_sync_arr::setup::{self, Outcome, SetupInput};
 use putio_sync_arr::{rpc, ArrApi, ArrService};
 use putio_sync_core::config::{ArrConfig, ArrKind, ArrServer, ArrSettings, Config};
@@ -178,6 +183,9 @@ pub fn router() -> Router<AppState> {
         .route("/discover", post(discover))
         .route("/setup/preview", post(setup_preview))
         .route("/setup", post(setup_run))
+        .route("/setup/check", post(setup_check))
+        .route("/setup/mapping", post(setup_mapping))
+        .route("/setup/recommendation", post(setup_recommendation))
 }
 
 /// The settings in use: the service's, or resolved from the config without a database
@@ -799,12 +807,21 @@ pub(crate) fn target_of(
     req: &SetupRequest,
     settings: &ArrSettings,
 ) -> Result<(String, String), ApiError> {
-    match &req.target {
+    target_key(&req.target, &req.api_key, settings)
+}
+
+/// The *arr's URL and key for a target, with the saved key when `api_key` is empty
+fn target_key(
+    target: &SetupTarget,
+    api_key: &str,
+    settings: &ArrSettings,
+) -> Result<(String, String), ApiError> {
+    match target {
         SetupTarget::Application { application } => {
             let server = settings.servers.get(*application).ok_or_else(|| {
                 ApiError::NotFound(format!("No application at index {}", application))
             })?;
-            let key = Some(req.api_key.trim())
+            let key = Some(api_key.trim())
                 .filter(|k| !k.is_empty())
                 .or(server.api_key.as_deref())
                 .ok_or_else(|| ApiError::BadRequest("Enter the API key".into()))?;
@@ -815,7 +832,7 @@ pub(crate) fn target_of(
             if url.is_empty() {
                 return Err(ApiError::BadRequest("Enter the address".into()));
             }
-            let key = req.api_key.trim();
+            let key = api_key.trim();
             if key.is_empty() {
                 return Err(ApiError::BadRequest("Enter the API key".into()));
             }
@@ -980,4 +997,243 @@ pub async fn setup_run(
         }
     }
     Ok(Json(json!(result)))
+}
+
+/// `POST /arr/setup/check`, `/mapping` and `/recommendation` body (feature 049)
+#[derive(Deserialize)]
+pub struct SetupStepRequest {
+    target: SetupTarget,
+    #[serde(default)]
+    api_key: String,
+    /// The host in the *arr's putio-sync client, when the caller knows it
+    #[serde(default)]
+    host: Option<String>,
+    /// `/mapping`: the proposal the operator confirmed
+    #[serde(default)]
+    proposal: Option<Proposal>,
+    /// `/recommendation`: which setting
+    #[serde(default)]
+    name: Option<String>,
+}
+
+/// A connected *arr for one step
+struct StepTarget {
+    api: ArrApi,
+    key: String,
+    /// The saved application's URL, whose row keeps the folder check
+    saved_url: Option<String>,
+}
+
+/// `{ok: false, reason, detail}` with the key taken out of the detail
+fn step_failure(reason: &str, detail: &str, key: &str) -> Value {
+    let detail = if key.is_empty() {
+        detail.to_string()
+    } else {
+        detail.replace(key, "********")
+    };
+    json!({ "ok": false, "reason": reason, "detail": detail })
+}
+
+/// Find the *arr a step is for. `Err(Ok(body))` is a 200 failure body.
+async fn step_target(
+    service: &ArrService,
+    req: &SetupStepRequest,
+) -> Result<Result<StepTarget, Value>, ApiError> {
+    let settings = service.settings();
+    let (url, key) = target_key(&req.target, &req.api_key, &settings)?;
+    let saved_url = match req.target {
+        SetupTarget::Application { .. } => Some(url.clone()),
+        SetupTarget::Url { .. } => None,
+    };
+    Ok(
+        match setup::connect(&url, &key, service.http().clone()).await {
+            Ok(api) => Ok(StepTarget {
+                api,
+                key,
+                saved_url,
+            }),
+            Err(f) => Err(step_failure(f.reason, &f.detail, &key)),
+        },
+    )
+}
+
+/// The host in the *arr's putio-sync client: the one given, or read from its clients
+async fn client_host(
+    state: &AppState,
+    headers: &HeaderMap,
+    api: &ArrApi,
+    given: Option<&str>,
+) -> Option<String> {
+    if let Some(h) = given.map(str::trim).filter(|h| !h.is_empty()) {
+        return Some(h.to_string());
+    }
+    let hosts = tailnet_first_hosts(state, browser_host(headers).as_deref(), None).await;
+    clients::read_clients(api, listen_port(state).await, &hosts, None)
+        .await
+        .host
+        .filter(|h| !h.is_empty())
+}
+
+/// Make the marker and work out the folder step. `Err` is a `{reason, detail}`.
+async fn analyse_folder(
+    state: &AppState,
+    api: &ArrApi,
+    host: &str,
+    key: &str,
+) -> Result<FolderAnalysis, Value> {
+    let folder = download_dir(state).await;
+    let marker = Marker::create(std::path::Path::new(&folder)).map_err(|e| {
+        warn!(error = %e, "Could not make the path check marker");
+        json!({ "reason": "marker_failed", "detail": e.to_string() })
+    })?;
+    path_mapping::analyse(
+        api,
+        &folder,
+        host,
+        marker.name(),
+        path_mapping::Limits::default(),
+    )
+    .await
+    .map_err(|e| {
+        let failure = step_failure(e.kind(), &e.to_string(), key);
+        json!({ "reason": failure["reason"], "detail": failure["detail"] })
+    })
+}
+
+/// `POST /arr/setup/check`: the folder step and the recommendations; changes nothing in the
+/// *arr
+pub async fn setup_check(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SetupStepRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let service = arr_service(&state)?;
+    let target = match step_target(&service, &req).await? {
+        Ok(t) => t,
+        Err(body) => return Ok(Json(body)),
+    };
+    let api = &target.api;
+    let host = client_host(&state, &headers, api, req.host.as_deref()).await;
+    let (folder, folder_error) = match &host {
+        None => (
+            None,
+            Some(json!({ "reason": "no_client",
+                "detail": "This app has no putio-sync download client yet" })),
+        ),
+        Some(host) => match analyse_folder(&state, api, host, &target.key).await {
+            Ok(a) => {
+                if let Some(url) = &target.saved_url {
+                    service.keep_path_check(url, a.path_check.clone());
+                }
+                (Some(a), None)
+            }
+            Err(e) => (None, Some(e)),
+        },
+    };
+    let (recommendations, recommendations_error) = match recommend::read(api).await {
+        Ok(r) => (json!(r), Value::Null),
+        Err(e) => {
+            let failure = step_failure(e.kind(), &e.to_string(), &target.key);
+            (
+                json!([]),
+                json!({ "reason": failure["reason"], "detail": failure["detail"] }),
+            )
+        }
+    };
+    Ok(Json(json!({
+        "ok": true,
+        "kind": api.kind(),
+        "app": api.kind().app_name(),
+        "url": api.url(),
+        "host": host,
+        "folder": folder,
+        "folder_error": folder_error,
+        "recommendations": recommendations,
+        "recommendations_error": recommendations_error,
+    })))
+}
+
+/// `POST /arr/setup/mapping`: re-runs the folder step and makes the change only when it
+/// still proposes the one confirmed (R4)
+pub async fn setup_mapping(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SetupStepRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let service = arr_service(&state)?;
+    let Some(confirmed) = req.proposal.clone() else {
+        return Err(ApiError::BadRequest("No proposal given".into()));
+    };
+    let target = match step_target(&service, &req).await? {
+        Ok(t) => t,
+        Err(body) => return Ok(Json(body)),
+    };
+    let api = &target.api;
+    let Some(host) = client_host(&state, &headers, api, req.host.as_deref()).await else {
+        return Ok(Json(step_failure(
+            "no_client",
+            "This app has no putio-sync download client yet",
+            "",
+        )));
+    };
+    let fresh = match analyse_folder(&state, api, &host, &target.key).await {
+        Ok(a) => a,
+        Err(e) => {
+            return Ok(Json(
+                json!({ "ok": false, "reason": e["reason"], "detail": e["detail"] }),
+            ))
+        }
+    };
+    if fresh.proposal != confirmed {
+        return Ok(Json(
+            json!({ "ok": false, "reason": "changed", "proposal": fresh.proposal }),
+        ));
+    }
+    let writes = matches!(
+        confirmed.action,
+        ProposalAction::Create | ProposalAction::Update | ProposalAction::Remove
+    );
+    if !writes {
+        return Ok(Json(
+            json!({ "ok": true, "done": "none", "path_check": fresh.path_check }),
+        ));
+    }
+    if let Err(e) = path_mapping::apply(api, &confirmed).await {
+        return Ok(Json(step_failure(e.kind(), &e.to_string(), &target.key)));
+    }
+    // The check after the change, with a fresh marker
+    let after = match analyse_folder(&state, api, &host, &target.key).await {
+        Ok(a) => a.path_check,
+        Err(_) => path_check::check(api, &download_dir(&state).await, &host).await,
+    };
+    if let Some(url) = &target.saved_url {
+        service.keep_path_check(url, after.clone());
+    }
+    Ok(Json(
+        json!({ "ok": true, "done": confirmed.action, "path_check": after }),
+    ))
+}
+
+/// `POST /arr/setup/recommendation`: turn on one recommended setting
+pub async fn setup_recommendation(
+    State(state): State<AppState>,
+    Json(req): Json<SetupStepRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let service = arr_service(&state)?;
+    let name = req.name.clone().unwrap_or_default();
+    if !recommend::NAMES.contains(&name.as_str()) {
+        return Err(ApiError::BadRequest(format!("Unknown setting '{}'", name)));
+    }
+    let target = match step_target(&service, &req).await? {
+        Ok(t) => t,
+        Err(body) => return Ok(Json(body)),
+    };
+    let result = match recommend::turn_on(&target.api, &name).await {
+        Ok(_) => recommend::read(&target.api).await,
+        Err(e) => Err(e),
+    };
+    Ok(Json(match result {
+        Ok(r) => json!({ "ok": true, "recommendations": r }),
+        Err(e) => step_failure(e.kind(), &e.to_string(), &target.key),
+    }))
 }

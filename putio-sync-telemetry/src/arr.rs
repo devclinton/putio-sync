@@ -1,8 +1,8 @@
 //! Radarr/Sonarr download-client metrics (feature 011).
 
 use crate::{
-    global, ArrItemState, ArrMethod, ArrOutcome, ArrSetupKind, ArrSetupResult, BlocklistOutcome,
-    Telemetry,
+    global, ArrItemState, ArrMappingResult, ArrMethod, ArrOutcome, ArrSetupKind, ArrSetupResult,
+    BlocklistOutcome, Telemetry,
 };
 
 impl Telemetry {
@@ -31,6 +31,13 @@ impl Telemetry {
             .with_label_values(&[kind.as_str(), result.as_str()])
             .inc();
     }
+
+    /// Count one Remote Path Mapping change (feature 049).
+    pub fn arr_path_mapping(&self, result: ArrMappingResult) {
+        self.arr_path_mapping
+            .with_label_values(&[result.as_str()])
+            .inc();
+    }
 }
 
 /// Count an RPC request on the global instance.
@@ -51,4 +58,9 @@ pub fn blocklist(outcome: BlocklistOutcome) {
 /// Count an auto-setup on the global instance.
 pub fn setup(kind: ArrSetupKind, result: ArrSetupResult) {
     global().arr_setup(kind, result);
+}
+
+/// Count a Remote Path Mapping change on the global instance.
+pub fn path_mapping(result: ArrMappingResult) {
+    global().arr_path_mapping(result);
 }

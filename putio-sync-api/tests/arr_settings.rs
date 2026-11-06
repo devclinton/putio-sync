@@ -1057,3 +1057,286 @@ async fn setup_reports_a_config_write_failure_before_touching_the_arr() {
     }
     assert!(!app.state.arr.as_ref().unwrap().service.settings().enabled);
 }
+
+// Feature 049: the folder mapping and recommendations steps
+
+/// The *arr sees putio-sync's `folder` at `/data/dl`: its filesystem browser lists `/`,
+/// `/data`, and the real contents of `folder` for `/data/dl`
+async fn fake_filesystem(arr: &mut mockito::Server, folder: &str) {
+    let folder = folder.to_string();
+    arr.mock("GET", "/api/v3/filesystem")
+        .match_query(Matcher::Any)
+        .with_body_from_request(move |req| {
+            let query = req
+                .path_and_query()
+                .split_once('?')
+                .map(|q| q.1)
+                .unwrap_or("");
+            let path = url::form_urlencoded::parse(query.as_bytes())
+                .find(|(k, _)| k == "path")
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_default();
+            let names: Vec<String> = match path.trim_end_matches('/') {
+                "" => vec!["data".into(), "proc".into()],
+                "/data" => vec!["dl".into(), "media".into()],
+                "/data/dl" => std::fs::read_dir(&folder)
+                    .unwrap()
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().is_dir())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect(),
+                _ => vec![],
+            };
+            let base = if path.ends_with('/') {
+                path.clone()
+            } else {
+                format!("{}/", path)
+            };
+            let dirs: Vec<Value> = names
+                .iter()
+                .map(|n| json!({"type": "folder", "name": n, "path": format!("{}{}", base, n)}))
+                .collect();
+            json!({"directories": dirs, "files": []})
+                .to_string()
+                .into_bytes()
+        })
+        .create_async()
+        .await;
+}
+
+/// A Sonarr with putio-sync's client, library at `/data/media/tv`, and no mappings at first
+async fn mock_sonarr_with_client(arr: &mut mockito::Server) {
+    arr.mock("GET", "/api/v3/system/status")
+        .match_header("x-api-key", ARR_KEY)
+        .with_body(r#"{"appName":"Sonarr","version":"4.0.15.2941"}"#)
+        .create_async()
+        .await;
+    arr.mock("GET", "/api/v3/downloadclient")
+        .with_body(putio_sync_client("tvCategory", "sonarr"))
+        .create_async()
+        .await;
+    arr.mock("GET", "/api/v3/rootfolder")
+        .with_body(r#"[{"id": 1, "path": "/data/media/tv"}]"#)
+        .create_async()
+        .await;
+}
+
+fn no_markers(folder: &std::path::Path) -> bool {
+    std::fs::read_dir(folder)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .all(|e| {
+            !e.file_name()
+                .to_string_lossy()
+                .starts_with("putio-sync-check-")
+        })
+}
+
+#[tokio::test]
+async fn the_folder_step_proposes_a_mapping_and_making_it_fixes_the_check() {
+    let mut arr = mockito::Server::new_async().await;
+    mock_sonarr_with_client(&mut arr).await;
+    let url = arr.url();
+    let app = test_app_with(|config| {
+        config.arr.servers = vec![server(
+            ArrKind::Sonarr,
+            url.clone(),
+            Some(ARR_KEY),
+            "sonarr",
+        )];
+    })
+    .await;
+    let folder = app._dir.path().display().to_string();
+    fake_filesystem(&mut arr, &folder).await;
+    // No mapping for the first two reads (check, then the apply's re-check), then the new one
+    arr.mock("GET", "/api/v3/remotepathmapping")
+        .with_body("[]")
+        .expect(2)
+        .create_async()
+        .await;
+    arr.mock("GET", "/api/v3/remotepathmapping")
+        .with_body(
+            json!([{"id": 4, "host": "putio-sync", "remotePath": format!("{}/", folder),
+                    "localPath": "/data/dl/"}])
+            .to_string(),
+        )
+        .create_async()
+        .await;
+    let create = arr
+        .mock("POST", "/api/v3/remotepathmapping")
+        .match_body(Matcher::Json(json!({"host": "putio-sync",
+            "remotePath": format!("{}/", folder), "localPath": "/data/dl/"})))
+        .with_status(201)
+        .with_body(r#"{"id": 4}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    arr.mock("GET", Matcher::Regex("^/api/v3/config/".into()))
+        .with_body("{}")
+        .create_async()
+        .await;
+
+    let target = json!({"application": 0});
+    let body = body_json(
+        app.post_json("/arr/setup/check", json!({"target": target}))
+            .await,
+    )
+    .await;
+    assert_eq!(body["ok"], true, "{}", body);
+    assert_eq!(body["app"], "Sonarr");
+    assert_eq!(body["host"], "putio-sync");
+    assert_eq!(body["folder"]["found"], "/data/dl", "{}", body);
+    assert_eq!(body["folder"]["path_check"]["status"], "not_visible");
+    let proposal = body["folder"]["proposal"].clone();
+    assert_eq!(
+        proposal,
+        json!({"action": "create", "host": "putio-sync", "remote_path": format!("{}/", folder),
+               "local_path": "/data/dl/", "id": null})
+    );
+    // The settings the app lacks are left out
+    assert_eq!(body["recommendations"], json!([]));
+    assert!(!body.to_string().contains(ARR_KEY));
+    assert!(no_markers(app._dir.path()));
+
+    let made = body_json(
+        app.post_json(
+            "/arr/setup/mapping",
+            json!({"target": target, "proposal": proposal}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(made["ok"], true, "{}", made);
+    assert_eq!(made["done"], "create");
+    assert_eq!(made["path_check"]["status"], "visible", "{}", made);
+    assert_eq!(made["path_check"]["arr_path"], "/data/dl");
+    // The row keeps the new check
+    let listed = body_json(app.get("/arr").await).await;
+    assert_eq!(listed["applications"][0]["path_check"]["status"], "visible");
+
+    // A second confirm of the same proposal writes nothing
+    let again = body_json(
+        app.post_json(
+            "/arr/setup/mapping",
+            json!({"target": target, "proposal": proposal}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(again["ok"], false);
+    assert_eq!(again["reason"], "changed");
+    assert_eq!(again["proposal"]["action"], "none");
+    create.assert_async().await;
+    assert!(no_markers(app._dir.path()));
+}
+
+#[tokio::test]
+async fn a_stale_proposal_is_refused_with_the_new_one() {
+    let mut arr = mockito::Server::new_async().await;
+    mock_sonarr_with_client(&mut arr).await;
+    let app = test_app().await;
+    let folder = app._dir.path().display().to_string();
+    fake_filesystem(&mut arr, &folder).await;
+    arr.mock("GET", "/api/v3/remotepathmapping")
+        .with_body("[]")
+        .create_async()
+        .await;
+    let never = arr
+        .mock("POST", "/api/v3/remotepathmapping")
+        .expect(0)
+        .create_async()
+        .await;
+    let stale = json!({"action": "create", "host": "putio-sync",
+        "remote_path": format!("{}/", folder), "local_path": "/old/", "id": null});
+    let body = body_json(
+        app.post_json(
+            "/arr/setup/mapping",
+            json!({"target": {"url": arr.url()}, "api_key": ARR_KEY, "proposal": stale}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(body["reason"], "changed", "{}", body);
+    assert_eq!(body["proposal"]["local_path"], "/data/dl/");
+    never.assert_async().await;
+}
+
+#[tokio::test]
+async fn without_a_putio_sync_client_the_folder_step_says_so() {
+    let mut arr = mockito::Server::new_async().await;
+    // No download clients
+    mock_radarr(&mut arr).await;
+    arr.mock("GET", "/api/v3/config/downloadclient")
+        .with_body(r#"{"id": 1, "enableCompletedDownloadHandling": true}"#)
+        .create_async()
+        .await;
+    arr.mock("GET", "/api/v3/config/mediamanagement")
+        .with_body(r#"{"id": 1, "importExtraFiles": false, "extraFileExtensions": "srt"}"#)
+        .create_async()
+        .await;
+    let app = test_app().await;
+    let body = body_json(
+        app.post_json(
+            "/arr/setup/check",
+            json!({"target": {"url": arr.url()}, "api_key": ARR_KEY}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(body["ok"], true, "{}", body);
+    assert_eq!(body["folder"], Value::Null);
+    assert_eq!(body["folder_error"]["reason"], "no_client");
+    assert_eq!(
+        body["recommendations"],
+        json!([{"name": "completed_download_handling", "on": true},
+               {"name": "import_extra_files", "on": false}])
+    );
+    assert!(no_markers(app._dir.path()));
+}
+
+#[tokio::test]
+async fn a_recommended_setting_is_turned_on() {
+    let mut arr = mockito::Server::new_async().await;
+    mock_radarr(&mut arr).await;
+    arr.mock("GET", "/api/v3/config/downloadclient")
+        .with_body(r#"{"id": 1}"#)
+        .create_async()
+        .await;
+    arr.mock("GET", "/api/v3/config/mediamanagement")
+        .with_body(r#"{"id": 2, "importExtraFiles": false, "extraFileExtensions": ""}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    arr.mock("GET", "/api/v3/config/mediamanagement")
+        .with_body(r#"{"id": 2, "importExtraFiles": true, "extraFileExtensions": "srt"}"#)
+        .create_async()
+        .await;
+    let put = arr
+        .mock("PUT", "/api/v3/config/mediamanagement/2")
+        .match_body(Matcher::Json(
+            json!({"id": 2, "importExtraFiles": true, "extraFileExtensions": "srt"}),
+        ))
+        .with_status(202)
+        .with_body("{}")
+        .create_async()
+        .await;
+    let app = test_app().await;
+    let req = |name: &str| json!({"target": {"url": arr.url()}, "api_key": ARR_KEY, "name": name});
+    let body = body_json(
+        app.post_json("/arr/setup/recommendation", req("import_extra_files"))
+            .await,
+    )
+    .await;
+    assert_eq!(body["ok"], true, "{}", body);
+    assert_eq!(
+        body["recommendations"],
+        json!([{"name": "import_extra_files", "on": true}])
+    );
+    put.assert_async().await;
+    assert_eq!(
+        app.post_json("/arr/setup/recommendation", req("rename_all"))
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+}

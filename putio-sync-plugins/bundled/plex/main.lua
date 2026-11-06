@@ -3,6 +3,8 @@
 local cfg = putio.config
 local PRODUCT = "putio-sync"
 local plex_tv = (cfg.plex_tv_url or "https://plex.tv"):gsub("/+$", "")
+-- Where the code is entered (048: the UI copies the code and opens this page)
+local LINK = "https://plex.tv/link"
 local PIN_SECONDS = 600
 
 -- One id per install, kept in the store; plex.tv ties the PIN and the token to it
@@ -96,13 +98,10 @@ function actions.sign_in()
     headers = headers(nil),
   })
   if not pin.id or not pin.code then error("plex.tv gave no PIN", 0) end
-  local link = "https://app.plex.tv/auth#?clientID=" .. media.encode(client_id()) ..
-    "&code=" .. media.encode(pin.code) ..
-    "&context%5Bdevice%5D%5Bproduct%5D=" .. media.encode(PRODUCT)
   return {
-    message = "Enter this code at plex.tv/link, or open the Plex sign-in page",
+    message = "Enter this code at plex.tv/link",
     code = pin.code,
-    open_url = link,
+    open_url = LINK,
     next = { action = "sign_in_poll", input = { id = pin.id, started = putio.time.now() }, after_seconds = 2 },
   }
 end
@@ -121,6 +120,7 @@ function actions.sign_in_poll(input)
     return {
       message = "Waiting for you to sign in at plex.tv",
       code = pin.code,
+      open_url = LINK,
       next = { action = "sign_in_poll", input = input, after_seconds = 2 },
     }
   end

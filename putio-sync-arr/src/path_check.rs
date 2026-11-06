@@ -35,12 +35,12 @@ pub struct PathCheck {
     pub detail: Option<String>,
 }
 
-fn is_sep(c: char) -> bool {
+pub(crate) fn is_sep(c: char) -> bool {
     c == '/' || c == '\\'
 }
 
 /// `path` with one trailing separator, in the style it already uses
-fn with_sep(path: &str) -> String {
+pub(crate) fn with_sep(path: &str) -> String {
     if path.ends_with(is_sep) {
         path.to_string()
     } else if path.contains('\\') && !path.contains('/') {
@@ -50,16 +50,26 @@ fn with_sep(path: &str) -> String {
     }
 }
 
+/// The first mapping for `client_host` whose remote path is a prefix of `folder`
+pub fn covering<'a>(
+    folder: &str,
+    client_host: &str,
+    mappings: &'a [RemotePathMapping],
+) -> Option<&'a RemotePathMapping> {
+    let folder_sep = with_sep(folder);
+    mappings.iter().find(|m| {
+        m.host.eq_ignore_ascii_case(client_host)
+            && !m.remote_path.is_empty()
+            && folder_sep.starts_with(&with_sep(&m.remote_path))
+    })
+}
+
 /// The folder as the *arr reads it: the first mapping for `client_host` whose remote path
 /// is a prefix rewrites it
 pub fn mapped(folder: &str, client_host: &str, mappings: &[RemotePathMapping]) -> String {
     let folder_sep = with_sep(folder);
-    for m in mappings {
-        if !m.host.eq_ignore_ascii_case(client_host) || m.remote_path.is_empty() {
-            continue;
-        }
-        let remote = with_sep(&m.remote_path);
-        if let Some(rest) = folder_sep.strip_prefix(&remote) {
+    if let Some(m) = covering(folder, client_host, mappings) {
+        if let Some(rest) = folder_sep.strip_prefix(&with_sep(&m.remote_path)) {
             let out = format!("{}{}", with_sep(&m.local_path), rest);
             let trimmed = out.trim_end_matches(is_sep);
             return if trimmed.is_empty() {
@@ -73,7 +83,7 @@ pub fn mapped(folder: &str, client_host: &str, mappings: &[RemotePathMapping]) -
 }
 
 /// `(parent, name)` of a path; `None` for a root
-fn split(path: &str) -> Option<(String, String)> {
+pub(crate) fn split(path: &str) -> Option<(String, String)> {
     let path = path.trim_end_matches(is_sep);
     let at = path.rfind(is_sep)?;
     let name = &path[at + 1..];
@@ -93,20 +103,32 @@ fn split(path: &str) -> Option<(String, String)> {
 /// Check that the *arr behind `api` can see `folder`, which putio-sync's client at
 /// `client_host` reports
 pub async fn check(api: &ArrApi, folder: &str, client_host: &str) -> PathCheck {
+    match api.remote_path_mappings().await {
+        Ok(mappings) => check_with(api, folder, client_host, mappings).await,
+        Err(e) => PathCheck {
+            status: PathStatus::Unknown,
+            folder: folder.to_string(),
+            arr_path: folder.to_string(),
+            mappings: Vec::new(),
+            detail: Some(e.to_string()),
+        },
+    }
+}
+
+/// [`check`] with the mappings already fetched
+pub async fn check_with(
+    api: &ArrApi,
+    folder: &str,
+    client_host: &str,
+    mappings: Vec<RemotePathMapping>,
+) -> PathCheck {
     let mut result = PathCheck {
         status: PathStatus::Unknown,
         folder: folder.to_string(),
         arr_path: folder.to_string(),
-        mappings: Vec::new(),
+        mappings,
         detail: None,
     };
-    match api.remote_path_mappings().await {
-        Ok(mappings) => result.mappings = mappings,
-        Err(e) => {
-            result.detail = Some(e.to_string());
-            return result;
-        }
-    }
     result.arr_path = mapped(folder, client_host, &result.mappings);
     let Some((parent, name)) = split(&result.arr_path) else {
         result.detail = Some("the folder is a root, which can't be checked".into());
@@ -134,6 +156,7 @@ mod tests {
 
     fn mapping(host: &str, remote: &str, local: &str) -> RemotePathMapping {
         RemotePathMapping {
+            id: None,
             host: host.into(),
             remote_path: remote.into(),
             local_path: local.into(),

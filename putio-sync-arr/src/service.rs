@@ -260,6 +260,16 @@ impl ArrService {
         Some(result)
     }
 
+    /// Keep `check` as the saved application at `url`'s last path check (feature 049)
+    pub fn keep_path_check(&self, url: &str, check: PathCheck) {
+        self.clients
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(url_key(url))
+            .or_default()
+            .path_check = Some(check);
+    }
+
     /// Re-read every saved application (R4)
     pub async fn refresh_all_client_info(&self, port: u16, hosts: &[String]) {
         let settings = self.settings();

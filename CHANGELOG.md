@@ -14,6 +14,24 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Plugins have their own page, **Settings › Plugins**. Each plugin that is on has a tab
+  with its settings, buttons, test event and last run, marked **!** when it is broken,
+  waits for approval or needs settings. Plugins that are off are one short list with
+  **Enable**, which names the hosts the plugin will contact and turns it on once you
+  approve them; **Disable** on a tab puts it back in the list with its settings kept.
+  Old links to the plugins card, and the doctor's plugin hints, open the new page;
+  unsaved edits now survive **Reload plugins**.
+- A plugin sign-in code (Sign in with Plex) shows a **Copy** button and **Copy and open
+  plex.tv/link**, which copies the code and opens the page where you enter it. The link stays
+  while the page waits for the sign-in. Over plain http, where the browser can't copy, the
+  code is selected for you to copy by hand.
+- Radarr/Sonarr **Set up** now does the whole setup: after the download client it finds
+  where the app sees putio-sync's download folder and proposes the Remote Path Mapping to
+  create, change or remove, which it makes once you confirm and then checks again. It also
+  shows Completed Download Handling and Import Extra Files (with `srt`) as recommendations,
+  each with **Turn on**. Every saved application with a key has **Set up**, and running it
+  again fixes drift without making duplicates. `putio_sync_arr_path_mapping_total` counts
+  the mappings it changes.
 - A **Logs** page in the web UI shows the daemon's recent log lines, kept in memory
   (`[logging] buffer_lines`, 2,000 by default, also under **Settings › Advanced › Logging**).
   Filter by level, module and text; follow new lines live with Pause and Resume; copy

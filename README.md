@@ -823,6 +823,7 @@ H = histogram.
 | `putio_sync_arr_rpc_requests_total` | counter | `method`, `outcome` | Transmission RPC requests from Radarr/Sonarr; `outcome` is `ok`, `error` or `auth_failed` |
 | `putio_sync_arr_items` | gauge | `state` | Radarr/Sonarr items by state: `putio`, `local`, `done`, `failed` |
 | `putio_sync_arr_blocklist_total` | counter | `outcome` | Calls asking Radarr/Sonarr to blocklist a failed release: `ok`, `not_found`, `error` |
+| `putio_sync_arr_path_mapping_total` | counter | `result` | Remote Path Mappings changed by setup: `created`, `updated`, `removed`, `failed` |
 | `putio_sync_precheck_total` | counter | `source`, `stage`, `outcome` | Release checks: `source` is `torrent`, `url`, `magnet`, `watch_torrent`, `watch_magnet`; `stage` is `before` (Put.io) or `putio`; `outcome` is `passed`, `rejected`, `unknown` |
 | `putio_sync_precheck_avoided_bytes_total` | counter | `stage` | Bytes in the file lists of rejected releases |
 | `putio_sync_precheck_cache_lookups_total` | counter | `cache`, `result` | Magnet cache requests by cache host: `found`, `not_found`, `timeout`, `wrong_hash`, `error` |
@@ -1051,8 +1052,8 @@ Network settings warn about this combination.
 
 ### Settings from the UI
 
-Settings has seven sections: General, Put.io, Downloads, Rules and filters, Integrations,
-Network and access, and Advanced; the docs name a card as "Settings › Section › Card".
+Settings has eight sections: General, Put.io, Downloads, Rules and filters, Integrations,
+Plugins, Network and access, and Advanced; the docs name a card as "Settings › Section › Card".
 Each section has its own address, `#/settings/<section>`, and `?field=download.verify`
 (a config key) opens it at that setting. The search box finds a setting by its label or
 help. A section shows *unsaved* while a card in it has unsaved changes, and a count of
@@ -1229,6 +1230,9 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /arr/discover` | Look for Radarr and Sonarr for up to 10 s → `{"instances", "tried"}`; 409 while one runs |
 | `POST /arr/setup/preview` | What setup would change; changes nothing |
 | `POST /arr/setup` | `{"target": {"url"} or {"application"}, "api_key", "category", "remember", "disable_blackhole"}` → `{"outcome": "created"/"updated"/"unchanged"/"failed", ...}` |
+| `POST /arr/setup/check` | `{"target", "api_key", "host"}` → `{"ok", "app", "host", "folder": {"path_check", "proposal", "found", "looked"}, "folder_error", "recommendations"}`; changes nothing in the app |
+| `POST /arr/setup/mapping` | `{"target", "api_key", "host", "proposal"}`: makes the confirmed mapping → `{"ok": true, "done", "path_check"}`, or `{"ok": false, "reason": "changed", "proposal"}` when the check now proposes something else |
+| `POST /arr/setup/recommendation` | `{"target", "api_key", "name"}` with `completed_download_handling` or `import_extra_files` → `{"ok", "recommendations"}` |
 | `GET /rules` | Folder rules, presets (built-in and your own, with the rules using each) and the global defaults |
 | `GET`/`PUT`/`DELETE /rules/folder/{id}` | A folder's rule and its effective settings, each with the rule it comes from; `PUT` an empty body clears it; 400 for the root |
 | `POST /rules/delete` | `{"path": "Shows"}`: remove a rule by path |
@@ -1323,6 +1327,9 @@ restart and keep the rest of `config.toml`. The client needs the API listener an
    password if it has none), then has the app test each address it might use for putio-sync
    (`putio-sync`, the Docker host, …) and saves the client with the first that passes. A
    failed test leaves nothing in the app. Running it again updates the client in place.
+4. The steps go on: the folder (see [Path mapping](#path-mapping)), then the recommended
+   settings. A saved application's **Set up** button runs the same steps; each is safe to run
+   again, so it also fixes a client or mapping that drifted. **Done** closes them.
 
 ### Download client and applications
 
@@ -1408,6 +1415,25 @@ host in its download client (e.g. `putio-sync`), Remote Path `/downloads/`, Loca
 Test in Settings → Radarr / Sonarr, and every setup, checks this: the app applies its
 mappings and lists the folder's parent. It shows "Folder visible", or which path the app could
 not see with its mappings.
+
+**Set up** works the mapping out for you. putio-sync makes an empty folder with a random name,
+`putio-sync-check-…`, in its download folder, and looks for it through the app's own folder
+browser: first next to the app's library folders, then from the top, trying names like
+`data`, `downloads` and `media` first and skipping system folders (at most 60 folders and
+20 s). The folder is removed straight after. Where it's found:
+
+- where the app already reads it: nothing to do, "Folder visible";
+- elsewhere: it proposes **Create mapping** (or **Change mapping** when a mapping for the
+  putio-sync host is wrong), for example `/downloads/ → /data/downloads/`;
+- at the same path, but a mapping hides it: **Remove mapping**;
+- nowhere: it says where it looked; mount the folder in the app and run it again.
+
+Nothing is written until you confirm. putio-sync checks again just before writing, so a
+stale page or a second click changes nothing, then shows the check's new result.
+
+Two settings are shown as recommendations, each with **Turn on**, never changed on their
+own: **Completed Download Handling** (older versions only; newer ones always have it on)
+and **Import Extra Files** with `srt`, so subtitles are imported with the video.
 
 ### The blackhole
 
@@ -1529,8 +1555,9 @@ executable, and a hook whose last run failed in the last day.
 Plugins are small Lua scripts that run inside putio-sync on the same events as hooks,
 with no other program to install. Seven come with it, all off until turned on. Four are
 **ntfy**, **Discord**, **Telegram** and **Pushover** notifications, which group repeats so a busy
-night sends a summary instead of a hundred messages. Settings › Integrations › Plugins turns them on,
-edits their settings, shows the hosts each one contacts and sends a test event.
+night sends a summary instead of a hundred messages. Settings › Plugins lists the ones that
+are off, one line each with **Enable**, and gives each one that is on a tab of its own that
+edits its settings, shows the hosts it contacts and sends a test event.
 
 **Plex**, **Jellyfin** and **Emby** plugins rescan just the folder of each finished
 download, so new episodes show up within seconds. Files landing in the same folder are

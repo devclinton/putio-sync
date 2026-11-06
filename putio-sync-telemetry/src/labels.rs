@@ -212,6 +212,16 @@ label_enum!(
 );
 
 label_enum!(
+    /// Result of one Remote Path Mapping change made by setup (feature 049).
+    ArrMappingResult {
+        Created => "created",
+        Updated => "updated",
+        Removed => "removed",
+        Failed => "failed",
+    }
+);
+
+label_enum!(
     /// Stage of an active transfer on the Active page (feature 039).
     PipelineStage {
         Putio => "putio",
