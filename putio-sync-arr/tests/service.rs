@@ -423,6 +423,49 @@ async fn lifecycle_putio_local_done_and_restart() {
     assert_eq!(t[0]["id"], item.id);
 }
 
+async fn first_torrent(service: &ArrService) -> serde_json::Value {
+    service.torrents(None).await.unwrap()[0].clone()
+}
+
+#[tokio::test]
+async fn paused_files_hold_and_the_switch_read_as_stopped() {
+    let mut h = Harness::new().await;
+    let service = h.service(vec![]);
+    h.added(&service).await;
+    h.transfers(&[transfer("COMPLETED", 100, Some(ITEM_FOLDER), None)])
+        .await;
+    h.item_folder(&[entry(1, "Show.S01E01.mkv", "VIDEO", ITEM_FOLDER, 900)])
+        .await;
+    service.refresh().await;
+    let t = first_torrent(&service).await;
+    assert_eq!(
+        (t["status"].clone(), t["error"].clone()),
+        (4.into(), 0.into())
+    );
+
+    // Every unfinished file paused: stopped, not failed, not finished
+    h.db.queue().pause_files(&[1]).await.unwrap();
+    let t = first_torrent(&service).await;
+    assert_eq!(t["status"], 0);
+    assert_eq!(t["error"], 0);
+    assert_eq!(t["isFinished"], false);
+    assert_eq!(t["leftUntilDone"], 450);
+    h.db.queue().resume_files(&[1]).await.unwrap();
+    assert_eq!(first_torrent(&service).await["status"], 4);
+
+    // The Pause NAS downloads switch pauses every item
+    h.db.flags()
+        .set_bool(putio_sync_db::pipeline::NAS_DOWNLOADS_PAUSED, true)
+        .await
+        .unwrap();
+    assert_eq!(first_torrent(&service).await["status"], 0);
+    h.db.flags()
+        .set_bool(putio_sync_db::pipeline::NAS_DOWNLOADS_PAUSED, false)
+        .await
+        .unwrap();
+    assert_eq!(first_torrent(&service).await["status"], 4);
+}
+
 #[tokio::test]
 async fn putio_error_and_missing_transfer_fail_the_item() {
     let mut h = Harness::new().await;

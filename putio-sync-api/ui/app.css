@@ -489,6 +489,10 @@ form > .error-text { margin: 12px 0 0; }
 .storage .small { font-size: var(--fs-sm); }
 .storage .toolbar { align-items: center; }
 .storage-warn { color: var(--warn); font-weight: 550; }
+.table tr.highlight td { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.notice.nas-paused { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2, 8px); background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: var(--text); margin-bottom: var(--gap); }
+.notice.nas-paused[hidden] { display: none; }
+.notice.nas-paused .btn { margin-left: auto; }
 .notice.storage-warn { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: var(--text); margin-bottom: var(--gap); }
 .storage-top { display: grid; gap: 10px; margin: 14px 0 0; padding: 0; list-style: none; }
 .storage-top li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; }

@@ -25,6 +25,8 @@ pub struct LocalProgress {
     pub file_count: i64,
     /// Current download speed of the item's files, bytes per second
     pub speed_bps: u64,
+    /// The item's downloads are paused: a file paused by hand, or the NAS switch is on
+    pub paused: bool,
 }
 
 /// `<target>/<category>` with no trailing slash, or just `<target>` for no category
@@ -61,12 +63,13 @@ fn left_until_done(item: &ArrItem, local: &LocalProgress) -> i64 {
     left.round() as i64
 }
 
-fn status(item: &ArrItem) -> i64 {
+fn status(item: &ArrItem, local: &LocalProgress) -> i64 {
     match item.state {
         // Held before Put.io (043) reads as queued, as Put.io's own queue does
         ArrState::Putio if matches!(item.putio_status.as_deref(), Some("IN_QUEUE" | HELD)) => {
             STATUS_QUEUED
         }
+        ArrState::Putio | ArrState::Local if local.paused => STATUS_STOPPED,
         ArrState::Putio | ArrState::Local => STATUS_DOWNLOADING,
         ArrState::Done | ArrState::Failed => STATUS_STOPPED,
     }
@@ -102,7 +105,7 @@ pub fn torrent(item: &ArrItem, local: &LocalProgress, target: &Path) -> Value {
         "totalSize": item.total_size,
         "leftUntilDone": left,
         "percentDone": percent_done,
-        "status": status(item),
+        "status": status(item, local),
         "isFinished": item.state == ArrState::Done,
         "errorString": if failed { item.error.clone().unwrap_or_default() } else { String::new() },
         "error": if failed { ERROR_LOCAL } else { 0 },
@@ -194,6 +197,7 @@ mod tests {
             completed_bytes: 600,
             file_count: 2,
             speed_bps: 100,
+            ..LocalProgress::default()
         };
         let v = torrent(&item(ArrState::Local), &local, target());
         assert_eq!(v["leftUntilDone"], 200);
@@ -202,6 +206,29 @@ mod tests {
         assert_eq!(v["eta"], 4);
         assert_eq!(v["downloadedEver"], 600);
         assert_eq!(v["fileCount"], 2);
+    }
+
+    #[test]
+    fn paused_local_item_reads_as_stopped_without_error() {
+        let local = LocalProgress {
+            completed_bytes: 600,
+            file_count: 2,
+            paused: true,
+            ..LocalProgress::default()
+        };
+        let v = torrent(&item(ArrState::Local), &local, target());
+        assert_eq!(v["status"], STATUS_STOPPED);
+        assert_eq!(v["error"], 0);
+        assert_eq!(v["errorString"], "");
+        assert_eq!(v["isFinished"], false);
+        assert_eq!(v["leftUntilDone"], 200);
+        // A transfer held on Put.io, or the NAS switch, reads the same
+        let v = torrent(&item(ArrState::Putio), &local, target());
+        assert_eq!(v["status"], STATUS_STOPPED);
+        assert_eq!(v["error"], 0);
+        assert_eq!(v["isFinished"], false);
+        let v = torrent(&item(ArrState::Done), &local, target());
+        assert_eq!(v["isFinished"], true);
     }
 
     #[test]

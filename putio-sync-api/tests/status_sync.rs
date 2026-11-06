@@ -45,6 +45,16 @@ async fn status_full() {
 }
 
 #[tokio::test]
+async fn status_reports_the_nas_switch() {
+    let app = test_app().await;
+    let body = body_json(app.get("/status").await).await;
+    assert_eq!(body["nas_paused"], false);
+    app.post_json("/local/queue/pause", json!({})).await;
+    let body = body_json(app.get("/status").await).await;
+    assert_eq!(body["nas_paused"], true);
+}
+
+#[tokio::test]
 async fn status_empty_queue_counts_zero() {
     let app = test_app().await;
     let body = body_json(app.get("/status").await).await;

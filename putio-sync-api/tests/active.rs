@@ -102,6 +102,65 @@ async fn active_returns_the_contract_shape() {
     assert!(body["recently_finished"].is_array(), "{body}");
 }
 
+/// Recently finished rows come back newest first, with the time spent in each stage;
+/// a time is null when either end is unknown (feature 039, T048)
+#[tokio::test]
+async fn recently_finished_lists_rows_with_stage_times() {
+    use putio_sync_db::pipeline::{FinishedOutcome, FinishedRow};
+    let mut app = test_app().await;
+    let _list = mock_transfers(&mut app, vec![]).await;
+    let finished = app.db().finished();
+    finished
+        .upsert(&FinishedRow {
+            key: "transfer:799".into(),
+            name: "Some.Movie".into(),
+            size: 31_000,
+            outcome: FinishedOutcome::Done,
+            reason: None,
+            added_at: Some("2026-10-28 06:00:00".into()),
+            putio_done_at: Some("2026-10-28 06:50:00".into()),
+            queued_at: Some("2026-10-28 06:57:00".into()),
+            done_at: "2026-10-28 07:30:00".into(),
+        })
+        .await
+        .unwrap();
+    finished
+        .upsert(&FinishedRow {
+            key: "folder:Photos".into(),
+            name: "Photos".into(),
+            size: 10,
+            outcome: FinishedOutcome::Failed,
+            reason: Some("nothing downloaded".into()),
+            added_at: None,
+            putio_done_at: None,
+            queued_at: Some("2026-10-28 08:00:00".into()),
+            done_at: "2026-10-28 09:00:00".into(),
+        })
+        .await
+        .unwrap();
+
+    let body = body_json(app.get("/active").await).await;
+    let rows = body["recently_finished"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{body}");
+    // Newest first; a row with unknown ends has null times
+    assert_eq!(rows[0]["key"], "folder:Photos");
+    assert_eq!(rows[0]["outcome"], "failed");
+    assert_eq!(rows[0]["reason"], "nothing downloaded");
+    assert_eq!(rows[0]["done_at"], "2026-10-28T09:00:00Z");
+    for field in ["total_seconds", "putio_seconds", "waiting_seconds"] {
+        assert!(rows[0][field].is_null(), "{field}: {body}");
+    }
+    // queued_at and done_at are known, so the NAS time is too
+    assert_eq!(rows[0]["nas_seconds"], 3600);
+    assert_eq!(rows[1]["key"], "transfer:799");
+    assert_eq!(rows[1]["outcome"], "done");
+    assert_eq!(rows[1]["size"], 31_000);
+    assert_eq!(rows[1]["total_seconds"], 5400);
+    assert_eq!(rows[1]["putio_seconds"], 3000);
+    assert_eq!(rows[1]["waiting_seconds"], 420);
+    assert_eq!(rows[1]["nas_seconds"], 1980);
+}
+
 #[tokio::test]
 async fn active_requires_auth() {
     let app = test_app().await;
@@ -157,4 +216,106 @@ async fn putio_down_serves_the_last_list_marked_stale() {
     let item = &body["items"][0];
     assert_eq!(item["key"], "transfer:2", "{body}");
     assert_eq!(item["files"]["total"], 2, "NAS figures are current: {item}");
+}
+
+fn results(body: &Value) -> Vec<(String, String)> {
+    body["results"]
+        .as_array()
+        .unwrap_or_else(|| panic!("results: {body}"))
+        .iter()
+        .map(|r| {
+            (
+                r["key"].as_str().unwrap().to_string(),
+                r["result"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+fn pair(key: &str, result: &str) -> (String, String) {
+    (key.to_string(), result.to_string())
+}
+
+#[tokio::test]
+async fn pause_and_resume_answer_per_key_in_order() {
+    let mut app = test_app().await;
+    let _list = mock_transfers(
+        &mut app,
+        vec![
+            transfer(1, "Downloading film", "DOWNLOADING"),
+            transfer(2, "Show S01", "COMPLETED"),
+        ],
+    )
+    .await;
+    queue_file(&app, 20, 2, QueueStatus::Pending).await;
+    queue_file(&app, 21, 2, QueueStatus::Pending).await;
+
+    let keys = json!({ "keys": ["transfer:2", "transfer:1", "file:5531", "transfer:2"] });
+    let response = app.post_json("/active/pause", keys.clone()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(
+        results(&body),
+        vec![
+            pair("transfer:2", "paused"),
+            pair("transfer:1", "held"),
+            pair("file:5531", "not_found"),
+            pair("transfer:2", "already"),
+        ],
+        "{body}"
+    );
+    assert!(app.db().holds().is_held(1).await.unwrap());
+    for id in [20, 21] {
+        let row = app.db().queue().get_by_file_id(id).await.unwrap().unwrap();
+        assert_eq!(row.status, "paused");
+    }
+
+    let response = app.post_json("/active/resume", keys).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(
+        results(&body),
+        vec![
+            pair("transfer:2", "resumed"),
+            pair("transfer:1", "resumed"),
+            pair("file:5531", "not_found"),
+            pair("transfer:2", "already"),
+        ],
+        "{body}"
+    );
+    assert!(!app.db().holds().is_held(1).await.unwrap());
+    let row = app.db().queue().get_by_file_id(20).await.unwrap().unwrap();
+    assert_eq!(row.status, "pending");
+}
+
+#[tokio::test]
+async fn pause_and_resume_refuse_no_keys_and_too_many() {
+    let mut app = test_app().await;
+    let _list = mock_transfers(&mut app, vec![]).await;
+    for path in ["/active/pause", "/active/resume"] {
+        let response = app.post_json(path, json!({ "keys": [] })).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+        let keys: Vec<String> = (0..501).map(|n| format!("file:{n}")).collect();
+        let response = app.post_json(path, json!({ "keys": keys })).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+        let keys: Vec<String> = (0..500).map(|n| format!("file:{n}")).collect();
+        let response = app.post_json(path, json!({ "keys": keys })).await;
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn pause_and_resume_require_auth() {
+    let app = test_app().await;
+    for path in ["/active/pause", "/active/resume"] {
+        let response = app
+            .req(
+                Method::POST,
+                path,
+                None,
+                Some(json!({ "keys": ["file:1"] })),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
 }

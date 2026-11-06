@@ -1,10 +1,13 @@
 // Queue page: active downloads and the queue, polled every 3 s, with every queue action
 // and "sync now". Reordering, skip, pause and resume are reversible, so only clearing
 // completed rows and cancelling a download ask first. Queue rows can be flagged as fake
-// (feature 042); flags reload when the rows or a flag change, not on every poll.
+// (feature 042); flags reload when the rows or a flag change, not on every poll. One
+// switch pauses or resumes all NAS downloads (feature 039); a file can also be paused,
+// resumed or retried on its own, and `?transfer=`, `?folder=` or `?file=` show only the
+// files an Active row stands for.
 
 import { del, get, post, syncNow } from "../api.js";
-import { confirm, empty, h, poll, toast } from "../app.js";
+import { confirm, empty, h, nasBanner, poll, setNasPaused, toast } from "../app.js";
 import { flagControl, loadFlags } from "../flags.js";
 import { bytes, duration, percent, relative, speed, utc } from "../format.js";
 
@@ -26,13 +29,32 @@ let shown = { downloads: null, queue: null, held: null };
 let watchingSync = false;
 let flags = null;
 let flagged = { ids: null, version: 0 };
+let banner = null;
+let nasPaused = false;
+// The files shown: the query string for GET /local/queue, and what to call them
+let only = { query: "", label: null };
 
-export function mount(el) {
+/** `?transfer=`, `?folder=` or `?file=` → the filter for the queue request */
+function filterOf(query) {
+  const get1 = (k) => (query && query.get(k)) || null;
+  const transfer = get1("transfer");
+  const folder = get1("folder");
+  const file = get1("file");
+  if (transfer && /^\d+$/.test(transfer)) return { query: `?transfer=${transfer}`, label: `transfer ${transfer}`, transfer };
+  if (folder) return { query: `?folder=${encodeURIComponent(folder)}`, label: folder };
+  if (file && /^\d+$/.test(file)) return { query: `?file=${file}`, label: `file ${file}` };
+  return { query: "", label: null };
+}
+
+export function mount(el, { query } = {}) {
+  only = filterOf(query);
+  nasPaused = false;
+  banner = nasBanner(() => refresh());
   els = {
     summary: h("p", { class: "muted" }, "Loading…"),
     sync: h("p", { class: "sync-line", hidden: true }),
-    pause: h("button", { type: "button", class: "btn", onclick: () => bulk("pause", "pause the queue") }, "Pause all"),
-    resume: h("button", { type: "button", class: "btn", onclick: () => bulk("resume", "resume the queue") }, "Resume all"),
+    showing: h("p", { class: "muted", hidden: true }),
+    switch: h("button", { type: "button", class: "btn", onclick: onSwitch }, "Pause NAS downloads"),
     clear: h("button", { type: "button", class: "btn", onclick: onClear }, "Clear completed"),
     syncBtn: h("button", { type: "button", class: "btn btn-primary", onclick: onSync }, "Sync now"),
     downloads: h("section", { class: "card wide" }),
@@ -48,18 +70,38 @@ export function mount(el) {
     h(
       "div",
       { class: "page-head" },
-      h("div", {}, h("h1", { text: "Queue" }), els.summary, els.sync),
-      h("div", { class: "toolbar" }, els.pause, els.resume, els.clear, els.syncBtn),
+      h("div", {}, h("h1", { text: "Queue" }), els.summary, els.sync, els.showing),
+      h("div", { class: "toolbar" }, els.switch, els.clear, els.syncBtn),
     ),
-    h("div", { class: "stack" }, els.downloads, els.held, els.queue),
+    h("div", { class: "stack" }, banner.el, els.downloads, els.held, els.queue),
   );
+  if (only.label) nameFilter();
   timer = poll(load, REFRESH_MS);
+}
+
+/** "Showing files of <name>" with a link back to the whole queue; the name comes from Active */
+async function nameFilter() {
+  const page = els;
+  let label = only.label;
+  if (only.transfer) {
+    try {
+      const active = await get("/active");
+      const found = (active.items || []).find((i) => i.key === `transfer:${only.transfer}`);
+      if (found) label = found.name;
+    } catch {
+      // the id stands in for the name
+    }
+  }
+  if (els !== page) return;
+  page.showing.hidden = false;
+  page.showing.replaceChildren(`Showing files of ${label} · `, h("a", { href: "#/queue" }, "Show all"));
 }
 
 export function unmount() {
   if (timer) timer.stop();
   timer = null;
   els = null;
+  banner = null;
   seq += 1; // drop any response still in flight
 }
 
@@ -68,7 +110,7 @@ export function unmount() {
 async function load() {
   const mine = ++seq;
   const [queue, downloads, status, arr] = await Promise.all([
-    get("/local/queue").catch(failure),
+    get(`/local/queue${only.query}`).catch(failure),
     get("/local/downloads").catch(failure),
     watchingSync ? get("/status").catch(() => null) : null,
     get("/arr/status").catch(() => null),
@@ -82,6 +124,7 @@ async function load() {
     flags = next;
     flagged = { ids, version: flagged.version + 1 };
   }
+  if (queue && !queue.failed) setSwitch(Boolean(queue.nas_paused));
   renderQueue(queue);
   renderDownloads(downloads);
   if (status && status.sync) renderSync(status.sync);
@@ -122,8 +165,18 @@ function reason(e) {
   return e.details ? `${e.error}: ${e.details}` : e.error;
 }
 
-function bulk(verb, what) {
-  return act(verb === "pause" ? els.pause : els.resume, what, () => post(`/local/queue/${verb}`));
+/** Show the switch's state: the button, and the banner */
+function setSwitch(on) {
+  nasPaused = on;
+  els.switch.textContent = on ? "Resume NAS downloads" : "Pause NAS downloads";
+  banner.update(on);
+}
+
+async function onSwitch() {
+  els.switch.disabled = true;
+  await setNasPaused(!nasPaused);
+  if (els) els.switch.disabled = false;
+  refresh();
 }
 
 async function onClear() {
@@ -262,8 +315,6 @@ function renderQueue(res) {
 }
 
 function setToolbar(counts) {
-  els.pause.disabled = !(counts.pending || counts.downloading);
-  els.resume.disabled = !counts.paused;
   els.clear.disabled = !counts.completed;
 }
 
@@ -286,6 +337,23 @@ function queueRow(item, index, last) {
       glyph,
     ),
   );
+  const single = { pending: ["pause", "Pause"], downloading: ["pause", "Pause"], paused: ["resume", "Resume"], failed: ["retry", "Retry"] }[s];
+  if (single) {
+    const [verb, label] = single;
+    buttons.push(
+      h(
+        "button",
+        {
+          type: "button",
+          class: "btn btn-small",
+          "aria-label": `${label} ${item.filename}`,
+          dataset: { key: `${id}:${verb}` },
+          onclick: (ev) => act(ev.currentTarget, `${verb} ${item.filename}`, () => post(`/local/queue/${id}/${verb}`)),
+        },
+        label,
+      ),
+    );
+  }
   buttons.push(
     h(
       "button",

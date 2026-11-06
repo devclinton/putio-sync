@@ -35,6 +35,7 @@ use crate::contact::Contacts;
 use crate::infohash;
 use crate::path_check::{self, PathCheck, PathStatus};
 use crate::view::{self, LocalProgress};
+use putio_sync_db::pipeline::NAS_DOWNLOADS_PAUSED;
 
 /// How often a poll may refresh from Put.io (research R7)
 pub const REFRESH_INTERVAL: Duration = Duration::from_secs(20);
@@ -1563,18 +1564,39 @@ impl ArrService {
             .map(|list| list.into_iter().map(|d| (d.file_id, d.speed_bps)).collect())
             .unwrap_or_default();
 
+        let nas_paused = self.db.flags().get_bool(NAS_DOWNLOADS_PAUSED).await?;
+
         let mut out = Vec::new();
         for item in items
             .iter()
             .filter(|i| ids.is_none_or(|ids| matches(i, ids)))
         {
             let files = repo.files(&item.hash).await?;
+            let mut paused = nas_paused;
+            if !paused {
+                // Held on Put.io, or every file still to download is paused (039)
+                if let Some(id) = item.transfer_id {
+                    paused = self.db.holds().is_held(id).await?;
+                }
+                if !paused && item.state == ArrState::Local {
+                    let mut unfinished = 0;
+                    let mut paused_files = 0;
+                    for (id, _) in &files {
+                        if let Some(row) = self.db.queue().get_by_file_id(*id).await? {
+                            unfinished += 1;
+                            paused_files += i32::from(row.status == "paused");
+                        }
+                    }
+                    paused = unfinished > 0 && unfinished == paused_files;
+                }
+            }
             let (completed_bytes, _) = repo.local_progress(&item.hash).await?;
             let speed: f64 = files.iter().filter_map(|(id, _)| speeds.get(id)).sum();
             let local = LocalProgress {
                 completed_bytes,
                 file_count: files.len() as i64,
                 speed_bps: speed.max(0.0) as u64,
+                paused,
             };
             out.push(view::torrent(item, &local, &self.target));
         }

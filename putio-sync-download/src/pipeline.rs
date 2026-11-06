@@ -368,8 +368,31 @@ pub fn summary(pipeline: &Pipeline) -> Summary {
     }
 }
 
+/// What a pause or resume did to one item (contracts/api.md)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionResult {
+    /// Pause: its files in the queue are paused and any running one stopped
+    Paused,
+    /// Pause: the transfer is on Put.io (or waiting for sync), so its NAS download is held
+    Held,
+    /// Resume: its paused files are back in the queue and any hold is released
+    Resumed,
+    /// Nothing to change: already paused or held, or not paused
+    Already,
+    /// No such active item
+    NotFound,
+}
+
+/// The result of a pause or resume for one key
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ItemResult {
+    pub key: String,
+    pub result: ActionResult,
+}
+
 /// The item key of a file (R2)
-fn file_key(file: &PipelineFile) -> String {
+pub fn file_key(file: &PipelineFile) -> String {
     match (file.transfer_id, file.relative_path.as_deref()) {
         (Some(id), _) => format!("transfer:{id}"),
         (None, Some(path)) if !path.is_empty() => format!("folder:{path}"),
@@ -450,7 +473,7 @@ fn transfer_item(
         next_sync_at: None,
         note: None,
         phase: None,
-        links: links(Some(transfer.id)),
+        links: links(&key, Some(transfer.id)),
         key,
     })
 }
@@ -490,7 +513,7 @@ fn waiting_item(input: &BuildInput, transfer: &Transfer, key: String) -> Option<
         next_sync_at: input.next_sync_at,
         note: None,
         phase: None,
-        links: links(Some(transfer.id)),
+        links: links(&key, Some(transfer.id)),
         key,
     })
 }
@@ -598,7 +621,7 @@ fn nas_item(
             .first()
             .copied()
             .filter(|p| *p != "downloading" && phases.iter().all(|q| q == p)),
-        links: links(transfer_id),
+        links: links(&key, transfer_id),
         key,
     })
 }
@@ -657,17 +680,41 @@ fn origin(input: &BuildInput, transfer_id: Option<i64>, files: &[&PipelineFile])
         })
 }
 
-fn links(transfer_id: Option<i64>) -> Links {
-    match transfer_id {
-        Some(id) => Links {
+/// Where an item's links lead: its transfer, if any, and its rows on the Queue page. An
+/// item with no transfer is a folder or a file in the queue, found by `?folder=`/`?file=`.
+fn links(key: &str, transfer_id: Option<i64>) -> Links {
+    match (transfer_id, key.split_once(':')) {
+        (Some(id), _) => Links {
             transfers: Some(format!("#/transfers?id={id}")),
             queue: format!("#/queue?transfer={id}"),
         },
-        None => Links {
+        (None, Some(("folder", path))) => Links {
+            transfers: None,
+            queue: format!("#/queue?folder={}", percent_encode(path)),
+        },
+        (None, Some(("file", id))) => Links {
+            transfers: None,
+            queue: format!("#/queue?file={id}"),
+        },
+        (None, _) => Links {
             transfers: None,
             queue: "#/queue".to_string(),
         },
     }
+}
+
+/// Percent-encode a query value (everything but unreserved characters and `/`)
+fn percent_encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
 }
 
 fn stall_view(stall: &Stall, now: SystemTime) -> StallView {
@@ -1091,7 +1138,22 @@ mod tests {
             .find(|i| i.key.starts_with("folder"))
             .unwrap();
         assert_eq!(folder.links.transfers, None);
-        assert_eq!(folder.links.queue, "#/queue");
+        assert_eq!(folder.links.queue, "#/queue?folder=Photos/2026");
+        let file = pipeline
+            .items
+            .iter()
+            .find(|i| i.key.starts_with("file"))
+            .unwrap();
+        assert_eq!(file.links.transfers, None);
+        assert_eq!(file.links.queue, "#/queue?file=12");
+    }
+
+    #[test]
+    fn folder_links_are_percent_encoded() {
+        assert_eq!(
+            links("folder:Tom & Jerry/S01", None).queue,
+            "#/queue?folder=Tom%20%26%20Jerry/S01"
+        );
     }
 
     #[test]

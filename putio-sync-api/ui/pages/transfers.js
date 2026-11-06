@@ -41,8 +41,15 @@ const CLEARS = [
   { status: "finished", label: "Clear all finished", what: "finished" },
 ];
 
+// The transfer an Active row links to (`?id=`): highlighted, and scrolled to once
+let target = null;
+let scrolled = false;
+
 export function mount(el, { query } = {}) {
   shown = null;
+  const id = query && query.get("id");
+  target = id && /^\d+$/.test(id) ? Number(id) : null;
+  scrolled = false;
   // A filter or sort change redraws the last list at once
   ctl = listControls({ query, columns: COLUMNS, onChange: () => ((shown = null), els && render(current)) });
   els = {
@@ -327,6 +334,13 @@ function render(list) {
     ),
   );
   sel.update();
+  if (target != null && !scrolled) {
+    const mark = els.list.querySelector("tr.highlight");
+    if (mark) {
+      scrolled = true;
+      mark.scrollIntoView({ block: "center" });
+    }
+  }
 }
 
 function row(t) {
@@ -335,7 +349,7 @@ function row(t) {
   const stall = t.stall;
   return h(
     "tr",
-    {},
+    { class: t.id === target ? "highlight" : null, "aria-current": t.id === target ? "true" : null },
     sel.box(t.id, { label: `Select ${t.name}` }),
     h(
       "td",

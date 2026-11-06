@@ -4,7 +4,7 @@
 
 import { arrRuntime, clearBandwidthOverride, get, setBandwidthOverride, syncNow } from "../api.js";
 import { describeSource, rate } from "../bandwidth.js";
-import { empty, h, poll, toast, toastError } from "../app.js";
+import { empty, h, nasBanner, poll, toast, toastError } from "../app.js";
 import { bytes, duration, percent, relative } from "../format.js";
 import { storageNotice } from "../storage.js";
 import { BADGE, LABEL, STAGES } from "./active.js";
@@ -15,14 +15,17 @@ let timer = null;
 let syncButton = null;
 let summary = null;
 let grid = null;
+let banner = null;
 
 export function mount(el) {
+  banner = nasBanner(() => timer && timer.now());
   syncButton = h("button", { type: "button", class: "btn btn-primary", onclick: onSync }, "Sync now");
   summary = h("p", { class: "muted" }, "Loading…");
   grid = h("div", { class: "grid" });
   el.append(
     h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Status" }), summary), syncButton),
     storageNotice(),
+    banner.el,
     grid,
   );
   timer = poll(refresh, REFRESH_MS);
@@ -31,6 +34,7 @@ export function mount(el) {
 export function unmount() {
   if (timer) timer.stop();
   timer = null;
+  banner = null;
 }
 
 async function refresh() {
@@ -67,6 +71,7 @@ function render(s, arr) {
   syncButton.disabled = syncing;
   syncButton.textContent = syncing ? "Syncing…" : "Sync now";
 
+  banner.update(Boolean(s.nas_paused));
   summary.replaceChildren(...headline(s));
   grid.replaceChildren(
     syncCard(s.sync),

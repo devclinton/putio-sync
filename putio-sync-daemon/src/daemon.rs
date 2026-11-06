@@ -779,6 +779,11 @@ pub async fn pipeline_tick(
     for (stage, state, n) in pipeline_gauges(&pipeline.counts) {
         putio_sync_telemetry::pipeline::set_items(stage, state, n);
     }
+    putio_sync_telemetry::pipeline::set_nas_paused(download_manager.nas_paused().await);
+    // Same list as above: it is inside the cache age, so this asks Put.io for nothing
+    download_manager
+        .release_stale_holds(PIPELINE_MAX_AGE)
+        .await?;
     Ok(pipeline.counts)
 }
 
@@ -909,7 +914,9 @@ mod tests {
         assert_eq!(tracker.stalled_count(), 1);
     }
 
-    async fn pipeline_manager(server: &mockito::Server) -> (tempfile::TempDir, DownloadManager) {
+    async fn pipeline_manager(
+        server: &mockito::Server,
+    ) -> (tempfile::TempDir, DownloadManager, Arc<Database>) {
         let dir = tempfile::tempdir().unwrap();
         let db = Arc::new(
             Database::new(dir.path().join(".putiosync.db"))
@@ -921,7 +928,7 @@ mod tests {
             target_directory: dir.path().to_path_buf(),
             ..DownloadConfig::default()
         };
-        (dir, DownloadManager::new(client, db, config))
+        (dir, DownloadManager::new(client, db.clone(), config), db)
     }
 
     /// FR-028, SC-006: with no page open, a minute of loop ticks asks Put.io once
@@ -939,7 +946,7 @@ mod tests {
             .expect(1)
             .create_async()
             .await;
-        let (_dir, manager) = pipeline_manager(&server).await;
+        let (_dir, manager, _db) = pipeline_manager(&server).await;
         let tracker = StallTracker::new(Duration::from_secs(3600));
 
         let ticks = PIPELINE_MAX_AGE.as_secs() / PIPELINE_TICK.as_secs();
@@ -967,7 +974,7 @@ mod tests {
             .expect(1)
             .create_async()
             .await;
-        let (_dir, manager) = pipeline_manager(&server).await;
+        let (_dir, manager, _db) = pipeline_manager(&server).await;
         let tracker = StallTracker::new(Duration::from_secs(3600));
 
         // One 10 s window: a loop tick, and each of three tabs polls twice
@@ -981,6 +988,87 @@ mod tests {
             }
         }
         list.assert_async().await;
+    }
+
+    /// R9: a hold is cleared when its transfer is in error or gone from Put.io; a hold on
+    /// a live transfer stays
+    #[tokio::test]
+    async fn pipeline_tick_releases_holds_of_failed_and_gone_transfers() {
+        let mut server = mockito::Server::new_async().await;
+        let mut failed = downloading(6, 0);
+        failed["status"] = "ERROR".into();
+        failed["error_message"] = "tracker gone".into();
+        mock_list(
+            &mut server,
+            serde_json::json!([downloading(5, 970), failed]),
+        )
+        .await;
+        let (_dir, manager, db) = pipeline_manager(&server).await;
+        for id in [5, 6, 7] {
+            db.holds().add(id, "Held").await.unwrap();
+        }
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        let left: Vec<i64> = db
+            .holds()
+            .list()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|h| h.transfer_id)
+            .collect();
+        assert_eq!(left, vec![5]);
+    }
+
+    /// With Put.io down the list is the last known one, so no hold is judged gone
+    #[tokio::test]
+    async fn pipeline_tick_keeps_holds_while_putio_is_unreachable() {
+        let mut server = mockito::Server::new_async().await;
+        let list = mock_list(&mut server, serde_json::json!([downloading(5, 970)])).await;
+        let (_dir, manager, db) = pipeline_manager(&server).await;
+        db.holds().add(5, "Held").await.unwrap();
+        db.holds().add(7, "Held").await.unwrap();
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        // Put.io fails from now on; the next snapshot is stale
+        list.remove_async().await;
+        let _down = server
+            .mock("GET", "/transfers/list")
+            .with_status(400)
+            .with_body(r#"{"status":"ERROR","error_type":"Down","error_message":"down"}"#)
+            .create_async()
+            .await;
+        manager.transfers_snapshot(Duration::ZERO).await.unwrap();
+        db.holds().add(8, "Held").await.unwrap();
+
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        assert_eq!(db.holds().list().await.unwrap().len(), 2);
+    }
+
+    /// The switch gauge follows the stored flag, so a change made by the CLI shows too (T041)
+    #[tokio::test]
+    async fn pipeline_tick_sets_the_nas_switch_gauge() {
+        let mut server = mockito::Server::new_async().await;
+        mock_list(&mut server, serde_json::json!([])).await;
+        let (_dir, manager, db) = pipeline_manager(&server).await;
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+        let gauge =
+            || putio_sync_telemetry::global().sample("putio_sync_nas_downloads_paused", &[]);
+
+        db.flags()
+            .set_bool(putio_sync_db::pipeline::NAS_DOWNLOADS_PAUSED, true)
+            .await
+            .unwrap();
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        assert_eq!(gauge(), Some(1.0));
+
+        db.flags()
+            .set_bool(putio_sync_db::pipeline::NAS_DOWNLOADS_PAUSED, false)
+            .await
+            .unwrap();
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        assert_eq!(gauge(), Some(0.0));
     }
 
     #[test]

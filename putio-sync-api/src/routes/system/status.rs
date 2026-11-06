@@ -29,6 +29,8 @@ pub struct StatusResponse {
     pub downloads: Option<Vec<ActiveDownloadInfo>>,
     /// The Active transfers card (feature 039), from the last Put.io list fetched
     pub active: Option<Summary>,
+    /// The Pause NAS downloads switch is on (feature 039)
+    pub nas_paused: bool,
     pub workers: WorkersSection,
     /// The download limit in force (feature 032), the `GET /bandwidth` body
     pub bandwidth: putio_sync_core::bandwidth::Status,
@@ -294,6 +296,7 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
         queue,
         downloads,
         active,
+        nas_paused: state.download_manager.nas_paused().await,
         workers,
         bandwidth: state.download_manager.bandwidth().status(),
         watcher,
