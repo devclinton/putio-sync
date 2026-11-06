@@ -74,9 +74,9 @@
 - [X] T036 [US2] Pass the `SubtitleSearch` client and `Arc<dyn MediaLookup>` into the pipeline and the engine request (file ID, category, hash path) in `putio-sync-pipeline/src/subtitles.rs` and `putio-sync-pipeline/src/lib.rs`
 - [X] T037 [US2] Build the client and the `ArrMedia` adapter and rebuild them on settings change in `putio-sync-daemon/src/daemon.rs`
 - [X] T038 [US2] Add the `opensubtitles` fields and `POST /settings/subtitles/opensubtitles/test` (unsaved input allowed, masked values keep stored ones) in `putio-sync-api/src/routes/system/subtitles.rs`; extend the secrets sweep test to the new fields and the JWT
-- [ ] T039 [P] [US2] Add the OpenSubtitles section (key, login, threshold, Test, quota text) to `putio-sync-api/ui/settings/subtitles.js` and logic tests in `putio-sync-api/tests/ui/subtitles_opensubtitles.test.mjs`
-- [ ] T040 [P] [US2] Document `[subtitles.opensubtitles]` in `config.example.toml`
-- [ ] T041 [US2] Verify US2 acceptance 1-8 against the mocks; run `cargo test -p putio-sync-subtitles -p putio-sync-arr -p putio-sync-pipeline -p putio-sync-api`
+- [X] T039 [P] [US2] Add the OpenSubtitles section (key, login, threshold, Test, quota text) to `putio-sync-api/ui/settings/subtitles.js` and logic tests in `putio-sync-api/tests/ui/subtitles_opensubtitles.test.mjs`
+- [X] T040 [P] [US2] Document `[subtitles.opensubtitles]` in `config.example.toml`
+- [X] T041 [US2] Verify US2 acceptance 1-8 against the mocks; run `cargo test -p putio-sync-subtitles -p putio-sync-arr -p putio-sync-pipeline -p putio-sync-api`
 
 **Checkpoint**: US1 and US2 work; OpenSubtitles needs only a key.
 
@@ -96,7 +96,7 @@
 - [X] T045 [US3] Implement `similarity` and `score_name` in `putio-sync-subtitles/src/score.rs`
 - [X] T046 [US3] Add the name level (query builder from `ReleaseInfo`, `type` movie/episode) in `putio-sync-subtitles/src/matching.rs` and call it from `fetch_for_video` after IDs; source label `os_name`
 - [X] T047 [US3] Make the manual path (`start_manual_subtitles`, Local files) pass the same lookups and OpenSubtitles client in `putio-sync-pipeline/src/subtitles.rs`; bypass nothing but the size/sample rules (025)
-- [ ] T048 [US3] Verify US3 acceptance 1-4 against the mocks
+- [X] T048 [US3] Verify US3 acceptance 1-4 against the mocks
 
 **Checkpoint**: all three levels and four modes work.
 

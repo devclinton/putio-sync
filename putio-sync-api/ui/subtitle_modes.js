@@ -28,3 +28,19 @@ export const modesText = (obj) => Object.entries(obj || {}).map(([k, m]) => `${k
 export function readModes({ mode, categories, languages }) {
   return { mode: mode || undefined, category_modes: parseModes(categories), language_modes: parseModes(languages) };
 }
+
+/** [name, label, hint, secret] for the OpenSubtitles fields */
+export const OS_FIELDS = [
+  ["api_key", "OpenSubtitles API key", "A free consumer key from opensubtitles.com. Empty turns this source off", true],
+  ["username", "Account name (optional)", "A login raises the daily download limit", false],
+  ["password", "Account password (optional)", "Needs the account name", true],
+];
+
+/** The OpenSubtitles body: the typed fields, the unchanged User-Agent, and the threshold when one is typed */
+export function readOpenSubtitles(v, stored) {
+  const min = String(v.min_confidence ?? "").trim();
+  return {
+    opensubtitles: { api_key: String(v.api_key).trim(), username: String(v.username).trim(), password: String(v.password), user_agent: (stored || {}).user_agent || "" },
+    min_confidence: min === "" ? undefined : Number(min),
+  };
+}

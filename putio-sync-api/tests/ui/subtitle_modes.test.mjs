@@ -29,3 +29,12 @@ test("the default is first and every other mode is offered", () => {
   assert.equal(MODES[0][0], "");
   assert.deepEqual(MODES.slice(1).map((m) => m[0]), ["download_only", "whisper_only", "both"]);
 });
+
+test("the OpenSubtitles fields are read with the stored User-Agent and an optional threshold", async () => {
+  const { OS_FIELDS, readOpenSubtitles } = await import("../../ui/subtitle_modes.js");
+  assert.deepEqual(OS_FIELDS.map((f) => f[0]), ["api_key", "username", "password"]);
+  const got = readOpenSubtitles({ api_key: " KEY ", username: " me ", password: "********", min_confidence: "70" }, { user_agent: "mine/1" });
+  assert.deepEqual(got, { opensubtitles: { api_key: "KEY", username: "me", password: "********", user_agent: "mine/1" }, min_confidence: 70 });
+  assert.equal(readOpenSubtitles({ api_key: "", username: "", password: "", min_confidence: " " }).min_confidence, undefined);
+  assert.equal(readOpenSubtitles({ api_key: "", username: "", password: "" }).opensubtitles.user_agent, "");
+});
