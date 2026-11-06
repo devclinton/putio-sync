@@ -1,0 +1,47 @@
+[package]
+name = "putio-sync-dlna"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "DLNA / UPnP media server for putio-sync"
+
+[dependencies]
+putio-sync-core = { path = "../putio-sync-core" }
+putio-sync-client = { path = "../putio-sync-client" }
+putio-sync-file-manager = { path = "../putio-sync-file-manager" }
+putio-sync-telemetry = { path = "../putio-sync-telemetry" }
+
+# HTTP server and streaming
+axum = "0.7"
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["fs"] }
+http-body-util = "0.1"
+futures-util = "0.3"
+bytes = "1"
+reqwest = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+# Multicast join and SO_REUSEADDR/SO_REUSEPORT for discovery
+socket2 = { version = "0.6", features = ["all"] }
+if-addrs = "0.15"
+
+# Identity, names and ids
+uuid = { version = "1.6", features = ["v4"] }
+mime_guess = "2.0"
+percent-encoding = "2.3"
+rand = "0.8"
+quick-xml = "0.37"
+
+# Logging
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3.8"
+mockito = "1.2"
+serde_json = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -15,12 +15,12 @@ red, so each story writes its tests first.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the crate `putio-sync-dlna` (`Cargo.toml` with workspace package fields; deps `putio-sync-core`, `putio-sync-file-manager`, `putio-sync-client`, `tokio`, `axum` 0.7, `tower-http` 0.5 with `fs`, `socket2` 0.6, `if-addrs`, `uuid` (v4), `mime_guess`, `reqwest`, `quick-xml`, `tracing`, `prometheus`, `thiserror`, `percent-encoding`, `rand`; dev-deps `tempfile`, `wiremock`, `serde_json`) and add it to `members` in `Cargo.toml`
-- [ ] T002 [P] Add an empty module layout in `putio-sync-dlna/src/lib.rs` (`ssdp`, `description`, `soap`, `content`, `media`, `stream_local`, `putio`, `metrics`) with a crate doc comment naming feature 022
+- [x] T001 Create the crate `putio-sync-dlna` (`Cargo.toml` with workspace package fields; deps `putio-sync-core`, `putio-sync-file-manager`, `putio-sync-client`, `tokio`, `axum` 0.7, `tower-http` 0.5 with `fs`, `socket2` 0.6, `if-addrs`, `uuid` (v4), `mime_guess`, `reqwest`, `quick-xml`, `tracing`, `prometheus`, `thiserror`, `percent-encoding`, `rand`; dev-deps `tempfile`, `wiremock`, `serde_json`) and add it to `members` in `Cargo.toml`
+- [x] T002 [P] Add an empty module layout in `putio-sync-dlna/src/lib.rs` (`ssdp`, `description`, `soap`, `content`, `media`, `stream_local`, `putio`, `metrics`) with a crate doc comment naming feature 022
 
 ## Phase 2: Foundational
 
-- [ ] T003 Add `DlnaConfig` to `putio-sync-core/src/config.rs`:
+- [x] T003 Add `DlnaConfig` to `putio-sync-core/src/config.rs`:
   - fields `enabled` (default `false`), `name` (default `"putio-sync"`; trimmed, empty → default, cut to 64 chars), `port` (default `8200`), `bind` (`BindList`, default empty = every LAN IPv4 address, not Docker bridges), `roots` (default `["downloads"]`), `putio_folder: Option<i64>`;
   - env overrides `PUTIO_SYNC_DLNA_ENABLED`, `PUTIO_SYNC_DLNA_NAME`, `PUTIO_SYNC_DLNA_PORT`;
   - validation in `Config::validate`:
@@ -28,27 +28,27 @@ red, so each story writes its tests first.
     - roots: each `downloads`, `cat:<name>` (no `/`), `watch:<path>` (one of `[watch] paths`) or `putio`; at least one if enabled; no duplicates;
     - `putio_folder` required when roots has `putio`;
   - unit tests in the same file for each rule
-- [ ] T004 [P] Document `[dlna]` in `config.example.toml`, exactly as in `contracts/config.md`
-- [ ] T005 [P] Add media classification to `putio-sync-dlna/src/media.rs`:
+- [x] T004 [P] Document `[dlna]` in `config.example.toml`, exactly as in `contracts/config.md`
+- [x] T005 [P] Add media classification to `putio-sync-dlna/src/media.rs`:
   - `classify(name) -> Option<MediaKind{Video,Audio,Image}>` with mime; the `mime_guess` fixes `.mkv`→`video/x-matroska`, `.ts`→`video/mp2t`, `.m4v`→`video/mp4`;
   - hidden (leading `.`) and `.downloading` names → `None`;
   - `protocol_info(mime)` and `content_features()` per research R5 (no `DLNA.ORG_PN`);
   - unit tests
-- [ ] T006 [P] Add the SOAP layer to `putio-sync-dlna/src/soap.rs`:
+- [x] T006 [P] Add the SOAP layer to `putio-sync-dlna/src/soap.rs`:
   - `parse_action(body) -> (service, action, args)` using `quick-xml`, prefix-agnostic;
   - `envelope(action, service, &[(name, value)])` with escaping;
   - `fault(code, description)` for UPnPError 401, 701 and 720;
   - unit tests with envelopes using `s:`, `SOAP-ENV:` and default namespaces
-- [ ] T007 [P] Add object IDs to `putio-sync-dlna/src/content.rs`:
+- [x] T007 [P] Add object IDs to `putio-sync-dlna/src/content.rs`:
   - `ObjectId::parse`/`format`: `"0"` root; else `percent-encode(key) + "/" + percent-encode(rel)`;
   - root keys `downloads`, `cat:<name>`, `watch:<path>`, `putio`;
   - round-trip tests, including names with spaces, `&`, `#`, `%`, emoji
-- [ ] T008 [P] Add DIDL-Lite building to `putio-sync-dlna/src/content.rs`:
+- [x] T008 [P] Add DIDL-Lite building to `putio-sync-dlna/src/content.rs`:
   - containers (`id`, `parentID`, `title`, optional `childCount`) and items (`upnp:class`, one `res` with `protocolInfo`, `size`, URL);
   - every value escaped;
   - unit test that the escaped result parses back with `quick-xml`
-- [ ] T009 Add `SharedRoot` building to `putio-sync-dlna/src/lib.rs`: `roots(&Config) -> Vec<SharedRoot{key,title,source}>` in the order downloads, `cat:*` by name, `watch:*` in config order, `putio`; a missing `cat:`/`watch:` folder → an empty container, with a WARN logged once
-- [ ] T010 Add the metrics to `putio-sync-dlna/src/metrics.rs`: `putio_sync_dlna_up`, `putio_sync_dlna_streams_active{root_kind}`, `putio_sync_dlna_bytes_sent_total{root_kind}`, `putio_sync_dlna_requests_total{kind,result}` (contracts/upnp.md); register them on the shared registry the same way `putio-sync-telemetry` does
+- [x] T009 Add `SharedRoot` building to `putio-sync-dlna/src/lib.rs`: `roots(&Config) -> Vec<SharedRoot{key,title,source}>` in the order downloads, `cat:*` by name, `watch:*` in config order, `putio`; a missing `cat:`/`watch:` folder → an empty container, with a WARN logged once
+- [x] T010 Add the metrics to `putio-sync-dlna/src/metrics.rs`: `putio_sync_dlna_up`, `putio_sync_dlna_streams_active{root_kind}`, `putio_sync_dlna_bytes_sent_total{root_kind}`, `putio_sync_dlna_requests_total{kind,result}` (contracts/upnp.md); register them on the shared registry the same way `putio-sync-telemetry` does
 
 ## Phase 3: User Story 1 – Play downloaded files on the TV (P1) 🎯 MVP
 
@@ -59,19 +59,19 @@ sees only finished media, and gets the right bytes for a range.
 
 ### Tests
 
-- [ ] T011 [P] [US1] Write `putio-sync-dlna/tests/discovery.rs`:
+- [x] T011 [P] [US1] Write `putio-sync-dlna/tests/discovery.rs`:
   - an M-SEARCH for `urn:schemas-upnp-org:device:MediaServer:1` on loopback gets a 200 reply with `LOCATION` and `USN`;
   - `GET LOCATION` has the friendly name escaped;
   - `stop()` sends `ssdp:byebye`;
   - skip with a printed reason when multicast is not routable
-- [ ] T012 [P] [US1] Write `putio-sync-dlna/tests/browse.rs`:
+- [x] T012 [P] [US1] Write `putio-sync-dlna/tests/browse.rs`:
   - root `0` lists the shared roots;
   - `downloads/` lists folders first, then files, by name case-insensitive;
   - `.x.mkv.downloading`, `.hidden.mp4`, `a.nfo` and `b.torrent` are hidden;
   - paging with `StartingIndex`/`RequestedCount` (0 = all, capped at 500) reports the full `TotalMatches`;
   - `BrowseMetadata` on an item;
   - a file added after the first browse appears on the next
-- [ ] T013 [P] [US1] Write `putio-sync-dlna/tests/stream.rs`:
+- [x] T013 [P] [US1] Write `putio-sync-dlna/tests/stream.rs`:
   - full GET equals the file;
   - `Range: bytes=100-199` → 206 with those bytes and `Content-Range`;
   - a range past the end → 416 with `bytes */<size>`;
@@ -81,28 +81,28 @@ sees only finished media, and gets the right bytes for a range.
 
 ### Implementation
 
-- [ ] T014 [US1] Write the description documents in `putio-sync-dlna/src/description.rs`: the device XML (MediaServer:1, friendlyName escaped, UDN, both services) and the static `cds.xml`/`cms.xml` SCPDs per contracts/upnp.md
-- [ ] T015 [US1] Add ContentDirectory `Browse` for local roots to `putio-sync-dlna/src/content.rs`:
+- [x] T014 [US1] Write the description documents in `putio-sync-dlna/src/description.rs`: the device XML (MediaServer:1, friendlyName escaped, UDN, both services) and the static `cds.xml`/`cms.xml` SCPDs per contracts/upnp.md
+- [x] T015 [US1] Add ContentDirectory `Browse` for local roots to `putio-sync-dlna/src/content.rs`:
   - decode the ObjectId, check that the root is shared now, `local_files::resolve(root, rel)`;
   - list with `std::fs::read_dir`, filter with `media::classify`; drop symlinks whose target resolves outside the root;
   - sort, page, build DIDL;
   - unknown or refused ID → fault 701, logged at WARN with `peer`, `object_id` (truncated to 200 chars) and `reason`;
   - also `GetSystemUpdateID`, `GetSearchCapabilities`, `GetSortCapabilities`
-- [ ] T016 [US1] Add ConnectionManager to `putio-sync-dlna/src/content.rs` or `soap.rs`: `GetProtocolInfo` (Source = every known mime's protocolInfo), `GetCurrentConnectionIDs` → `0`, `GetCurrentConnectionInfo` → static
-- [ ] T017 [US1] Write local streaming in `putio-sync-dlna/src/stream_local.rs`:
+- [x] T016 [US1] Add ConnectionManager to `putio-sync-dlna/src/content.rs` or `soap.rs`: `GetProtocolInfo` (Source = every known mime's protocolInfo), `GetCurrentConnectionIDs` → `0`, `GetCurrentConnectionInfo` → static
+- [x] T017 [US1] Write local streaming in `putio-sync-dlna/src/stream_local.rs`:
   - resolve the same way as Browse (refused → 404 with no body);
   - `tower_http::services::ServeFile`, plus `transferMode.dlna.org: Streaming` and `contentFeatures.dlna.org`;
   - a body wrapper that counts bytes, updates `streams_active` and `bytes_sent_total{root_kind="local"}`, and logs the end at INFO with `root`, `size`, `bytes_sent`, `duration_ms`, `result`
-- [ ] T018 [US1] Write the HTTP router in `putio-sync-dlna/src/lib.rs`:
+- [x] T018 [US1] Write the HTTP router in `putio-sync-dlna/src/lib.rs`:
   - `/description.xml`, `/cds.xml`, `/cms.xml`, `POST /ctl/cds`, `POST /ctl/cms`, `GET|HEAD /media/*id`;
   - `SUBSCRIBE`/`UNSUBSCRIBE /evt/*` → 200 with `SID` and `TIMEOUT: Second-1800`;
   - everything else 404;
   - `requests_total` per kind and result
-- [ ] T019 [US1] Write SSDP in `putio-sync-dlna/src/ssdp.rs`:
+- [x] T019 [US1] Write SSDP in `putio-sync-dlna/src/ssdp.rs`:
   - a socket per LAN IPv4 interface (from `if-addrs`; loopback, `docker0`, `br-*` and `veth*` skipped unless `bind` names them), joined to 239.255.255.250:1900 with `SO_REUSEADDR`/`SO_REUSEPORT`;
   - NOTIFY alive 3× at start, then every 900 s, `max-age=1800`; byebye on stop;
   - M-SEARCH replies for the STs in contracts/upnp.md, after a random delay of at most `min(MX,5)` s, with `LOCATION` = the receiving interface's address
-- [ ] T020 [US1] Add the `MediaServer` handle to `putio-sync-dlna/src/lib.rs`:
+- [x] T020 [US1] Add the `MediaServer` handle to `putio-sync-dlna/src/lib.rs`:
   - `start(config, client)`, `update(DlnaConfig)` per research R8, `status() -> MediaServerStatus`, `stop()`;
   - the UUID is loaded from or created in `<config dir>/dlna-uuid`;
   - binds through the `[dlna] bind` entries;
@@ -117,13 +117,13 @@ sees only finished media, and gets the right bytes for a range.
 
 **Independent test**: Every traversal and symlink case is refused, with nothing sent.
 
-- [ ] T022 [P] [US2] Write `putio-sync-dlna/tests/confine.rs`, for both Browse and `/media`:
+- [x] T022 [P] [US2] Write `putio-sync-dlna/tests/confine.rs`, for both Browse and `/media`:
   - `downloads/..`, encoded `%2E%2E`, `downloads//etc`, an absolute rel;
   - a symlink in the root pointing outside the root (hidden from listings, refused direct);
   - a `cat:sonarr` root that cannot reach `radarr/`;
   - an ID from a root that was unshared after `update()`;
   - each refused with fault 701 or 404, a WARN, and no file bytes
-- [ ] T023 [US2] Make `update()` in `putio-sync-dlna/src/lib.rs` swap the roots atomically, bump `SystemUpdateID`, and make every request check the current roots (no cache of resolved paths)
+- [x] T023 [US2] Make `update()` in `putio-sync-dlna/src/lib.rs` swap the roots atomically, bump `SystemUpdateID`, and make every request check the current roots (no cache of resolved paths)
 - [ ] T024 [US2] Add `GET`/`PUT /settings/media-server` and `POST /settings/media-server/preview` in `putio-sync-api/src/routes/system/media_server.rs`:
   - the view with `available_roots` per contracts/api.md;
   - validate via `Config::validate`, save, then call `MediaServer::update`;
@@ -155,7 +155,7 @@ sees only finished media, and gets the right bytes for a range.
 converted and the original otherwise, ranges pass through, and a failure leaves the local
 roots working.
 
-- [ ] T030 [P] [US4] Write `putio-sync-dlna/tests/putio.rs` (wiremock):
+- [x] T030 [P] [US4] Write `putio-sync-dlna/tests/putio.rs` (wiremock):
   - the folder listing becomes DIDL under `putio/`;
   - an item outside `putio_folder`'s tree → 701;
   - `/files/{id}/mp4` `COMPLETED` → streams `/files/{id}/mp4/download` with the player's `Range`;
@@ -165,12 +165,12 @@ roots working.
   - the listing is refreshed after the 60 s cache (paused tokio time);
   - no token or link in the response headers or body;
   - Put.io off → zero requests to the mock
-- [ ] T031 [US4] Add the Put.io MP4 calls to `putio-sync-client/src/files.rs` (`mp4_status(id)` for `GET /files/{id}/mp4`, `mp4_download_url(id)`), with wiremock unit tests
-- [ ] T032 [US4] Add the Put.io root to `putio-sync-dlna/src/putio.rs`:
+- [x] T031 [US4] Add the Put.io MP4 calls to `putio-sync-client/src/files.rs` (`mp4_status(id)` for `GET /files/{id}/mp4`, `mp4_download_url(id)`), with wiremock unit tests
+- [x] T032 [US4] Add the Put.io root to `putio-sync-dlna/src/putio.rs`:
   - per-folder listing cache for 60 s, capped at 200 folders;
   - the parent chain checked against `putio_folder` (filled by `get_file_details` when missing);
   - Browse items with the size of the chosen version
-- [ ] T033 [US4] Add the Put.io stream proxy to `putio-sync-dlna/src/putio.rs`:
+- [x] T033 [US4] Add the Put.io stream proxy to `putio-sync-dlna/src/putio.rs`:
   - an authenticated request with the player's `Range`, following redirects server-side, a fresh request per range;
   - pass back the status and range headers; the body is counted as `root_kind="putio"`;
   - the log has `version=mp4|original` and redacts links
