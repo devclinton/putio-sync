@@ -352,8 +352,8 @@ times; a failed one shows its reason; rows older than the retention are gone.
   Pause NAS downloads switch, and `finished_retention_hours`.
 - [X] T052 [P] `CHANGELOG.md` entry, with the upgrade note: rows paused by the old Pause all
   stay paused after the upgrade, so resume them once from the Queue page.
-- [ ] T053 Run `make ci` and fix anything it reports.
-- [ ] T054 Walk through [quickstart.md](quickstart.md) sections 2 and 3 on the mock UI (all 15
+- [X] T053 Run `make ci` and fix anything it reports.
+- [X] T054 Walk through [quickstart.md](quickstart.md) sections 2 and 3 on the mock UI (all 15
   checks, then `MOCK_PUTIO_DOWN=1`).
 
 ---

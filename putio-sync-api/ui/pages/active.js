@@ -6,7 +6,7 @@
 // page adds no retry, cancel or remove of its own: each row links to the page that has them.
 
 import { get, post } from "../api.js";
-import { empty, h, nasBanner, poll, setNasPaused, toast } from "../app.js";
+import { empty, fill, h, nasBanner, poll, setNasPaused, toast } from "../app.js";
 import { bytes, dateTime, duration, percent, relative, speed, utc } from "../format.js";
 import { selection } from "../select.js";
 
@@ -155,7 +155,9 @@ function draw(force) {
   els.title.textContent = rows.length === items.length ? `Transfers (${items.length})` : `Transfers (${rows.length} of ${items.length})`;
   // The selection survives a poll for rows still listed and shown
   sel.reset(rows.filter(actionable).map((i) => i.key));
-  els.body.replaceChildren(
+  // `fill` flattens the array; the DOM's replaceChildren would show it as text
+  fill(
+    els.body,
     rows.length === 0
       ? empty("Nothing matches the filter", "Clear the name filter or choose Show all.")
       : [
