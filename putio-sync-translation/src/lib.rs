@@ -8,6 +8,11 @@
 
 pub mod align;
 pub mod callback;
+pub mod chat;
 pub mod chunk;
+pub mod engine;
 pub mod prompt;
 pub mod source;
+pub mod translator;
+
+pub use translator::Translator;
