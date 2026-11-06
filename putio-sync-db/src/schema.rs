@@ -223,7 +223,7 @@ CREATE TABLE IF NOT EXISTS pipeline_steps (
     stage TEXT NOT NULL,
     branch TEXT,
     position INTEGER NOT NULL DEFAULT 0,
-    kind TEXT NOT NULL CHECK (kind IN ('hook', 'download', 'notify', 'subtitle_scan', 'subtitles')),
+    kind TEXT NOT NULL CHECK (kind IN ('hook', 'download', 'notify', 'subtitle_scan', 'subtitles', 'translate_scan', 'translate')),
     name TEXT NOT NULL,
     required INTEGER NOT NULL DEFAULT 1,
     changes_files INTEGER NOT NULL DEFAULT 0,
@@ -241,6 +241,38 @@ pub const CREATE_PIPELINE_DEFERRED_DELETES_TABLE: &str = r#"
 CREATE TABLE IF NOT EXISTS pipeline_deferred_deletes (
     file_id INTEGER PRIMARY KEY,
     item_key TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+)
+"#;
+
+/// SQL to create the translation_callbacks table (feature 026): one row per translation job
+/// sent to a callback service. The token is never stored, only its SHA-256.
+pub const CREATE_TRANSLATION_CALLBACKS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS translation_callbacks (
+    token_hash TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL UNIQUE,
+    step_id INTEGER NOT NULL REFERENCES pipeline_steps(id) ON DELETE CASCADE,
+    attempt_id INTEGER NOT NULL,
+    source_lang TEXT NOT NULL,
+    target_lang TEXT NOT NULL,
+    source_path TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL,
+    target_path TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('waiting', 'done', 'failed', 'expired')),
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    finished_at INTEGER
+)
+"#;
+
+/// SQL to create the subtitle_provenance table (features 025 and 026): where each saved
+/// sidecar came from, so translation can prefer a transcribed or original source
+pub const CREATE_SUBTITLE_PROVENANCE_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS subtitle_provenance (
+    path TEXT PRIMARY KEY,
+    language TEXT NOT NULL,
+    source TEXT NOT NULL CHECK (source IN ('putio_embedded', 'putio_folder', 'opensubtitles', 'transcribed', 'translated')),
+    bytes INTEGER NOT NULL,
     created_at INTEGER NOT NULL
 )
 "#;
@@ -430,6 +462,9 @@ pub const CREATE_INDEXES: &str = r#"
 CREATE INDEX IF NOT EXISTS idx_pipeline_steps_item ON pipeline_steps(item_key);
 CREATE INDEX IF NOT EXISTS idx_pipeline_steps_due ON pipeline_steps(state, next_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_pipeline_attempts_step ON pipeline_attempts(step_id);
+CREATE INDEX IF NOT EXISTS idx_translation_callbacks_due ON translation_callbacks(state, expires_at);
+CREATE INDEX IF NOT EXISTS idx_translation_callbacks_step ON translation_callbacks(step_id);
+CREATE INDEX IF NOT EXISTS idx_subtitle_provenance_created ON subtitle_provenance(created_at);
 
 -- Index for finding downloads by file_id
 CREATE INDEX IF NOT EXISTS idx_downloads_file_id ON downloads(file_id);

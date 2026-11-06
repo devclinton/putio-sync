@@ -71,9 +71,39 @@ pub fn redact(text: &str) -> String {
             }
         }
     }
+    let out = mask_callback_path(&out);
     let out = mask_keyed(&out);
     let out = mask_schemes(&out);
     crate::redact::text(&out)
+}
+
+/// The path of the one-time translation callback (feature 026): the segment after it is a
+/// bearer token, so it is masked wherever it shows up
+const CALLBACK_PATH: &str = "/translate/callback/";
+
+/// `text` with the segment after [`CALLBACK_PATH`] masked
+fn mask_callback_path(text: &str) -> String {
+    if !text.contains(CALLBACK_PATH) {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(CALLBACK_PATH) {
+        let start = at + CALLBACK_PATH.len();
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let end = tail
+            .find(|c: char| {
+                c == '/' || c == '?' || c == '#' || c.is_whitespace() || "\"'()[]<>,;".contains(c)
+            })
+            .unwrap_or(tail.len());
+        if end > 0 {
+            out.push_str(MASK);
+        }
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// A field's value, masked whole when the field's name marks a secret
@@ -267,6 +297,47 @@ mod tests {
                 assert_masked(&format!("failed ({secret})"), secret);
             }
         });
+    }
+
+    #[test]
+    fn the_callback_token_in_a_path_is_masked() {
+        let token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        for line in [
+            format!("POST /translate/callback/{token} 200"),
+            format!("callback url http://nas.lan:8088/translate/callback/{token}?x=1 sent"),
+            format!("uri=/translate/callback/{token}"),
+            format!("see \"http://h/p/translate/callback/{token}\", then"),
+            format!("a /translate/callback/{token}/ b /translate/callback/{token} c"),
+        ] {
+            let out = redact(&line);
+            assert!(!out.contains(token), "{out}");
+            // a full URL is also shortened by the URL redactor; either way the token is gone
+            assert!(
+                out.contains("/translate/callback/********") || out.contains("://"),
+                "{out}"
+            );
+        }
+        assert_eq!(
+            redact_field("uri", &format!("/translate/callback/{token}")),
+            "/translate/callback/********"
+        );
+        // the text around the token stays
+        assert_eq!(
+            redact(&format!("POST /translate/callback/{token}/x?a=1 ok")),
+            "POST /translate/callback/********/x?a=1 ok"
+        );
+    }
+
+    #[test]
+    fn other_paths_are_unchanged() {
+        for line in [
+            "GET /translate/other/abcdef",
+            "GET /translate/callback",
+            "GET /translate/callback/",
+            "POST /settings/translation/test 200",
+        ] {
+            assert_eq!(redact(line), line);
+        }
     }
 
     #[test]

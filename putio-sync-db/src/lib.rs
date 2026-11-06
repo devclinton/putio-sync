@@ -413,6 +413,15 @@ impl Database {
                 schema::CREATE_PIPELINE_DEFERRED_DELETES_TABLE,
                 "Failed to create pipeline_deferred_deletes table",
             ),
+            // Subtitle translation (feature 026)
+            (
+                schema::CREATE_TRANSLATION_CALLBACKS_TABLE,
+                "Failed to create translation_callbacks table",
+            ),
+            (
+                schema::CREATE_SUBTITLE_PROVENANCE_TABLE,
+                "Failed to create subtitle_provenance table",
+            ),
             // Release pre-check (feature 042)
             (
                 schema::CREATE_RELEASE_CHECKS_TABLE,
@@ -475,10 +484,12 @@ impl Database {
     }
 
     /// Feature 025 widens the CHECK lists of `pipeline_steps` (kinds `subtitle_scan` and
-    /// `subtitles`, skip reason `no_video`). SQLite cannot alter a CHECK, so a table made by
-    /// 038 is rebuilt: new table, copy, drop, rename, in one transaction with foreign keys
-    /// off so `pipeline_attempts` is not cascade-deleted. Idempotent: a table that already
-    /// allows `subtitles` is left alone.
+    /// `subtitles`, skip reason `no_video`) and feature 026 adds the kinds `translate_scan`
+    /// and `translate`. SQLite cannot alter a CHECK, so an older table is rebuilt: new
+    /// table, copy, drop, rename, in one transaction with foreign keys off so
+    /// `pipeline_attempts` and `translation_callbacks` are not cascade-deleted. One rebuild
+    /// brings any older table to the current kind list. Idempotent: a table that already
+    /// allows `translate` is left alone.
     async fn migrate_pipeline_steps_checks(&self) -> DbResult<()> {
         let stored: Option<(String,)> = sqlx::query_as(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pipeline_steps'",
@@ -492,7 +503,7 @@ impl Database {
         let Some((sql,)) = stored else {
             return Ok(());
         };
-        if sql.contains("'subtitles'") {
+        if sql.contains("'translate'") {
             return Ok(());
         }
 
@@ -554,7 +565,7 @@ impl Database {
             .await
             .map_err(tracked(DbOp::Migrate, ctx))?;
         result.map_err(tracked(DbOp::Migrate, ctx))?;
-        info!("Rebuilt pipeline_steps for the subtitle step kinds");
+        info!("Rebuilt pipeline_steps for the subtitle and translation step kinds");
         Ok(())
     }
 
