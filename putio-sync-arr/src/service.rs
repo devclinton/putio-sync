@@ -1483,7 +1483,7 @@ impl ArrService {
     /// The *arr API for a category, when one with an API key is configured
     /// The application whose putio-sync client has `category` (R4). Before the first read,
     /// a legacy typed category is used.
-    fn blocklist_server(&self, category: &str) -> Option<ArrApi> {
+    pub(crate) fn blocklist_server(&self, category: &str) -> Option<ArrApi> {
         let settings = self.settings();
         let wanted = normalize_arr_category(category)?;
         let read = {
@@ -1505,6 +1505,17 @@ impl ArrService {
             key,
             self.http.clone(),
         ))
+    }
+
+    /// The item whose Put.io folder or accepted files include `file_id` (feature 050)
+    pub(crate) async fn item_for_file(&self, file_id: i64) -> Option<putio_sync_db::ArrItem> {
+        match self.db.arr().get_by_file_id(file_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!(file_id, error = %e, "Failed to look up the arr item of a file");
+                None
+            }
+        }
     }
 
     /// Ask the *arr to remove and blocklist each failed item still pending

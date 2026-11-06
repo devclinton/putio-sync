@@ -7,6 +7,7 @@ pub mod clients;
 pub mod contact;
 pub mod discovery;
 pub mod infohash;
+pub mod media;
 pub mod path_check;
 pub mod path_mapping;
 pub mod recommend;
@@ -17,6 +18,7 @@ pub mod view;
 
 pub use arr_api::{ArrApi, ArrApiError, DownloadClient, SystemStatus};
 pub use contact::Contacts;
+pub use media::ArrMedia;
 pub use service::{
     unix_now, AddOutcome, AddSource, ArrError, ArrService, ItemId, HELD, REFRESH_INTERVAL,
 };

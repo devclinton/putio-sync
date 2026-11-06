@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 use putio_sync_core::config::ArrKind;
+use putio_sync_core::media::{imdb_digits, MediaInfo, MediaKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -449,6 +450,64 @@ impl ArrApi {
                     .is_some_and(|d| d.eq_ignore_ascii_case(hash))
             })
             .map(|e| e.id))
+    }
+
+    /// What the *arr's history says the download `hash` is: the movie, or the series and its
+    /// episodes (feature 050). An empty result means the history has no record of it.
+    pub async fn history_by_download(&self, hash: &str) -> Result<MediaInfo, ArrApiError> {
+        let include = match self.kind {
+            ArrKind::Radarr => "includeMovie=true",
+            ArrKind::Sonarr => "includeSeries=true&includeEpisode=true",
+        };
+        let response = self
+            .send(self.request(
+                reqwest::Method::GET,
+                &format!(
+                    "/api/v3/history?downloadId={}&pageSize=100&{include}",
+                    hash.to_ascii_uppercase()
+                ),
+            ))
+            .await?;
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|_| self.not_arr("unexpected history response"))?;
+        // Paged (`records`) in v3; a bare list in some versions
+        let records = body
+            .get("records")
+            .and_then(Value::as_array)
+            .or_else(|| body.as_array())
+            .ok_or_else(|| self.not_arr("unexpected history response"))?;
+        let mut info = MediaInfo::default();
+        for record in records {
+            let same = record
+                .get("downloadId")
+                .and_then(Value::as_str)
+                .is_some_and(|d| d.eq_ignore_ascii_case(hash));
+            if !same {
+                continue;
+            }
+            match self.kind {
+                ArrKind::Radarr => read_feature(&mut info, record.get("movie"), MediaKind::Movie),
+                ArrKind::Sonarr => {
+                    read_feature(&mut info, record.get("series"), MediaKind::Episode);
+                    let episode = record.get("episode");
+                    let number = |key: &str| {
+                        episode
+                            .and_then(|e| e.get(key))
+                            .and_then(Value::as_u64)
+                            .and_then(|n| u16::try_from(n).ok())
+                    };
+                    if let (Some(s), Some(e)) = (number("seasonNumber"), number("episodeNumber")) {
+                        if !info.episodes.contains(&(s, e)) {
+                            info.episodes.push((s, e));
+                        }
+                    }
+                }
+            }
+        }
+        info.episodes.sort_unstable();
+        Ok(info)
     }
 
     /// Remove a queue item, blocklist the release and let the *arr search again
@@ -904,5 +963,30 @@ mod tests {
         for e in errors {
             assert!(!e.to_string().contains(KEY));
         }
+    }
+}
+
+/// Fill `info` from a history record's `movie` or `series` object
+fn read_feature(info: &mut MediaInfo, feature: Option<&Value>, kind: MediaKind) {
+    let Some(f) = feature else { return };
+    info.kind = Some(kind);
+    if info.title.is_none() {
+        info.title = f.get("title").and_then(Value::as_str).map(str::to_string);
+    }
+    if info.year.is_none() {
+        info.year = f
+            .get("year")
+            .and_then(Value::as_u64)
+            .and_then(|y| u16::try_from(y).ok())
+            .filter(|y| *y > 0);
+    }
+    if info.imdb_id.is_none() {
+        info.imdb_id = f
+            .get("imdbId")
+            .and_then(Value::as_str)
+            .and_then(imdb_digits);
+    }
+    if info.tmdb_id.is_none() {
+        info.tmdb_id = f.get("tmdbId").and_then(Value::as_u64).filter(|id| *id > 0);
     }
 }
