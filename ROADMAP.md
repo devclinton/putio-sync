@@ -55,12 +55,38 @@ kept apart or removed.
 
 ### 025 Subtitles
 
-Fetch subtitles for downloaded video in the languages the user picks: first
-from what Put.io already finds on OpenSubtitles, then, when none exist and
-automatic transcription is on, by sending the audio to a Whisper server.
-putio-sync does not run Whisper itself; it calls any server with the
+Get subtitles for downloaded video in the languages the user picks, from two
+kinds of source: downloads and Whisper transcription.
+
+Downloads are matched in order of confidence, with no guessing model:
+
+1. **Hash**: Put.io's subtitle lookup by the file's OpenSubtitles hash
+   (`opensubtitles_hash`). A hash match is the exact release, so timing is
+   right.
+2. **IDs**: the OpenSubtitles API (user's own API key) queried by the IMDb or
+   TMDb ID, season and episode that Radarr/Sonarr already know, with results
+   ranked by how closely the release name matches (group, source,
+   resolution).
+3. **Name**: for files outside the *arrs, a rule-based filename parse (title,
+   year, `SxxEyy`) used for the same query.
+
+A match below a set confidence is skipped, not saved.
+
+Whisper: putio-sync does not run Whisper itself; it calls any server with the
 OpenAI-style transcription API (faster-whisper-server/speaches, whisper.cpp's
-server), set by URL. Subtitles are saved next to the video as `.<lang>.srt`.
+server), set by URL.
+
+The user picks a mode, globally and per category (and optionally per
+language):
+
+- **Download only**: never transcribe.
+- **Download, then Whisper**: transcribe only when no download matches.
+- **Whisper only**: always transcribe, never download.
+- **Both**: keep the download and a transcription side by side.
+
+Subtitles are saved next to the video as `<video>.<lang>.srt`; in **Both**
+mode the transcription is `<video>.<lang>.whisper.srt` so neither overwrites
+the other.
 
 ### 026 Subtitle translation
 
