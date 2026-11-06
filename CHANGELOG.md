@@ -14,6 +14,14 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Keep folders out of the empty-folder cleanup. **Keep folder** on a folder's rule card on
+  the Put.io page (or **Keep out of cleanup** in the rule editor, `keep = true` in a
+  folder rule) keeps it and everything below it; **Keep patterns** in Settings › Put.io ›
+  Put.io cleanup (`[cleanup] keep_patterns`) keep every folder whose name or path matches,
+  in the Only / Never download pattern language. The daily run, **Remove empty folders**
+  and the doctor all leave kept folders alone. The preview now lists the empty folders it
+  keeps and why (protected, too new, a rule or a pattern), and so does
+  `putio-sync files clean-empty --dry-run`.
 - Plugins have their own page, **Settings › Plugins**. Each plugin that is on has a tab
   with its settings, buttons, test event and last run, marked **!** when it is broken,
   waits for approval or needs settings. Plugins that are off are one short list with

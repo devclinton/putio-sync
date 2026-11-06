@@ -1806,6 +1806,10 @@ pub struct CleanupConfig {
     /// Also remove folders whose sub-folders are all empty, in the same run. Off: only
     /// folders with nothing in them go (their parents on a later run).
     pub nested: bool,
+    /// Keep folders matching any of these patterns (feature 020 language, tested against
+    /// the folder's name and path), and everything inside them (feature 021)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub keep_patterns: Vec<String>,
 }
 
 impl Default for CleanupConfig {
@@ -1815,6 +1819,7 @@ impl Default for CleanupConfig {
             run_at: "03:00".to_string(),
             min_age_hours: 24,
             nested: true,
+            keep_patterns: Vec::new(),
         }
     }
 }
@@ -1825,9 +1830,12 @@ impl CleanupConfig {
         parse_run_at(&self.run_at)
     }
 
-    /// Check `run_at` and `min_age_hours`
+    /// Check `run_at`, `min_age_hours` and `keep_patterns`
     pub fn validate(&self) -> CoreResult<()> {
         self.run_time()?;
+        for p in &self.keep_patterns {
+            crate::rules::check_pattern(Some(p), "[cleanup] keep_patterns")?;
+        }
         if self.min_age_hours > MAX_CLEANUP_MIN_AGE_HOURS {
             return Err(CoreError::ConfigError(format!(
                 "cleanup min_age_hours must not exceed {}",
@@ -3873,6 +3881,19 @@ mod save_keeping_file_credentials_tests {
         config.cleanup.min_age_hours = MAX_CLEANUP_MIN_AGE_HOURS + 1;
         let err = config.validate().unwrap_err().to_string();
         assert!(err.contains("min_age_hours"), "{err}");
+    }
+
+    #[test]
+    fn cleanup_keep_patterns_are_checked() {
+        let mut config = Config::default();
+        config.cleanup.keep_patterns = vec!["Season*".into(), "Software/*".into()];
+        assert!(config.validate().is_ok());
+        config.cleanup.keep_patterns.push("\"Old".into());
+        let err = config.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("keep_patterns") && err.contains("unclosed"),
+            "{err}"
+        );
     }
 
     fn rule(path: &str, preset: Option<&str>) -> FolderRule {

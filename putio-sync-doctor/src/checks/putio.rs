@@ -177,6 +177,12 @@ pub(crate) async fn empty_folders(ctx: &Ctx) -> Finding {
             } else {
                 format!("{} could be removed.", count(items.len(), "empty folder"))
             };
+            if report.kept_by_user > 0 {
+                summary.push_str(&format!(
+                    " {} kept by your keep settings.",
+                    count(report.kept_by_user as usize, "empty folder")
+                ));
+            }
             if !report.failures.is_empty() {
                 summary.push_str(&format!(
                     " {} could not be checked.",

@@ -164,7 +164,7 @@ async fn settings_default() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         body_json(response).await,
-        json!({"enabled": false, "run_at": "03:00", "min_age_hours": 24, "nested": true})
+        json!({"enabled": false, "run_at": "03:00", "min_age_hours": 24, "nested": true, "keep_patterns": []})
     );
 }
 
@@ -178,7 +178,10 @@ async fn settings_save_keeps_comments_and_reach_the_service() {
     );
     std::fs::write(&path, &edited).unwrap();
 
-    let body = json!({"enabled": true, "run_at": "04:15", "min_age_hours": 48, "nested": false});
+    let body = json!({
+        "enabled": true, "run_at": "04:15", "min_age_hours": 48, "nested": false,
+        "keep_patterns": ["Season*"]
+    });
     let (status, response) = put_settings(&app, body.clone()).await;
     assert_eq!(status, StatusCode::OK, "{response}");
     let message = response["message"].as_str().unwrap();
@@ -196,6 +199,32 @@ async fn settings_save_keeps_comments_and_reach_the_service() {
     assert_eq!(service.min_age_hours, 48);
     assert!(!service.nested);
     assert!(text.contains("nested = false"), "{text}");
+    assert_eq!(service.keep_patterns, vec!["Season*"]);
+}
+
+/// Feature 021: a saved keep pattern keeps the folder, and the preview says why
+#[tokio::test]
+async fn keep_patterns_keep_folders_with_the_reason() {
+    let mut app = test_app().await;
+    let (status, response) = put_settings(
+        &app,
+        json!({"enabled": false, "run_at": "03:00", "min_age_hours": 24, "keep_patterns": ["Old", " "]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(app.state.cleanup.config().keep_patterns, vec!["Old"]);
+    let _tree = one_empty_folder(&mut app).await;
+    let delete = deletes(&mut app, 0).await;
+
+    let body = body_json(app.post_json(PATH, json!({"dry_run": true})).await).await;
+
+    delete.assert_async().await;
+    assert_eq!(body["removed_count"], 0);
+    assert_eq!(body["kept_by_user"], 1);
+    assert_eq!(
+        body["kept"],
+        json!([{"id": 10, "path": "/Old", "reason": "matches keep pattern \"Old\""}])
+    );
 }
 
 /// A body from before `nested` existed keeps the default (on)
@@ -222,6 +251,7 @@ async fn settings_invalid_change_nothing() {
         json!({"enabled": true, "run_at": "3:00", "min_age_hours": 24}),
         json!({"enabled": true, "run_at": "03:00", "min_age_hours": 8761}),
         json!({"enabled": true, "run_at": "03:00"}),
+        json!({"enabled": true, "run_at": "03:00", "min_age_hours": 24, "keep_patterns": ["\"Old"]}),
     ] {
         let (status, response) = put_settings(&app, body.clone()).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {response}");

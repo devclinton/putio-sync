@@ -430,6 +430,9 @@ pub struct CleanupSettings {
     /// Missing in a PUT body means the default (on)
     #[serde(default = "default_nested")]
     pub nested: bool,
+    /// Keep folders matching these patterns (feature 021); missing means none
+    #[serde(default)]
+    pub keep_patterns: Vec<String>,
 }
 
 fn default_nested() -> bool {
@@ -855,6 +858,7 @@ fn cleanup_view(config: &Config) -> CleanupSettings {
         run_at: config.cleanup.run_at.clone(),
         min_age_hours: config.cleanup.min_age_hours,
         nested: config.cleanup.nested,
+        keep_patterns: config.cleanup.keep_patterns.clone(),
     }
 }
 
@@ -1289,6 +1293,12 @@ fn apply_cleanup(settings: CleanupSettings, config: &mut Config) -> Result<(), A
         run_at: settings.run_at,
         min_age_hours: settings.min_age_hours,
         nested: settings.nested,
+        keep_patterns: settings
+            .keep_patterns
+            .into_iter()
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .collect(),
     };
     Ok(())
 }
@@ -1296,8 +1306,14 @@ fn apply_cleanup(settings: CleanupSettings, config: &mut Config) -> Result<(), A
 /// Cleanup fields applied without a restart, and when
 pub(crate) fn live_cleanup(state: &AppState) -> (&'static [&'static str], &'static str) {
     let live: &'static [&'static str] = match state.engine {
-        Engine::Daemon => &["enabled", "run_at", "min_age_hours", "nested"],
-        Engine::Server => &["min_age_hours", "nested"],
+        Engine::Daemon => &[
+            "enabled",
+            "run_at",
+            "min_age_hours",
+            "nested",
+            "keep_patterns",
+        ],
+        Engine::Server => &["min_age_hours", "nested", "keep_patterns"],
     };
     (live, "Applies from the next run")
 }

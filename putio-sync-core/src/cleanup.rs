@@ -3,10 +3,15 @@
 //! One [`EmptyFolderCleanup`] per process is shared by the daemon's daily schedule and the
 //! API (and so the web UI). It holds the `[cleanup]` settings and the protected folder ids
 //! from the config, lets one run happen at a time, and logs and counts each run.
+//!
+//! Feature 021: folders kept by a folder rule (`keep = true`) or a `[cleanup]
+//! keep_patterns` entry are passed to the walk as [`KeepFolders`].
 
 use crate::config::{CleanupConfig, Config};
+use crate::pattern::Pattern;
+use crate::rules::{sanitize_name, RuleSet};
 use putio_sync_client::{
-    ClientError, EmptyFolderOptions, EmptyFolderReport, FailedStep, PutioApiClient,
+    ClientError, EmptyFolderOptions, EmptyFolderReport, FailedStep, KeepFolders, PutioApiClient,
 };
 use putio_sync_telemetry::{cleanup as metrics, SyncResult};
 
@@ -33,6 +38,7 @@ pub enum CleanupError {
 struct Settings {
     config: CleanupConfig,
     protected: HashSet<i64>,
+    keep: Option<KeepFolders>,
 }
 
 impl Settings {
@@ -40,8 +46,53 @@ impl Settings {
         Self {
             config: config.cleanup.clone(),
             protected: protected_ids(config),
+            keep: keep_folders(config),
         }
     }
+}
+
+/// The folders the user keeps, `None` when no rule sets `keep` and no keep pattern is set
+fn keep_folders(config: &Config) -> Option<KeepFolders> {
+    let rules = config.download.rules.iter().any(|r| r.keep.is_some());
+    let patterns: Vec<Pattern> = config
+        .cleanup
+        .keep_patterns
+        .iter()
+        .map(|p| Pattern::parse(p))
+        .filter(|p| !p.is_empty())
+        .collect();
+    if !rules && patterns.is_empty() {
+        return None;
+    }
+    let rules = RuleSet::from_config(&config.download);
+    Some(KeepFolders::new(move |path| {
+        keep_reason(&rules, &patterns, path)
+    }))
+}
+
+/// Why the folder at `path` (Put.io names from the root) is kept: its effective rule
+/// keeps it, or it or a folder above it matches a keep pattern
+fn keep_reason(rules: &RuleSet, patterns: &[Pattern], path: &str) -> Option<String> {
+    let segments: Vec<String> = path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(sanitize_name)
+        .collect();
+    let keep = rules.resolve(&segments.join("/")).keep;
+    if keep.value {
+        return Some(format!(
+            "kept by the rule on {}",
+            keep.from.unwrap_or_default()
+        ));
+    }
+    for depth in 1..=segments.len() {
+        let prefix = segments[..depth].join("/");
+        let name = &segments[depth - 1];
+        if let Some(p) = patterns.iter().find(|p| p.matches(name, &prefix)) {
+            return Some(format!("matches keep pattern \"{}\"", p.as_str()));
+        }
+    }
+    None
 }
 
 /// Folder ids from the config that are never deleted: the watch upload folder and the
@@ -106,6 +157,7 @@ impl EmptyFolderCleanup {
             protected: settings.protected,
             now: chrono::Utc::now(),
             nested: settings.config.nested,
+            keep: settings.keep,
         };
         info!(
             trigger = trigger.as_str(),
@@ -147,6 +199,7 @@ impl EmptyFolderCleanup {
             removed = report.removed.len(),
             kept_protected = report.kept_protected,
             kept_too_new = report.kept_too_new,
+            kept_by_user = report.kept_by_user,
             failures = report.failures.len(),
             "Empty-folder cleanup finished"
         );
@@ -193,6 +246,66 @@ mod tests {
 
         config.watch.parent_folder_id = None;
         assert_eq!(protected_ids(&config), HashSet::from([9]));
+    }
+
+    fn keep_config(rules: Vec<crate::rules::FolderRule>, patterns: &[&str]) -> Config {
+        let mut config = Config::default();
+        config.download.rules = rules;
+        config.cleanup.keep_patterns = patterns.iter().map(|p| p.to_string()).collect();
+        config
+    }
+
+    fn reason(config: &Config, path: &str) -> Option<String> {
+        keep_folders(config).and_then(|k| k.reason(path))
+    }
+
+    #[test]
+    fn no_keep_settings_means_no_callback() {
+        assert!(keep_folders(&Config::default()).is_none());
+        let rule = crate::rules::FolderRule {
+            path: "Movies".into(),
+            skip: Some(true),
+            ..Default::default()
+        };
+        assert!(keep_folders(&keep_config(vec![rule], &[])).is_none());
+    }
+
+    #[test]
+    fn rules_keep_folders_and_their_children() {
+        let config = keep_config(
+            vec![
+                crate::rules::FolderRule {
+                    path: "Movies".into(),
+                    keep: Some(true),
+                    ..Default::default()
+                },
+                crate::rules::FolderRule {
+                    path: "Movies/Old".into(),
+                    keep: Some(false),
+                    ..Default::default()
+                },
+            ],
+            &[],
+        );
+        let kept = Some("kept by the rule on Movies".to_string());
+        assert_eq!(reason(&config, "Movies"), kept);
+        assert_eq!(reason(&config, "Movies/Kids"), kept);
+        assert_eq!(reason(&config, "Movies/Old"), None);
+        assert_eq!(reason(&config, "TV"), None);
+    }
+
+    #[test]
+    fn patterns_match_the_folder_or_a_folder_above() {
+        let config = keep_config(vec![], &["Season*", "Software/*"]);
+        let season = Some("matches keep pattern \"Season*\"".to_string());
+        assert_eq!(reason(&config, "TV/Show/Season 1"), season);
+        assert_eq!(reason(&config, "TV/Show/Season 1/Extras"), season);
+        assert_eq!(reason(&config, "TV/Old"), None);
+        assert!(reason(&config, "Software/Tools/Old").is_some());
+        assert_eq!(reason(&config, "Software"), None);
+        // Names are cleaned like rule paths
+        let config = keep_config(vec![], &["Movies_*"]);
+        assert!(reason(&config, "Movies: Old").is_some());
     }
 
     #[test]
