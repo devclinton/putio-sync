@@ -283,7 +283,7 @@ Unraid wrapper.
 
 - [X] T033 Add a `CHANGELOG.md` line under Unreleased covering the process figures, the
   resources dashboard and `putio-sync archive`. Run `scripts/check-changelog.sh`.
-- [ ] T034 Run `make ci` and quickstart §1–§3 locally. Record any manual-only steps (§4–§7) as
+- [X] T034 Run `make ci` and quickstart §1–§3 locally. Record any manual-only steps (§4–§7) as
   unchecked items for the operator in the PR description.
 
 ## Dependencies
