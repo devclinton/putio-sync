@@ -167,6 +167,8 @@ blocked_extensions = ["exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs",
 #                          an inherited one. Checked before the type filter.
 #   skip                   download nothing in this folder
 #   delete_blocked         delete files the rule blocks from Put.io (one call per sync)
+#   keep                   keep this folder and everything below out of the
+#                          empty-folder cleanup and the doctor ([cleanup] below)
 #   delete_after_download  / on_existing: override the settings above
 #                          (an old rule's skip_existing is still read)
 #
@@ -303,6 +305,13 @@ min_age_hours = 24
 # with nothing at all in them are removed; their parents go on a later run.
 # Default: true
 nested = true
+
+# Keep folders matching any of these patterns, and everything inside them (the
+# Only / Never download pattern language: a term with / is tested against the
+# folder's path from the root, otherwise its name). A folder rule's keep = true
+# does the same for one folder. Kept folders show in the preview with why.
+# Default: []
+# keep_patterns = ["Season*", "Software/*"]
 
 # ============================================================================
 # Put.io Storage (feature 033)

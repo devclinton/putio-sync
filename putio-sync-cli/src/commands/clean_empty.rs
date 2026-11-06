@@ -65,6 +65,13 @@ fn print_report(report: &EmptyFolderReport) {
         }
         println!("{}", "-".repeat(70));
     }
+    // The preview says what is kept and why (feature 021); the real run would repeat it
+    if report.dry_run && !report.kept.is_empty() {
+        println!("\nEmpty folders kept:");
+        for folder in &report.kept {
+            println!("{:<12} {} ({})", folder.id, folder.path, folder.reason);
+        }
+    }
     for failure in &report.failures {
         let step = match failure.step {
             FailedStep::List => "list",
@@ -76,7 +83,7 @@ fn print_report(report: &EmptyFolderReport) {
         );
     }
     println!(
-        "Scanned {} folders: {} {}, kept {} protected, {} too new, {} failed",
+        "Scanned {} folders: {} {}, kept {} protected, {} too new, {} by keep settings, {} failed",
         report.scanned,
         if report.dry_run {
             "would remove"
@@ -86,6 +93,7 @@ fn print_report(report: &EmptyFolderReport) {
         report.removed.len(),
         report.kept_protected,
         report.kept_too_new,
+        report.kept_by_user,
         report.failures.len()
     );
 }

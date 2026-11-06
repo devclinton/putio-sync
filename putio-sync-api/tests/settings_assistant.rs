@@ -217,7 +217,7 @@ async fn assistant_live_fields_follow_the_engine() {
     assert_eq!(assistant["groups"]["watcher"]["live"], json!([]));
     assert_eq!(
         assistant["groups"]["cleanup"]["live"],
-        json!(["min_age_hours", "nested"])
+        json!(["min_age_hours", "nested", "keep_patterns"])
     );
 }
 

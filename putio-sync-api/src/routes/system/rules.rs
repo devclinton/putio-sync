@@ -68,6 +68,8 @@ pub struct RuleBody {
     /// Replaced by `on_existing`; still read from an old UI tab, never sent
     #[serde(skip_serializing)]
     pub skip_existing: Option<bool>,
+    /// Keep out of the empty-folder cleanup (feature 021)
+    pub keep: Option<bool>,
 }
 
 impl RuleBody {
@@ -83,6 +85,7 @@ impl RuleBody {
             delete_after_download: rule.delete_after_download,
             on_existing: rule.existing(),
             skip_existing: None,
+            keep: rule.keep,
         }
     }
 
@@ -106,6 +109,7 @@ impl RuleBody {
             delete_after_download: self.delete_after_download,
             on_existing: self.on_existing.or(self.skip_existing.map(Into::into)),
             skip_existing: None,
+            keep: self.keep,
         })
     }
 }
@@ -151,6 +155,7 @@ pub struct EffectiveView {
     pub delete_blocked: SourcedView<bool>,
     pub delete_after_download: SourcedView<bool>,
     pub on_existing: SourcedView<ExistingFile>,
+    pub keep: SourcedView<bool>,
 }
 
 impl From<Effective> for EffectiveView {
@@ -180,6 +185,7 @@ impl From<Effective> for EffectiveView {
             delete_blocked: part(e.delete_blocked),
             delete_after_download: part(e.delete_after_download),
             on_existing: part(e.on_existing),
+            keep: part(e.keep),
         }
     }
 }
@@ -348,10 +354,12 @@ async fn get_folder(
     }))
 }
 
-/// Hand the saved rules to the download manager the API holds
+/// Hand the saved rules to the download manager the API holds, and their `keep`
+/// settings to the empty-folder cleanup
 async fn apply(state: &AppState) {
     let download_config = {
         let cfg = state.config.read().await;
+        state.cleanup.configure(&cfg);
         crate::extract_download_config(&cfg)
     };
     state.download_manager.update_config(download_config).await;

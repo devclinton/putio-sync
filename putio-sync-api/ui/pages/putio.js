@@ -251,6 +251,14 @@ const SHOWN_PATHS = 5;
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
+/** The empty folders a preview keeps, a few with why (feature 021) */
+function keptText(kept) {
+  if (!kept.length) return "";
+  const shown = kept.slice(0, SHOWN_PATHS).map((k) => `${k.path} (${k.reason})`);
+  const more = kept.length > shown.length ? `, and ${kept.length - shown.length} more` : "";
+  return `Kept ${plural(kept.length, "empty folder", "empty folders")}: ${shown.join(", ")}${more}.`;
+}
+
 /** Dry run, confirm with the count, then the real run; the listing reloads after. */
 async function onCleanEmpty(button) {
   button.disabled = true;
@@ -259,16 +267,18 @@ async function onCleanEmpty(button) {
   try {
     const preview = await post(CLEANUP, { dry_run: true });
     const n = preview.removed_count;
+    const kept = keptText(preview.kept || []);
     if (n === 0) {
       const failed = preview.failures.length;
-      toast("No empty folders to remove", failed ? "error" : "ok", failed ? `${plural(failed, "folder", "folders")} couldn't be checked` : null);
+      const notes = [kept, failed ? `${plural(failed, "folder", "folders")} couldn't be checked` : null].filter(Boolean).join(" ");
+      toast("No empty folders to remove", failed ? "error" : "ok", notes || null);
       return;
     }
     const paths = preview.removed.slice(-SHOWN_PATHS).map((r) => r.path);
     const more = n > paths.length ? `, and ${n - paths.length} more` : "";
     const ok = await confirm({
       title: "Remove empty folders",
-      text: `Delete ${plural(n, "empty folder", "empty folders")} from Put.io (${paths.join(", ")}${more})? This cannot be undone.`,
+      text: `Delete ${plural(n, "empty folder", "empty folders")} from Put.io (${paths.join(", ")}${more})? This cannot be undone.${kept ? ` ${kept}` : ""}`,
       verb: "Delete",
     });
     if (!ok) return;

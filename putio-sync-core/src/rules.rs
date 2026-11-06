@@ -13,6 +13,9 @@
 //! inherited like the other settings from `[download] whitelist_patterns` /
 //! `blacklist_patterns`. A file is refused when its folder is skipped, then when it
 //! matches `exclude`, then when it misses `include`, then by the type filter.
+//!
+//! Feature 021 adds `keep`: the empty-folder cleanup (and so the doctor) leaves the folder
+//! and everything below it alone.
 
 use crate::config::{DownloadConfig, ExistingFile};
 use crate::error::{CoreError, CoreResult};
@@ -58,6 +61,9 @@ pub struct FolderRule {
     /// Per-folder `skip_existing`, replaced by `on_existing` and still read
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip_existing: Option<bool>,
+    /// Keep this folder out of the empty-folder cleanup (feature 021)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep: Option<bool>,
 }
 
 impl FolderRule {
@@ -73,6 +79,7 @@ impl FolderRule {
             && self.delete_after_download.is_none()
             && self.on_existing.is_none()
             && self.skip_existing.is_none()
+            && self.keep.is_none()
     }
 
     /// This rule's choice for existing files: `on_existing`, else the old `skip_existing`
@@ -422,6 +429,8 @@ pub struct Effective {
     pub delete_after_download: Sourced<bool>,
     /// What to do when a file already exists locally
     pub on_existing: Sourced<ExistingFile>,
+    /// Keep the folder out of the empty-folder cleanup
+    pub keep: Sourced<bool>,
     /// The folder this was resolved for, for path patterns
     #[serde(skip)]
     pub folder: String,
@@ -649,6 +658,7 @@ impl RuleSet {
             delete_blocked: Sourced::global(false),
             delete_after_download: Sourced::global(self.delete_after_download),
             on_existing: Sourced::global(self.on_existing),
+            keep: Sourced::global(false),
             folder: folder_path
                 .split('/')
                 .filter(|s| !s.is_empty())
@@ -704,6 +714,7 @@ impl RuleSet {
             .delete_after_download
             .set(rule.delete_after_download, path);
         effective.on_existing.set(rule.existing(), path);
+        effective.keep.set(rule.keep, path);
     }
 
     /// What happens to `name` in `folder_path`
@@ -848,6 +859,35 @@ mod tests {
         );
         assert!(downloads(&rules, "Seeding/Keep", "film.mkv"));
         assert!(!downloads(&rules, "Seeding/Keep", "setup.exe"));
+    }
+
+    #[test]
+    fn keep_inherits_and_a_deeper_rule_clears_it() {
+        let rules = set(vec![
+            FolderRule {
+                keep: Some(true),
+                ..rule("Movies")
+            },
+            FolderRule {
+                keep: Some(false),
+                ..rule("Movies/Old")
+            },
+        ]);
+        let keep = |path: &str| rules.resolve(path).keep;
+        assert_eq!(
+            keep("Movies/Kids"),
+            Sourced {
+                value: true,
+                from: Some("Movies".into())
+            }
+        );
+        assert!(!keep("Movies/Old/x").value);
+        assert!(!keep("TV").value);
+        assert!(!FolderRule {
+            keep: Some(true),
+            ..rule("Movies")
+        }
+        .is_empty());
     }
 
     #[test]

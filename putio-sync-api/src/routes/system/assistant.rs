@@ -191,6 +191,10 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
                 "nested",
                 "Also removes folders that hold only empty folders",
             ),
+            (
+                "keep_patterns",
+                "Folders matching these, and what is inside them, are never removed",
+            ),
         ],
     ),
     (

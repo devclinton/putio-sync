@@ -2,7 +2,8 @@
 // Folder rules, Presets and Recently blocked cards of Settings. A rule is set on a Put.io
 // folder by id; each part of the effective rule says where it comes from (this folder,
 // a parent folder, or the global Download settings). Feature 020 adds the Only download
-// and Never download patterns, in the filter language of query.js.
+// and Never download patterns, in the filter language of query.js. Feature 021 adds Keep:
+// the empty-folder cleanup and the doctor leave the folder and its sub-folders alone.
 
 import { del, get, post, put } from "./api.js";
 import { confirm, h, toast } from "./app.js";
@@ -13,6 +14,7 @@ const FLAGS = [
   ["skip", "Skip folder", "Download nothing here"],
   ["delete_blocked", "Delete blocked files", "Remove files the type filter blocks from Put.io at each sync"],
   ["delete_after_download", "Delete after download", "Remove each file from Put.io once downloaded"],
+  ["keep", "Keep out of cleanup", "The empty-folder cleanup and the doctor leave this folder and its sub-folders alone"],
 ];
 // feature 040: what to do when a file is already on disk
 const EXISTING = [
@@ -112,6 +114,7 @@ export function ruleCard(id, onChange) {
             { class: "toolbar spaced" },
             h("button", { type: "button", class: "btn btn-small", onclick: edit }, own ? "Edit rule" : "Set rule"),
             own ? h("button", { type: "button", class: "btn btn-small", onclick: (ev) => clear(ev.currentTarget) }, "Clear rule") : null,
+            h("button", { type: "button", class: "btn btn-small", onclick: (ev) => toggleKeep(ev.currentTarget) }, eff.keep.value ? "Don't keep" : "Keep folder"),
           );
     el.replaceChildren(
       h("h2", { text: own ? "Folder rule · this folder" : "Folder rule" }),
@@ -137,6 +140,21 @@ export function ruleCard(id, onChange) {
       await load();
     } catch (e) {
       if (!quiet(e)) toast("Couldn't clear the rule", "error", reason(e));
+      if (button.isConnected) button.disabled = false;
+    }
+  };
+
+  // One click: change only this folder's keep setting; a folder kept from a parent gets
+  // its own "no"
+  const toggleKeep = async (button) => {
+    button.disabled = true;
+    const keep = !data.effective.keep.value;
+    try {
+      const r = await put(`/rules/folder/${id}`, { ...(data.rule || {}), keep });
+      toast(keep ? "Folder kept out of the empty-folder cleanup" : "Folder no longer kept", "ok", r.message);
+      await load();
+    } catch (e) {
+      if (!quiet(e)) toast("Couldn't change the keep setting", "error", reason(e));
       if (button.isConnected) button.disabled = false;
     }
   };

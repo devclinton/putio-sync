@@ -4,6 +4,10 @@
 //! deletes the top-most deletable folder of each empty subtree; Put.io removes its empty
 //! sub-folders with it. With `nested` off, only folders with nothing in them are deleted. Anything not fully seen (a listing error, a further page, the depth
 //! limit) counts as not empty, so nothing that could hold a file is ever deleted.
+//!
+//! Feature 021: the caller can keep folders the user marked (a folder rule or a keep
+//! pattern) with [`KeepFolders`]; every empty folder kept, for any reason, is listed in the
+//! report with why.
 
 use crate::client::PutioApiClient;
 use crate::error::ClientResult;
@@ -12,6 +16,8 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
 
@@ -20,6 +26,31 @@ pub const MAX_DEPTH: usize = 64;
 
 /// Transfer statuses whose save folder may be deleted; any other status is still running
 const FINISHED_TRANSFER_STATUSES: &[&str] = &["COMPLETED", "SEEDING"];
+
+/// Folders the user keeps: given a folder's path from the root (`Movies/Old`, Put.io
+/// names as listed), why it is kept, or `None`
+#[derive(Clone)]
+pub struct KeepFolders(Arc<KeepReason>);
+
+type KeepReason = dyn Fn(&str) -> Option<String> + Send + Sync;
+
+impl KeepFolders {
+    /// Keep the folders `reason` gives a reason for
+    pub fn new(reason: impl Fn(&str) -> Option<String> + Send + Sync + 'static) -> Self {
+        Self(Arc::new(reason))
+    }
+
+    /// Why the folder at `path` is kept, if it is
+    pub fn reason(&self, path: &str) -> Option<String> {
+        (self.0)(path)
+    }
+}
+
+impl fmt::Debug for KeepFolders {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("KeepFolders(..)")
+    }
+}
 
 /// What one cleanup run may delete
 #[derive(Debug, Clone)]
@@ -36,6 +67,8 @@ pub struct EmptyFolderOptions {
     /// Also delete folders whose sub-folders are all deletable. Off: a folder with any
     /// entry is kept, though its empty sub-folders are still deleted.
     pub nested: bool,
+    /// Folders the user keeps out of the cleanup (feature 021)
+    pub keep: Option<KeepFolders>,
 }
 
 /// A folder removed by the run, or that a dry run would remove
@@ -47,6 +80,17 @@ pub struct RemovedFolder {
     pub path: String,
     /// Hours since the folder was created
     pub age_hours: u64,
+}
+
+/// An empty folder the run kept, and why
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptFolder {
+    /// Put.io file id
+    pub id: i64,
+    /// Path from the root
+    pub path: String,
+    /// Why it was kept: `protected`, `too new`, or the user's keep setting
+    pub reason: String,
 }
 
 /// What failed for a folder
@@ -86,15 +130,23 @@ pub struct EmptyFolderReport {
     pub kept_protected: u64,
     /// Empty folders kept because they are younger than the minimum age, or of unknown age
     pub kept_too_new: u64,
+    /// Empty folders kept by a folder rule or a keep pattern
+    #[serde(default)]
+    pub kept_by_user: u64,
+    /// Every empty folder kept (the root aside), with why
+    #[serde(default)]
+    pub kept: Vec<KeptFolder>,
     /// Folders that could not be listed or deleted
     pub failures: Vec<CleanupFailure>,
 }
 
 /// Why a folder may not be deleted even when empty
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Keep {
     Root,
     Protected,
+    /// A folder rule or keep pattern, with its reason
+    User(String),
     TooNew,
 }
 
@@ -113,6 +165,7 @@ struct Walk {
     now: DateTime<Utc>,
     nested: bool,
     protected: HashSet<i64>,
+    keep: Option<KeepFolders>,
     report: EmptyFolderReport,
 }
 
@@ -120,8 +173,11 @@ impl Walk {
     fn node(&self, parent_path: &str, entry: &FileEntry) -> Node {
         let path = format!("{}/{}", parent_path, entry.name);
         let age = entry.created_at.as_deref().and_then(|c| age(c, self.now));
+        let user = self.keep.as_ref().and_then(|k| k.reason(&path[1..]));
         let keep = if self.protected.contains(&entry.id) {
             Some(Keep::Protected)
+        } else if let Some(reason) = user {
+            Some(Keep::User(reason))
         } else {
             match age {
                 Some(age) if age >= self.min_age => None,
@@ -179,6 +235,7 @@ impl PutioApiClient {
             now: options.now,
             nested: options.nested,
             protected,
+            keep: options.keep.clone(),
             report: EmptyFolderReport {
                 dry_run: options.dry_run,
                 ..Default::default()
@@ -269,9 +326,30 @@ impl PutioApiClient {
                         });
                         return Some(subtree);
                     }
-                    Some(Keep::Protected) => walk.report.kept_protected += 1,
-                    Some(Keep::TooNew) => walk.report.kept_too_new += 1,
                     Some(Keep::Root) => {}
+                    Some(keep) => {
+                        let reason = match keep {
+                            Keep::Protected => {
+                                walk.report.kept_protected += 1;
+                                "protected".to_string()
+                            }
+                            Keep::TooNew => {
+                                walk.report.kept_too_new += 1;
+                                "too new".to_string()
+                            }
+                            Keep::User(reason) => {
+                                walk.report.kept_by_user += 1;
+                                reason
+                            }
+                            Keep::Root => unreachable!(),
+                        };
+                        debug!(folder_id = node.id, path = %node.path, %reason, "Kept empty folder");
+                        walk.report.kept.push(KeptFolder {
+                            id: node.id,
+                            path: node.path,
+                            reason,
+                        });
+                    }
                 }
             }
             for subtree in deletable {
@@ -323,6 +401,7 @@ mod tests {
             protected: HashSet::new(),
             now: now(),
             nested: true,
+            keep: None,
         }
     }
 
@@ -513,6 +592,81 @@ mod tests {
         del.assert_async().await;
         assert_eq!(ids(&report), vec![41]);
         assert_eq!(report.kept_protected, 1);
+    }
+
+    #[tokio::test]
+    async fn user_kept_folders_are_kept_and_listed_with_the_reason() {
+        let mut server = Server::new_async().await;
+        let _t = transfers(&mut server, vec![]).await;
+        let _root = list(
+            &mut server,
+            0,
+            vec![
+                folder(100, "Movies", 0, Some(OLD)),
+                folder(110, "Old", 0, Some(OLD)),
+                folder(120, "New", 0, Some(NEW)),
+                folder(130, "Uploads", 0, Some(OLD)),
+            ],
+        )
+        .await;
+        let _m = list(
+            &mut server,
+            100,
+            vec![folder(101, "Extras", 100, Some(OLD))],
+        )
+        .await;
+        let _x = list(&mut server, 101, vec![]).await;
+        let _o = list(&mut server, 110, vec![]).await;
+        let _n = list(&mut server, 120, vec![]).await;
+        let _u = list(&mut server, 130, vec![]).await;
+        let del = delete(&mut server, 110).await;
+
+        let mut opts = options(false);
+        opts.protected.insert(130);
+        opts.keep = Some(KeepFolders::new(|path| {
+            (path == "Movies" || path.starts_with("Movies/"))
+                .then(|| "kept by the rule on Movies".to_string())
+        }));
+        let report = client(&server).remove_empty_folders(&opts).await.unwrap();
+
+        del.assert_async().await;
+        assert_eq!(ids(&report), vec![110]);
+        // Movies holds a kept folder, so it is not empty and not listed itself
+        assert_eq!(report.kept_by_user, 1);
+        assert_eq!(report.kept_protected, 1);
+        assert_eq!(report.kept_too_new, 1);
+        let kept: Vec<(i64, &str, &str)> = report
+            .kept
+            .iter()
+            .map(|k| (k.id, k.path.as_str(), k.reason.as_str()))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                (101, "/Movies/Extras", "kept by the rule on Movies"),
+                (120, "/New", "too new"),
+                (130, "/Uploads", "protected"),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn protected_wins_over_a_user_keep() {
+        let mut server = Server::new_async().await;
+        let _t = transfers(&mut server, vec![]).await;
+        let _root = list(&mut server, 0, vec![folder(140, "Uploads", 0, Some(OLD))]).await;
+        let _u = list(&mut server, 140, vec![]).await;
+        let deletes = no_deletes(&mut server).await;
+
+        let mut opts = options(false);
+        opts.protected.insert(140);
+        opts.keep = Some(KeepFolders::new(|_| Some("kept".to_string())));
+        let report = client(&server).remove_empty_folders(&opts).await.unwrap();
+
+        deletes.assert_async().await;
+        assert_eq!(report.kept_protected, 1);
+        assert_eq!(report.kept_by_user, 0);
+        assert_eq!(report.kept.len(), 1);
     }
 
     #[tokio::test]
