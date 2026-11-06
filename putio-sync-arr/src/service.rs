@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use putio_sync_client::{error_chain, PutioApiClient};
 use putio_sync_core::config::{normalize_arr_category, ArrServer, ArrSettings, PrecheckConfig};
+use putio_sync_core::pipeline_gate::PipelineGate;
 use putio_sync_core::rules::RuleSet;
 use putio_sync_db::{
     ArrItem, ArrState, BlocklistState, CheckState, Database, Held, HeldSettle, NewArrItem,
@@ -175,6 +176,8 @@ pub struct ArrService {
     /// the window again
     not_found_since: Mutex<HashMap<String, Instant>>,
     not_found_window: Duration,
+    /// What the processing pipeline still has to do (038); `None` until it is set
+    gate: std::sync::RwLock<Option<Arc<dyn PipelineGate>>>,
 }
 
 /// The cache key for a server URL
@@ -208,7 +211,20 @@ impl ArrService {
             clients: std::sync::RwLock::new(HashMap::new()),
             not_found_since: Mutex::new(HashMap::new()),
             not_found_window: NOT_FOUND_WINDOW,
+            gate: std::sync::RwLock::new(None),
         }
+    }
+
+    /// Hold items back from the *arr while the pipeline has file-changing steps due (038)
+    pub fn set_gate(&self, gate: Arc<dyn PipelineGate>) {
+        *self.gate.write().unwrap() = Some(gate);
+    }
+
+    /// The step still due for `item`, if the pipeline has one
+    fn gated(&self, item: &ArrItem) -> Option<String> {
+        let id = item.transfer_id?;
+        let gate = self.gate.read().unwrap().clone()?;
+        gate.pending(&format!("transfer:{id}"))
     }
 
     /// The last [`ClientInfo`] read for the application at `url`
@@ -1401,6 +1417,10 @@ impl ArrService {
     async fn check_local(&self, item: &ArrItem) -> Result<(), ArrError> {
         let (_, all_done) = self.db.arr().local_progress(&item.hash).await?;
         if all_done {
+            if let Some(step) = self.gated(item) {
+                debug!(hash = %item.hash, step, "arr item held back by the pipeline");
+                return Ok(());
+            }
             self.db
                 .arr()
                 .set_state(&item.hash, ArrState::Done, None, false)
@@ -1598,7 +1618,7 @@ impl ArrService {
                 speed_bps: speed.max(0.0) as u64,
                 paused,
             };
-            out.push(view::torrent(item, &local, &self.target));
+            out.push(view::torrent(item, &local, &self.target, self.gated(item).is_some()));
         }
         Ok(out)
     }

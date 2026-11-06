@@ -119,7 +119,7 @@
   redacts the output through `putio_sync_core::log_redact`, and records the attempt. It logs
   start and end with `key`, `stage`, `step`, `attempt`, `result` and `duration_ms`, and
   updates the metrics from contracts/api.md.
-- [ ] T017 [US2] Add the pre-download gate in `putio-sync-pipeline/src/lib.rs`. When a new
+- [x] T017 [US2] Add the pre-download gate in `putio-sync-pipeline/src/lib.rs`. When a new
   item has pre-download hooks and no file of it has started, place a 039 hold with reason
   `pre-download`. Release the hold when the hooks pass. A hook skip ends the item as
   `skipped`, and its queued files are removed through the existing queue cancel.
@@ -131,7 +131,7 @@
 
 ## Phase 5: User Story 3 – Radarr and Sonarr import only finished items (P1)
 
-- [ ] T019 [P] [US3] Write the tests in `putio-sync-arr/src/view.rs`: when the gate reports
+- [x] T019 [P] [US3] Write the tests in `putio-sync-arr/src/view.rs`: when the gate reports
   pending for a locally done item, `percentDone` is 0.99, `leftUntilDone` is
   `max(1, total/100)`, `status` is downloading and `errorString` is empty. When the gate
   clears, it reads 1.0 and done. With `NoGate`, the output is the same as today.
@@ -141,7 +141,7 @@
   - an existing target is renamed to `<item> (2)`;
   - a different `st_dev` is refused (use a tmpfs or a second temp volume when one is
     available; otherwise test the check function directly).
-- [ ] T021 [US3] Write the `PipelineGate` impl in `putio-sync-pipeline/src/gate.rs`. It
+- [x] T021 [US3] Write the `PipelineGate` impl in `putio-sync-pipeline/src/gate.rs`. It
   answers from an in-memory map that is refreshed on every step change, with no DB query per
   `torrent-get`. Pass it to `putio-sync-arr` (`view::torrent` and its service) in the daemon
   wiring.

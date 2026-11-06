@@ -279,6 +279,10 @@ impl AppState {
     /// Use the caller's processing pipeline (feature 038), so the Active page shows its
     /// steps and the operator can retry or skip them
     pub fn with_pipeline(mut self, pipeline: Arc<putio_sync_pipeline::Pipeline>) -> AppState {
+        // Radarr and Sonarr wait for the steps that change files (R4)
+        if let Some(arr) = &self.arr {
+            arr.service.set_gate(pipeline.gate());
+        }
         self.pipeline = Some(pipeline);
         self
     }
