@@ -206,10 +206,7 @@ pub fn user_prompt(context: &[Numbered], lines: &[Numbered]) -> String {
 /// Remove `<think>...</think>` blocks (and everything before a lone `</think>`)
 pub fn strip_think(text: &str) -> String {
     let mut out = text.to_string();
-    loop {
-        let Some(start) = out.find("<think>") else {
-            break;
-        };
+    while let Some(start) = out.find("<think>") {
         match out[start..].find("</think>") {
             Some(rel) => out.replace_range(start..start + rel + "</think>".len(), ""),
             None => {

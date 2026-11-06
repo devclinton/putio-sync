@@ -169,7 +169,11 @@ impl Pipeline {
                 s.state == StepState::Failed
                     && matches!(
                         s.kind,
-                        StepKind::Hook | StepKind::SubtitleScan | StepKind::Subtitles
+                        StepKind::Hook
+                            | StepKind::SubtitleScan
+                            | StepKind::Subtitles
+                            | StepKind::TranslateScan
+                            | StepKind::Translate
                     )
             })
             .map(|s| s.name.clone())
@@ -216,6 +220,8 @@ impl Pipeline {
             }
             StepKind::SubtitleScan => self.run_subtitle_scan(item, step).await,
             StepKind::Subtitles => self.run_subtitles(item, step).await,
+            StepKind::TranslateScan => self.run_translate_scan(item, step).await,
+            StepKind::Translate => self.run_translate(item, step).await,
             _ => self.run_hook(item, step).await,
         }
     }

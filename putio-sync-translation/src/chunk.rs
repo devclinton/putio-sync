@@ -299,11 +299,10 @@ pub async fn translate_chunks(
             Ok((index, Ok(texts))) => parts[index] = Some(texts),
             Ok((_, Err(e))) => {
                 // a fatal error beats a chunk failure: it is the thing to fix
-                let better = match (&failure, &e) {
-                    (None, _) => true,
-                    (Some(TranslateError::Chunk { .. }), TranslateError::Fatal(_)) => true,
-                    _ => false,
-                };
+                let better = matches!(
+                    (&failure, &e),
+                    (None, _) | (Some(TranslateError::Chunk { .. }), TranslateError::Fatal(_))
+                );
                 if better {
                     failure = Some(e);
                 }
@@ -335,11 +334,13 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
+    type Script = Box<dyn Fn(usize, &Request) -> Option<Result<String, CallError>> + Send + Sync>;
+
     /// Translates every line to `T<text>`; the script can break chosen calls
     struct Fake {
         calls: Mutex<Vec<Request>>,
         /// (call index) -> reply override
-        script: Box<dyn Fn(usize, &Request) -> Option<Result<String, CallError>> + Send + Sync>,
+        script: Script,
         in_flight: AtomicUsize,
         max_in_flight: AtomicUsize,
     }

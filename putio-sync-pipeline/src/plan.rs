@@ -6,6 +6,7 @@
 
 use putio_sync_core::hooks::HookConfig;
 use putio_sync_core::subtitles::SubtitlesConfig;
+use putio_sync_core::translation::TranslationConfig;
 
 use crate::model::{SkipReason, Stage, StepKind, StepState};
 
@@ -39,7 +40,7 @@ pub struct PlanInput<'a> {
 
 /// The ordered steps of an item
 pub fn plan(input: PlanInput<'_>, hooks: &[HookConfig]) -> Vec<PlannedStep> {
-    plan_with(input, hooks, None)
+    plan_with(input, hooks, None, None)
 }
 
 /// The position of the subtitles scan inside its stage: before the per-video steps it adds
@@ -54,6 +55,7 @@ pub fn plan_with(
     input: PlanInput<'_>,
     hooks: &[HookConfig],
     subtitles: Option<&SubtitlesConfig>,
+    translation: Option<&TranslationConfig>,
 ) -> Vec<PlannedStep> {
     let mut steps = Vec::new();
     for stage in Stage::ALL {
@@ -93,6 +95,28 @@ pub fn plan_with(
                             branch: None,
                             position: SCAN_POSITION,
                             kind: StepKind::SubtitleScan,
+                            name: "videos".to_string(),
+                            required: false,
+                            changes_files: true,
+                            state: if excluded {
+                                StepState::Skipped
+                            } else {
+                                StepState::Waiting
+                            },
+                            skip_reason: excluded.then_some(SkipReason::Category),
+                        });
+                    }
+                }
+                if stage == Stage::Translating {
+                    // Translation needs a translator and something to translate into
+                    let on = translation.filter(|t| t.is_configured());
+                    if let (Some(cfg), Some(_)) = (on, subtitles.filter(|c| c.is_configured())) {
+                        let excluded = input.category.is_some_and(|c| cfg.excludes(c));
+                        steps.push(PlannedStep {
+                            stage,
+                            branch: None,
+                            position: SCAN_POSITION,
+                            kind: StepKind::TranslateScan,
                             name: "videos".to_string(),
                             required: false,
                             changes_files: true,
@@ -184,7 +208,7 @@ mod tests {
             ..Default::default()
         };
         let scan = |category, cfg: Option<&SubtitlesConfig>| {
-            plan_with(input(category), &[], cfg)
+            plan_with(input(category), &[], cfg, None)
                 .into_iter()
                 .find(|s| s.kind == StepKind::SubtitleScan)
         };

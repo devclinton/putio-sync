@@ -335,6 +335,7 @@ async fn a_staged_item_gets_its_subtitle_inside_the_staging_folder_and_moves_wit
                 },
                 &[],
                 Some(&env.config.subtitles),
+                Some(&env.config.translation),
             ),
         )
         .await

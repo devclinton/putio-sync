@@ -2482,6 +2482,7 @@ dependencies = [
  "putio-sync-hooks",
  "putio-sync-subtitles",
  "putio-sync-telemetry",
+ "putio-sync-translation",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

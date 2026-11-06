@@ -65,7 +65,7 @@ pub fn scan_files(files: &[ItemFile]) -> Scan {
 }
 
 /// Where a step's video is: the item's file itself for a single-file item, else under the folder
-fn video_path(item: &ItemRow, relative: &str) -> PathBuf {
+pub(crate) fn video_path(item: &ItemRow, relative: &str) -> PathBuf {
     let dir = PathBuf::from(&item.dir);
     if dir.is_file() {
         dir
@@ -181,7 +181,7 @@ impl Pipeline {
         }
     }
 
-    async fn skip_step(&self, step: &StepRow, why: SkipReason) -> Outcome {
+    pub(crate) async fn skip_step(&self, step: &StepRow, why: SkipReason) -> Outcome {
         let _ = self
             .inner
             .store
@@ -268,7 +268,7 @@ impl Pipeline {
     }
 
     /// The files of an item, with their Put.io ids
-    async fn item_files(&self, item: &ItemRow) -> Vec<ItemFile> {
+    pub(crate) async fn item_files(&self, item: &ItemRow) -> Vec<ItemFile> {
         if item.dir.is_empty() {
             return Vec::new();
         }

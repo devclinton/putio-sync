@@ -132,7 +132,7 @@ pub fn classify_reply(
             Err(message) => Reply::Failed(message),
         },
         202 => Reply::Accepted,
-        200..=299 => Reply::Failed(format!("unexpected HTTP {status} (expected 200 or 202)")),
+        201 | 203..=299 => Reply::Failed(format!("unexpected HTTP {status} (expected 200 or 202)")),
         300..=399 => Reply::Failed(format!(
             "HTTP {status}: redirects are not followed; use the final URL"
         )),
