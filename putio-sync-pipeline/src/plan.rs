@@ -72,9 +72,10 @@ pub fn plan(input: PlanInput<'_>, hooks: &[HookConfig]) -> Vec<PlannedStep> {
                     .iter()
                     .filter(|h| h.enabled && h.stage.map(Stage::from) == Some(stage));
                 for (position, hook) in in_stage.enumerate() {
+                    // An unknown category is judged when the step is about to run
                     let wrong_category = !hook.categories.is_empty()
-                        && !input.category.is_some_and(|c| {
-                            hook.categories.iter().any(|h| h.eq_ignore_ascii_case(c))
+                        && input.category.is_some_and(|c| {
+                            !hook.categories.iter().any(|h| h.eq_ignore_ascii_case(c))
                         });
                     let no_gate = stage == Stage::PreDownload && !input.has_transfer;
                     let skip = if wrong_category {
@@ -171,8 +172,9 @@ mod tests {
         let movies = plan(input(Some("radarr")), &[h.clone()]);
         assert_eq!(movies[1].state, StepState::Skipped);
         assert_eq!(movies[1].skip_reason, Some(SkipReason::Category));
+        // No category yet: left for the step to judge when it runs
         let none = plan(input(None), &[h]);
-        assert_eq!(none[1].skip_reason, Some(SkipReason::Category));
+        assert_eq!(none[1].state, StepState::Waiting);
     }
 
     #[test]
@@ -205,8 +207,10 @@ mod tests {
     fn any_stage_hook_turns_staging_on() {
         assert!(!changes_files(&[]));
         assert!(changes_files(&[hook("x", HookStage::PostProcessing)]));
-        let mut event_hook = HookConfig::default();
-        event_hook.events = vec!["*".to_string()];
+        let event_hook = HookConfig {
+            events: vec!["*".to_string()],
+            ..Default::default()
+        };
         assert!(!changes_files(&[event_hook]));
     }
 }

@@ -16,7 +16,7 @@
     `serde_json`, `tracing`, `prometheus`, `thiserror`;
   - dev-deps: `tempfile`, `wiremock`;
   - add it to the workspace `members` in `Cargo.toml`.
-- [ ] T002 [P] Lay out the modules in `putio-sync-pipeline/src/lib.rs` (`model`, `store`,
+- [x] T002 [P] Lay out the modules in `putio-sync-pipeline/src/lib.rs` (`model`, `store`,
   `plan`, `runner`, `staging`, `gate`). Add a crate doc comment naming feature 038.
 
 ## Phase 2: Foundational
@@ -69,7 +69,7 @@
 
 ## Phase 3: User Story 1 – See where an item is (P1) 🎯 MVP
 
-- [ ] T009 [P] [US1] Write `putio-sync-pipeline/tests/stages.rs`:
+- [x] T009 [P] [US1] Write `putio-sync-pipeline/tests/stages.rs`:
   - with no hooks, the timeline is download done, notify done, and the rest not configured;
   - stages run in the FR-001 order;
   - a restart while a step is running marks it interrupted and runs it again, while done
@@ -77,7 +77,7 @@
   - an item whose download failed has its later steps marked not reached;
   - the branch API: two branches in one stage run at the same time, and the stage is done
     when both are.
-- [ ] T010 [US1] Write the `Pipeline` service in `putio-sync-pipeline/src/lib.rs`:
+- [x] T010 [US1] Write the `Pipeline` service in `putio-sync-pipeline/src/lib.rs`:
   - `on_tick(&download::Pipeline)` (research R1):
     - new keys become items;
     - an item whose NAS stage is done moves to `pre_processing`;
@@ -102,7 +102,7 @@
 
 ## Phase 4: User Story 2 – My own steps (P1)
 
-- [ ] T014 [P] [US2] Write `putio-sync-pipeline/tests/hooks.rs`:
+- [x] T014 [P] [US2] Write `putio-sync-pipeline/tests/hooks.rs`:
   - the environment holds `PUTIO_SYNC_ITEM_KEY`, `_NAME`, `_CATEGORY`, `_SOURCE`, `_DIR`,
     `_STAGE` and `PUTIO_SYNC_ITEM_JSON`, and the JSON shape matches research R3;
   - exit 0 means done, exit 3 means failed with the output kept, and running past the timeout
@@ -111,11 +111,11 @@
   - URL hook: 2xx means done, 204 with `{"action":"skip"}` means skip, and 500 means failed;
   - hooks in one stage run in order;
   - an event hook (no `stage`) is never run as a step.
-- [ ] T015 [US2] Add `run_step(hook, &ItemPayload) -> StepOutcome` to
+- [x] T015 [US2] Add `run_step(hook, &ItemPayload) -> StepOutcome` to
   `putio-sync-hooks/src/command.rs` and `putio-sync-hooks/src/webhook.rs`, reusing their
   timeout, env, header and output capture. The JSON is written to a temp file and removed
   after the run. `HooksService` must not fire hooks that have a `stage`.
-- [ ] T016 [US2] Write the runner in `putio-sync-pipeline/src/runner.rs`. It runs a hook step,
+- [x] T016 [US2] Write the runner in `putio-sync-pipeline/src/runner.rs`. It runs a hook step,
   redacts the output through `putio_sync_core::log_redact`, and records the attempt. It logs
   start and end with `key`, `stage`, `step`, `attempt`, `result` and `duration_ms`, and
   updates the metrics from contracts/api.md.

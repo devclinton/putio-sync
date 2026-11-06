@@ -52,6 +52,9 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_setup_required",
     "putio_sync_pipeline_items",
     "putio_sync_pipeline_actions_total",
+    "putio_sync_pipeline_steps_total",
+    "putio_sync_pipeline_step_seconds",
+    "putio_sync_pipeline_items_waiting",
     "putio_sync_nas_downloads_paused",
     "putio_sync_download_bandwidth_limit_bytes_per_second",
     "putio_sync_download_bandwidth_override",
@@ -255,6 +258,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
         "stage" => {
             let mut v = strs(PrecheckStage::ALL, PrecheckStage::as_str);
             v.extend(strs(PipelineStage::ALL, PipelineStage::as_str));
+            v.extend(putio_sync_telemetry::steps::STAGES);
             v
         }
         // Host names from the config's cache list
@@ -280,6 +284,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v.extend(putio_sync_telemetry::hooks::RESULTS);
             v.extend(putio_sync_telemetry::verify::RESULTS);
             v.extend(putio_sync_telemetry::verify::RUN_RESULTS);
+            v.extend(putio_sync_telemetry::steps::RESULTS);
             v
         }
         "type" => putio_sync_telemetry::hooks::EVENT_TYPES.to_vec(),
@@ -299,6 +304,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             let mut v = strs(SyncKind::ALL, SyncKind::as_str);
             v.extend(strs(ArrSetupKind::ALL, ArrSetupKind::as_str));
             v.extend(strs(FlagKind::ALL, FlagKind::as_str));
+            v.extend(putio_sync_telemetry::steps::KINDS);
             v
         }
         "state" => {
