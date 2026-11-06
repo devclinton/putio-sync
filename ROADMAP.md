@@ -90,13 +90,14 @@ Subtitles are saved next to the video as `<video>.<lang>.srt`; in **Both**
 mode the transcription is `<video>.<lang>.whisper.srt` so neither overwrites
 the other.
 
-### 026 Subtitle translation
+### 026 Subtitle translation (done)
 
 Translate subtitles into the languages wanted through an LLM: a base URL,
 model and optional API key, using the OpenAI-compatible chat API so Ollama,
 Open WebUI, LM Studio and hosted APIs all work. Subtitles are translated in
 chunks with timestamps kept exactly, and a test button checks the connection
-and model.
+and model. A user-supplied service that answers now or calls back is supported too.
+See `specs/026-subtitle-translation/tasks.md` for the deviations.
 
 ### 028 Lua plugins: sync extension points
 

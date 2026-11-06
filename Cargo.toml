@@ -20,6 +20,7 @@ members = [
     "putio-sync-pipeline",
     "putio-sync-subtitles",
     "putio-sync-dlna",
+    "putio-sync-translation",
 ]
 resolver = "2"
 

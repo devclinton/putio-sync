@@ -16,6 +16,7 @@ putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-hooks = { path = "../putio-sync-hooks" }
 putio-sync-subtitles = { path = "../putio-sync-subtitles" }
 putio-sync-telemetry = { path = "../putio-sync-telemetry" }
+putio-sync-translation = { path = "../putio-sync-translation" }
 
 # Async runtime
 tokio = { workspace = true }

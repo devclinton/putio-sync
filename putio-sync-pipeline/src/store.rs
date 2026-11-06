@@ -40,6 +40,60 @@ pub struct NewItem {
     pub state: ItemState,
 }
 
+/// Provenance rows older than this many days are pruned
+pub const PROVENANCE_DAYS: i64 = 90;
+
+/// Where a saved subtitle file came from
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Provenance {
+    pub path: String,
+    pub language: String,
+    /// `putio_embedded`, `putio_folder`, `opensubtitles`, `transcribed` or `translated`
+    pub source: String,
+    pub bytes: i64,
+}
+
+/// One translation job sent to a callback service (feature 026). The token is never stored,
+/// only its SHA-256.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallbackJob {
+    pub token_hash: String,
+    pub job_id: String,
+    pub step_id: i64,
+    pub attempt_id: i64,
+    pub source_lang: String,
+    pub target_lang: String,
+    pub source_path: String,
+    pub source_sha256: String,
+    pub target_path: String,
+    /// `waiting`, `done`, `failed` or `expired`
+    pub state: String,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub finished_at: Option<i64>,
+}
+
+fn callback_job(row: &SqliteRow) -> CallbackJob {
+    CallbackJob {
+        token_hash: row.get("token_hash"),
+        job_id: row.get("job_id"),
+        step_id: row.get("step_id"),
+        attempt_id: row.get("attempt_id"),
+        source_lang: row.get("source_lang"),
+        target_lang: row.get("target_lang"),
+        source_path: row.get("source_path"),
+        source_sha256: row.get("source_sha256"),
+        target_path: row.get("target_path"),
+        state: row.get("state"),
+        created_at: row.get("created_at"),
+        expires_at: row.get("expires_at"),
+        finished_at: row.get("finished_at"),
+    }
+}
+
+/// Steps that a restart interrupts (they run again) unless a callback job holds them
+const RESTARTABLE: &str = "('hook', 'subtitle_scan', 'subtitles', 'translate_scan', 'translate')";
+
 /// One planned step and where it is
 #[derive(Debug, Clone, PartialEq)]
 pub struct StepRow {
@@ -399,21 +453,175 @@ impl Store {
     }
 
     /// At startup: steps that were running when the daemon stopped become `interrupted`,
-    /// and their open attempts are closed. Returns how many.
+    /// and their open attempts are closed. A step that waits for a callback (a `waiting`
+    /// job) stays `running` with its attempt open: the service may still call back.
+    /// Returns how many steps were interrupted.
     pub async fn interrupt_running(&self) -> Result<u64> {
         sqlx::query(
             "UPDATE pipeline_attempts SET ended_at = CURRENT_TIMESTAMP, result = 'interrupted' \
-             WHERE ended_at IS NULL",
+             WHERE ended_at IS NULL AND step_id NOT IN \
+             (SELECT step_id FROM translation_callbacks WHERE state = 'waiting')",
         )
         .execute(&self.pool)
         .await?;
-        let n = sqlx::query(
-            "UPDATE pipeline_steps SET state = 'interrupted' WHERE state = 'running' AND kind = 'hook'",
-        )
+        let n = sqlx::query(&format!(
+            "UPDATE pipeline_steps SET state = 'interrupted' WHERE state = 'running' \
+             AND kind IN {RESTARTABLE} AND id NOT IN \
+             (SELECT step_id FROM translation_callbacks WHERE state = 'waiting')"
+        ))
         .execute(&self.pool)
         .await?
         .rows_affected();
         Ok(n)
+    }
+
+    /// Record a job before the request is sent, so a callback that arrives before the reply
+    /// is read finds it
+    pub async fn insert_job(&self, job: &CallbackJob) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO translation_callbacks (token_hash, job_id, step_id, attempt_id, \
+             source_lang, target_lang, source_path, source_sha256, target_path, state, \
+             created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?)",
+        )
+        .bind(&job.token_hash)
+        .bind(&job.job_id)
+        .bind(job.step_id)
+        .bind(job.attempt_id)
+        .bind(&job.source_lang)
+        .bind(&job.target_lang)
+        .bind(&job.source_path)
+        .bind(&job.source_sha256)
+        .bind(&job.target_path)
+        .bind(job.created_at)
+        .bind(job.expires_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Use up a token: one atomic update, so of any number of callers with the same token
+    /// exactly one gets the job. A token that is unknown, used, expired by state or past
+    /// `expires_at` gets nothing.
+    pub async fn claim(&self, token_hash: &str, now: i64) -> Result<Option<CallbackJob>> {
+        Ok(sqlx::query(
+            "UPDATE translation_callbacks SET state = 'done', finished_at = ? \
+             WHERE token_hash = ? AND state = 'waiting' AND expires_at > ? RETURNING *",
+        )
+        .bind(now)
+        .bind(token_hash)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(|r| callback_job(&r)))
+    }
+
+    /// A job by token hash
+    pub async fn job(&self, token_hash: &str) -> Result<Option<CallbackJob>> {
+        Ok(
+            sqlx::query("SELECT * FROM translation_callbacks WHERE token_hash = ?")
+                .bind(token_hash)
+                .fetch_optional(&self.pool)
+                .await?
+                .map(|r| callback_job(&r)),
+        )
+    }
+
+    /// The `waiting` job of a step, if it has one
+    pub async fn waiting_job(&self, step_id: i64) -> Result<Option<CallbackJob>> {
+        Ok(sqlx::query(
+            "SELECT * FROM translation_callbacks WHERE step_id = ? AND state = 'waiting' \
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(step_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(|r| callback_job(&r)))
+    }
+
+    /// Every job that is `waiting`
+    pub async fn waiting_jobs(&self) -> Result<Vec<CallbackJob>> {
+        Ok(
+            sqlx::query("SELECT * FROM translation_callbacks WHERE state = 'waiting'")
+                .fetch_all(&self.pool)
+                .await?
+                .iter()
+                .map(callback_job)
+                .collect(),
+        )
+    }
+
+    /// Settle a job that was claimed or sent but did not end well (`failed`), or whose
+    /// request never got a usable answer
+    pub async fn finish_job(&self, token_hash: &str, state: &str, now: i64) -> Result<()> {
+        sqlx::query(
+            "UPDATE translation_callbacks SET state = ?, finished_at = ? WHERE token_hash = ?",
+        )
+        .bind(state)
+        .bind(now)
+        .bind(token_hash)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Jobs whose time is up become `expired`; returns them
+    pub async fn expire_due(&self, now: i64) -> Result<Vec<CallbackJob>> {
+        Ok(sqlx::query(
+            "UPDATE translation_callbacks SET state = 'expired', finished_at = ? \
+             WHERE state = 'waiting' AND expires_at <= ? RETURNING *",
+        )
+        .bind(now)
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(callback_job)
+        .collect())
+    }
+
+    /// The `waiting` jobs of one step become `expired`; returns them
+    pub async fn expire_for_step(&self, step_id: i64, now: i64) -> Result<Vec<CallbackJob>> {
+        Ok(sqlx::query(
+            "UPDATE translation_callbacks SET state = 'expired', finished_at = ? \
+             WHERE state = 'waiting' AND step_id = ? RETURNING *",
+        )
+        .bind(now)
+        .bind(step_id)
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(callback_job)
+        .collect())
+    }
+
+    /// The `waiting` jobs of every step of an item become `expired`; returns them
+    pub async fn expire_for_item(&self, item_key: &str, now: i64) -> Result<Vec<CallbackJob>> {
+        Ok(sqlx::query(
+            "UPDATE translation_callbacks SET state = 'expired', finished_at = ? \
+             WHERE state = 'waiting' AND step_id IN \
+             (SELECT id FROM pipeline_steps WHERE item_key = ?) RETURNING *",
+        )
+        .bind(now)
+        .bind(item_key)
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(callback_job)
+        .collect())
+    }
+
+    /// At startup, after the steps are interrupted: a `waiting` job whose step is no longer
+    /// `running` can never be answered usefully. Returns how many.
+    pub async fn expire_orphans(&self, now: i64) -> Result<u64> {
+        Ok(sqlx::query(
+            "UPDATE translation_callbacks SET state = 'expired', finished_at = ? \
+             WHERE state = 'waiting' AND step_id NOT IN \
+             (SELECT id FROM pipeline_steps WHERE state = 'running')",
+        )
+        .bind(now)
+        .execute(&self.pool)
+        .await?
+        .rows_affected())
     }
 
     /// Steps that can run now: waiting or interrupted, with no retry time or one that has
@@ -432,16 +640,77 @@ impl Store {
         .collect())
     }
 
+    /// Remember where a saved sidecar came from (features 025 and 026). Saving over the
+    /// same path replaces the row.
+    pub async fn upsert_provenance(&self, row: &Provenance) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO subtitle_provenance (path, language, source, bytes, created_at) \
+             VALUES (?, ?, ?, ?, strftime('%s','now')) \
+             ON CONFLICT(path) DO UPDATE SET language = excluded.language, \
+             source = excluded.source, bytes = excluded.bytes, created_at = excluded.created_at",
+        )
+        .bind(&row.path)
+        .bind(&row.language)
+        .bind(&row.source)
+        .bind(row.bytes)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Where the sidecar at `path` came from. A row whose recorded size differs from
+    /// `bytes` is stale (the file was replaced by hand) and counts as unknown.
+    pub async fn provenance(&self, path: &str, bytes: Option<i64>) -> Result<Option<Provenance>> {
+        let row = sqlx::query(
+            "SELECT path, language, source, bytes FROM subtitle_provenance WHERE path = ?",
+        )
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row
+            .map(|r| Provenance {
+                path: r.get("path"),
+                language: r.get("language"),
+                source: r.get("source"),
+                bytes: r.get("bytes"),
+            })
+            .filter(|p| bytes.is_none_or(|b| b == p.bytes)))
+    }
+
+    /// Staging rename: rows whose path starts with `from` now live under `to`. Returns how
+    /// many were re-keyed.
+    pub async fn rekey_provenance(&self, from: &str, to: &str) -> Result<u64> {
+        let from = from.trim_end_matches('/');
+        let to = to.trim_end_matches('/');
+        Ok(sqlx::query(
+            "UPDATE OR REPLACE subtitle_provenance SET path = ? || substr(path, ?) \
+             WHERE path = ? OR substr(path, 1, ?) = ? || '/'",
+        )
+        .bind(to)
+        .bind(from.chars().count() as i64 + 1)
+        .bind(from)
+        .bind(from.chars().count() as i64 + 1)
+        .bind(from)
+        .execute(&self.pool)
+        .await?
+        .rows_affected())
+    }
+
     /// Drop finished items older than `hours`, with their steps and attempts
     pub async fn prune(&self, hours: u64) -> Result<u64> {
-        Ok(sqlx::query(
+        let n = sqlx::query(
             "DELETE FROM pipeline_items WHERE finished_at IS NOT NULL \
              AND finished_at < datetime('now', '-' || ? || ' hours')",
         )
         .bind(hours as i64)
         .execute(&self.pool)
         .await?
-        .rows_affected())
+        .rows_affected();
+        sqlx::query("DELETE FROM subtitle_provenance WHERE created_at < strftime('%s','now') - ?")
+            .bind(PROVENANCE_DAYS * 86_400)
+            .execute(&self.pool)
+            .await?;
+        Ok(n)
     }
 }
 

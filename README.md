@@ -1727,6 +1727,39 @@ chunk_secs = 600                 # audio goes in parts of this length
 Metrics: `putio_sync_subtitles_saved_total` (by `source` and `language`) and
 `putio_sync_subtitles_transcribed_seconds_total`.
 
+## Subtitle translation
+
+When a wanted subtitle language is still missing after the Subtitles stage, the Translating
+stage can make it from a subtitle the video already has. It is off until you pick a
+translator in **Settings › Downloads › Translation**. Timestamps are copied from the source,
+never from the translator, and a result with a different number of lines is refused. The new
+file is saved as `Movie.es.srt` next to the video and is never written over an existing one.
+
+- **Chat model**: any OpenAI-compatible server. Give the server URL (`http://ollama.lan:11434/v1`
+  for Ollama, `http://pc:1234` for LM Studio, `https://api.openai.com` for a hosted one), the
+  model name, and an API key if it needs one. **Test server** sends two sample lines and names
+  the problem (address, key, model, time, reply format). Ollama's default context is small:
+  set `num_ctx` on the model (or lower **Subtitle lines per request**) if long lines come back cut.
+- **Your own service**: putio-sync POSTs JSON (`job_id`, `source_lang`, `target_lang`,
+  `video_name`, `srt`, `callback_url`) to your URL, with the headers you set (kept secret).
+  Answer `200` with the translated subtitle (plain text, or JSON `{"srt": "..."}`), or
+  answer `202` and later POST the result to `callback_url`. A failure is `{"error": "..."}`.
+  Set **This app's address** to how the service reaches putio-sync (for example
+  `http://nas.lan:8088`); **Use this address** fills in the one your browser used, and
+  **Test service** checks that it answers from here.
+- **The callback route**: `POST /translate/callback/<token>` needs no API token. The token is a
+  one-time random value for one job, valid until the time limit (default one hour), and is
+  masked in logs. An unknown, used or expired token gets the same `404`; failures count
+  against the caller's address like bad sign-ins. Bodies over 4 MiB get `413`. If no callback
+  arrives in time the step fails with a timeout and is not retried by itself; a restart
+  keeps a job that is still waiting.
+- **Skip categories** (for example `radarr`) with **Skip these categories**.
+- **By hand**: on Local files a video row has **Translate**; it asks before translating into
+  the wanted languages that have no subtitle yet.
+
+Metrics: `putio_sync_translation_chunks_total`, `_chunk_retries_total`, `_rate_limited_total`,
+`_callbacks_waiting` and `_callbacks_refused_total` (by reason).
+
 ## Plugins
 
 Plugins are small Lua scripts that run inside putio-sync on the same events as hooks,

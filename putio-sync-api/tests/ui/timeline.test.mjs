@@ -62,3 +62,14 @@ test("subtitle steps are named after what they work on", () => {
   assert.equal(stepLine({ ...video, state: "failed" }, "running"), "Needs you: Subtitles for Movie.2024.1080p.mkv failed");
   assert.equal(skipReason({ state: "skipped", skip_reason: "no_video" }), "no video in this item");
 });
+
+test("translate steps name the file and the language, and a parked one says so (026)", () => {
+  const scan = { stage: "translating", kind: "translate_scan", name: "videos", state: "running" };
+  const step = { stage: "translating", kind: "translate", branch: "es", name: "Movie (2024)/Movie.2024.mkv", state: "running" };
+  assert.equal(stepTitle(scan), "Find subtitles to translate");
+  assert.equal(stepTitle(step), "Movie.2024.mkv (es)");
+  assert.equal(stepLine(step, "running"), "Translating: Movie.2024.mkv (es)");
+  const parked = { ...step, waiting: { for: "callback", since: "2026-11-05T10:00:00Z", expires_at: "2026-11-05T11:00:00Z" } };
+  assert.equal(stepLine(parked, "running"), "Translating: Movie.2024.mkv (es), waiting for callback");
+  assert.equal(stepLine({ ...step, state: "failed" }, "running"), "Needs you: Movie.2024.mkv (es) failed");
+});

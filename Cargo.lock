@@ -2242,6 +2242,7 @@ dependencies = [
  "putio-sync-subtitles",
  "putio-sync-tailscale",
  "putio-sync-telemetry",
+ "putio-sync-translation",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2579,6 +2580,7 @@ dependencies = [
  "putio-sync-hooks",
  "putio-sync-subtitles",
  "putio-sync-telemetry",
+ "putio-sync-translation",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2683,6 +2685,25 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "putio-sync-translation"
+version = "0.1.1"
+dependencies = [
+ "mockito",
+ "putio-sync-core",
+ "putio-sync-subtitles",
+ "putio-sync-telemetry",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

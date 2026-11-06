@@ -169,7 +169,11 @@ impl Pipeline {
                 s.state == StepState::Failed
                     && matches!(
                         s.kind,
-                        StepKind::Hook | StepKind::SubtitleScan | StepKind::Subtitles
+                        StepKind::Hook
+                            | StepKind::SubtitleScan
+                            | StepKind::Subtitles
+                            | StepKind::TranslateScan
+                            | StepKind::Translate
                     )
             })
             .map(|s| s.name.clone())
@@ -216,6 +220,8 @@ impl Pipeline {
             }
             StepKind::SubtitleScan => self.run_subtitle_scan(item, step).await,
             StepKind::Subtitles => self.run_subtitles(item, step).await,
+            StepKind::TranslateScan => self.run_translate_scan(item, step).await,
+            StepKind::Translate => self.run_translate(item, step).await,
             _ => self.run_hook(item, step).await,
         }
     }
@@ -375,6 +381,23 @@ impl Pipeline {
 
     /// A step failed or timed out
     async fn failed(&self, item: &ItemRow, step: &StepRow, n: i64, error: String) -> Outcome {
+        self.failed_with(item, step, n, error, true).await
+    }
+
+    /// A step failed or timed out and will not be tried again by itself (a callback that
+    /// never came: the service was asked once, the operator can retry)
+    pub(crate) async fn give_up(&self, item: &ItemRow, step: &StepRow, n: i64, error: String) {
+        self.failed_with(item, step, n, error, false).await;
+    }
+
+    async fn failed_with(
+        &self,
+        item: &ItemRow,
+        step: &StepRow,
+        n: i64,
+        error: String,
+        retry: bool,
+    ) -> Outcome {
         let store = &self.inner.store;
         events::emit(Payload::PipelineStepFailed(PipelineStepFailed {
             key: item.key.clone(),
@@ -394,7 +417,7 @@ impl Pipeline {
             return Outcome::Stopped;
         }
         let retries = self.settings().pipeline.optional_retries;
-        match retries.get((n - 1) as usize) {
+        match retries.get((n - 1) as usize).filter(|_| retry) {
             Some(delay) => {
                 let _ = store
                     .set_step(step.id, StepState::Waiting, None, Some(*delay))

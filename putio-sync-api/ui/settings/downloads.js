@@ -5,6 +5,7 @@ import { entryFromRow, move, rowFromEntry } from "../bandwidth.js";
 import { h } from "../app.js";
 import { groupCard } from "./form.js";
 import { cards as subtitleCards } from "./subtitles.js";
+import { cards as translationCards } from "./translation.js";
 
 // Field kinds: b checkbox, n number, n? number or empty, s text, s? text or empty,
 // l one entry per line, or an array of <select> values.
@@ -64,7 +65,7 @@ const VERIFY = {
   advanced: ["verify_max_redownloads", "verify_read_limit_mb_per_sec", "verify_follow_bandwidth_pause"],
 };
 
-export const cards = (ctx) => [...[DOWNLOAD, BANDWIDTH, VERIFY].map((g) => groupCard(g, ctx)), ...subtitleCards(ctx)];
+export const cards = (ctx) => [...[DOWNLOAD, BANDWIDTH, VERIFY].map((g) => groupCard(g, ctx)), ...subtitleCards(ctx), ...translationCards(ctx)];
 
 const LIMIT_KINDS = [
   ["rate", "MB/s"],

@@ -82,6 +82,11 @@ pub enum StepKind {
     SubtitleScan,
     /// Fetches or makes the subtitles of one video (feature 025)
     Subtitles,
+    /// Finds the videos of an item and adds one `Translate` step per missing language
+    /// (feature 026)
+    TranslateScan,
+    /// Translates one subtitle of one video into one language (feature 026)
+    Translate,
 }
 
 impl StepKind {
@@ -92,6 +97,8 @@ impl StepKind {
             StepKind::Notify => "notify",
             StepKind::SubtitleScan => "subtitle_scan",
             StepKind::Subtitles => "subtitles",
+            StepKind::TranslateScan => "translate_scan",
+            StepKind::Translate => "translate",
         }
     }
 
@@ -102,6 +109,8 @@ impl StepKind {
             "notify" => Some(StepKind::Notify),
             "subtitle_scan" => Some(StepKind::SubtitleScan),
             "subtitles" => Some(StepKind::Subtitles),
+            "translate_scan" => Some(StepKind::TranslateScan),
+            "translate" => Some(StepKind::Translate),
             _ => None,
         }
     }
@@ -299,6 +308,8 @@ mod tests {
             StepKind::Notify,
             StepKind::SubtitleScan,
             StepKind::Subtitles,
+            StepKind::TranslateScan,
+            StepKind::Translate,
         ] {
             assert_eq!(StepKind::parse(s.as_str()), Some(s));
         }

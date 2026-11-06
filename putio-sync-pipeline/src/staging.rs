@@ -82,7 +82,9 @@ impl Settings {
             StagingMode::On => true,
             // Every pipeline hook changes files, so any enabled one counts
             StagingMode::Auto => {
-                self.hooks.iter().any(|h| h.enabled) || self.subtitles.is_configured()
+                self.hooks.iter().any(|h| h.enabled)
+                    || self.subtitles.is_configured()
+                    || (self.translation.is_configured() && self.subtitles.is_configured())
             }
         }
     }
@@ -153,6 +155,12 @@ impl Pipeline {
                     .await;
             }
         }
+        // Where each saved subtitle came from follows the rename (feature 026)
+        let _ = self
+            .inner
+            .store
+            .rekey_provenance(&staged.to_string_lossy(), &to.to_string_lossy())
+            .await;
         let _ = self
             .inner
             .store

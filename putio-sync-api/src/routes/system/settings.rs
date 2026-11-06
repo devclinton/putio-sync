@@ -24,6 +24,7 @@
 //! - PUT  /settings/putio - Update the Put.io app ID; refused while PUTIO_SYNC_APP_ID sets it
 //! - GET/PUT /settings/subtitles - Wanted subtitle languages and transcription (feature 025,
 //!   in `subtitles.rs`)
+//! - GET/PUT /settings/translation - Subtitle translation (feature 026, in `translation.rs`)
 //! - GET/PUT /settings/network - The listen addresses (feature 037, in `network.rs`)
 //! - POST /settings/{group}/preview - What a PUT of that body would do, without saving
 //!   (feature 015; the assistant, export and import routes are in `assistant.rs`)
@@ -241,6 +242,13 @@ pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
                 &defaults,
             ))),
             super::subtitles::live_subtitles(),
+        ),
+        group(
+            "translation",
+            json(serde_json::to_value(super::translation::translation_view(
+                &defaults,
+            ))),
+            super::translation::live_translation(),
         ),
     ]
 }
@@ -656,6 +664,7 @@ pub fn router() -> Router<AppState> {
         .merge(super::network::settings_router())
         .merge(super::subtitles::settings_router())
         .merge(super::media_server::settings_router())
+        .merge(super::translation::settings_router())
         .merge(assistant::router())
 }
 

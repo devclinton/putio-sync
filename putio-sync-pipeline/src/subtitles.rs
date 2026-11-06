@@ -65,7 +65,7 @@ pub fn scan_files(files: &[ItemFile]) -> Scan {
 }
 
 /// Where a step's video is: the item's file itself for a single-file item, else under the folder
-fn video_path(item: &ItemRow, relative: &str) -> PathBuf {
+pub(crate) fn video_path(item: &ItemRow, relative: &str) -> PathBuf {
     let dir = PathBuf::from(&item.dir);
     if dir.is_file() {
         dir
@@ -97,33 +97,6 @@ impl Pipeline {
         if !is_video(&name) {
             return Err(ManualError::NotAVideo);
         }
-        let dir = video.to_string_lossy().into_owned();
-        let _one_at_a_time = self.inner.manual.lock().await;
-        let store = &self.inner.store;
-        let items = store
-            .items()
-            .await
-            .map_err(|e| ManualError::Failed(e.to_string()))?;
-        let manual = || items.iter().filter(|i| i.source == crate::MANUAL_SOURCE);
-        if let Some(running) = manual().find(|i| i.dir == dir && !i.state.is_terminal()) {
-            return Err(ManualError::Duplicate(running.key.clone()));
-        }
-        let next = manual()
-            .filter_map(|i| i.key.strip_prefix("manual:")?.parse::<u64>().ok())
-            .max()
-            .unwrap_or(0)
-            + 1;
-        let key = format!("manual:{next}");
-        let new = crate::store::NewItem {
-            key: key.clone(),
-            name: name.clone(),
-            category: None,
-            source: crate::MANUAL_SOURCE.to_string(),
-            dir,
-            transfer_id: None,
-            stage: Stage::Subtitles,
-            state: crate::model::ItemState::Running,
-        };
         let step = PlannedStep {
             stage: Stage::Subtitles,
             branch: None,
@@ -135,7 +108,53 @@ impl Pipeline {
             state: StepState::Waiting,
             skip_reason: None,
         };
-        match store.insert_item(&new, &[step]).await {
+        self.register_manual_item(video, Stage::Subtitles, vec![step])
+            .await
+    }
+
+    /// Register a `manual:<n>` item for `path` (a video, or a folder) in `stage` with the
+    /// given steps. One that is still running in the same stage for the same path is a
+    /// duplicate. Shared by the manual subtitles (025) and manual translation (026) actions.
+    pub async fn register_manual_item(
+        &self,
+        path: &Path,
+        stage: Stage,
+        steps: Vec<PlannedStep>,
+    ) -> Result<String, ManualError> {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let dir = path.to_string_lossy().into_owned();
+        let _one_at_a_time = self.inner.manual.lock().await;
+        let store = &self.inner.store;
+        let items = store
+            .items()
+            .await
+            .map_err(|e| ManualError::Failed(e.to_string()))?;
+        let manual = || items.iter().filter(|i| i.source == crate::MANUAL_SOURCE);
+        if let Some(running) =
+            manual().find(|i| i.dir == dir && i.stage == stage && !i.state.is_terminal())
+        {
+            return Err(ManualError::Duplicate(running.key.clone()));
+        }
+        let next = manual()
+            .filter_map(|i| i.key.strip_prefix("manual:")?.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let key = format!("manual:{next}");
+        let new = crate::store::NewItem {
+            key: key.clone(),
+            name,
+            category: None,
+            source: crate::MANUAL_SOURCE.to_string(),
+            dir,
+            transfer_id: None,
+            stage,
+            state: crate::model::ItemState::Running,
+        };
+        match store.insert_item(&new, &steps).await {
             Ok(true) => {
                 self.inner.wake.notify_one();
                 Ok(key)
@@ -143,6 +162,11 @@ impl Pipeline {
             Ok(false) => Err(ManualError::Failed("the item already exists".to_string())),
             Err(e) => Err(ManualError::Failed(e.to_string())),
         }
+    }
+
+    /// The videos of an item that are subtitle (and translation) targets
+    pub(crate) async fn scan_videos(&self, item: &ItemRow) -> Scan {
+        scan_files(&self.item_files(item).await)
     }
 
     /// Whether subtitles are off for this item now (settings changed since the plan)
@@ -157,7 +181,7 @@ impl Pipeline {
         }
     }
 
-    async fn skip_step(&self, step: &StepRow, why: SkipReason) -> Outcome {
+    pub(crate) async fn skip_step(&self, step: &StepRow, why: SkipReason) -> Outcome {
         let _ = self
             .inner
             .store
@@ -176,8 +200,7 @@ impl Pipeline {
             return Outcome::Stopped;
         };
         let started = Instant::now();
-        let files = self.item_files(item).await;
-        let scan = scan_files(&files);
+        let scan = self.scan_videos(item).await;
         let message = match (scan.videos.len(), scan.skipped) {
             (v, 0) => format!("{v} videos"),
             (v, s) => format!("{v} videos, {s} sample or small skipped"),
@@ -245,7 +268,7 @@ impl Pipeline {
     }
 
     /// The files of an item, with their Put.io ids
-    async fn item_files(&self, item: &ItemRow) -> Vec<ItemFile> {
+    pub(crate) async fn item_files(&self, item: &ItemRow) -> Vec<ItemFile> {
         if item.dir.is_empty() {
             return Vec::new();
         }
@@ -305,6 +328,22 @@ impl Pipeline {
         let _ = writer.await;
         let _ = self.inner.store.set_progress(id, None).await;
         result
+    }
+
+    /// Remember where each saved sidecar came from, so translation can prefer a
+    /// transcribed or original source (feature 026). A failure here never fails the step.
+    async fn record_provenance(&self, saved: &[engine::SavedSubtitle]) {
+        for s in saved {
+            let row = crate::store::Provenance {
+                path: s.path.to_string_lossy().into_owned(),
+                language: s.language.clone(),
+                source: s.source.to_string(),
+                bytes: s.bytes as i64,
+            };
+            if let Err(e) = self.inner.store.upsert_provenance(&row).await {
+                warn!(error = %e, "Could not record where a subtitle came from");
+            }
+        }
     }
 
     /// One video's step
@@ -370,6 +409,7 @@ impl Pipeline {
                 if !outcome.warnings.is_empty() {
                     message.push_str(&format!(" ({} passed over)", outcome.warnings.len()));
                 }
+                self.record_provenance(&outcome.saved).await;
                 info!(key = %item.key, video = %step.name, result = %message, "Subtitles step done");
                 (AttemptResult::Done, log_redact::redact(&message), None)
             }

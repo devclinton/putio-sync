@@ -22,6 +22,7 @@ use putio_sync_core::config::{Config, PipelineConfig};
 use putio_sync_core::hooks::HookConfig;
 use putio_sync_core::pipeline_gate::PipelineGate;
 use putio_sync_core::subtitles::SubtitlesConfig;
+use putio_sync_core::translation::TranslationConfig;
 use putio_sync_db::pipeline::{FinishedOutcome, FinishedRow};
 use putio_sync_db::Database;
 use putio_sync_download::pipeline::{Origin, Pipeline as ActiveView, PipelineItem, State};
@@ -29,6 +30,7 @@ use putio_sync_subtitles::SubtitleSource;
 use tokio::sync::{Notify, Semaphore};
 use tracing::{debug, info, warn};
 
+pub mod callback;
 pub mod deletes;
 pub mod gate;
 pub mod locate;
@@ -39,6 +41,7 @@ pub mod staging;
 pub mod store;
 pub mod subtitles;
 pub mod timeline;
+pub mod translate;
 
 pub use gate::Gate;
 pub use model::{ItemState, Stage, StepState};
@@ -74,6 +77,7 @@ pub(crate) struct Settings {
     pub target: PathBuf,
     pub retention_hours: u64,
     pub subtitles: SubtitlesConfig,
+    pub translation: TranslationConfig,
 }
 
 impl Settings {
@@ -89,6 +93,7 @@ impl Settings {
             target: config.download.target_directory.clone(),
             retention_hours: config.transfers.finished_retention_hours,
             subtitles: config.subtitles.clone(),
+            translation: config.translation.clone(),
         }
     }
 }
@@ -107,6 +112,8 @@ pub(crate) struct Inner {
     pub gate: Gate,
     /// Where Put.io's subtitles come from; none until the daemon sets it
     pub source: RwLock<Option<Arc<dyn SubtitleSource>>>,
+    /// Live translation settings and the in-flight limit
+    pub translator: Arc<putio_sync_translation::Translator>,
     /// Transcriptions run one at a time, whatever the item
     pub transcribing: Semaphore,
     /// Held while a manual item is added, so two requests for one video cannot both pass
@@ -146,6 +153,7 @@ impl Pipeline {
                 cancels: Mutex::new(HashMap::new()),
                 gate: Gate::default(),
                 source: RwLock::new(None),
+                translator: Arc::new(putio_sync_translation::Translator::new(&config.translation)),
                 transcribing: Semaphore::new(1),
                 manual: tokio::sync::Mutex::new(()),
                 missed: Mutex::new(HashMap::new()),
@@ -163,8 +171,23 @@ impl Pipeline {
                 *permits = Arc::new(Semaphore::new(settings.pipeline.concurrency.max(1)));
             }
         }
+        self.inner.translator.configure(&settings.translation);
         if let Ok(mut s) = self.inner.settings.write() {
             *s = settings;
+        }
+        self.inner.wake.notify_one();
+    }
+
+    /// The `[translation]` settings in use
+    pub fn translation_settings(&self) -> TranslationConfig {
+        self.settings().translation
+    }
+
+    /// Take new `[translation]` settings without touching the rest
+    pub fn configure_translation(&self, translation: &TranslationConfig) {
+        self.inner.translator.configure(translation);
+        if let Ok(mut s) = self.inner.settings.write() {
+            s.translation = translation.clone();
         }
         self.inner.wake.notify_one();
     }
@@ -216,6 +239,10 @@ impl Pipeline {
             ),
             Err(e) => warn!(error = %e, "Could not mark running pipeline steps interrupted"),
         }
+        // A job that was waiting for a callback and whose step is no longer running can
+        // never be answered
+        let _ = self.inner.store.expire_orphans(callback::unix_now()).await;
+        self.refresh_callback_gauge().await;
         self.check_staging();
         self.refresh_gate().await;
     }
@@ -228,6 +255,7 @@ impl Pipeline {
             loop {
                 let _ =
                     tokio::time::timeout(Duration::from_secs(1), me.inner.wake.notified()).await;
+                me.expire_callbacks().await;
                 me.spawn_due().await;
             }
         })
@@ -334,6 +362,7 @@ impl Pipeline {
             },
             hooks,
             Some(&settings.subtitles),
+            Some(&settings.translation),
         );
         let has_gate = steps
             .iter()
@@ -409,6 +438,7 @@ impl Pipeline {
             },
             &settings.hooks,
             Some(&settings.subtitles),
+            Some(&settings.translation),
         );
         let new = NewItem {
             key: row.key.clone(),
@@ -534,6 +564,14 @@ impl Pipeline {
         if let Some(notify) = self.inner.cancels.lock().unwrap().get(key) {
             notify.notify_waiters();
         }
+        if let Ok(jobs) = self
+            .inner
+            .store
+            .expire_for_item(key, callback::unix_now())
+            .await
+        {
+            self.abandon_jobs(jobs).await;
+        }
         self.inner.missed.lock().unwrap().remove(key);
         info!(key, "Pipeline item cancelled: it is gone from Put.io");
     }
@@ -573,7 +611,11 @@ impl Pipeline {
             let open = steps.iter().find(|s| {
                 matches!(
                     s.kind,
-                    StepKind::Hook | StepKind::SubtitleScan | StepKind::Subtitles
+                    StepKind::Hook
+                        | StepKind::SubtitleScan
+                        | StepKind::Subtitles
+                        | StepKind::TranslateScan
+                        | StepKind::Translate
                 ) && !s.state.is_settled()
                     && (s.state != StepState::Failed || s.required)
             });
@@ -605,7 +647,21 @@ impl Pipeline {
         for s in &steps {
             attempts.extend(store.attempts(s.id).await.ok()?);
         }
-        Some(timeline::timeline(&item, &steps, &attempts))
+        let mut view = timeline::timeline(&item, &steps, &attempts);
+        let jobs = store.waiting_jobs().await.unwrap_or_default();
+        if !jobs.is_empty() {
+            let steps_of = view.stages.iter_mut().flat_map(|s| {
+                s.steps
+                    .iter_mut()
+                    .chain(s.branches.iter_mut().flat_map(|b| b.values_mut().flatten()))
+            });
+            for step in steps_of {
+                if let Some(job) = jobs.iter().find(|j| j.step_id == step.id) {
+                    step.waiting = Some(timeline::Waiting::from_job(job));
+                }
+            }
+        }
+        Some(view)
     }
 
     /// The item finished with warnings (an optional step gave up)
@@ -620,12 +676,17 @@ impl Pipeline {
     pub async fn summaries(&self) -> HashMap<String, StepSummary> {
         let mut out = HashMap::new();
         let store = &self.inner.store;
+        let jobs = store.waiting_jobs().await.unwrap_or_default();
         for item in store.items().await.unwrap_or_default() {
             if item.state.is_terminal() {
                 continue;
             }
             let steps = store.steps(&item.key).await.unwrap_or_default();
-            if let Some(summary) = timeline::summary(&item, &steps) {
+            if let Some(mut summary) = timeline::summary(&item, &steps) {
+                summary.waiting = jobs
+                    .iter()
+                    .find(|j| j.step_id == summary.id)
+                    .map(timeline::Waiting::from_job);
                 out.insert(item.key, summary);
             }
         }

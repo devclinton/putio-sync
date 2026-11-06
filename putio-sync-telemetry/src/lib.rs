@@ -38,6 +38,8 @@ pub mod subtitles;
 pub mod sync;
 pub mod tailscale;
 pub mod transfers;
+/// Subtitle translation metrics (feature 026)
+pub mod translation;
 pub mod verify;
 pub mod watch;
 
@@ -160,6 +162,13 @@ pub struct Telemetry {
     // Feature 025
     pub(crate) subtitles_saved: IntCounterVec,
     pub(crate) subtitles_transcribed_seconds: IntCounter,
+    pub(crate) translations: IntCounterVec,
+    pub(crate) translation_chunks: IntCounterVec,
+    pub(crate) translation_chunk_retries: IntCounter,
+    pub(crate) translation_rate_limited: IntCounter,
+    pub(crate) translation_seconds: HistogramVec,
+    pub(crate) translation_callbacks_waiting: IntGauge,
+    pub(crate) translation_callbacks_refused: IntCounterVec,
     // Feature 028
     pub(crate) plugin_runs: IntCounterVec,
     pub(crate) plugin_duration: HistogramVec,
@@ -712,6 +721,54 @@ impl Telemetry {
                 "Seconds of audio sent to the transcription server.",
             ))
             .unwrap(),
+            translations: IntCounterVec::new(
+                opts(
+                    "translations_total",
+                    "Subtitle translations finished, by translator kind, result and language.",
+                ),
+                &["kind", "result", "language"],
+            )
+            .unwrap(),
+            translation_chunks: IntCounterVec::new(
+                opts(
+                    "translation_chunks_total",
+                    "Chat translation chunks, by how they ended (ok, split, failed).",
+                ),
+                &["result"],
+            )
+            .unwrap(),
+            translation_chunk_retries: IntCounter::with_opts(opts(
+                "translation_chunk_retries_total",
+                "Chat translation requests repeated after a bad or failed reply.",
+            ))
+            .unwrap(),
+            translation_rate_limited: IntCounter::with_opts(opts(
+                "translation_rate_limited_total",
+                "Translation requests answered with HTTP 429.",
+            ))
+            .unwrap(),
+            translation_seconds: HistogramVec::new(
+                hopts(
+                    "translation_seconds",
+                    "Time to translate one subtitle file, by translator kind.",
+                    &[1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1200.0, 3600.0],
+                ),
+                &["kind"],
+            )
+            .unwrap(),
+            translation_callbacks_waiting: IntGauge::with_opts(opts(
+                "translation_callbacks_waiting",
+                "Translation jobs sent to a callback service and not yet answered.",
+            ))
+            .unwrap(),
+            translation_callbacks_refused: IntCounterVec::new(
+                opts(
+                    "translation_callbacks_refused_total",
+                    "Translation callbacks refused, by reason.",
+                ),
+                &["reason"],
+            )
+            .unwrap(),
             hook_runs: IntCounterVec::new(
                 opts(
                     "hook_runs_total",
@@ -895,6 +952,13 @@ impl Telemetry {
             Box::new(self.hook_runs.clone()),
             Box::new(self.subtitles_saved.clone()),
             Box::new(self.subtitles_transcribed_seconds.clone()),
+            Box::new(self.translations.clone()),
+            Box::new(self.translation_chunks.clone()),
+            Box::new(self.translation_chunk_retries.clone()),
+            Box::new(self.translation_rate_limited.clone()),
+            Box::new(self.translation_seconds.clone()),
+            Box::new(self.translation_callbacks_waiting.clone()),
+            Box::new(self.translation_callbacks_refused.clone()),
             Box::new(self.hook_duration.clone()),
             Box::new(self.hook_dropped.clone()),
             Box::new(self.plugin_runs.clone()),

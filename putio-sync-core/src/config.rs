@@ -189,6 +189,9 @@ pub struct Config {
     /// Subtitles: wanted languages and optional transcription (feature 025)
     #[serde(default)]
     pub subtitles: crate::subtitles::SubtitlesConfig,
+    /// `[translation]` (feature 026)
+    #[serde(default)]
+    pub translation: crate::translation::TranslationConfig,
     /// Radarr/Sonarr download client (Transmission RPC)
     #[serde(default)]
     pub arr: ArrConfig,
@@ -1571,6 +1574,7 @@ impl Config {
         self.transfers.validate()?;
         self.pipeline.validate()?;
         self.subtitles.validate()?;
+        self.translation.validate()?;
         self.precheck.validate(&self.watch.paths)?;
         self.storage.validate()?;
         self.tailscale.validate()?;
@@ -1823,6 +1827,7 @@ impl ConfigBuilder {
             transfers: TransfersConfig::default(),
             pipeline: PipelineConfig::default(),
             subtitles: Default::default(),
+            translation: Default::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
             putio: PutioConfig::default(),
@@ -3101,6 +3106,7 @@ mod tests {
             transfers: TransfersConfig::default(),
             pipeline: PipelineConfig::default(),
             subtitles: Default::default(),
+            translation: Default::default(),
             arr: ArrConfig::default(),
             doctor: DoctorConfig::default(),
             putio: PutioConfig::default(),
@@ -4817,7 +4823,7 @@ mod precheck_tests {
 }
 
 /// Environment variables that can hold a secret, masked in captured log lines (feature 047)
-const SECRET_VARS: [&str; 8] = [
+const SECRET_VARS: [&str; 9] = [
     "PUTIO_TOKEN",
     "PUTIO_SYNC_PUTIO_TOKEN",
     "PUTIO_SYNC_API_TOKEN",
@@ -4826,6 +4832,7 @@ const SECRET_VARS: [&str; 8] = [
     "PUTIO_SYNC_SONARR_API_KEY",
     "PUTIO_CLIENT_SECRET",
     "PUTIO_SYNC_TRANSCRIPTION_API_KEY",
+    "PUTIO_SYNC_TRANSLATION_API_KEY",
 ];
 
 impl Config {
@@ -4859,6 +4866,9 @@ impl Config {
             plugin.secrets.values().for_each(|v| add(Some(v)));
         }
         add(Some(&self.subtitles.transcription.api_key));
+        for v in self.translation.secret_values() {
+            add(Some(&v));
+        }
         for var in SECRET_VARS {
             add(std::env::var(var).ok().as_ref());
         }
@@ -4900,6 +4910,10 @@ mod secret_values_tests {
             secrets = { key = "s-plugin-secret" }
             [subtitles.transcription]
             api_key = "s-transcription-key"
+            [translation.chat]
+            api_key = "s-translation-key"
+            [translation.callback.headers]
+            Authorization = "s-translation-header"
             "#,
         )
         .unwrap();
@@ -4914,6 +4928,8 @@ mod secret_values_tests {
             "s-arr-password",
             "s-arr-key",
             "s-transcription-key",
+            "s-translation-key",
+            "s-translation-header",
             "https://hook.lan/s-hook-url",
             "s-hook-header",
             "s-hook-env",

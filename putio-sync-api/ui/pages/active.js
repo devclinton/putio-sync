@@ -493,6 +493,7 @@ function stepView(t, step) {
       step.progress != null && step.state === "running" ? h("small", { class: "muted", text: percent(step.progress) }) : null,
     ),
     skipReason(step) ? h("small", { class: "muted block", text: skipReason(step) }) : null,
+    step.waiting ? h("small", { class: "muted block", text: `Waiting for the service to call back; gives up ${relative(step.waiting.expires_at)}` }) : null,
     step.next_attempt_at && step.state === "waiting" ? h("small", { class: "muted block", text: `Next try ${relative(step.next_attempt_at.replace(" ", "T") + "Z")}` }) : null,
     tries.map((a) =>
       h(

@@ -82,7 +82,9 @@ telemetry, not from a debugger.
 - Config files that can hold tokens stay gitignored; examples use placeholders.
 - The HTTP API MUST require authentication for any endpoint that reads Put.io data or
   changes state; only health and metrics endpoints MAY be unauthenticated, and metrics MAY
-  be put behind auth via config.
+  be put behind auth via config. A callback endpoint MAY skip the API token when the URL
+  holds a random token that is good for one job, one use and a limited time; failed calls
+  are rate limited and the token never appears in logs.
 
 ### VII. Simplicity
 
@@ -123,4 +125,4 @@ Amendments are made by editing this file through `/speckit-constitution`, with a
 MAJOR for removing or redefining a principle, MINOR for adding a principle or section, PATCH
 for wording fixes.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-25 | **Last Amended**: 2026-10-25
+**Version**: 1.1.0 | **Ratified**: 2026-10-25 | **Last Amended**: 2026-11-05

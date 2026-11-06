@@ -156,6 +156,7 @@ pub async fn downloaded_item_named(env: &Env, key: &str, name: &str, dir: &Path)
         },
         &env.config.hooks,
         Some(&env.config.subtitles),
+        Some(&env.config.translation),
     );
     env.store
         .insert_item(

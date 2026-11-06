@@ -19,5 +19,6 @@ pub mod stats;
 pub mod status;
 pub mod subtitles;
 pub mod tailscale;
+pub mod translation;
 pub mod verify;
 pub mod whats_new;

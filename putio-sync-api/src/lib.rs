@@ -447,7 +447,13 @@ pub fn router(state: AppState) -> Router {
 
     public_routes(state)
         .merge(protected)
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|req: &axum::http::Request<_>| {
+                // The callback token is a credential: it never reaches a log line
+                let path = putio_sync_core::log_redact::redact(req.uri().path());
+                tracing::info_span!("request", method = %req.method(), uri = %path)
+            }),
+        )
 }
 
 /// Routes that answer without a token: health, sign-in, and the web UI page and its
@@ -462,6 +468,12 @@ fn public_routes(state: AppState) -> Router {
         .route(
             "/auth/login",
             axum::routing::post(routes::system::auth::login),
+        )
+        // A translation service returns its result here; the token in the path is the
+        // credential (feature 026)
+        .route(
+            "/translate/callback/:token",
+            axum::routing::post(routes::translate_callback::callback),
         )
         .route("/", axum::routing::get(ui::index))
         .route("/assets/*path", axum::routing::get(ui::asset))
