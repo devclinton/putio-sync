@@ -617,6 +617,15 @@ pub struct DownloadManager {
     delete_gate: Arc<std::sync::RwLock<Option<Arc<dyn RemoteDeleteGate>>>>,
 }
 
+/// What [`DownloadManager::delete_remote`] did
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RemoteDeletes {
+    /// Deleted from Put.io
+    pub deleted: Vec<i64>,
+    /// Not deleted, and never will be: the download is not completed. The caller forgets them.
+    pub refused: Vec<i64>,
+}
+
 /// The answer of [`RemoteDeleteGate::defer`]
 pub type DeferFuture<'a> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + 'a>>;
@@ -1134,37 +1143,41 @@ impl DownloadManager {
 
     /// Delete files from Put.io that the pipeline held back and now released. Each id is
     /// checked against its `downloads` row first: a file whose download is not completed
-    /// and on disk is never deleted. Returns the ids deleted.
-    pub async fn delete_remote(&self, file_ids: &[i64]) -> Vec<i64> {
+    /// and on disk is never deleted.
+    pub async fn delete_remote(&self, file_ids: &[i64]) -> RemoteDeletes {
+        let mut result = RemoteDeletes::default();
         let Some(db) = self.database.as_ref() else {
-            return Vec::new();
+            return result;
         };
         let mut ok = Vec::new();
         for id in file_ids {
             match db.downloads().find_by_file_id(*id).await {
                 Ok(Some(d)) if d.status == "completed" && !d.local_path.is_empty() => ok.push(*id),
-                Ok(_) => warn!(
-                    file_id = id,
-                    "Held-back delete refused: the download is not completed"
-                ),
+                Ok(_) => {
+                    warn!(
+                        file_id = id,
+                        "Held-back delete refused: the download is not completed"
+                    );
+                    result.refused.push(*id);
+                }
                 Err(e) => {
-                    warn!(file_id = id, error = %e, "Held-back delete refused: no download row")
+                    warn!(file_id = id, error = %e, "Held-back delete not done: no download row")
                 }
             }
         }
         if ok.is_empty() {
-            return ok;
+            return result;
         }
         match self.client.delete_files(ok.clone()).await {
             Ok(_) => {
                 info!(count = ok.len(), "Deleted held-back files from Put.io");
-                ok
+                result.deleted = ok;
             }
             Err(e) => {
-                warn!(count = ok.len(), error = %error_chain(&e), "Failed to delete held-back files from Put.io");
-                Vec::new()
+                warn!(count = ok.len(), error = %error_chain(&e), "Failed to delete held-back files from Put.io")
             }
         }
+        result
     }
 
     /// Download a single file

@@ -257,6 +257,10 @@ pub async fn execute_daemon(
         daemon = daemon.with_pipeline(pipeline.clone());
         if let Some(manager) = daemon.get_download_manager() {
             manager.set_redirect(pipeline.clone());
+            manager.set_delete_gate(pipeline.clone());
+        }
+        if let Some(client) = daemon.get_client() {
+            pipeline.use_putio(client);
         }
     }
 

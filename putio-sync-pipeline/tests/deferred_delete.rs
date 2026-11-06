@@ -86,7 +86,10 @@ async fn a_transfer_file_waits_for_its_transfer_item() {
         .await
         .unwrap();
     assert_eq!(
-        env.pipeline.defer(50, "tv/Show", "e01.mkv").await.as_deref(),
+        env.pipeline
+            .defer(50, "tv/Show", "e01.mkv")
+            .await
+            .as_deref(),
         Some("transfer:9")
     );
 }
@@ -94,15 +97,28 @@ async fn a_transfer_file_waits_for_its_transfer_item() {
 #[tokio::test]
 async fn a_delete_is_not_released_before_the_stage_ends_and_is_after() {
     let env = env_on().await;
-    item(&env, "transfer:1", PStage::PreProcessing, ItemState::Running).await;
-    env.db.deferred_deletes().insert(11, "transfer:1", now()).await.unwrap();
+    item(
+        &env,
+        "transfer:1",
+        PStage::PreProcessing,
+        ItemState::Running,
+    )
+    .await;
+    env.db
+        .deferred_deletes()
+        .insert(11, "transfer:1", now())
+        .await
+        .unwrap();
     assert!(env.pipeline.releasable_deletes().await.is_empty());
 
     env.store
         .set_item("transfer:1", PStage::Subtitles, ItemState::Running)
         .await
         .unwrap();
-    assert!(env.pipeline.releasable_deletes().await.is_empty(), "still in the stage");
+    assert!(
+        env.pipeline.releasable_deletes().await.is_empty(),
+        "still in the stage"
+    );
 
     env.store
         .set_item("transfer:1", PStage::PostProcessing, ItemState::Running)
@@ -120,7 +136,11 @@ async fn a_finished_failed_or_vanished_item_releases_and_a_missing_one_waits() {
     item(&env, "transfer:1", PStage::Subtitles, ItemState::Failed).await;
     item(&env, "transfer:2", PStage::Subtitles, ItemState::Cancelled).await;
     for (id, key) in [(1, "transfer:1"), (2, "transfer:2"), (3, "transfer:3")] {
-        env.db.deferred_deletes().insert(id, key, now()).await.unwrap();
+        env.db
+            .deferred_deletes()
+            .insert(id, key, now())
+            .await
+            .unwrap();
     }
     let mut ready = env.pipeline.releasable_deletes().await;
     ready.sort();
@@ -130,21 +150,41 @@ async fn a_finished_failed_or_vanished_item_releases_and_a_missing_one_waits() {
 #[tokio::test]
 async fn the_24_hour_failsafe_releases_a_stuck_item() {
     let env = env_on().await;
-    item(&env, "transfer:1", PStage::PreProcessing, ItemState::WaitingForOperator).await;
+    item(
+        &env,
+        "transfer:1",
+        PStage::PreProcessing,
+        ItemState::WaitingForOperator,
+    )
+    .await;
     env.db
         .deferred_deletes()
         .insert(1, "transfer:1", now() - 24 * 3600 - 1)
         .await
         .unwrap();
-    env.db.deferred_deletes().insert(2, "transfer:1", now() - 3600).await.unwrap();
+    env.db
+        .deferred_deletes()
+        .insert(2, "transfer:1", now() - 3600)
+        .await
+        .unwrap();
     assert_eq!(env.pipeline.releasable_deletes().await, [1]);
 }
 
 #[tokio::test]
 async fn turning_subtitles_off_releases_everything() {
     let env = env_on().await;
-    item(&env, "transfer:1", PStage::PreProcessing, ItemState::Running).await;
-    env.db.deferred_deletes().insert(1, "transfer:1", now()).await.unwrap();
+    item(
+        &env,
+        "transfer:1",
+        PStage::PreProcessing,
+        ItemState::Running,
+    )
+    .await;
+    env.db
+        .deferred_deletes()
+        .insert(1, "transfer:1", now())
+        .await
+        .unwrap();
     let mut config = env.config.clone();
     config.subtitles = SubtitlesConfig::default();
     env.pipeline.configure(&config);
@@ -154,8 +194,18 @@ async fn turning_subtitles_off_releases_everything() {
 #[tokio::test]
 async fn a_restart_keeps_the_held_rows() {
     let env = env_on().await;
-    item(&env, "transfer:1", PStage::PreProcessing, ItemState::Running).await;
-    env.db.deferred_deletes().insert(1, "transfer:1", now()).await.unwrap();
+    item(
+        &env,
+        "transfer:1",
+        PStage::PreProcessing,
+        ItemState::Running,
+    )
+    .await;
+    env.db
+        .deferred_deletes()
+        .insert(1, "transfer:1", now())
+        .await
+        .unwrap();
     // A new service over the same database, as after a restart
     let again = putio_sync_pipeline::Pipeline::new(env.db.clone(), &env.config).await;
     again.startup().await;

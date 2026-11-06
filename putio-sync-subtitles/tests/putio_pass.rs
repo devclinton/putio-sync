@@ -18,7 +18,11 @@ struct Fake {
 }
 
 impl SubtitleSource for Fake {
-    fn list<'a>(&'a self, _: i64, _: &'a [String]) -> BoxFut<'a, Result<SubtitleList, SourceError>> {
+    fn list<'a>(
+        &'a self,
+        _: i64,
+        _: &'a [String],
+    ) -> BoxFut<'a, Result<SubtitleList, SourceError>> {
         let r = self.list.clone();
         Box::pin(async move { r })
     }
@@ -55,7 +59,10 @@ fn fake(subs: Vec<PutioSubtitle>, bodies: Vec<(&str, Result<Vec<u8>, SourceError
             default: None,
             subtitles: subs,
         }),
-        bodies: bodies.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+        bodies: bodies
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
         downloads: Mutex::new(Vec::new()),
     }
 }
@@ -79,7 +86,10 @@ async fn en_is_saved_es_is_missing_and_fr_is_ignored() {
             sub("a", "en", "English", "opensubtitles"),
             sub("b", "fr", "French", "opensubtitles"),
         ],
-        vec![("a", Ok(SRT.as_bytes().to_vec())), ("b", Ok(SRT.as_bytes().to_vec()))],
+        vec![
+            ("a", Ok(SRT.as_bytes().to_vec())),
+            ("b", Ok(SRT.as_bytes().to_vec())),
+        ],
     );
     let wanted = langs(&["en", "es"]);
     let out = fetch_for_video(
@@ -98,7 +108,11 @@ async fn en_is_saved_es_is_missing_and_fr_is_ignored() {
     assert_eq!(out.saved[0].source, "opensubtitles");
     assert_eq!(out.missing, ["es"]);
     assert_eq!(out.message(), "en: opensubtitles; es: missing");
-    assert_eq!(*f.downloads.lock().unwrap(), ["a"], "fr was never downloaded");
+    assert_eq!(
+        *f.downloads.lock().unwrap(),
+        ["a"],
+        "fr was never downloaded"
+    );
 }
 
 #[tokio::test]
@@ -116,9 +130,16 @@ async fn folder_and_embedded_beat_opensubtitles() {
         ],
     );
     let wanted = langs(&["en"]);
-    let out = fetch_for_video(&f, &VideoRequest { video: &v, file_id: Some(1), languages: &wanted })
-        .await
-        .unwrap();
+    let out = fetch_for_video(
+        &f,
+        &VideoRequest {
+            video: &v,
+            file_id: Some(1),
+            languages: &wanted,
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(out.saved[0].source, "putio_embedded");
     assert_eq!(*f.downloads.lock().unwrap(), ["emb"]);
 }
@@ -138,9 +159,16 @@ async fn a_bad_candidate_falls_to_the_next() {
         ],
     );
     let wanted = langs(&["en"]);
-    let out = fetch_for_video(&f, &VideoRequest { video: &v, file_id: Some(1), languages: &wanted })
-        .await
-        .unwrap();
+    let out = fetch_for_video(
+        &f,
+        &VideoRequest {
+            video: &v,
+            file_id: Some(1),
+            languages: &wanted,
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(out.saved[0].source, "opensubtitles");
     assert_eq!(out.warnings.len(), 1);
     assert_eq!(*f.downloads.lock().unwrap(), ["bad", "good"]);
@@ -156,9 +184,16 @@ async fn an_existing_sidecar_is_kept_and_not_fetched() {
         vec![("a", Ok(SRT.as_bytes().to_vec()))],
     );
     let wanted = langs(&["en"]);
-    let out = fetch_for_video(&f, &VideoRequest { video: &v, file_id: Some(1), languages: &wanted })
-        .await
-        .unwrap();
+    let out = fetch_for_video(
+        &f,
+        &VideoRequest {
+            video: &v,
+            file_id: Some(1),
+            languages: &wanted,
+        },
+    )
+    .await
+    .unwrap();
     assert!(out.saved.is_empty());
     assert_eq!(out.present, ["en"]);
     assert_eq!(
@@ -185,10 +220,21 @@ async fn forced_and_sdh_go_to_their_own_names() {
         ],
     );
     let wanted = langs(&["en"]);
-    let out = fetch_for_video(&f, &VideoRequest { video: &v, file_id: Some(1), languages: &wanted })
-        .await
-        .unwrap();
-    for n in ["Movie.2020.en.srt", "Movie.2020.en.forced.srt", "Movie.2020.en.sdh.srt"] {
+    let out = fetch_for_video(
+        &f,
+        &VideoRequest {
+            video: &v,
+            file_id: Some(1),
+            languages: &wanted,
+        },
+    )
+    .await
+    .unwrap();
+    for n in [
+        "Movie.2020.en.srt",
+        "Movie.2020.en.forced.srt",
+        "Movie.2020.en.sdh.srt",
+    ] {
         assert!(dir.path().join(n).exists(), "{n}");
     }
     let kinds: Vec<_> = out.saved.iter().map(|s| s.kind).collect();
@@ -204,9 +250,16 @@ async fn forced_alone_does_not_fill_the_main_slot() {
         vec![("f", Ok(SRT.as_bytes().to_vec()))],
     );
     let wanted = langs(&["en"]);
-    let out = fetch_for_video(&f, &VideoRequest { video: &v, file_id: Some(1), languages: &wanted })
-        .await
-        .unwrap();
+    let out = fetch_for_video(
+        &f,
+        &VideoRequest {
+            video: &v,
+            file_id: Some(1),
+            languages: &wanted,
+        },
+    )
+    .await
+    .unwrap();
     assert!(!dir.path().join("Movie.2020.en.srt").exists());
     assert_eq!(out.missing, ["en"]);
 }
@@ -224,9 +277,16 @@ async fn vtt_and_latin1_are_saved_as_utf8_srt() {
         vec![("v", Ok(VTT.as_bytes().to_vec())), ("l", Ok(latin1))],
     );
     let wanted = langs(&["en", "es"]);
-    fetch_for_video(&f, &VideoRequest { video: &v, file_id: Some(1), languages: &wanted })
-        .await
-        .unwrap();
+    fetch_for_video(
+        &f,
+        &VideoRequest {
+            video: &v,
+            file_id: Some(1),
+            languages: &wanted,
+        },
+    )
+    .await
+    .unwrap();
     let en = std::fs::read_to_string(dir.path().join("Movie.2020.en.srt")).unwrap();
     assert!(en.contains("00:00:01,000 --> 00:00:02,000") && en.contains("Hello vtt"));
     let es = std::fs::read_to_string(dir.path().join("Movie.2020.es.srt")).unwrap();
@@ -240,16 +300,30 @@ async fn put_io_unavailable_is_not_an_error_but_a_failure_is() {
     let wanted = langs(&["en"]);
     let mut f = fake(vec![], vec![]);
     f.list = Err(SourceError::Unavailable("gone".into()));
-    let out = fetch_for_video(&f, &VideoRequest { video: &v, file_id: Some(1), languages: &wanted })
-        .await
-        .unwrap();
+    let out = fetch_for_video(
+        &f,
+        &VideoRequest {
+            video: &v,
+            file_id: Some(1),
+            languages: &wanted,
+        },
+    )
+    .await
+    .unwrap();
     assert!(out.none_found());
     assert_eq!(out.missing, ["en"]);
 
     f.list = Err(SourceError::Failed("503".into()));
-    let err = fetch_for_video(&f, &VideoRequest { video: &v, file_id: Some(1), languages: &wanted })
-        .await
-        .unwrap_err();
+    let err = fetch_for_video(
+        &f,
+        &VideoRequest {
+            video: &v,
+            file_id: Some(1),
+            languages: &wanted,
+        },
+    )
+    .await
+    .unwrap_err();
     assert_eq!(err, EngineError::Failed("503".into()));
 }
 
@@ -262,9 +336,16 @@ async fn a_download_that_fails_on_the_network_is_retried_by_the_step() {
         vec![("a", Err(SourceError::Failed("reset".into())))],
     );
     let wanted = langs(&["en"]);
-    let err = fetch_for_video(&f, &VideoRequest { video: &v, file_id: Some(1), languages: &wanted })
-        .await
-        .unwrap_err();
+    let err = fetch_for_video(
+        &f,
+        &VideoRequest {
+            video: &v,
+            file_id: Some(1),
+            languages: &wanted,
+        },
+    )
+    .await
+    .unwrap_err();
     assert_eq!(err, EngineError::Failed("reset".into()));
 }
 
@@ -274,9 +355,16 @@ async fn no_file_id_means_no_put_io_calls() {
     let v = video(&dir);
     let f = fake(vec![sub("a", "en", "English", "mkv")], vec![]);
     let wanted = langs(&["en"]);
-    let out = fetch_for_video(&f, &VideoRequest { video: &v, file_id: None, languages: &wanted })
-        .await
-        .unwrap();
+    let out = fetch_for_video(
+        &f,
+        &VideoRequest {
+            video: &v,
+            file_id: None,
+            languages: &wanted,
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(out.missing, ["en"]);
     assert!(f.downloads.lock().unwrap().is_empty());
 }

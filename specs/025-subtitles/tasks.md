@@ -44,24 +44,24 @@
 
 ### Tests for US1 (write first, must fail)
 
-- [ ] T026 [P] [US1] Engine test: en saved from Put.io, es missing, fr ignored, in `putio-sync-subtitles/tests/putio_pass.rs`
-- [ ] T027 [P] [US1] Engine tests: ranking folder/embedded over opensubtitles, failed candidate falls to next, existing `.en.srt` kept and not fetched, forced/sdh saved to own names, VTT and latin-1 converted, in `putio-sync-subtitles/tests/putio_pass.rs`
-- [ ] T028 [P] [US1] Pipeline tests: no languages gives stage skipped `not_configured`; excluded category gives `category`; season pack gives one step per video; samples and files under 100 MB skipped; zero videos gives `no_video`, in `putio-sync-pipeline/tests/subtitles.rs`
-- [ ] T029 [P] [US1] Pipeline tests: Subtitles step failure retries per `optional_retries` then item is `done_with_warnings`; gate keeps Radarr/Sonarr pending until the stage ends; staging mode writes inside the staging folder, in `putio-sync-pipeline/tests/subtitles.rs`
-- [ ] T030 [P] [US1] Delete-wait tests: gate defers, row persisted, not released before the stage ends, released after, released by the 24 h failsafe, restart keeps the row, `delete_remote` refuses a download not completed, in `putio-sync-pipeline/tests/deferred_delete.rs`
+- [x] T026 [P] [US1] Engine test: en saved from Put.io, es missing, fr ignored, in `putio-sync-subtitles/tests/putio_pass.rs`
+- [x] T027 [P] [US1] Engine tests: ranking folder/embedded over opensubtitles, failed candidate falls to next, existing `.en.srt` kept and not fetched, forced/sdh saved to own names, VTT and latin-1 converted, in `putio-sync-subtitles/tests/putio_pass.rs`
+- [x] T028 [P] [US1] Pipeline tests: no languages gives stage skipped `not_configured`; excluded category gives `category`; season pack gives one step per video; samples and files under 100 MB skipped; zero videos gives `no_video`, in `putio-sync-pipeline/tests/subtitles.rs`
+- [x] T029 [P] [US1] Pipeline tests: Subtitles step failure retries per `optional_retries` then item is `done_with_warnings`; gate keeps Radarr/Sonarr pending until the stage ends; staging mode writes inside the staging folder, in `putio-sync-pipeline/tests/subtitles.rs`
+- [x] T030 [P] [US1] Delete-wait tests: gate defers, row persisted, not released before the stage ends, released after, released by the 24 h failsafe, restart keeps the row, `delete_remote` refuses a download not completed, in `putio-sync-pipeline/tests/deferred_delete.rs`
 - [ ] T031 [P] [US1] Config/API tests: GET/PUT `/settings/subtitles` (validation, masked key, applies now), preview, secrets sweep covers the key, in `putio-sync-api/tests/settings.rs` and `putio-sync-api/tests/secrets_sweep.rs`
 
 ### Implementation for US1
 
-- [ ] T032 [US1] Implement `fetch_for_video` Put.io pass (existing sidecars, list, select, download, convert, write, outcome) in `putio-sync-subtitles/src/engine.rs`
-- [ ] T033 [US1] Plan the Subtitles stage (`SubtitleScan` step, `not_configured`/`category` skips via `applies_to`) in `putio-sync-pipeline/src/plan.rs`
-- [ ] T034 [US1] Implement scan (locate files, video/size/sample rules, `insert_steps`, `no_video`) and per-video step runner in `putio-sync-pipeline/src/subtitles.rs`; wire dispatch in `putio-sync-pipeline/src/runner.rs`
-- [ ] T035 [US1] Count subtitle-step failures as warnings in `finalize()`, add the new kinds to `refresh_gate()` in `putio-sync-pipeline/src/gate.rs`, make `Settings::staging_on` (Auto) true when subtitles are configured
-- [ ] T036 [US1] Inject `Arc<dyn SubtitleSource>` and the subtitles config into `Pipeline`; add `configure` support for live config in `putio-sync-pipeline/src/lib.rs`
-- [ ] T037 [US1] Add `RemoteDeleteGate` trait, `set_delete_gate`, deferral in `process_queue`, and `DownloadManager::delete_remote` (re-verifies completed row) in `putio-sync-download/src/manager.rs`
-- [ ] T038 [US1] Implement the gate in the pipeline plus `releasable_deletes()`/`mark_deleted` in `putio-sync-pipeline/src/deletes.rs`
-- [ ] T039 [US1] Wire the source, the gate and the per-tick release into `pipeline_tick_with` in `putio-sync-daemon/src/daemon.rs`
-- [ ] T040 [US1] Record metrics and structured logs (saved, candidate failed) in the engine; key never logged
+- [x] T032 [US1] Implement `fetch_for_video` Put.io pass (existing sidecars, list, select, download, convert, write, outcome) in `putio-sync-subtitles/src/engine.rs`
+- [x] T033 [US1] Plan the Subtitles stage (`SubtitleScan` step, `not_configured`/`category` skips via `applies_to`) in `putio-sync-pipeline/src/plan.rs`
+- [x] T034 [US1] Implement scan (locate files, video/size/sample rules, `insert_steps`, `no_video`) and per-video step runner in `putio-sync-pipeline/src/subtitles.rs`; wire dispatch in `putio-sync-pipeline/src/runner.rs`
+- [x] T035 [US1] Count subtitle-step failures as warnings in `finalize()`, add the new kinds to `refresh_gate()` in `putio-sync-pipeline/src/gate.rs`, make `Settings::staging_on` (Auto) true when subtitles are configured
+- [x] T036 [US1] Inject `Arc<dyn SubtitleSource>` and the subtitles config into `Pipeline`; add `configure` support for live config in `putio-sync-pipeline/src/lib.rs`
+- [x] T037 [US1] Add `RemoteDeleteGate` trait, `set_delete_gate`, deferral in `process_queue`, and `DownloadManager::delete_remote` (re-verifies completed row) in `putio-sync-download/src/manager.rs`
+- [x] T038 [US1] Implement the gate in the pipeline plus `releasable_deletes()`/`mark_deleted` in `putio-sync-pipeline/src/deletes.rs`
+- [x] T039 [US1] Wire the source, the gate and the per-tick release into `pipeline_tick_with` in `putio-sync-daemon/src/daemon.rs`
+- [x] T040 [US1] Record metrics and structured logs (saved, candidate failed) in the engine; key never logged
 - [ ] T041 [US1] Settings routes `GET/PUT /settings/subtitles` and `POST /settings/subtitles/preview`, `configure_subtitles`, group registration in `putio-sync-api/src/routes/system/subtitles.rs`, `settings.rs`, `assistant.rs`
 - [ ] T042 [P] [US1] Subtitles settings card (languages, excluded categories) in `putio-sync-api/ui/settings/integrations.js`, register in `putio-sync-api/ui/settings/sections.js`; extend `putio-sync-api/tests/ui/settings_sections.test.mjs`
 - [ ] T043 [P] [US1] Show subtitle step names, sources and "Waiting for subtitles" in the timeline UI; extend `putio-sync-api/tests/ui/timeline.test.mjs`

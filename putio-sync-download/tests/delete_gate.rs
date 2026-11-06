@@ -87,12 +87,16 @@ async fn a_gate_answer_holds_the_delete_and_records_it() {
         .expect(0)
         .create_async()
         .await;
-    s.manager.set_delete_gate(Arc::new(Defer(Some("transfer:3"))));
+    s.manager
+        .set_delete_gate(Arc::new(Defer(Some("transfer:3"))));
     assert!(s.manager.process_queue().await.unwrap());
     delete.assert_async().await;
     let rows = s.db.deferred_deletes().list().await.unwrap();
     assert_eq!(rows.len(), 1);
-    assert_eq!((rows[0].file_id, rows[0].item_key.as_str()), (7, "transfer:3"));
+    assert_eq!(
+        (rows[0].file_id, rows[0].item_key.as_str()),
+        (7, "transfer:3")
+    );
 }
 
 #[tokio::test]
@@ -134,7 +138,8 @@ async fn delete_remote_deletes_completed_downloads_and_refuses_the_rest() {
         .await;
     // 2 is not completed and 3 has no row: only 1 goes
     let done = s.manager.delete_remote(&[1, 2, 3]).await;
-    assert_eq!(done, [1]);
+    assert_eq!(done.deleted, [1]);
+    assert_eq!(done.refused, [2], "3 has no row and is left to try again");
     delete.assert_async().await;
-    assert!(s.manager.delete_remote(&[2, 3]).await.is_empty());
+    assert!(s.manager.delete_remote(&[2, 3]).await.deleted.is_empty());
 }

@@ -30,8 +30,8 @@ pub use files::{
 pub use manager::{
     ActiveDownload, DeferFuture, DownloadConfig, DownloadFile, DownloadManager,
     DownloadOperationResult, PathRedirect, PreviewDownload, PreviewItem, RedirectFuture,
-    RemoteDeleteGate, RulePreview, SyncStats, TransfersSnapshot, TreeDecision, TreeFile,
-    TreeReport, VerifySettings, WorkerStats, PREVIEW_DOWNLOADS, PREVIEW_ITEMS,
+    RemoteDeleteGate, RemoteDeletes, RulePreview, SyncStats, TransfersSnapshot, TreeDecision,
+    TreeFile, TreeReport, VerifySettings, WorkerStats, PREVIEW_DOWNLOADS, PREVIEW_ITEMS,
 };
 pub use progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 pub use rate_limiter::RateLimiter;

@@ -179,6 +179,11 @@ impl Pipeline {
             .expect("settings lock")
     }
 
+    /// Take subtitles from Put.io through `client`
+    pub fn use_putio(&self, client: Arc<putio_sync_client::PutioApiClient>) {
+        self.set_subtitle_source(client);
+    }
+
     /// Where Put.io's subtitles come from (the daemon gives the real client, tests a fake)
     pub fn set_subtitle_source(&self, source: Arc<dyn SubtitleSource>) {
         *self.inner.source.write().unwrap() = Some(source);
