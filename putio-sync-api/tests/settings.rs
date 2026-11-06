@@ -776,6 +776,91 @@ async fn hooks_save_masks_values_and_applies_now() {
     assert_eq!(saved(&app).hooks[0].headers["Authorization"], "Bearer new");
 }
 
+/// Feature 038: a hook that is a pipeline step keeps its stage, order and flags, and a bad
+/// step is refused naming the hook
+#[tokio::test]
+async fn pipeline_step_hooks_save_in_order_and_bad_ones_are_refused() {
+    let app = test_app().await;
+    let step = |name: &str, stage: &str| {
+        json!({
+            "name": name, "events": [], "command": ["/bin/true"], "timeout_secs": 10,
+            "stage": stage, "required": false, "categories": ["radarr"]
+        })
+    };
+    let hooks = json!({ "hooks": [step("b", "post_processing"), step("a", "post_processing"), step("c", "pre_download")] });
+    let (status, body) = put(&app, "/settings/hooks", hooks).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let view = get_ok(&app, "/settings/hooks").await;
+    let names: Vec<_> = view["hooks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        ["b", "a", "c"],
+        "list order is the order inside a stage"
+    );
+    assert_eq!(view["hooks"][0]["stage"], "post_processing");
+    assert_eq!(view["hooks"][0]["required"], false);
+    assert_eq!(view["hooks"][0]["categories"], json!(["radarr"]));
+
+    // A step takes no events
+    let mut bad = step("x", "post_processing");
+    bad["events"] = json!(["download.finished"]);
+    let (status, body) = put(&app, "/settings/hooks", json!({ "hooks": [bad] })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("\"x\""), "{body}");
+    assert_eq!(saved(&app).hooks.len(), 3, "a refused save changes nothing");
+}
+
+#[tokio::test]
+async fn pipeline_settings_validate_and_apply_now() {
+    let mut app = test_app().await;
+    let pipeline = app.attach_pipeline().await;
+    let view = get_ok(&app, "/settings/pipeline").await;
+    assert_eq!(view["concurrency"], 2);
+    assert_eq!(view["optional_retries"], json!([60, 300, 600]));
+    assert_eq!(view["staging"], "auto");
+
+    let (status, body) = put(
+        &app,
+        "/settings/pipeline",
+        json!({"concurrency": 4, "optional_retries": [5, 10], "staging": "off"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body["message"].as_str().unwrap().contains("Applies now"),
+        "{body}"
+    );
+    let stored = saved(&app).pipeline;
+    assert_eq!(
+        (stored.concurrency, stored.optional_retries.clone()),
+        (4, vec![5, 10])
+    );
+    let _ = pipeline;
+
+    for bad in [
+        json!({"concurrency": 0}),
+        json!({"concurrency": 17}),
+        json!({"optional_retries": [1,1,1,1,1,1,1,1,1,1,1]}),
+        json!({"staging": "maybe"}),
+    ] {
+        let (status, body) = put(&app, "/settings/pipeline", bad.clone()).await;
+        assert!(
+            status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY,
+            "{bad}: {status} {body}"
+        );
+    }
+    assert_eq!(
+        saved(&app).pipeline.concurrency,
+        4,
+        "refused saves change nothing"
+    );
+}
+
 #[tokio::test]
 async fn a_bad_hook_is_400_naming_hook_and_field() {
     let app = test_app().await;

@@ -35,7 +35,7 @@
     `failed`, `cancelled`, `skipped`;
   - `SkipReason`: `not_configured`, `category`, `operator`, `hook`;
   - DB string round-trip tests.
-- [ ] T005 [P] Add the config to `putio-sync-core/src/config.rs`:
+- [x] T005 [P] Add the config to `putio-sync-core/src/config.rs`:
   - a `[pipeline]` section:
     - `concurrency`, default 2, "1..=16";
     - `optional_retries`, default `[60, 300, 600]`, "≤ 10 entries";
@@ -123,7 +123,7 @@
   item has pre-download hooks and no file of it has started, place a 039 hold with reason
   `pre-download`. Release the hold when the hooks pass. A hook skip ends the item as
   `skipped`, and its queued files are removed through the existing queue cancel.
-- [ ] T018 [US2] Extend the hook editor in `putio-sync-api/ui/` and the settings route in
+- [x] T018 [US2] Extend the hook editor in `putio-sync-api/ui/` and the settings route in
   `putio-sync-api/src/routes/system/settings.rs` (`apply_hooks`):
   - "Runs as" (event hook, or a stage), Required, Categories;
   - order within a stage;
@@ -179,7 +179,7 @@
 
 ## Phase 8: Polish
 
-- [ ] T028 [P] Add the `GET`/`PUT /settings/pipeline` routes and the Settings › Pipeline group
+- [x] T028 [P] Add the `GET`/`PUT /settings/pipeline` routes and the Settings › Pipeline group
   in `putio-sync-api/ui/`.
 - [ ] T029 [P] Update `README.md` (Pipeline section), `EVENTS.md` (pipeline hooks: input, exit
   codes, the idempotency note) and `CHANGELOG.md` (Unreleased › Added).

@@ -219,6 +219,23 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
         )],
     ),
     (
+        "pipeline",
+        &[
+            (
+                "concurrency",
+                "How many items run their processing steps at once",
+            ),
+            (
+                "optional_retries",
+                "Seconds to wait before each retry of a failing optional step; the step is given up after the last",
+            ),
+            (
+                "staging",
+                "Whether a watch-folder download is kept out of sight until its steps are done: auto, on or off",
+            ),
+        ],
+    ),
+    (
         "plugins",
         &[
             ("plugins_dir", "Folder of Lua plugins; empty for plugins next to the config"),
@@ -480,6 +497,9 @@ async fn import_settings(
         state.cleanup.configure(&candidate);
         state.storage.configure(&candidate);
         state.hooks.configure(candidate.hooks.clone());
+        if let Some(pipeline) = &state.pipeline {
+            pipeline.configure(&candidate);
+        }
         state.plugins.configure(candidate.plugins.clone());
         let plugins_dir = putio_sync_core::plugins::dir_for(
             candidate.plugins_dir.as_deref(),

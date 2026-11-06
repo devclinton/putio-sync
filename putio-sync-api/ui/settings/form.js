@@ -105,6 +105,11 @@ function form(g, data, reload, help, ctx, start = null) {
       input = h("textarea", { class: "input", id, rows: 3, spellcheck: "false" });
       input.value = (value || []).join("\n");
       inputs[name] = () => input.value.split("\n").map((s) => s.trim()).filter(Boolean);
+    } else if (kind === "ln") {
+      // One number per line
+      input = h("textarea", { class: "input", id, rows: 3, spellcheck: "false" });
+      input.value = (value || []).join("\n");
+      inputs[name] = () => input.value.split("\n").map((s) => s.trim()).filter(Boolean).map(Number);
     } else {
       const num = kind[0] === "n";
       const optional = kind.endsWith("?");

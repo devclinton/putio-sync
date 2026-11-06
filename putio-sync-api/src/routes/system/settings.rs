@@ -15,6 +15,8 @@
 //! - PUT  /settings/tailscale - Update the Tailscale settings
 //! - GET  /settings/hooks - Get the event hooks, header and env values masked (feature 027)
 //! - PUT  /settings/hooks - Replace the event hooks; a masked value keeps the stored one
+//! - GET  /settings/pipeline - Get the processing pipeline settings (feature 038)
+//! - PUT  /settings/pipeline - Replace them; they apply now
 //! - GET  /settings/plugins - Get the plugins folder and plugin settings, secrets masked
 //!   (feature 028)
 //! - PUT  /settings/plugins - Replace them; checked against the manifests, applied now
@@ -40,8 +42,8 @@ pub use crate::AppState;
 use crate::Engine;
 use putio_sync_core::assistant::Change;
 use putio_sync_core::config::{
-    CleanupConfig, Config, NotificationBackend, PrecheckConfig, PrecheckOverride, ProgressStyle,
-    SortOrder, StorageConfig, TailscaleConfig,
+    CleanupConfig, Config, NotificationBackend, PipelineConfig, PrecheckConfig, PrecheckOverride,
+    ProgressStyle, SortOrder, StorageConfig, TailscaleConfig,
 };
 use putio_sync_core::error::CoreError;
 use putio_sync_core::logging::ConsoleFormat;
@@ -150,7 +152,7 @@ pub(crate) struct GroupInfo {
     pub when: &'static str,
 }
 
-/// The twelve groups. Defaults are the default config's, with the current download
+/// The thirteen groups. Defaults are the default config's, with the current download
 /// folder kept: resetting it is almost never what a user means.
 pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
     let mut defaults = Config::default();
@@ -193,6 +195,11 @@ pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
             "hooks",
             json(serde_json::to_value(hooks_view(&defaults))),
             live_hooks(),
+        ),
+        group(
+            "pipeline",
+            json(serde_json::to_value(pipeline_view(&defaults))),
+            live_pipeline(),
         ),
         group(
             "plugins",
@@ -616,6 +623,8 @@ pub fn router() -> Router<AppState> {
         .route("/tailscale", put(update_tailscale_settings))
         .route("/hooks", get(get_hooks_settings))
         .route("/hooks", put(update_hooks_settings))
+        .route("/pipeline", get(get_pipeline_settings))
+        .route("/pipeline", put(update_pipeline_settings))
         .route("/plugins", get(get_plugins_settings))
         .route("/plugins", put(update_plugins_settings))
         .route("/putio", get(get_putio_settings))
@@ -629,6 +638,7 @@ pub fn router() -> Router<AppState> {
         .route("/precheck/preview", post(preview_precheck))
         .route("/tailscale/preview", post(preview_tailscale))
         .route("/hooks/preview", post(preview_hooks))
+        .route("/pipeline/preview", post(preview_pipeline))
         .route("/plugins/preview", post(preview_plugins))
         .route("/putio/preview", post(preview_putio))
         .merge(super::network::settings_router())
@@ -1326,6 +1336,7 @@ async fn update_hooks_settings(
         changed.push("hooks".to_string());
     }
     state.hooks.configure(hooks);
+    configure_pipeline(&state).await;
     let (live, when) = live_hooks();
     Ok(Json(SuccessResponse {
         message: saved_message("Hooks", &changed, live, when, &[]),
@@ -1349,6 +1360,66 @@ fn hooks_view(config: &Config) -> HooksSettings {
     HooksSettings {
         hooks: putio_sync_core::hooks::mask(&config.hooks),
     }
+}
+
+/// Give the processing pipeline the saved config: its hooks, concurrency and staging
+async fn configure_pipeline(state: &AppState) {
+    if let Some(pipeline) = &state.pipeline {
+        pipeline.configure(&*state.config.read().await);
+    }
+}
+
+/// Get the processing pipeline settings (`[pipeline]`, feature 038)
+///
+/// GET /settings/pipeline
+async fn get_pipeline_settings(State(state): State<AppState>) -> Json<PipelineConfig> {
+    Json(pipeline_view(&*state.config.read().await))
+}
+
+/// Replace the processing pipeline settings
+///
+/// PUT /settings/pipeline. Applies now: a new concurrency or staging mode is used by the
+/// next step.
+async fn update_pipeline_settings(
+    State(state): State<AppState>,
+    settings: Result<Json<PipelineConfig>, JsonRejection>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let settings = body(settings)?;
+    let changed = update(&state, pipeline_view, |config| {
+        config.pipeline = settings;
+        Ok(())
+    })
+    .await?;
+    configure_pipeline(&state).await;
+    let (live, when) = live_pipeline();
+    Ok(Json(SuccessResponse {
+        message: saved_message("Pipeline", &changed, live, when, &[]),
+    }))
+}
+
+/// POST /settings/pipeline/preview
+async fn preview_pipeline(
+    State(state): State<AppState>,
+    settings: Result<Json<PipelineConfig>, JsonRejection>,
+) -> Result<Json<Preview>, ApiError> {
+    let settings = body(settings)?;
+    Ok(preview(&state, pipeline_view, live_pipeline(), |c| {
+        c.pipeline = settings;
+        Ok(())
+    })
+    .await)
+}
+
+/// Pipeline settings apply without a restart under both engines
+pub(crate) fn live_pipeline() -> (&'static [&'static str], &'static str) {
+    (
+        &["concurrency", "optional_retries", "staging"],
+        "Applies now",
+    )
+}
+
+fn pipeline_view(config: &Config) -> PipelineConfig {
+    config.pipeline.clone()
 }
 
 /// Get the plugins folder and plugin settings

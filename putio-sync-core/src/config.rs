@@ -2779,6 +2779,41 @@ mod tests {
         }
     }
 
+    #[test]
+    fn pipeline_defaults_and_rules() {
+        let config: super::Config = toml::from_str("").unwrap();
+        assert_eq!(config.pipeline.concurrency, 2);
+        assert_eq!(config.pipeline.optional_retries, vec![60, 300, 600]);
+        assert_eq!(config.pipeline.staging, super::StagingMode::Auto);
+        assert!(config.validate().is_ok());
+
+        let config: super::Config = toml::from_str(
+            "[pipeline]\nconcurrency = 4\noptional_retries = []\nstaging = \"off\"\n",
+        )
+        .unwrap();
+        assert_eq!(config.pipeline.concurrency, 4);
+        assert!(config.pipeline.optional_retries.is_empty());
+        assert_eq!(config.pipeline.staging, super::StagingMode::Off);
+
+        for (n, ok) in [(1, true), (16, true), (0, false), (17, false)] {
+            let pipeline = super::PipelineConfig {
+                concurrency: n,
+                ..Default::default()
+            };
+            assert_eq!(pipeline.validate().is_ok(), ok, "concurrency {n}");
+        }
+        let many = super::PipelineConfig {
+            optional_retries: vec![1; 11],
+            ..Default::default()
+        };
+        assert!(many
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("at most 10"));
+        assert!(toml::from_str::<super::Config>("[pipeline]\nstaging = \"maybe\"\n").is_err());
+    }
+
     use super::*;
     use tempfile::TempDir;
 

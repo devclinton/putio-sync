@@ -35,6 +35,7 @@ test("config keys map to sections", () => {
   assert.equal(sectionOfKey("watch.paths"), "putio");
   assert.equal(sectionOfKey("cleanup.enabled"), "putio");
   assert.equal(sectionOfKey("hooks"), "integrations");
+  assert.equal(sectionOfKey("pipeline.concurrency"), "integrations");
   assert.equal(sectionOfKey("plugins"), "plugins");
   assert.equal(sectionOfKey("logging.level"), "advanced");
   assert.equal(sectionOfKey("notifications.enabled"), "general");
