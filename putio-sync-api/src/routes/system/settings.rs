@@ -1386,6 +1386,11 @@ async fn update_pipeline_settings(
 ) -> Result<Json<SuccessResponse>, ApiError> {
     let settings = body(settings)?;
     let changed = update(&state, pipeline_view, |config| {
+        // Staging needs a rename inside one filesystem (R5)
+        if settings.staging != putio_sync_core::config::StagingMode::Off {
+            putio_sync_pipeline::staging::check_same_device(&config.download.target_directory)
+                .map_err(|e| ApiError::BadRequest(format!("staging: {e}")))?;
+        }
         config.pipeline = settings;
         Ok(())
     })

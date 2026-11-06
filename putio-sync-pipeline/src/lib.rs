@@ -100,6 +100,8 @@ pub(crate) struct Inner {
     pub missed: Mutex<HashMap<String, u32>>,
     /// The database's clock when the service was built; only later finishes are picked up
     pub started_at: String,
+    /// Set when a staging folder is on another filesystem: no staging until a restart
+    pub staging_off: std::sync::atomic::AtomicBool,
 }
 
 /// The processing pipeline service. Cheap to clone.
@@ -130,6 +132,7 @@ impl Pipeline {
                 gate: Gate::default(),
                 missed: Mutex::new(HashMap::new()),
                 started_at,
+                staging_off: std::sync::atomic::AtomicBool::new(false),
             }),
         }
     }
@@ -185,6 +188,7 @@ impl Pipeline {
             ),
             Err(e) => warn!(error = %e, "Could not mark running pipeline steps interrupted"),
         }
+        self.check_staging();
         self.refresh_gate().await;
     }
 

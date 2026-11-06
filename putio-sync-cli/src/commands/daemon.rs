@@ -255,6 +255,9 @@ pub async fn execute_daemon(
     };
     if let Some(pipeline) = &pipeline {
         daemon = daemon.with_pipeline(pipeline.clone());
+        if let Some(manager) = daemon.get_download_manager() {
+            manager.set_redirect(pipeline.clone());
+        }
     }
 
     // One plugins service likewise (feature 028)

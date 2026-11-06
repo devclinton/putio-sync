@@ -135,7 +135,7 @@
   pending for a locally done item, `percentDone` is 0.99, `leftUntilDone` is
   `max(1, total/100)`, `status` is downloading and `errorString` is empty. When the gate
   clears, it reads 1.0 and done. With `NoGate`, the output is the same as today.
-- [ ] T020 [P] [US3] Write `putio-sync-pipeline/tests/staging.rs`:
+- [x] T020 [P] [US3] Write `putio-sync-pipeline/tests/staging.rs`:
   - files go into `<category>/.putio-sync-staging/<item>/`;
   - the category listing never shows the item until one rename;
   - an existing target is renamed to `<item> (2)`;
@@ -145,13 +145,13 @@
   answers from an in-memory map that is refreshed on every step change, with no DB query per
   `torrent-get`. Pass it to `putio-sync-arr` (`view::torrent` and its service) in the daemon
   wiring.
-- [ ] T022 [US3] Write staging in `putio-sync-pipeline/src/staging.rs` and in
+- [x] T022 [US3] Write staging in `putio-sync-pipeline/src/staging.rs` and in
   `putio-sync-download/src/pipeline.rs`:
   - give the target dir for watch-folder items when staging is in effect;
   - rename into place after the last file-changing step;
   - check `st_dev` at start and on config save, which a `[pipeline] staging` save refuses
     with a field error.
-- [ ] T023 [US3] Make a hold (039) pause the pipeline between steps: the item becomes `held`.
+- [x] T023 [US3] Make a hold (039) pause the pipeline between steps: the item becomes `held`.
   Releasing the hold returns it to its last state. Test this in
   `putio-sync-pipeline/tests/stages.rs`.
 

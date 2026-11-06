@@ -134,6 +134,11 @@ pub async fn finished(db: &Database, key: &str, outcome: FinishedOutcome) {
 /// An item already downloaded and waiting for its processing steps, with its plan from the
 /// pipeline's own configuration
 pub async fn downloaded_item(env: &Env, key: &str, dir: &Path) {
+    downloaded_item_named(env, key, &format!("name-of-{key}"), dir).await;
+}
+
+/// Like [`downloaded_item`], with the item's name
+pub async fn downloaded_item_named(env: &Env, key: &str, name: &str, dir: &Path) {
     let steps = putio_sync_pipeline::plan::plan(
         putio_sync_pipeline::plan::PlanInput {
             category: Some("sonarr"),
@@ -146,7 +151,7 @@ pub async fn downloaded_item(env: &Env, key: &str, dir: &Path) {
         .insert_item(
             &NewItem {
                 key: key.to_string(),
-                name: format!("name-of-{key}"),
+                name: name.to_string(),
                 category: Some("sonarr".to_string()),
                 source: "arr".to_string(),
                 dir: dir.to_string_lossy().into_owned(),

@@ -291,3 +291,42 @@ async fn steps_in_one_branch_run_in_position_order() {
     let log = std::fs::read_to_string(env.dir.path().join("o.log")).unwrap();
     assert_eq!(log.lines().collect::<Vec<_>>(), ["one", "two"]);
 }
+
+#[tokio::test]
+async fn a_hold_pauses_the_item_between_steps_and_release_goes_on() {
+    let env = env_with(|dir| {
+        vec![hook(
+            "tidy",
+            HookStage::PostProcessing,
+            script(dir, "tidy", "true"),
+        )]
+    })
+    .await;
+    downloaded_item(&env, "transfer:3", env.dir.path()).await;
+    env.db.holds().add(3, "name-of-transfer:3").await.unwrap();
+    env.pipeline.on_tick(&view(vec![])).await;
+    let t = env.pipeline.timeline("transfer:3").await.unwrap();
+    assert_eq!(t.state, ItemState::Held);
+
+    env.pipeline.run_due().await;
+    let t = env.pipeline.timeline("transfer:3").await.unwrap();
+    assert_eq!(t.state, ItemState::Held, "no step starts while held");
+    let steps = env.store.steps("transfer:3").await.unwrap();
+    assert!(steps
+        .iter()
+        .filter(|s| s.name == "tidy")
+        .all(|s| s.state == StepState::Waiting));
+
+    env.db.holds().remove(3).await.unwrap();
+    env.pipeline.on_tick(&view(vec![])).await;
+    assert_eq!(
+        env.pipeline.timeline("transfer:3").await.unwrap().state,
+        ItemState::Running,
+        "release returns it to running"
+    );
+    env.pipeline.run_due().await;
+    assert_eq!(
+        env.pipeline.timeline("transfer:3").await.unwrap().state,
+        ItemState::Done
+    );
+}
