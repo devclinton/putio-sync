@@ -165,3 +165,4 @@ Setup 3, Foundational 22, US1 18, US2 12, US3 7, Polish 6. Total 68.
 - T067 (Docker image size with ffmpeg) and T068 (run against the real Put.io API) were not done: no Docker build and
   no real Put.io token in this run. Real subtitle `source` strings, the subtitle download path and forced/SDH names
   are still the ones in `contracts/putio-subtitles.md`, marked unconfirmed there.
+- UI bundle cap raised from 448 KiB to 480 KiB (`assets_total_under_480kb`): the Subtitles card, transcription section and Fetch subtitles action brought the UI to 464,011 bytes.
