@@ -24,8 +24,8 @@ jobs:
           else
             VERSION="${{ github.event.inputs.version }}"
           fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "version_no_v=${VERSION#v}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version_no_v=${VERSION#v}" >> "$GITHUB_OUTPUT"
 
       - name: Download release tarball and calculate SHA256
         id: get_sha
@@ -37,7 +37,7 @@ jobs:
           curl -L "${URL}" -o release.tar.gz
 
           SHA256=$(sha256sum release.tar.gz | cut -d' ' -f1)
-          echo "sha256=${SHA256}" >> $GITHUB_OUTPUT
+          echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
           echo "SHA256: ${SHA256}"
 
           rm release.tar.gz
@@ -75,11 +75,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add Formula/putio-sync.rb
-          git commit -m "Update putio-sync to ${VERSION}
-
-Automated update by GitHub Actions
-
-Release: https://github.com/devclinton/putio-sync/releases/tag/${VERSION}"
+          git commit \
+            -m "Update putio-sync to ${VERSION}" \
+            -m "Automated update by GitHub Actions" \
+            -m "Release: https://github.com/devclinton/putio-sync/releases/tag/${VERSION}"
 
           git push
 
@@ -98,14 +97,16 @@ Release: https://github.com/devclinton/putio-sync/releases/tag/${VERSION}"
           VERSION="${{ steps.get_version.outputs.version }}"
           SHA256="${{ steps.get_sha.outputs.sha256 }}"
 
-          echo "## Homebrew Formula Updated" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: ${VERSION}" >> $GITHUB_STEP_SUMMARY
-          echo "- **SHA256**: \`${SHA256}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Repository**: [homebrew-putio-sync](https://github.com/devclinton/homebrew-putio-sync)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Installation" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "brew tap devclinton/putio-sync" >> $GITHUB_STEP_SUMMARY
-          echo "brew install putio-sync" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Homebrew Formula Updated"
+            echo ""
+            echo "- **Version**: ${VERSION}"
+            echo "- **SHA256**: \`${SHA256}\`"
+            echo "- **Repository**: [homebrew-putio-sync](https://github.com/devclinton/homebrew-putio-sync)"
+            echo ""
+            echo "### Installation"
+            echo "\`\`\`bash"
+            echo "brew tap devclinton/putio-sync"
+            echo "brew install putio-sync"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"

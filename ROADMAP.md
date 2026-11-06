@@ -152,5 +152,3 @@ this would fix. Research is in `specs/043-magnet-cache-retry/research.md`.
   service; CI builds amd64 only today.
 - **Flathub**: needs a public repository and probably a desktop wrapper
   around the web UI.
-- **Homebrew workflow**: `.github/workflows/homebrew.yml` is not valid YAML
-  and fails on every push.
