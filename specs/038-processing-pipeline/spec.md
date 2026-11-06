@@ -106,8 +106,8 @@ failed and holds the item. A pre-download hook that answers "skip" stops the dow
 ### User Story 3 - Radarr and Sonarr import only finished items (Priority: P1)
 
 Radarr/Sonarr never import an item while a step that changes files is still to run.
-- **Transmission mode**: the item reports as still downloading, under 100%, with the current
-  step as its status message, until the last file-changing step is done.
+- **Transmission mode**: the item reports as still downloading, under 100%, until the last
+  file-changing step is done. The current step shows on the Active page.
 - **Watch-folder mode**: the item is built in a hidden staging folder on the same disk and is
   moved into place in one rename when its file-changing steps are done.
 
@@ -116,14 +116,14 @@ or the hook's changes exist. That is the main reason the pipeline is needed.
 
 **Independent Test**:
 - Transmission mode: with a slow post-processing hook, the item's percent stays below 100
-  while the hook runs, the status message names the step, and it reaches 100% only after the
+  while the hook runs, the Active page names the step, and it reaches 100% only after the
   hook.
 - Watch-folder mode: the category folder never shows the item until it appears whole.
 
 **Acceptance Scenarios**:
 
 1. **Given** Transmission mode and a post-processing hook, **When** the download finishes,
-   **Then** Radarr's view of the item stays under 100% with "Post-processing: <hook>" until the
+   **Then** Radarr's view of the item stays under 100% (the Active page shows "Post-processing: <hook>") until the
    hook is done.
 2. **Given** watch-folder mode, **When** the item is being downloaded and processed, **Then**
    nothing of it is in the category folder, and after the last file-changing step the whole
@@ -241,7 +241,8 @@ filter, and the per-category switch is ready for 025 and 026 to use.
 - **FR-013**: A step MUST declare whether it changes files. Pipeline hooks do, and so will
   subtitles and translation. Notifications do not.
 - **FR-014**: In Transmission mode, an item MUST report less than 100% done until its last
-  file-changing step is done, and MUST report the current step as its status message.
+  file-changing step is done, and MUST show the current step on the Active page. Transmission has no message
+  field except for errors (research R4).
 - **FR-015**: In watch-folder mode, an item MUST be downloaded and processed in a hidden staging
   folder on the same filesystem as the category folder, and MUST be moved into place in one
   rename when its file-changing steps are done.
