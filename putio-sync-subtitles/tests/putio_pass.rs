@@ -5,6 +5,7 @@ use std::sync::Mutex;
 
 use putio_sync_client::{PutioSubtitle, SubtitleList};
 use putio_sync_subtitles::engine::{fetch_for_video, EngineError, VideoRequest};
+use putio_sync_subtitles::modes::ModePlan;
 use putio_sync_subtitles::naming::SlotKind;
 use putio_sync_subtitles::{BoxFut, SourceError, SubtitleSource};
 
@@ -94,11 +95,7 @@ async fn en_is_saved_es_is_missing_and_fr_is_ignored() {
     let wanted = langs(&["en", "es"]);
     let out = fetch_for_video(
         &f,
-        &VideoRequest {
-            video: &v,
-            file_id: Some(9),
-            languages: &wanted,
-        },
+        &VideoRequest::new(&v, Some(9), &wanted, &ModePlan::legacy(&wanted)),
     )
     .await
     .unwrap();
@@ -132,11 +129,7 @@ async fn folder_and_embedded_beat_opensubtitles() {
     let wanted = langs(&["en"]);
     let out = fetch_for_video(
         &f,
-        &VideoRequest {
-            video: &v,
-            file_id: Some(1),
-            languages: &wanted,
-        },
+        &VideoRequest::new(&v, Some(1), &wanted, &ModePlan::legacy(&wanted)),
     )
     .await
     .unwrap();
@@ -161,11 +154,7 @@ async fn a_bad_candidate_falls_to_the_next() {
     let wanted = langs(&["en"]);
     let out = fetch_for_video(
         &f,
-        &VideoRequest {
-            video: &v,
-            file_id: Some(1),
-            languages: &wanted,
-        },
+        &VideoRequest::new(&v, Some(1), &wanted, &ModePlan::legacy(&wanted)),
     )
     .await
     .unwrap();
@@ -186,11 +175,7 @@ async fn an_existing_sidecar_is_kept_and_not_fetched() {
     let wanted = langs(&["en"]);
     let out = fetch_for_video(
         &f,
-        &VideoRequest {
-            video: &v,
-            file_id: Some(1),
-            languages: &wanted,
-        },
+        &VideoRequest::new(&v, Some(1), &wanted, &ModePlan::legacy(&wanted)),
     )
     .await
     .unwrap();
@@ -222,11 +207,7 @@ async fn forced_and_sdh_go_to_their_own_names() {
     let wanted = langs(&["en"]);
     let out = fetch_for_video(
         &f,
-        &VideoRequest {
-            video: &v,
-            file_id: Some(1),
-            languages: &wanted,
-        },
+        &VideoRequest::new(&v, Some(1), &wanted, &ModePlan::legacy(&wanted)),
     )
     .await
     .unwrap();
@@ -252,11 +233,7 @@ async fn forced_alone_does_not_fill_the_main_slot() {
     let wanted = langs(&["en"]);
     let out = fetch_for_video(
         &f,
-        &VideoRequest {
-            video: &v,
-            file_id: Some(1),
-            languages: &wanted,
-        },
+        &VideoRequest::new(&v, Some(1), &wanted, &ModePlan::legacy(&wanted)),
     )
     .await
     .unwrap();
@@ -279,11 +256,7 @@ async fn vtt_and_latin1_are_saved_as_utf8_srt() {
     let wanted = langs(&["en", "es"]);
     fetch_for_video(
         &f,
-        &VideoRequest {
-            video: &v,
-            file_id: Some(1),
-            languages: &wanted,
-        },
+        &VideoRequest::new(&v, Some(1), &wanted, &ModePlan::legacy(&wanted)),
     )
     .await
     .unwrap();
@@ -302,11 +275,7 @@ async fn put_io_unavailable_is_not_an_error_but_a_failure_is() {
     f.list = Err(SourceError::Unavailable("gone".into()));
     let out = fetch_for_video(
         &f,
-        &VideoRequest {
-            video: &v,
-            file_id: Some(1),
-            languages: &wanted,
-        },
+        &VideoRequest::new(&v, Some(1), &wanted, &ModePlan::legacy(&wanted)),
     )
     .await
     .unwrap();
@@ -316,11 +285,7 @@ async fn put_io_unavailable_is_not_an_error_but_a_failure_is() {
     f.list = Err(SourceError::Failed("503".into()));
     let err = fetch_for_video(
         &f,
-        &VideoRequest {
-            video: &v,
-            file_id: Some(1),
-            languages: &wanted,
-        },
+        &VideoRequest::new(&v, Some(1), &wanted, &ModePlan::legacy(&wanted)),
     )
     .await
     .unwrap_err();
@@ -338,11 +303,7 @@ async fn a_download_that_fails_on_the_network_is_retried_by_the_step() {
     let wanted = langs(&["en"]);
     let err = fetch_for_video(
         &f,
-        &VideoRequest {
-            video: &v,
-            file_id: Some(1),
-            languages: &wanted,
-        },
+        &VideoRequest::new(&v, Some(1), &wanted, &ModePlan::legacy(&wanted)),
     )
     .await
     .unwrap_err();
@@ -357,11 +318,7 @@ async fn no_file_id_means_no_put_io_calls() {
     let wanted = langs(&["en"]);
     let out = fetch_for_video(
         &f,
-        &VideoRequest {
-            video: &v,
-            file_id: None,
-            languages: &wanted,
-        },
+        &VideoRequest::new(&v, None, &wanted, &ModePlan::legacy(&wanted)),
     )
     .await
     .unwrap();

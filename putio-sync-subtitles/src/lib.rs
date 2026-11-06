@@ -6,15 +6,16 @@
 //!
 //! The pipeline crate schedules; this crate does the work for one video at a time.
 
-use std::future::Future;
-use std::pin::Pin;
-
 use putio_sync_client::{ClientError, PutioApiClient, PutioSubtitle, SubtitleList};
 
 pub mod audio;
 pub mod candidates;
 pub mod engine;
+pub mod hash;
+pub mod modes;
 pub mod naming;
+pub mod release;
+pub mod score;
 pub mod srt;
 pub mod transcribe;
 
@@ -22,7 +23,7 @@ pub mod transcribe;
 pub use putio_sync_core::lang;
 
 /// A boxed future, so [`SubtitleSource`] can be a trait object without a macro crate
-pub type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+pub use putio_sync_core::media::BoxFut;
 
 /// Why a Put.io call gave nothing
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -51,6 +52,27 @@ pub trait SubtitleSource: Send + Sync {
         file_id: i64,
         subtitle: &'a PutioSubtitle,
     ) -> BoxFut<'a, Result<Vec<u8>, SourceError>>;
+}
+
+/// A source with nothing to offer, for videos whose modes never ask Put.io (Whisper only)
+pub struct NoSource;
+
+impl SubtitleSource for NoSource {
+    fn list<'a>(
+        &'a self,
+        _: i64,
+        _: &'a [String],
+    ) -> BoxFut<'a, Result<SubtitleList, SourceError>> {
+        Box::pin(async { Err(SourceError::Unavailable("no subtitle source".to_string())) })
+    }
+
+    fn download<'a>(
+        &'a self,
+        _: i64,
+        _: &'a PutioSubtitle,
+    ) -> BoxFut<'a, Result<Vec<u8>, SourceError>> {
+        Box::pin(async { Err(SourceError::Unavailable("no subtitle source".to_string())) })
+    }
 }
 
 fn map_error(e: ClientError) -> SourceError {

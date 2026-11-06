@@ -14,6 +14,8 @@ pub enum SlotKind {
     Forced,
     /// `<stem>.<lang>.sdh.srt`
     Sdh,
+    /// `<stem>.<lang>.whisper.srt`: a transcription kept beside a download (feature 050)
+    Whisper,
 }
 
 impl SlotKind {
@@ -22,6 +24,7 @@ impl SlotKind {
             SlotKind::Main => "",
             SlotKind::Forced => ".forced",
             SlotKind::Sdh => ".sdh",
+            SlotKind::Whisper => ".whisper",
         }
     }
 }
@@ -41,6 +44,14 @@ impl Slot {
         Self {
             language: language.to_string(),
             kind: SlotKind::Main,
+        }
+    }
+
+    /// A transcription slot (`.whisper`)
+    pub fn whisper(language: &str) -> Self {
+        Self {
+            language: language.to_string(),
+            kind: SlotKind::Whisper,
         }
     }
 }
@@ -67,7 +78,7 @@ pub fn stem(video: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// `<stem>.<lang>[.forced|.sdh].srt`
+/// `<stem>.<lang>[.forced|.sdh|.whisper].srt`
 pub fn sidecar_name(video: &Path, slot: &Slot) -> String {
     format!("{}.{}{}.srt", stem(video), slot.language, slot.kind.infix())
 }
@@ -82,8 +93,8 @@ pub fn sidecar_path(video: &Path, slot: &Slot) -> PathBuf {
 
 /// Subtitle sidecars of `video`: same directory, name starts with the video stem and a dot,
 /// a subtitle extension, and a dot-separated token that is a language. `forced` and
-/// `sdh`/`hi`/`cc` tokens make it a forced or SDH file, which never counts as the main one.
-/// (`hi` alone is Hindi.)
+/// `sdh`/`hi`/`cc` tokens make it a forced or SDH file, and a `whisper` token a transcription
+/// kept beside a download; none of them counts as the main one. (`hi` alone is Hindi.)
 pub fn existing_sidecars(video: &Path) -> Vec<Existing> {
     let Some(dir) = video.parent() else {
         return Vec::new();
@@ -122,9 +133,11 @@ pub fn existing_sidecars(video: &Path) -> Vec<Existing> {
 
 fn classify(tokens: &str) -> Option<(String, SlotKind)> {
     let mut kind = SlotKind::Main;
+    let mut whisper = false;
     let mut langs: Vec<String> = Vec::new();
     for t in tokens.split('.') {
         match t {
+            "whisper" => whisper = true,
             "forced" => kind = SlotKind::Forced,
             "sdh" | "cc" => {
                 if kind != SlotKind::Forced {
@@ -145,7 +158,29 @@ fn classify(tokens: &str) -> Option<(String, SlotKind)> {
             kind = SlotKind::Sdh;
         }
     }
+    if whisper {
+        kind = SlotKind::Whisper;
+    }
     langs.first().map(|l| (l.clone(), kind))
+}
+
+/// Whether `path` is named like a transcription: `<name>.<lang>.whisper.<ext>`
+pub fn is_transcription(path: &Path) -> bool {
+    let name = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let mut tokens = name.rsplit('.');
+    tokens.next() == Some("whisper") && tokens.next().is_some_and(|t| lang::lookup(t).is_some())
+}
+
+/// The language token of a subtitle file name, looking from the end past `forced`, `sdh`, `cc`
+/// and `whisper` (`Movie.en.whisper.srt` gives `en`)
+pub fn language_of(path: &Path) -> Option<String> {
+    let name = path.file_stem()?.to_string_lossy().to_lowercase();
+    name.rsplit('.')
+        .filter(|t| !matches!(*t, "forced" | "sdh" | "cc" | "whisper"))
+        .find_map(lang::lookup)
 }
 
 /// Whether a file for this slot already exists next to the video
@@ -313,5 +348,82 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("gone").join("Movie.en.srt");
         assert!(write_new(&target, b"x").is_err());
+    }
+
+    #[test]
+    fn whisper_names_are_their_own_slot() {
+        let v = Path::new("/m/Movie.mkv");
+        assert_eq!(
+            sidecar_name(v, &Slot::whisper("en")),
+            "Movie.en.whisper.srt"
+        );
+        assert_eq!(
+            sidecar_path(v, &Slot::whisper("pt-br")),
+            Path::new("/m/Movie.pt-br.whisper.srt")
+        );
+    }
+
+    #[test]
+    fn a_whisper_file_is_never_the_main_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        for n in [
+            "Movie.en.whisper.srt",
+            "Movie.fr.srt",
+            "Movie.fr.whisper.srt",
+            "Movie.de.forced.srt",
+            "Movie.de.sdh.srt",
+            "Movie.de.whisper.srt",
+            "Movie.ja.whisper.srt",
+        ] {
+            touch(d, n);
+        }
+        let found = existing_sidecars(&d.join("Movie.mkv"));
+        // a transcription alone leaves the main slot empty, so a download still goes ahead
+        assert!(!has_slot(&found, &Slot::main("en")));
+        assert!(has_slot(&found, &Slot::whisper("en")));
+        assert!(has_slot(&found, &Slot::main("fr")));
+        assert!(has_slot(&found, &Slot::whisper("fr")));
+        assert!(!has_slot(&found, &Slot::main("de")));
+        assert!(has_slot(&found, &Slot::whisper("de")));
+        assert!(has_slot(&found, &Slot::whisper("ja")));
+        let kinds_of_de: Vec<_> = found
+            .iter()
+            .filter(|e| e.language == "de")
+            .map(|e| e.kind)
+            .collect();
+        assert_eq!(
+            kinds_of_de.len(),
+            3,
+            "forced, sdh and whisper are independent"
+        );
+    }
+
+    #[test]
+    fn transcriptions_are_recognized_by_name() {
+        for yes in [
+            "/m/Movie.en.whisper.srt",
+            "/m/Movie.2024.PT-BR.Whisper.srt",
+            "x.ja.whisper.ass",
+        ] {
+            assert!(is_transcription(Path::new(yes)), "{yes}");
+        }
+        for no in [
+            "/m/Movie.en.srt",
+            "/m/Movie.whisper.srt",
+            "/m/Movie.en.forced.srt",
+            "/m/whisper.en.srt",
+        ] {
+            assert!(!is_transcription(Path::new(no)), "{no}");
+        }
+        assert_eq!(
+            language_of(Path::new("/m/Movie.en.whisper.srt")).as_deref(),
+            Some("en")
+        );
+        assert_eq!(
+            language_of(Path::new("/m/Movie.es.forced.srt")).as_deref(),
+            Some("es")
+        );
+        assert_eq!(language_of(Path::new("/m/Movie.srt")), None);
     }
 }

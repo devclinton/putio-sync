@@ -162,6 +162,9 @@ pub struct Telemetry {
     // Feature 025
     pub(crate) subtitles_saved: IntCounterVec,
     pub(crate) subtitles_transcribed_seconds: IntCounter,
+    // Feature 050
+    pub(crate) subtitles_skipped: IntCounterVec,
+    pub(crate) opensubtitles_requests: IntCounterVec,
     pub(crate) translations: IntCounterVec,
     pub(crate) translation_chunks: IntCounterVec,
     pub(crate) translation_chunk_retries: IntCounter,
@@ -721,6 +724,22 @@ impl Telemetry {
                 "Seconds of audio sent to the transcription server.",
             ))
             .unwrap(),
+            subtitles_skipped: IntCounterVec::new(
+                opts(
+                    "subtitles_skipped_total",
+                    "OpenSubtitles matches not saved, by reason.",
+                ),
+                &["reason"],
+            )
+            .unwrap(),
+            opensubtitles_requests: IntCounterVec::new(
+                opts(
+                    "opensubtitles_requests_total",
+                    "Requests to the OpenSubtitles API, by endpoint and result.",
+                ),
+                &["endpoint", "result"],
+            )
+            .unwrap(),
             translations: IntCounterVec::new(
                 opts(
                     "translations_total",
@@ -952,6 +971,8 @@ impl Telemetry {
             Box::new(self.hook_runs.clone()),
             Box::new(self.subtitles_saved.clone()),
             Box::new(self.subtitles_transcribed_seconds.clone()),
+            Box::new(self.subtitles_skipped.clone()),
+            Box::new(self.opensubtitles_requests.clone()),
             Box::new(self.translations.clone()),
             Box::new(self.translation_chunks.clone()),
             Box::new(self.translation_chunk_retries.clone()),

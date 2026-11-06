@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use mockito::Matcher;
 use putio_sync_core::subtitles::TranscriptionConfig;
 use putio_sync_subtitles::engine::{self, EngineError, Outcome, VideoRequest};
+use putio_sync_subtitles::modes::ModePlan;
 
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let p = dir.join(name);
@@ -57,24 +58,26 @@ fn it_runs_only_when_on_and_nothing_wanted_exists() {
         ..Default::default()
     };
     let langs = vec!["en".to_string()];
+    let modes = ModePlan::legacy(&langs);
     assert!(engine::wants_transcription(
         &cfg,
+        &modes,
         &Outcome::default(),
         &langs
     ));
     let mut found = Outcome::default();
     found.present.push("en".into());
     assert!(
-        !engine::wants_transcription(&cfg, &found, &langs),
+        !engine::wants_transcription(&cfg, &modes, &found, &langs),
         "a wanted subtitle exists"
     );
     let off = TranscriptionConfig::default();
     assert!(
-        !engine::wants_transcription(&off, &Outcome::default(), &langs),
+        !engine::wants_transcription(&off, &modes, &Outcome::default(), &langs),
         "off"
     );
     assert!(
-        !engine::wants_transcription(&cfg, &Outcome::default(), &[]),
+        !engine::wants_transcription(&cfg, &ModePlan::legacy(&[]), &Outcome::default(), &[]),
         "no languages"
     );
 }
@@ -103,11 +106,8 @@ async fn chunks_join_into_one_file_in_the_detected_language_even_if_unwanted() {
         .await;
 
     let langs = vec!["en".to_string()];
-    let req = VideoRequest {
-        video: &v,
-        file_id: None,
-        languages: &langs,
-    };
+    let modes = ModePlan::legacy(&langs);
+    let req = VideoRequest::new(&v, None, &langs, &modes);
     let mut out = Outcome::default();
     out.missing.push("en".into());
     let ticks = Mutex::new(Vec::new());
@@ -156,11 +156,8 @@ async fn a_wanted_language_clears_it_from_missing() {
         .create_async()
         .await;
     let langs = vec!["en".to_string()];
-    let req = VideoRequest {
-        video: &v,
-        file_id: None,
-        languages: &langs,
-    };
+    let modes = ModePlan::legacy(&langs);
+    let req = VideoRequest::new(&v, None, &langs, &modes);
     let mut out = Outcome::default();
     out.missing.push("en".into());
     engine::transcribe_video(&req, &config(&server.url(), &ffmpeg), &none, &mut out)
@@ -190,11 +187,8 @@ async fn an_existing_file_is_never_overwritten() {
         .create_async()
         .await;
     let langs = vec!["en".to_string()];
-    let req = VideoRequest {
-        video: &v,
-        file_id: None,
-        languages: &langs,
-    };
+    let modes = ModePlan::legacy(&langs);
+    let req = VideoRequest::new(&v, None, &langs, &modes);
     let mut out = Outcome::default();
     engine::transcribe_video(&req, &config(&server.url(), &ffmpeg), &none, &mut out)
         .await
@@ -217,11 +211,8 @@ async fn silence_saves_nothing_and_says_so() {
         .create_async()
         .await;
     let langs = vec!["en".to_string()];
-    let req = VideoRequest {
-        video: &v,
-        file_id: None,
-        languages: &langs,
-    };
+    let modes = ModePlan::legacy(&langs);
+    let req = VideoRequest::new(&v, None, &langs, &modes);
     let mut out = Outcome::default();
     out.missing.push("en".into());
     engine::transcribe_video(&req, &config(&server.url(), &ffmpeg), &none, &mut out)
@@ -249,11 +240,8 @@ async fn a_server_error_or_missing_ffmpeg_fails_the_step_so_it_retries() {
         .create_async()
         .await;
     let langs = vec!["en".to_string()];
-    let req = VideoRequest {
-        video: &v,
-        file_id: None,
-        languages: &langs,
-    };
+    let modes = ModePlan::legacy(&langs);
+    let req = VideoRequest::new(&v, None, &langs, &modes);
     let mut out = Outcome::default();
     let err = engine::transcribe_video(&req, &config(&server.url(), &ffmpeg), &none, &mut out)
         .await

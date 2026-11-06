@@ -10,11 +10,12 @@ use tracing::{info, warn};
 
 use crate::audio;
 use crate::candidates::{self, Candidate, SourceKind};
+use crate::modes::ModePlan;
 use crate::naming::{self, Slot, SlotKind, WriteOutcome};
 use crate::srt;
 use crate::transcribe::{self, ChunkCues, TranscribeError, Transcriber};
 use crate::{SourceError, SubtitleSource};
-use putio_sync_core::subtitles::TranscriptionConfig;
+use putio_sync_core::subtitles::{SubtitleMode, TranscriptionConfig};
 
 /// What the engine needs to know about one video
 #[derive(Debug, Clone)]
@@ -25,6 +26,25 @@ pub struct VideoRequest<'a> {
     pub file_id: Option<i64>,
     /// Wanted languages, canonical codes, in order
     pub languages: &'a [String],
+    /// What each language does: download, transcribe or both (feature 050)
+    pub modes: &'a ModePlan,
+}
+
+impl<'a> VideoRequest<'a> {
+    /// A request for `video` with the given modes
+    pub fn new(
+        video: &'a Path,
+        file_id: Option<i64>,
+        languages: &'a [String],
+        modes: &'a ModePlan,
+    ) -> Self {
+        Self {
+            video,
+            file_id,
+            languages,
+            modes,
+        }
+    }
 }
 
 /// A subtitle file the engine wrote
@@ -38,6 +58,45 @@ pub struct SavedSubtitle {
     pub bytes: usize,
     /// Whether `language` is one of the wanted ones
     pub wanted: bool,
+    /// For an OpenSubtitles match, the score and what agreed, such as `80 (group, source)`
+    pub detail: String,
+}
+
+/// Why a language got no subtitle from OpenSubtitles
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkipReason {
+    /// The best result scored this, under the threshold
+    BelowThreshold(u8),
+    /// The download quota is used up
+    Quota,
+    /// The searches found nothing usable
+    NoResult,
+    /// No IMDb or TMDb id for the video (and no fingerprint match)
+    NoIds,
+    /// The file name has no title to search by
+    NoName,
+}
+
+impl SkipReason {
+    /// The metrics `reason` label
+    pub fn metric(&self) -> &'static str {
+        match self {
+            SkipReason::BelowThreshold(_) => "below_threshold",
+            SkipReason::Quota => "quota",
+            SkipReason::NoResult => "no_result",
+            SkipReason::NoIds => "no_ids",
+            SkipReason::NoName => "no_name",
+        }
+    }
+}
+
+/// A language that OpenSubtitles did not fill, and why
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkipNote {
+    /// Canonical language code
+    pub language: String,
+    /// Why
+    pub reason: SkipReason,
 }
 
 /// What happened to one video
@@ -53,6 +112,12 @@ pub struct Outcome {
     pub warnings: Vec<String>,
     /// Transcription ran and the server heard no speech
     pub no_speech: bool,
+    /// Wanted languages that already had a `.whisper` file
+    pub whisper_present: Vec<String>,
+    /// Languages OpenSubtitles did not fill, and why
+    pub skipped: Vec<SkipNote>,
+    /// The OpenSubtitles quota was used up while this video was handled
+    pub quota_used_up: bool,
 }
 
 impl Outcome {
@@ -66,17 +131,33 @@ impl Outcome {
         let mut parts = Vec::new();
         for s in &self.saved {
             let slot = match s.kind {
-                SlotKind::Main => String::new(),
+                SlotKind::Main | SlotKind::Whisper => String::new(),
                 SlotKind::Forced => " forced".to_string(),
                 SlotKind::Sdh => " sdh".to_string(),
             };
-            parts.push(format!("{}{}: {}", s.language, slot, s.source));
+            let mut what = s.source.to_string();
+            if !s.detail.is_empty() {
+                what = format!("{what} {}", s.detail);
+            }
+            if s.kind == SlotKind::Whisper {
+                what.push_str(" (whisper)");
+            }
+            parts.push(format!("{}{}: {}", s.language, slot, what));
         }
         for l in &self.present {
             parts.push(format!("{l}: already present"));
         }
         for l in &self.missing {
-            parts.push(format!("{l}: missing"));
+            match self.skipped.iter().find(|n| n.language == *l) {
+                Some(SkipNote {
+                    reason: SkipReason::BelowThreshold(score),
+                    ..
+                }) => parts.push(format!("{l}: best match below threshold ({score})")),
+                _ => parts.push(format!("{l}: missing")),
+            }
+        }
+        if self.quota_used_up {
+            parts.push("opensubtitles: quota used up".to_string());
         }
         if self.no_speech {
             parts.push("no speech found".to_string());
@@ -97,7 +178,7 @@ pub enum EngineError {
     Failed(String),
 }
 
-/// The Put.io pass for one video
+/// The download passes for one video: Put.io's list, for each wanted language whose mode downloads
 pub async fn fetch_for_video(
     source: &dyn SubtitleSource,
     req: &VideoRequest<'_>,
@@ -111,10 +192,12 @@ pub async fn fetch_for_video(
         .cloned()
         .collect();
 
+    // Languages in Whisper only mode never reach Put.io; with none left there is no call at all
+    let downloading = req.modes.download_languages();
     let mut all: Vec<Candidate> = Vec::new();
     if let Some(id) = req.file_id {
-        if !req.languages.is_empty() {
-            match source.list(id, req.languages).await {
+        if !downloading.is_empty() {
+            match source.list(id, &downloading).await {
                 Ok(list) => all = candidates::from_list(&list),
                 Err(SourceError::Unavailable(why)) => {
                     info!(file_id = id, %why, "Put.io has no subtitles for this file");
@@ -125,7 +208,7 @@ pub async fn fetch_for_video(
     }
 
     let mut transient: Option<String> = None;
-    for lang in req.languages {
+    for lang in &downloading {
         for kind in [SlotKind::Main, SlotKind::Forced, SlotKind::Sdh] {
             let slot = Slot {
                 language: lang.clone(),
@@ -169,6 +252,9 @@ pub async fn fetch_for_video(
             out.present.push(lang.clone());
         } else if !naming::has_slot(&existing, &Slot::main(lang)) {
             out.missing.push(lang.clone());
+        }
+        if naming::has_slot(&existing, &Slot::whisper(lang)) {
+            out.whisper_present.push(lang.clone());
         }
     }
     if let Some(why) = transient {
@@ -218,6 +304,7 @@ async fn try_candidate(
                 source: label,
                 bytes: text.len(),
                 wanted: req.languages.contains(&slot.language),
+                detail: String::new(),
             }))
         }
         Ok(WriteOutcome::AlreadyExists) => Ok(None),
@@ -238,17 +325,30 @@ pub fn bounded(language: &str, wanted: &[String]) -> String {
     }
 }
 
-/// Whether the transcription pass should run: it is on, and no wanted language has a main
-/// subtitle (one was there already, or the Put.io pass saved one)
+/// Whether the transcription pass should run. It needs the server on and a wanted language.
+/// Whisper only and Both always transcribe, unless every such language already has the file the
+/// transcription would write (so a repeat run costs nothing). Download then Whisper keeps the
+/// 025 rule: only when no wanted language has a subtitle. Download only never does.
 pub fn wants_transcription(
     config: &TranscriptionConfig,
+    modes: &ModePlan,
     outcome: &Outcome,
     languages: &[String],
 ) -> bool {
-    config.enabled
-        && !languages.is_empty()
-        && outcome.saved.is_empty()
-        && outcome.present.is_empty()
+    if !config.enabled || languages.is_empty() {
+        return false;
+    }
+    if modes.always_transcribe() {
+        let done = languages.iter().all(|l| match modes.mode(l) {
+            SubtitleMode::WhisperOnly => outcome.present.contains(l),
+            SubtitleMode::Both => outcome.whisper_present.contains(l),
+            _ => true,
+        });
+        if !done {
+            return true;
+        }
+    }
+    modes.fallback_transcribe() && outcome.saved.is_empty() && outcome.present.is_empty()
 }
 
 /// Progress reporter: a fraction from 0 to 1 after each chunk
@@ -311,7 +411,12 @@ pub async fn transcribe_video(
     let language = detected
         .or_else(|| Some(client.hint().to_string()).filter(|h| !h.is_empty()))
         .ok_or_else(|| EngineError::Failed(TranscribeError::NoLanguage.to_string()))?;
-    let slot = Slot::main(&language);
+    // Both keeps the download and the transcription apart: the transcription gets `.whisper`
+    let slot = if req.modes.whisper_token(&language) {
+        Slot::whisper(&language)
+    } else {
+        Slot::main(&language)
+    };
     let target = naming::sidecar_path(req.video, &slot);
     let text = srt::render(&cues);
     match naming::write_new(&target, text.as_bytes()) {
@@ -326,15 +431,17 @@ pub async fn transcribe_video(
             out.saved.push(SavedSubtitle {
                 path: target,
                 language,
-                kind: SlotKind::Main,
+                kind: slot.kind,
                 source: "transcribed",
                 bytes: text.len(),
                 wanted,
+                detail: String::new(),
             });
         }
         Ok(WriteOutcome::AlreadyExists) => {
             out.warnings
                 .push(format!("{language}: a subtitle file is already there"));
+            warn!(language = %language, path = %target.display(), "Transcription not saved: the file exists");
         }
         Err(e) => return Err(EngineError::Failed(format!("could not write: {e}"))),
     }

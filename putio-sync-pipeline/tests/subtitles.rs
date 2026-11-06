@@ -686,3 +686,125 @@ mod manual {
         );
     }
 }
+
+/// Feature 050: source modes chosen per category, and Whisper output beside the downloaded file
+mod modes {
+    use super::*;
+    use putio_sync_core::subtitles::SubtitleMode;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn tools(dir: &Path) -> PathBuf {
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for (name, body) in [
+            ("ffprobe", "echo 100".to_string()),
+            (
+                "ffmpeg",
+                "for last; do :; done\nhead -c 4000 /dev/zero > \"$last\"".to_string(),
+            ),
+        ] {
+            let p = bin.join(name);
+            std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        bin.join("ffmpeg")
+    }
+
+    const SPEECH: &str = r#"{"language":"en","segments":[{"start":1.0,"end":2.0,"text":"Hi"}]}"#;
+
+    fn config(url: &str, ffmpeg: &Path, excluded: &[&str]) -> SubtitlesConfig {
+        let mut c = subs(&["en"], excluded);
+        c.transcription.enabled = true;
+        c.transcription.url = url.to_string();
+        c.transcription.ffmpeg_path = ffmpeg.to_string_lossy().into_owned();
+        c
+    }
+
+    async fn item(env: &Env, fake: Arc<Fake>) -> PathBuf {
+        let video = env.dir.path().join("Movie.mkv");
+        big_file(&video, BIG);
+        downloaded(env, 5, &video).await;
+        downloaded_item(env, "file:5", &video).await;
+        env.pipeline.set_subtitle_source(fake);
+        video
+    }
+
+    #[tokio::test]
+    async fn a_category_in_whisper_only_never_asks_put_io_and_fills_the_main_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg = tools(dir.path());
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("POST", "/v1/audio/transcriptions")
+            .with_status(200)
+            .with_body(SPEECH)
+            .create_async()
+            .await;
+        let mut cfg = config(&server.url(), &ffmpeg, &[]);
+        cfg.category_modes
+            .insert("sonarr".into(), SubtitleMode::WhisperOnly);
+        let env = env_subs(cfg).await;
+        let fake = Fake::offering(&["en"]);
+        item(&env, fake.clone()).await;
+        env.pipeline.run_due().await;
+        assert_eq!(*fake.lists.lock().unwrap(), 0, "Put.io was not asked");
+        assert!(env.dir.path().join("Movie.en.srt").exists());
+        assert!(!env.dir.path().join("Movie.en.whisper.srt").exists());
+        let t = env.pipeline.timeline("file:5").await.unwrap();
+        assert_eq!(t.state, ItemState::Done);
+        let out = &t.stages[3].steps[1].attempts[0].output;
+        assert!(out.contains("en: transcribed"), "{out}");
+        assert!(out.contains("[whisper_only]"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn both_saves_the_download_and_the_transcription() {
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg = tools(dir.path());
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("POST", "/v1/audio/transcriptions")
+            .with_status(200)
+            .with_body(SPEECH)
+            .create_async()
+            .await;
+        let mut cfg = config(&server.url(), &ffmpeg, &[]);
+        cfg.mode = Some(SubtitleMode::Both);
+        let env = env_subs(cfg).await;
+        item(&env, Fake::offering(&["en"])).await;
+        env.pipeline.run_due().await;
+        assert!(env.dir.path().join("Movie.en.srt").exists());
+        assert!(env.dir.path().join("Movie.en.whisper.srt").exists());
+        let t = env.pipeline.timeline("file:5").await.unwrap();
+        let out = &t.stages[3].steps[1].attempts[0].output;
+        assert!(out.contains("en: transcribed (whisper)"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn an_excluded_category_beats_its_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg = tools(dir.path());
+        let mut cfg = config("http://127.0.0.1:9", &ffmpeg, &["Sonarr"]);
+        cfg.category_modes
+            .insert("sonarr".into(), SubtitleMode::WhisperOnly);
+        let env = env_subs(cfg).await;
+        let fake = Fake::offering(&["en"]);
+        item(&env, fake.clone()).await;
+        env.pipeline.run_due().await;
+        let t = env.pipeline.timeline("file:5").await.unwrap();
+        assert_eq!(t.stages[3].steps[0].skip_reason, Some("category"));
+        assert_eq!(*fake.lists.lock().unwrap(), 0);
+        assert!(!env.dir.path().join("Movie.en.whisper.srt").exists());
+    }
+
+    #[tokio::test]
+    async fn a_config_without_modes_keeps_the_025_behaviour_and_message() {
+        let env = env_subs(subs(&["en"], &[])).await;
+        item(&env, Fake::offering(&["en"])).await;
+        env.pipeline.run_due().await;
+        assert!(env.dir.path().join("Movie.en.srt").exists());
+        let t = env.pipeline.timeline("file:5").await.unwrap();
+        let out = &t.stages[3].steps[1].attempts[0].output;
+        assert!(!out.contains('['), "no mode label for the default: {out}");
+    }
+}

@@ -81,7 +81,9 @@ impl Pipeline {
     pub(crate) async fn source_candidates(&self, video: &Path, target: &str) -> Vec<Candidate> {
         let mut out = Vec::new();
         for e in naming::existing_sidecars(video) {
-            if e.kind != SlotKind::Main || e.language == target || !readable(&e.path) {
+            // A `.whisper` file is a transcription kept beside a download (feature 050)
+            let usable = matches!(e.kind, SlotKind::Main | SlotKind::Whisper);
+            if !usable || e.language == target || !readable(&e.path) {
                 continue;
             }
             let size = std::fs::metadata(&e.path).map(|m| m.len() as i64).ok();
@@ -91,6 +93,7 @@ impl Pipeline {
                 .provenance(&e.path.to_string_lossy(), size)
                 .await
             {
+                _ if e.kind == SlotKind::Whisper => Origin::Transcribed,
                 Ok(Some(p)) if p.source == "translated" => Origin::Translated,
                 Ok(Some(p)) if p.source == "transcribed" => Origin::Transcribed,
                 _ => Origin::Other,

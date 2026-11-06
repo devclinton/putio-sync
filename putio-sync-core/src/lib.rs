@@ -46,6 +46,9 @@ pub mod plugins;
 /// Language codes for subtitle names (feature 025)
 pub mod lang;
 
+/// What the Radarr/Sonarr side knows about a download, as a trait (feature 050)
+pub mod media;
+
 /// `[subtitles]` settings: validation and key masking (feature 025)
 pub mod subtitles;
 

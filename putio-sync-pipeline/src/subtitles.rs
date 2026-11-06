@@ -5,10 +5,13 @@
 //! timeline come with them. The engine in `putio-sync-subtitles` does the work for one video.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use putio_sync_core::log_redact;
 use putio_sync_subtitles::engine::{self, EngineError, VideoRequest};
+use putio_sync_subtitles::modes::ModePlan;
+use putio_sync_subtitles::NoSource;
 use tracing::{info, warn};
 
 use crate::locate::{self, ItemFile};
@@ -351,15 +354,21 @@ impl Pipeline {
         if let Some(why) = self.subtitles_off(item) {
             return self.skip_step(step, why).await;
         }
-        let Some(source) = self.inner.source.read().unwrap().clone() else {
-            return self.skip_step(step, SkipReason::NotConfigured).await;
+        let cfg = self.settings().subtitles;
+        let languages = cfg.wanted();
+        // What each wanted language does for this item's category (feature 050)
+        let modes = ModePlan::new(&cfg, item.category.as_deref(), &languages);
+        let source = self.inner.source.read().unwrap().clone();
+        // Whisper only needs no Put.io client; every other mode does
+        let source = match source {
+            Some(s) => s,
+            None if modes.download_languages().is_empty() => Arc::new(NoSource),
+            None => return self.skip_step(step, SkipReason::NotConfigured).await,
         };
         let store = &self.inner.store;
         let Ok((attempt_id, n)) = store.start_attempt(step.id).await else {
             return Outcome::Stopped;
         };
-        let cfg = self.settings().subtitles;
-        let languages = cfg.wanted();
         let video = video_path(item, &step.name);
         let cancel = self.cancel_of(&item.key);
         let started = Instant::now();
@@ -371,13 +380,9 @@ impl Pipeline {
                 )));
             }
             let file_id = self.putio_id_of(item, &video).await;
-            let req = VideoRequest {
-                video: &video,
-                file_id,
-                languages: &languages,
-            };
+            let req = VideoRequest::new(&video, file_id, &languages, &modes);
             let mut outcome = engine::fetch_for_video(source.as_ref(), &req).await?;
-            if engine::wants_transcription(&cfg.transcription, &outcome, &languages) {
+            if engine::wants_transcription(&cfg.transcription, &modes, &outcome, &languages) {
                 self.transcribe(step, &req, &cfg.transcription, &mut outcome)
                     .await?;
             }
@@ -406,6 +411,9 @@ impl Pipeline {
         let (result, output, error) = match run {
             Ok(outcome) => {
                 let mut message = outcome.message();
+                if modes != ModePlan::legacy(&languages) {
+                    message.push_str(&format!(" [{}]", modes.label()));
+                }
                 if !outcome.warnings.is_empty() {
                     message.push_str(&format!(" ({} passed over)", outcome.warnings.len()));
                 }

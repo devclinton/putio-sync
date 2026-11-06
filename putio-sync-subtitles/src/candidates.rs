@@ -13,8 +13,14 @@ pub enum SourceKind {
     Embedded,
     /// A file next to the video
     Folder,
-    /// OpenSubtitles
+    /// OpenSubtitles, through Put.io's list
     OpenSubtitles,
+    /// OpenSubtitles API, found by the video's file fingerprint (feature 050)
+    OsHash,
+    /// OpenSubtitles API, found by IMDb or TMDb id
+    OsIds,
+    /// OpenSubtitles API, found by the parsed file name
+    OsName,
     /// A source string we do not know
     Unknown,
 }
@@ -42,7 +48,10 @@ impl SourceKind {
     pub fn rank(self) -> u8 {
         match self {
             SourceKind::Embedded | SourceKind::Folder => 0,
-            SourceKind::OpenSubtitles => 1,
+            SourceKind::OpenSubtitles
+            | SourceKind::OsHash
+            | SourceKind::OsIds
+            | SourceKind::OsName => 1,
             SourceKind::Unknown => 2,
         }
     }
@@ -53,6 +62,9 @@ impl SourceKind {
         match self {
             SourceKind::Embedded => "putio_embedded",
             SourceKind::Folder => "putio_folder",
+            SourceKind::OsHash => "os_hash",
+            SourceKind::OsIds => "os_ids",
+            SourceKind::OsName => "os_name",
             SourceKind::OpenSubtitles | SourceKind::Unknown => "opensubtitles",
         }
     }
