@@ -14,6 +14,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Home-server app store listings: an Unraid Community Applications template, Umbrel and
+  CasaOS packages, and a Docker Compose file for TrueNAS SCALE, Runtipi, Portainer and
+  Dockge custom apps (`packaging/STORES.md`). The project is MIT licensed, now with a
+  `LICENSE` file.
 - The web UI speaks 27 languages. It follows the browser's language, and **Settings ›
   General › Language** picks another for this browser, switching at once without a reload.
   Arabic and Hebrew read right to left. The translations are machine-made; names, paths,

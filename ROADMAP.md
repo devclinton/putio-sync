@@ -189,5 +189,3 @@ this would fix. Research is in `specs/043-magnet-cache-retry/research.md`.
   separate dev image. Settle which registry the NAS uses first.
 - **arm64 snap**: build on an arm64 runner or through Snapcraft's build
   service; CI builds amd64 only today.
-- **Flathub**: needs a public repository and probably a desktop wrapper
-  around the web UI.

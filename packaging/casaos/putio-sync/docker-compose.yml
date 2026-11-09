@@ -1,0 +1,75 @@
+name: putio-sync
+services:
+  putio-sync:
+    image: ghcr.io/devclinton/putio-sync:0.1.1
+    container_name: putio-sync
+    restart: unless-stopped
+    user: "$PUID:$PGID"
+    environment:
+      TZ: $TZ
+    ports:
+      - target: 15432
+        published: "15432"
+        protocol: tcp
+    volumes:
+      - type: bind
+        source: /DATA/AppData/$AppID/config
+        target: /config
+      - type: bind
+        source: /DATA/Downloads
+        target: /downloads
+      - type: bind
+        source: /DATA/AppData/$AppID/watch
+        target: /watches
+    x-casaos:
+      envs:
+        - container: TZ
+          description:
+            en_US: Time zone
+      ports:
+        - container: "15432"
+          description:
+            en_US: Web UI and API
+      volumes:
+        - container: /config
+          description:
+            en_US: Config file and state
+        - container: /downloads
+          description:
+            en_US: Where finished Put.io downloads go
+        - container: /watches
+          description:
+            en_US: .torrent and .magnet files dropped here are sent to Put.io
+
+x-casaos:
+  id: io.github.devclinton.putio-sync
+  main: putio-sync
+  index: /
+  port_map: "15432"
+  scheme: http
+  category: Media
+  version: "0.1.1"
+  architectures:
+    - amd64
+    - arm64
+  author: devclinton
+  developer: devclinton
+  icon: https://raw.githubusercontent.com/devclinton/putio-sync/main/snap/gui/putio-sync.png
+  title:
+    en_US: putio-sync
+  tagline:
+    en_US: Download your Put.io transfers automatically
+  description:
+    en_US: >-
+      Unofficial sync daemon for Put.io, not affiliated with Put.io. It downloads finished
+      Put.io transfers to /DATA/Downloads, sends .torrent and .magnet files from a watch
+      folder to Put.io, and acts as a download client for Radarr and Sonarr. The web UI
+      sets it up and shows the queue, transfers and stats.
+  tips:
+    before_install:
+      en_US: >-
+        On first start, putio-sync prints a one-time setup code in the app's log. Open the
+        web UI, enter the code, and choose /downloads as the download folder.
+  website: https://github.com/devclinton/putio-sync
+  repo: https://github.com/devclinton/putio-sync
+  support: https://github.com/devclinton/putio-sync/issues

@@ -124,10 +124,9 @@ sudo snap start --enable putio-sync.daemon
 ```
 See [snap/README.md](snap/README.md) for where the config and downloads live.
 
-**Flatpak** (all distributions):
-```bash
-flatpak install flathub com.putio.PutioSync
-```
+**Home servers**: Unraid, Umbrel, CasaOS, TrueNAS SCALE, Runtipi and other Docker hosts
+use the container image; see [packaging/STORES.md](packaging/STORES.md) and
+[packaging/docker-compose/compose.yaml](packaging/docker-compose/compose.yaml).
 
 **Debian/Ubuntu** (.deb):
 ```bash
@@ -2350,7 +2349,7 @@ putio-sync download --all --daemon --interval 300
 putio-sync create --daemon --interval 60 --watch ~/Downloads/torrents ~/Watch/putio
 ```
 ```
-docker run --env PUTIO_SYNC_CONFIG=/config/config.toml --volume "/mnt/archive/sync_folders/local/putio-sync:/config" --volume "/mnt/archive/sync_folders/torrents/downloaded:/downloads" --volume /mnt/archive/sync_folders/torrents/blackhole:/watches/torrents devclinton/putio-sync:latest
+docker run --env PUTIO_SYNC_CONFIG=/config/config.toml --volume "/path/to/config:/config" --volume "/path/to/downloads:/downloads" --volume /path/to/watch:/watches/torrents ghcr.io/devclinton/putio-sync:latest
 ```
 ### Method 4: Systemd Services (Linux)
 
@@ -2747,39 +2746,13 @@ docker run -d \
 
 ### Docker Compose
 
-Example `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  putio-sync-daemon:
-    image: ghcr.io/devclinton/putio-sync:latest
-    container_name: putio-sync-daemon
-    restart: unless-stopped
-    volumes:
-      - ~/.putiosync:/config
-      - ~/Downloads/putio:/downloads
-    environment:
-      - RUST_LOG=info
-    command: putio-sync download --all --daemon --interval 300
-
-  putio-sync-watcher:
-    image: ghcr.io/devclinton/putio-sync:latest
-    container_name: putio-sync-watcher
-    restart: unless-stopped
-    volumes:
-      - ~/.putiosync:/config
-      - ~/Downloads/torrents:/watches
-    environment:
-      - RUST_LOG=info
-    command: putio-sync create --watch /watches --daemon
-```
-
-Run with:
+[`packaging/docker-compose/compose.yaml`](packaging/docker-compose/compose.yaml) runs the
+daemon with the web UI on port 15432:
 
 ```bash
-docker-compose up -d
+curl -O https://raw.githubusercontent.com/devclinton/putio-sync/main/packaging/docker-compose/compose.yaml
+docker compose up -d
+docker compose logs putio-sync   # the one-time setup code
 ```
 
 ## File Formats & Processing

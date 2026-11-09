@@ -1,0 +1,21 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      APP_HOST: putio-sync_web_1
+      APP_PORT: 15432
+
+  web:
+    # Pin the multi-arch index digest of the release:
+    #   docker buildx imagetools inspect ghcr.io/devclinton/putio-sync:0.1.1
+    image: ghcr.io/devclinton/putio-sync:0.1.1@sha256:REPLACE_WITH_RELEASE_DIGEST
+    user: "1000:1000"
+    restart: on-failure
+    environment:
+      # Unlocks the setup wizard and the web UI; Umbrel shows it as the app password.
+      PUTIO_SYNC_API_TOKEN: ${APP_PASSWORD}
+    volumes:
+      - ${APP_DATA_DIR}/data/config:/config
+      - ${APP_DATA_DIR}/data/watch:/watches
+      - ${UMBREL_ROOT}/data/storage/downloads:/downloads

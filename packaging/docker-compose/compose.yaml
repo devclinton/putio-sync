@@ -1,0 +1,30 @@
+# putio-sync with Docker Compose. Also works as a "custom app" in Runtipi,
+# TrueNAS SCALE, Portainer, Dockge and similar.
+#
+#   docker compose up -d
+#   docker compose logs putio-sync   # shows the one-time setup code
+#
+# Then open http://<host>:15432/ and enter the setup code (or the token below).
+services:
+  putio-sync:
+    image: ghcr.io/devclinton/putio-sync:latest
+    container_name: putio-sync
+    restart: unless-stopped
+    # The image runs as 99:100 by default; use the owner of the folders below.
+    user: "1000:1000"
+    environment:
+      TZ: Etc/UTC
+      # Optional: a web UI token, which also unlocks the setup wizard.
+      # PUTIO_SYNC_API_TOKEN: change-me
+    ports:
+      - "15432:15432" # web UI and API
+      # - "9742:9742" # Prometheus metrics
+    volumes:
+      - ./config:/config
+      - ./downloads:/downloads
+      - ./watch:/watches # optional: .torrent and .magnet files dropped here go to Put.io
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:15432/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

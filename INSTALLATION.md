@@ -8,12 +8,12 @@ Complete installation instructions for putio-sync across all supported platforms
 - [Windows](#windows)
 - [Linux](#linux)
   - [Snap](#snap-all-distributions)
-  - [Flatpak](#flatpak-all-distributions)
   - [Debian/Ubuntu](#debianubuntu)
   - [Arch Linux](#arch-linux)
   - [Fedora/RHEL](#fedorarhel)
 - [From Source](#from-source)
 - [Docker](#docker)
+- [Home servers (Unraid, Umbrel, CasaOS, TrueNAS, Runtipi)](#home-servers)
 - [Verification](#verification)
 - [Troubleshooting](#troubleshooting)
 
@@ -132,42 +132,6 @@ sudo snap refresh putio-sync
 
 ```bash
 sudo snap remove putio-sync
-```
-
----
-
-### Flatpak (All Distributions)
-
-**Works on**: Any distribution with Flatpak support.
-
-```bash
-# Install Flatpak (if not already installed)
-# See: https://flatpak.org/setup/
-
-# Install putio-sync
-flatpak install flathub com.putio.PutioSync
-
-# Run
-flatpak run com.putio.PutioSync --version
-```
-
-#### Create Alias
-
-```bash
-echo "alias putio-sync='flatpak run com.putio.PutioSync'" >> ~/.bashrc
-source ~/.bashrc
-```
-
-#### Update
-
-```bash
-flatpak update com.putio.PutioSync
-```
-
-#### Uninstall
-
-```bash
-flatpak uninstall com.putio.PutioSync
 ```
 
 ---
@@ -318,6 +282,22 @@ services:
 With `docker run`, add `--network host`. Then open port 8200 (TCP) and 1900 (UDP) on the
 host firewall for your home network only. Without host networking, Settings › Media server
 says "No LAN interface: players can't find it".
+
+---
+
+## Home servers
+
+putio-sync runs as a container, so home-server app stores install the same image:
+
+- **Unraid**: search for putio-sync in Community Applications (once listed), or add
+  [`packaging/unraid/putio-sync.xml`](packaging/unraid/putio-sync.xml) as a template URL.
+- **Umbrel** and **CasaOS / ZimaOS**: install from the app store once listed. The
+  packages are in [`packaging/umbrel/`](packaging/umbrel/) and [`packaging/casaos/`](packaging/casaos/).
+- **TrueNAS SCALE**, **Runtipi**, **Portainer**, **Dockge**: add a custom app from
+  [`packaging/docker-compose/compose.yaml`](packaging/docker-compose/compose.yaml).
+
+On first start the container log shows a one-time setup code. Open `http://<host>:15432/`,
+enter it (or the web UI token you set), and choose `/downloads` as the download folder.
 
 ---
 

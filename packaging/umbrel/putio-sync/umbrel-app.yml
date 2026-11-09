@@ -1,0 +1,36 @@
+manifestVersion: 1
+id: putio-sync
+storage:
+  dataRoot: data
+category: files
+name: putio-sync
+version: "0.1.1"
+tagline: Download your Put.io transfers automatically
+description: >-
+  putio-sync is an unofficial sync daemon for Put.io; it is not affiliated with Put.io.
+
+
+  It downloads finished Put.io transfers to your Umbrel's Downloads folder, where your
+  media apps can find them, and sends .torrent and .magnet files from a watch folder to
+  Put.io. It can also act as a download client for Radarr and Sonarr, so they send
+  releases to Put.io and import them once they are downloaded.
+
+
+  The web UI walks you through connecting your Put.io account, choosing what to
+  download, and shows the queue, active transfers and download stats.
+
+
+  When the setup wizard asks for a code, enter the password shown on this page.
+releaseNotes: ""
+developer: devclinton
+website: https://github.com/devclinton/putio-sync
+dependencies: []
+repo: https://github.com/devclinton/putio-sync
+support: https://github.com/devclinton/putio-sync/issues
+port: 15432
+gallery: []
+path: ""
+defaultUsername: ""
+deterministicPassword: true
+submitter: devclinton
+submission: ""
