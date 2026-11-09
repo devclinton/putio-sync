@@ -6,8 +6,8 @@ export const SECTIONS = [
   {
     id: "general",
     title: "General",
-    help: "How this page looks in this browser, which credentials are set, and how finished downloads are announced.",
-    cards: [["appearance", "Appearance"], ["credentials", "Credentials"], ["notifications", "Notifications"]],
+    help: "How this page looks and which language it uses in this browser, which credentials are set, and how finished downloads are announced.",
+    cards: [["appearance", "Appearance"], ["language", "Language"], ["credentials", "Credentials"], ["notifications", "Notifications"]],
   },
   {
     id: "putio",

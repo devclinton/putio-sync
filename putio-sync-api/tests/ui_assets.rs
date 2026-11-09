@@ -177,14 +177,16 @@ async fn no_cache_header() {
     }
 }
 
+/// What an English page loads. Catalogs and translate.js (feature 051) load only for another
+/// language and aren't reachable from the index's imports, so they don't count.
 #[tokio::test]
-async fn assets_total_under_480kb() {
+async fn assets_total_under_484kb() {
     let app = test_app().await;
     let mut total = body_text(public_get(&app, "/").await).await.len();
     for path in all_assets(&app).await {
         total += body_text(public_get(&app, &path).await).await.len();
     }
-    assert!(total < 480 * 1024, "UI is {total} bytes");
+    assert!(total < 484 * 1024, "UI is {total} bytes");
 }
 
 #[tokio::test]

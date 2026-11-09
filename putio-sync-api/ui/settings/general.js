@@ -2,7 +2,8 @@
 // are set, and notifications.
 
 import { get } from "../api.js";
-import { h } from "../app.js";
+import { h, toast } from "../app.js";
+import { LANGUAGES, choice, nativeName, setLanguage } from "../i18n.js";
 import { groupCard } from "./form.js";
 
 const NOTIFICATIONS = {
@@ -19,7 +20,7 @@ const NOTIFICATIONS = {
 const PUTIO_AUTH = { token: "OAuth token set", app_password: "app password set", none: "not set" };
 const MODE_NAMES = { system: "System", light: "Light", dark: "Dark" };
 
-export const cards = (ctx) => [appearance(ctx), credentials(ctx), groupCard(NOTIFICATIONS, ctx)];
+export const cards = (ctx) => [appearance(ctx), language(), credentials(ctx), groupCard(NOTIFICATIONS, ctx)];
 
 /** Mode and accent radios; a change applies at once and is saved in this browser. */
 function appearance(ctx) {
@@ -40,6 +41,25 @@ function appearance(ctx) {
   document.addEventListener("appearancechange", sync);
   ctx.cleanup.push(() => document.removeEventListener("appearancechange", sync));
   return h("section", { class: "card", id: "card-appearance" }, h("h2", { text: "Appearance" }), form, h("p", { class: "muted spaced", text: "Saved in this browser only." }));
+}
+
+/** The UI's language (feature 051): the browser's by default; a change applies at once */
+function language() {
+  const option = (code) => h("option", { value: code, translate: "no", lang: code, text: nativeName(code) });
+  const select = h(
+    "select",
+    { id: "ui-language", onchange: async () => (await setLanguage(select.value)) || toast("Couldn't load that language", "error", "The page stays in English.") },
+    h("option", { value: "", text: "Browser default" }),
+    ["en", ...LANGUAGES].map(option),
+  );
+  select.value = choice();
+  return h(
+    "section",
+    { class: "card", id: "card-language" },
+    h("h2", { text: "Language" }),
+    h("label", { class: "field" }, h("span", { text: "Language" }), select),
+    h("p", { class: "muted spaced", text: "Saved in this browser only. Machine-translated; names, paths and messages from the daemon stay as they are." }),
+  );
 }
 
 /** Which credentials are set; their values are never shown */

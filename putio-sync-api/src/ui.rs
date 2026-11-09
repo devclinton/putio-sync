@@ -3,7 +3,7 @@
 //! The files under `putio-sync-api/ui/` are compiled into the binary and served as they
 //! are on disk, with no build step:
 //! - GET  /               - `index.html`
-//! - GET  /assets/{file}  - stylesheet and ES modules
+//! - GET  /assets/{file}  - stylesheet, ES modules and language catalogs (feature 051)
 //!
 //! Both routes are public: the page holds only the sign-in form and rendering code;
 //! every piece of data behind it comes from protected routes.
@@ -19,9 +19,21 @@ use std::sync::OnceLock;
 const HTML: &str = "text/html; charset=utf-8";
 const CSS: &str = "text/css; charset=utf-8";
 const JS: &str = "text/javascript; charset=utf-8";
+const JSON: &str = "application/json; charset=utf-8";
 
 /// The page itself, served at `/`
 const INDEX: &[u8] = include_bytes!("../ui/index.html");
+
+/// A language's catalog (feature 051), fetched only when that language is in use
+macro_rules! catalog {
+    ($code:literal) => {
+        (
+            concat!("i18n/", $code, ".json"),
+            JSON,
+            include_bytes!(concat!("../ui/i18n/", $code, ".json")),
+        )
+    };
+}
 
 /// `(path under /assets/, content type, bytes)`
 const ASSETS: &[(&str, &str, &[u8])] = &[
@@ -33,6 +45,8 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("query.js", JS, include_bytes!("../ui/query.js")),
     ("listctl.js", JS, include_bytes!("../ui/listctl.js")),
     ("theme.js", JS, include_bytes!("../ui/theme.js")),
+    ("i18n.js", JS, include_bytes!("../ui/i18n.js")),
+    ("translate.js", JS, include_bytes!("../ui/translate.js")),
     ("rules.js", JS, include_bytes!("../ui/rules.js")),
     ("flags.js", JS, include_bytes!("../ui/flags.js")),
     ("storage.js", JS, include_bytes!("../ui/storage.js")),
@@ -164,6 +178,32 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
         JS,
         include_bytes!("../ui/settings/advanced.js"),
     ),
+    catalog!("ar"),
+    catalog!("da"),
+    catalog!("de"),
+    catalog!("es"),
+    catalog!("fi"),
+    catalog!("fr"),
+    catalog!("he"),
+    catalog!("hi"),
+    catalog!("id"),
+    catalog!("it"),
+    catalog!("ja"),
+    catalog!("ko"),
+    catalog!("ms"),
+    catalog!("nb"),
+    catalog!("nl"),
+    catalog!("pl"),
+    catalog!("pt"),
+    catalog!("pt-PT"),
+    catalog!("ru"),
+    catalog!("sv"),
+    catalog!("th"),
+    catalog!("tr"),
+    catalog!("uk"),
+    catalog!("vi"),
+    catalog!("zh"),
+    catalog!("zh-TW"),
 ];
 
 /// `"<16 hex digits>"`: a hash of `bytes`, so the ETag changes whenever the embedded

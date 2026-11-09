@@ -3,6 +3,7 @@
 // api.js and format.js; they never import each other.
 
 import { authStatus, getIdentity, getToken, logout, onAuthExpired, post } from "./api.js";
+import { choice, setLanguage, tr } from "./i18n.js";
 import * as status from "./pages/status.js";
 import * as active from "./pages/active.js";
 import * as queue from "./pages/queue.js";
@@ -43,6 +44,7 @@ const view = document.getElementById("view");
 const banner = document.getElementById("banner");
 
 let current = null;
+let currentName = "status";
 let polls = new Set();
 let loginParams = {};
 // Set at boot when the daemon waits for its first-run setup (feature 013)
@@ -165,7 +167,8 @@ function mount(name, params) {
     if (a.dataset.page === name) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
-  document.title = `${TITLES[name]} · putio-sync`;
+  currentName = name;
+  showTitle();
   // Signed in by Tailscale only: there is nothing to sign out of here
   document.getElementById("signout").hidden = name === "login" || name === "setup" || (!getToken() && Boolean(getIdentity()));
   showWho();
@@ -175,6 +178,11 @@ function mount(name, params) {
   current = PAGES[name];
   current.mount(view, params);
 }
+
+function showTitle() {
+  document.title = `${tr(TITLES[currentName])} · putio-sync`;
+}
+document.addEventListener("languagechange", showTitle);
 
 // One entrance per page change; app.css only animates it without reduced motion.
 let enterTimer = null;
@@ -389,6 +397,9 @@ document.getElementById("signout").addEventListener("click", () => {
 });
 
 window.addEventListener("hashchange", route);
+
+// The saved or browser language (feature 051), before the first page shows
+await setLanguage(choice(), false);
 
 // A daemon without a usable config serves the setup wizard instead
 try {

@@ -1,4 +1,4 @@
-.PHONY: help build test clean fmt lint ci install run-cli dev release check doc \
+.PHONY: help build test clean fmt lint ci install run-cli dev release check doc i18n i18n-translate \
 	docker-build docker-test docker-run docker-push docker-clean \
 	build-deb build-snap build-flatpak packages \
 	ci-docker workflow-ci workflow-docker
@@ -97,6 +97,12 @@ lint-fix: ## Run clippy with automatic fixes
 ci: ## Run all CI checks locally (format, lint, test, build)
 	@echo "Running local CI checks..."
 	@$(CI_SCRIPT)
+
+i18n: ## Refresh the web UI's English catalog from its strings (feature 051)
+	node scripts/i18n-extract.mjs
+
+i18n-translate: i18n ## Translate the web UI's missing strings (needs atranslate-cli and ATRANSLATE_URL)
+	node scripts/i18n-translate.mjs $(LANGS)
 
 check: ## Quick check that the code compiles
 	@echo "Checking compilation..."

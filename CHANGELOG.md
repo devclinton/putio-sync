@@ -14,6 +14,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- The web UI speaks 27 languages. It follows the browser's language, and **Settings ›
+  General › Language** picks another for this browser, switching at once without a reload.
+  Arabic and Hebrew read right to left. The translations are machine-made; names, paths,
+  logs and daemon messages stay as they are.
+
 - Subtitle source modes and OpenSubtitles matching. Choose per category or language whether
   subtitles are downloaded only, downloaded then transcribed if missing (the default,
   unchanged), transcribed only, or both (the transcription is saved as `Movie.en.whisper.srt`

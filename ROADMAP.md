@@ -166,6 +166,15 @@ Radarr and Sonarr must not import an item before its pipeline is done:
   import back forever: after a set number of retries the item completes
   without it, and the failure shows on the item and in notifications.
 
+### 051 Multi-language web UI (done)
+
+The web UI is translated through catalogs keyed by its English text, in every base language
+the atranslate service supports, with a Language card in Settings. Left for later: review of
+the machine translations by native speakers, plural forms, and translating messages that
+come from the daemon. A translated Snap Store listing is not possible: the store keeps one
+summary and description per snap (see `specs/051-ui-i18n/research.md`); a Flathub listing
+could carry translations through AppStream.
+
 ### Magnet file lists from peers (deferred from 043)
 
 When the .torrent caches never have a magnet's file list, fetch it from

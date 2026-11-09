@@ -995,6 +995,21 @@ as well as a desktop. The pages:
 The UI is built into the binary and the Docker image; there is nothing else to install
 or mount.
 
+### Languages
+
+The UI follows the browser's language when it has a translation, and English otherwise.
+**Settings › General › Language** picks another one for this browser and switches at once.
+Translations are machine-made for Arabic, Chinese (simplified and traditional), Danish, Dutch,
+Finnish, French, German, Hebrew, Hindi, Indonesian, Italian, Japanese, Korean, Malay,
+Norwegian Bokmål, Polish, Portuguese (Brazil and Portugal), Russian, Spanish, Swedish, Thai,
+Turkish, Ukrainian and Vietnamese. Names, paths, log lines and messages from the daemon stay as
+they are.
+
+The catalogs are `putio-sync-api/ui/i18n/<code>.json`, each mapping the English text to its
+translation, so a correction is an edit to one line. After changing UI text, `make i18n`
+refreshes `en.json` (`make ci` fails until it is current) and `make i18n-translate` fills the
+new strings in every catalog through `atranslate-cli` (set `ATRANSLATE_URL` to the service).
+
 ### Stats page
 
 `#/stats` shows, for the last 24 hours, 7, 30 or 90 days, a year or everything:
