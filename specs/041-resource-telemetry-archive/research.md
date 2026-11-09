@@ -14,14 +14,14 @@ monitoring server (monitoring01) and `~/dev/home-network`.
   `telemetry::sync::record_run`. That is where "sync running" can be set.
 - **Monitoring server**: Prometheus (Homebrew, LaunchDaemon or LaunchAgent from role
   `monitoring_prometheus`) on `:9090`, scrape interval 15 s, `--storage.tsdb.retention.time=30d`
-  for everything. About 11,400 series, 3.5 GB on disk, 618 GB free. It scrapes itself
+  for everything. It scrapes itself
   (`job_name: prometheus`). `promtool` and `jq` are installed. Ports used in the repo include
   9090, 9091, 9093, 9100, 9115, 9121, 9187, 9190, 9191 and 9742.
 - **Alerts**: a `DiskSpaceLow` rule (below 20% free) already covers `/` on every node_exporter
   host, so the monitoring server's disk is covered. FR-012 needs no new rule.
 - **NAS**: no Prometheus, Grafana or container exporter. The container runs
   `putio-sync --config /config/config.toml daemon ...`. `/config` is
-  `/mnt/user/appdata/putio-sync/`, and `/downloads` holds the DB (4.6 MB). The host has `curl`,
+  `/mnt/user/appdata/putio-sync/`, and `/downloads` holds the DB (a few MB). The host has `curl`,
   `jq`, `sqlite3` and `gzip`, but not `promtool`. The Unraid User Scripts plugin is not
   installed.
 

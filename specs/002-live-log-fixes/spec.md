@@ -157,4 +157,4 @@ As the operator, I want logs to be quiet when nothing happens, and the startup b
 - **Watch folders keep their current layout.** The 41 stuck files are assumed to be uploaded already, based on their fingerprint records. If any isn't in the store, it is uploaded normally, which is acceptable.
 - **Deployment is out of scope.** Rebuilding and redeploying the NAS image is not part of this feature. That includes the Docker Hub vs GHCR question raised during 001. The success criteria measured on the NAS (SC-001–SC-006) are checked after the operator deploys.
 - **Out of scope.** Telemetry and metrics (feature 003) and the web UI (feature 004) are not part of this feature.
-- **The daemon's weekly restarts are expected.** They come from the Unraid appdata backup at Monday 00:00 Pacific, and are not a bug.
+- **The daemon's weekly restarts are expected.** They come from the Unraid appdata backup once a week, and are not a bug.

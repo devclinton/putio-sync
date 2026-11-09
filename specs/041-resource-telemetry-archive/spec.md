@@ -22,12 +22,11 @@ long-term through grafana and maybe some data archive scripts?"
   (monitoring01, 192.168.1.60) and are managed in `~/dev/home-network`. That Prometheus
   already scrapes putio-sync on the NAS every 15 s (job `putio_sync`), and Grafana already has a
   `putio-sync` dashboard provisioned from that repo.
-- That Prometheus keeps data for **30 days**, for every app at once. It holds about 11,400
-  series in about 3.5 GB of disk, and putio-sync makes up about 195 of them. The monitoring
-  server has about 618 GB free. Anything older than 30 days is gone today, so "long term" is
+- That Prometheus keeps data for **30 days**, for every app at once. putio-sync makes up
+  about 195 of its series. Anything older than 30 days is gone today, so "long term" is
   not possible without a change.
 - putio-sync's own database already keeps every finished download (feature 006 charts it). On
-  the NAS it is about 4.6 MB, so it does not need trimming for size.
+  the NAS it is a few MB, so it does not need trimming for size.
 - No other container on the NAS exports per-container CPU or memory to Prometheus.
 
 ## Clarifications

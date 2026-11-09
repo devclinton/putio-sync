@@ -77,8 +77,7 @@ Decisions for feature 003. Each one lists what was chosen, why, and what else wa
   is `/metrics`.
 - **Rationale**:
   - Port 9742 isn't used anywhere in `~/dev/home-network`.
-  - It isn't listening on nas01 today. The ports in use there are 22, 80, 111, 139,
-    443, 445, 2049, 3702, 5355, 7878, 8080, 8181, 8191, 8989, 9191, 9696 and 32400+.
+  - Nothing on the NAS listens on it today.
   - It isn't a well-known Prometheus exporter port that could clash later. 9464, for
     example, is the OpenTelemetry default.
 - **Alternatives considered**: 9464 (the OTel exporter default, kept free for a future
