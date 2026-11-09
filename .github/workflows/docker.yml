@@ -6,10 +6,23 @@ on:
       - main
     tags:
       - 'v*'
+    # Docs-only pushes to main skip the build; tag pushes always build
+    paths:
+      - 'putio-sync-*/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - '.github/workflows/docker.yml'
   workflow_dispatch:
 
 # Pushes to main build amd64 only (the NAS pulls :main); tags and manual runs
 # build the multi-arch image.
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io

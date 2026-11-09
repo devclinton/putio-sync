@@ -453,6 +453,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- The edge snap is no longer rebuilt on every push to main; it is published when a
+  maintainer runs the snap workflow, so it can trail main by a few commits. The `:main`
+  Docker image is rebuilt only when code or the Dockerfile changes, not for docs-only
+  commits.
 - **Pause all** and **Resume all** on the Queue page are replaced by the Pause NAS
   downloads switch, and `POST /local/queue/pause` and `/resume` now turn that switch on
   and off instead of changing every row. Upgrade note: rows paused by the old Pause all

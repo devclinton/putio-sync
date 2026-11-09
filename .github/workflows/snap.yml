@@ -1,18 +1,10 @@
 name: Build and Publish Snap
 
-# Pushes to main go to the edge channel, releases to stable. Publishing needs the
-# SNAPCRAFT_TOKEN secret (`snapcraft export-login`); without it the snap is only
-# built, tested and uploaded as an artifact.
+# Releases go to stable; to update edge, run it by hand:
+#   gh workflow run snap.yml -f channel=edge
+# Publishing needs the SNAPCRAFT_TOKEN secret (`snapcraft export-login`);
+# without it the snap is only built, tested and uploaded as an artifact.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'putio-sync-*/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'config.example.toml'
-      - 'snap/**'
-      - '.github/workflows/snap.yml'
   release:
     types: [published]
   workflow_dispatch:

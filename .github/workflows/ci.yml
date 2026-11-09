@@ -4,11 +4,20 @@ name: CI
 # Push/PR runs that same script on one Linux job; the OS matrix and beta
 # toolchain only run when triggered manually: gh workflow run ci.yml -f full=true
 
+# Docs-only changes skip CI
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'specs/**'
+      - 'Tasks/**'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'specs/**'
+      - 'Tasks/**'
   workflow_dispatch:
     inputs:
       full:

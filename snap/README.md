@@ -43,12 +43,12 @@ repository secret is set:
 
 | Trigger | Channel | Version |
 |---------|---------|---------|
-| Push to main | edge | Cargo version plus commit, e.g. `0.1.1+git1a2b3c4` |
 | GitHub release | stable | The release tag, without the `v` |
-| Run workflow | chosen | The given version, or Cargo version plus commit |
+| Run workflow | chosen, edge by default | The given version, or Cargo version plus commit, e.g. `0.1.1+git1a2b3c4` |
 
 Without the secret the snap is still built and tested, and attached to the run
-as the `snap-package` artifact.
+as the `snap-package` artifact. Pushes to main no longer build a snap; update
+edge with `gh workflow run snap.yml -f channel=edge`.
 
 ### One-time Snap Store setup
 
