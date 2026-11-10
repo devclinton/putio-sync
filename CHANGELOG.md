@@ -395,6 +395,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- A command hook whose script had just been written could fail to start on Linux
+  with "text file busy"; the start is now retried briefly.
 - `cargo build --release` (and so `make ci`) failed on macOS after the October
   2026 Command Line Tools update: the stripped `sqlx` proc macro would not load.
   Proc macros and build scripts are no longer stripped; shipped binaries still

@@ -69,7 +69,19 @@ pub async fn run(hook: &HookConfig, event: &Event) -> HookRun {
     #[cfg(unix)]
     cmd.process_group(0);
 
-    let mut child = match cmd.spawn() {
+    // A script that was just written can briefly be "text file busy" on Linux while
+    // another thread's fork still holds its write descriptor; try again shortly.
+    let mut spawned = cmd.spawn();
+    for _ in 0..5 {
+        match &spawned {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                spawned = cmd.spawn();
+            }
+            _ => break,
+        }
+    }
+    let mut child = match spawned {
         Ok(child) => child,
         Err(e) => {
             run.error = Some(match e.kind() {
