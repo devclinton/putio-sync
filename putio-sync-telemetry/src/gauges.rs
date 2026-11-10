@@ -46,6 +46,7 @@ impl Telemetry {
 
 /// `(free, total)` bytes of the filesystem holding `dir`, from `statvfs`. Free is the
 /// space available to unprivileged users (`f_bavail`), as `df` reports it.
+#[cfg(unix)]
 pub fn disk_usage(dir: &Path) -> std::io::Result<(u64, u64)> {
     let st = rustix::fs::statvfs(dir)?;
     let frsize = st.f_frsize;
@@ -53,6 +54,24 @@ pub fn disk_usage(dir: &Path) -> std::io::Result<(u64, u64)> {
         st.f_bavail.saturating_mul(frsize),
         st.f_blocks.saturating_mul(frsize),
     ))
+}
+
+/// `(free, total)` bytes of the volume holding `dir`, from `GetDiskFreeSpaceExW`. Free
+/// is what the calling user may use (quotas applied), like `f_bavail`.
+#[cfg(windows)]
+pub fn disk_usage(dir: &Path) -> std::io::Result<(u64, u64)> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
+    let (mut free, mut total) = (0u64, 0u64);
+    // SAFETY: `wide` is NUL-terminated and outlives the call; the out pointers are valid.
+    let ok =
+        unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, std::ptr::null_mut()) };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok((free, total))
 }
 
 /// Refresh the queue and disk gauges now and then every [`REFRESH_INTERVAL`].
