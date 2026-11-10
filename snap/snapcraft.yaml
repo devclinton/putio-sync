@@ -42,6 +42,64 @@ description: |
     sudo snap connect putio-sync:removable-media
 
   putio-sync is not affiliated with Put.io.
+
+  In other languages
+
+  Español:
+
+  putio-sync descarga sus archivos Put.io en un NAS, servidor o escritorio y los mantiene sincronizados.
+
+  * Descarga automáticamente sus transferencias terminadas, y las descargas interrumpidas se reanudan donde se detuvieron.
+  * Una interfaz web en el puerto 15432, disponible en 27 idiomas.
+  * Puede agregar enlaces magnet y archivos torrent en el navegador, o copiarlos en una carpeta supervisada.
+  * Funciona como un cliente de descarga para Radarr y Sonarr.
+
+  No está afiliado a Put.io.
+
+  中文:
+
+  putio-sync将您的Put.io文件下载到NAS、服务器或桌面，并保持同步。
+
+  * 它会自动下载您完成的传输，中断的下载会在它们停止的地方恢复。
+  * 端口15432上的网页界面，有27种语言版本。
+  * 您可以在浏览器中添加磁力链接和种子文件，或将它们复制到受监控的文件夹中。
+  * 它作为Radarr和Sonarr的下载客户端工作。
+
+  与Put.io无关。
+
+  हिन्दी:
+
+  putio-sync आपकी Put.io फ़ाइलों को NAS, सर्वर या डेस्कटॉप पर डाउनलोड करता है और उन्हें सिंक में रखता है।
+
+  * यह स्वचालित रूप से आपके समाप्त स्थानान्तरण को डाउनलोड करता है, और बाधित डाउनलोड फिर से शुरू होता है जहां वे रुक गए थे।
+  * पोर्ट 15432 पर एक वेब इंटरफ़ेस, 27 भाषाओं में उपलब्ध है।
+  * आप ब्राउज़र में चुंबक लिंक और टोरेंट फ़ाइलों को जोड़ सकते हैं, या उन्हें मॉनिटर किए गए फ़ोल्डर में कॉपी कर सकते हैं।
+  * यह Radarr और Sonarr के लिए एक डाउनलोड क्लाइंट के रूप में काम करता है।
+
+  Put.io से संबद्ध नहीं है।
+
+  Français:
+
+  putio-sync télécharge vos fichiers Put.io sur un NAS, un serveur ou un bureau et les synchronise.
+
+  * Il télécharge automatiquement vos transferts terminés, et les téléchargements interrompus reprennent là où ils se sont arrêtés.
+  * Une interface web sur le port 15432, disponible en 27 langues.
+  * Vous pouvez ajouter des liens magnet et des fichiers torrent dans le navigateur, ou les copier dans un dossier surveillé.
+  * Il fonctionne comme un client de téléchargement pour Radarr et Sonarr.
+
+  Non affilié à Put.io.
+
+  العربية:
+
+  يقوم putio-sync بتنزيل ملفات Put.io الخاصة بك إلى NAS أو خادم أو سطح مكتب ويبقيها متزامنة.
+
+  * يقوم تلقائيا بتنزيل عمليات النقل النهائية، وتستأنف التنزيلات المتقطعة حيث توقفت.
+  * واجهة ويب على المنفذ 15432، متوفرة ب 27 لغة.
+  * يمكنك إضافة روابط مغناطيسية وملفات تورنت في المتصفح، أو نسخها إلى مجلد مراقب.
+  * إنه يعمل كعميل تنزيل ل Radarr و Sonarr.
+
+  غير تابع ل Put.io.
+
 website: https://github.com/devclinton/putio-sync
 license: MIT
 grade: stable

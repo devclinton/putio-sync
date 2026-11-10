@@ -14,6 +14,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- The Snap Store description has a short summary of the main features in Spanish,
+  Chinese, Hindi, French and Arabic (machine-translated), after the English text.
 - Home-server app store listings: an Unraid Community Applications template, Umbrel and
   CasaOS packages, and a Docker Compose file for TrueNAS SCALE, Runtipi, Portainer and
   Dockge custom apps (`packaging/STORES.md`). The project is MIT licensed, now with a
