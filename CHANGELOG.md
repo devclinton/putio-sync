@@ -12,11 +12,13 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-09
+
 ### Fixed
 
-- The Windows, `.deb` and x86_64 Linux downloads build again; 0.2.0 shipped without
-  them. On Windows the disk space metrics now come from the volume holding the download
-  folder.
+- The Windows, `.deb` and x86_64 Linux downloads build again. Their build failures kept
+  0.2.0 from being published, so 0.2.1 is the first release with every download. On
+  Windows the disk space metrics now come from the volume holding the download folder.
 
 ## [0.2.0] - 2026-11-09
 
