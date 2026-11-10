@@ -133,14 +133,8 @@ This guide is for maintainers of the putio-sync project, covering release proced
    # macOS
    brew upgrade putio-sync
 
-   # Windows
-   winget upgrade putio.putio-sync
-
    # Linux (Snap)
    sudo snap refresh putio-sync
-
-   # Linux (Flatpak)
-   flatpak update com.putio.PutioSync
    ```
 
 2. **Monitor Package Submissions**
@@ -215,15 +209,8 @@ snapcraft promote putio-sync --from-channel edge --to-channel stable
 
 ### Flatpak
 
-**Flathub Repository**: https://github.com/flathub/com.putio.PutioSync
-
-**Automated Builds**: Bundles via workflow, manual Flathub submission
-
-**Update Flathub**:
-1. Update manifest in Flathub repository
-2. Create pull request
-3. Address review feedback
-4. Flathub builds and publishes automatically
+Not on Flathub: it doesn't accept console software. `flatpak.yml` builds a bundle by hand
+(`gh workflow run flatpak.yml`); release.yml doesn't call it.
 
 ---
 
@@ -241,6 +228,17 @@ Required secrets for automated workflows:
 1. Go to https://github.com/settings/tokens/new
 2. Create token with `repo` and `workflow` scopes
 3. Add to repository secrets: https://github.com/devclinton/putio-sync/settings/secrets/actions
+
+### WINGET_TOKEN
+
+**Purpose**: Open the winget-pkgs PR for each release (`winget.yml`)
+
+**Permissions**: classic token with `public_repo`; the action forks
+`microsoft/winget-pkgs` into the token owner's account
+
+**Before the first release that uses it**: `devclinton.putio-sync` has to exist in
+winget-pkgs, so the first version is a manual PR made from `packaging/winget/manifests/`.
+Until then the winget job fails with "does not exist in microsoft/winget-pkgs".
 
 ### SNAPCRAFT_TOKEN
 

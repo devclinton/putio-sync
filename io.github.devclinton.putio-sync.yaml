@@ -1,4 +1,4 @@
-app-id: com.putio.PutioSync
+app-id: io.github.devclinton.putio-sync
 runtime: org.freedesktop.Platform
 runtime-version: '23.08'
 sdk: org.freedesktop.Sdk

@@ -12,6 +12,13 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- The Windows install steps no longer say `winget install`: putio-sync isn't in winget
+  yet, so they point at the installer and the zip. The winget package ID is now
+  `devclinton.putio-sync` and the Flatpak ID `io.github.devclinton.putio-sync`, so
+  neither suggests Put.io publishes them.
+
 ## [0.2.1] - 2026-11-09
 
 ### Fixed
