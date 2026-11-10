@@ -21,6 +21,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- The README, snap description and website give the daemon's idle memory on a NAS as
+  about 33 MB; they said 11 MB. The docs site's dark themes have readable link and
+  code colors, links in text are underlined, and code blocks can be scrolled from the
+  keyboard.
 - The Windows install steps no longer say `winget install`: putio-sync isn't in winget
   yet, so they point at the installer and the zip. The winget package ID is now
   `devclinton.putio-sync` and the Flatpak ID `io.github.devclinton.putio-sync`, so
