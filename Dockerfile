@@ -168,8 +168,9 @@ VOLUME ["/config", "/downloads", "/watches"]
 # Set working directory
 WORKDIR /config
 
-# default to info logging
-ENV RUST_LOG=info
+# HOME is the config volume so ~/.putiosync/logs is writable under any --user
+# (the putio user's /home/putio isn't), as in Dockerfile.dhi. Default to info logging.
+ENV HOME=/config RUST_LOG=info
 
 # Prometheus metrics ([metrics] bind) and the API + web UI ([api] bind). The UI is
 # embedded in the binary; publish the ports with -p or the Unraid template.

@@ -13,6 +13,8 @@ services:
     user: "1000:1000"
     restart: on-failure
     environment:
+      # 0.2.1 leaves HOME at / for uids other than 99, where logs can't be written.
+      HOME: /config
       # Unlocks the setup wizard and the web UI; Umbrel shows it as the app password.
       PUTIO_SYNC_API_TOKEN: ${APP_PASSWORD}
     volumes:
