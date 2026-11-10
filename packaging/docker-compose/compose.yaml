@@ -14,6 +14,8 @@ services:
     user: "1000:1000"
     environment:
       TZ: Etc/UTC
+      # Logs go to ~/.putiosync; images up to 0.2.1 leave HOME at / for other uids.
+      HOME: /config
       # Optional: a web UI token, which also unlocks the setup wizard.
       # PUTIO_SYNC_API_TOKEN: change-me
     ports:
