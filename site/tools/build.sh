@@ -23,8 +23,11 @@ rm -rf "$out"
 mkdir -p "$out"
 mdbook build "$root/site/book"
 # mdBook's sidebar toggle is a <label> with aria-expanded, which axe flags as
-# critical; role="button" makes the attribute valid
-find "$out/docs" -name '*.html' -exec sed -i.bak 's/<label id="mdbook-sidebar-toggle" /<label id="mdbook-sidebar-toggle" role="button" /' {} +
+# critical; role="button" makes the attribute valid. Code blocks scroll
+# sideways, so they need to take keyboard focus.
+find "$out/docs" -name '*.html' -exec sed -i.bak \
+    -e 's/<label id="mdbook-sidebar-toggle" /<label id="mdbook-sidebar-toggle" role="button" /' \
+    -e 's/<pre><code/<pre><code tabindex="0"/g' {} +
 find "$out/docs" -name '*.html.bak' -delete
 for f in index.html style.css install.js; do
     sed "s/{{version}}/$version/g" "$root/site/$f" > "$out/$f"

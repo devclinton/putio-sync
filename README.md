@@ -12,7 +12,7 @@
 downloads finished transfers to local storage, sends torrents and magnet links to
 Put.io, and works as a download client for Radarr and Sonarr. It is one small Rust
 binary with a web UI, built to run unattended on a home server: on a NAS it idles at
-about 11 MB of memory.
+about 33 MB of memory.
 
 putio-sync is an independent project and is not affiliated with Put.io.
 

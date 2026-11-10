@@ -40,4 +40,4 @@
 ## Phase 7: Polish
 
 - [X] T016 Set the site as the website URL in the snap, Unraid, Umbrel and CasaOS files
-- [ ] T017 Lighthouse on the live site (SC-001); fix what falls short
+- [X] T017 Lighthouse on the live site (SC-001); fix what falls short
