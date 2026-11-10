@@ -1,0 +1,26 @@
+/* Accessibility fixes on top of mdBook's stock theme (054, SC-001) */
+
+/* Link colors with 4.5:1 contrast on each dark theme's background */
+.coal, .navy { --links: #6cb9df; --sidebar-active: #6cb9df; }
+.ayu { --links: #39bae6; }
+
+/* The dark highlight theme's red is just under 4.5:1 */
+.coal :is(.hljs-variable, .hljs-attr, .hljs-attribute, .hljs-tag, .hljs-name, .hljs-template-variable, .hljs-regexp, .hljs-deletion, .hljs-selector-id, .hljs-selector-class),
+.navy :is(.hljs-variable, .hljs-attr, .hljs-attribute, .hljs-tag, .hljs-name, .hljs-template-variable, .hljs-regexp, .hljs-deletion, .hljs-selector-id, .hljs-selector-class) {
+  color: #db7a7a;
+}
+
+/* Links inside text are underlined, not told apart by color alone */
+.content main a:not(.header) { text-decoration: underline; text-underline-offset: 0.15em; }
+.content main a.header { text-decoration: none; }
+
+/* 24px minimum touch targets for the header icons */
+.menu-bar .icon-button,
+.menu-bar .right-buttons a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  margin-inline: 2px;
+}

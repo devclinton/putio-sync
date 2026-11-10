@@ -2,6 +2,7 @@
 title = "putio-sync docs"
 authors = ["Clinton Collins"]
 language = "en"
+description = "Documentation for putio-sync, which keeps a NAS or server in sync with a Put.io account."
 src = "src"
 
 [build]
@@ -17,6 +18,7 @@ after = ["links"]
 [output.html]
 default-theme = "light"
 preferred-dark-theme = "navy"
+additional-css = ["extra.css"]
 git-repository-url = "https://github.com/devclinton/putio-sync"
 edit-url-template = "https://github.com/devclinton/putio-sync/edit/main/{path}"
 site-url = "/putio-sync/docs/"

@@ -9,7 +9,7 @@ description: |
   finger.
 
   It is a single native binary written in Rust and very light on resources: on
-  a home NAS the daemon idles at about 11 MB of memory and well under 1% of one
+  a home NAS the daemon idles at about 33 MB of memory and well under 1% of one
   CPU core.
 
   Features:
