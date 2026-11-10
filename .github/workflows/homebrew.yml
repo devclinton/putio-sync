@@ -1,8 +1,12 @@
 name: Update Homebrew Formula
 
 on:
-  release:
-    types: [published]
+  # release.yml calls it (feature 053)
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       version:
@@ -19,11 +23,7 @@ jobs:
       - name: Get version
         id: get_version
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            VERSION="${{ github.event.release.tag_name }}"
-          else
-            VERSION="${{ github.event.inputs.version }}"
-          fi
+          VERSION="${{ inputs.version }}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "version_no_v=${VERSION#v}" >> "$GITHUB_OUTPUT"
 

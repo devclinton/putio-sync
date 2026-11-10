@@ -45,3 +45,6 @@ tests/
 *.db
 *.db-shm
 *.db-wal
+
+# Release builds
+dist/

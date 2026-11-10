@@ -1,143 +1,228 @@
 name: Build Release Binaries
 
+# Standalone binaries and installers for every platform (feature 053):
+#   Linux x86_64/aarch64  static musl tarballs (Dockerfile.dhi, target binary)
+#   macOS arm64           tarball and an unsigned .pkg with a launchd agent
+#   Windows x64/arm64     zips (winget installs these) and Inno Setup installers
+# plus SHA256SUMS over all of them. release.yml calls it with upload: true; run
+# it by hand for a dry run that keeps everything as workflow artifacts:
+#   gh workflow run release-binaries.yml -f version=v0.1.2
+#
+# Secrets: DHI_USERNAME and DHI_TOKEN (a Docker account and access token) to
+# pull dhi.io; MACOS_INSTALLER_P12, MACOS_INSTALLER_P12_PASSWORD and
+# MACOS_INSTALLER_IDENTITY are optional and sign the .pkg when all are set.
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      upload:
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to build (e.g., v0.1.1)'
+        description: 'Version to build (e.g., v0.1.2)'
         required: true
+      upload:
+        description: 'Upload to the existing GitHub release with this tag'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  VERSION: ${{ inputs.version }}
 
 jobs:
+  build-linux:
+    name: Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: aarch64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to dhi.io
+        uses: docker/login-action@v3
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DHI_USERNAME }}
+          password: ${{ secrets.DHI_TOKEN }}
+
+      - name: Build the static binary
+        run: |
+          docker buildx build -f Dockerfile.dhi --target binary \
+            --platform ${{ matrix.platform }} \
+            --build-arg PUTIO_SYNC_GIT_SHA=${{ github.sha }} \
+            --output type=local,dest=out .
+
+      - name: Check it is static and runs
+        run: |
+          file out/putio-sync
+          file out/putio-sync | grep -q 'statically linked'
+          out/putio-sync --version
+
+      - name: Package
+        run: |
+          name="putio-sync-${VERSION#v}-linux-${{ matrix.arch }}"
+          mkdir -p "$name" dist
+          cp out/putio-sync LICENSE README.md CHANGELOG.md "$name/"
+          tar -czf "dist/$name.tar.gz" "$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: dist/*
+
+  build-macos:
+    name: macOS arm64
+    runs-on: macos-latest
+    env:
+      MACOS_INSTALLER_IDENTITY: ${{ secrets.MACOS_INSTALLER_IDENTITY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup reads the version from rust-toolchain.toml
+      - name: Build
+        env:
+          PUTIO_SYNC_GIT_SHA: ${{ github.sha }}
+        run: cargo build --release --locked --target aarch64-apple-darwin --package putio-sync-cli
+
+      - name: Check it runs and links only system libraries
+        run: |
+          bin=target/aarch64-apple-darwin/release/putio-sync
+          "$bin" --version
+          otool -L "$bin"
+          if otool -L "$bin" | tail -n +2 | grep -v -e '^\s*/usr/lib/' -e '^\s*/System/Library/'; then
+            echo "Links a library macOS doesn't ship"; exit 1
+          fi
+
+      - name: Import the installer signing identity
+        if: env.MACOS_INSTALLER_IDENTITY != ''
+        env:
+          P12: ${{ secrets.MACOS_INSTALLER_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_INSTALLER_P12_PASSWORD }}
+        run: |
+          echo "$P12" | base64 --decode > installer.p12
+          security create-keychain -p ci build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p ci build.keychain
+          security import installer.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/productbuild
+          rm installer.p12
+
+      - name: Package
+        run: |
+          bin=target/aarch64-apple-darwin/release/putio-sync
+          name="putio-sync-${VERSION#v}-macos-arm64"
+          mkdir -p "$name" dist
+          cp "$bin" LICENSE README.md CHANGELOG.md "$name/"
+          tar -czf "dist/$name.tar.gz" "$name"
+          bash packaging/macos/build-pkg.sh "$VERSION" "$bin" dist
+          pkgutil --payload-files dist/*.pkg
+          pkgutil --check-signature dist/*.pkg || echo "Unsigned package"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-arm64
+          path: dist/*
+
   build-windows:
-    name: Build Windows ${{ matrix.target }}
+    name: Windows ${{ matrix.arch }}
     runs-on: windows-latest
     strategy:
       matrix:
         include:
           - target: x86_64-pc-windows-msvc
             arch: x64
+          # Cross-compiled on the x64 runner; MSVC ships the ARM64 tools
           - target: aarch64-pc-windows-msvc
             arch: arm64
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Get version
-        id: get_version
+      - name: Build
         shell: pwsh
-        run: |
-          if ("${{ github.event_name }}" -eq "release") {
-            $version = "${{ github.event.release.tag_name }}"
-          } else {
-            $version = "${{ github.event.inputs.version }}"
-          }
-          echo "version=$version" >> $env:GITHUB_OUTPUT
-          echo "version_no_v=$($version -replace '^v', '')" >> $env:GITHUB_OUTPUT
-
-      - name: Build binary
-        shell: pwsh
-        run: |
-          cargo build --release --target ${{ matrix.target }} --package putio-sync-cli
-
-          # Verify the binary was created
-          $binaryPath = "target/${{ matrix.target }}/release/putio-sync.exe"
-          if (!(Test-Path $binaryPath)) {
-            Write-Error "Binary not found at $binaryPath"
-            exit 1
-          }
-
-      - name: Create archive
-        shell: pwsh
-        run: |
-          $version = "${{ steps.get_version.outputs.version }}"
-          $archiveName = "putio-sync-$version-${{ matrix.target }}.zip"
-
-          # Create archive directory
-          New-Item -ItemType Directory -Path "archive" -Force
-
-          # Copy binary
-          Copy-Item "target/${{ matrix.target }}/release/putio-sync.exe" -Destination "archive/"
-
-          # Copy additional files
-          Copy-Item "README.md" -Destination "archive/" -ErrorAction SilentlyContinue
-          Copy-Item "LICENSE" -Destination "archive/" -ErrorAction SilentlyContinue
-
-          # Create ZIP archive
-          Compress-Archive -Path "archive/*" -DestinationPath $archiveName
-
-          # Calculate SHA256
-          $hash = (Get-FileHash -Algorithm SHA256 $archiveName).Hash
-          echo "SHA256: $hash"
-          echo $hash | Out-File -FilePath "$archiveName.sha256" -NoNewline
-
-          echo "archive_name=$archiveName" >> $env:GITHUB_OUTPUT
-          echo "sha256=$hash" >> $env:GITHUB_OUTPUT
-        id: create_archive
-
-      - name: Upload to release
-        if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ${{ steps.create_archive.outputs.archive_name }}
-          asset_name: ${{ steps.create_archive.outputs.archive_name }}
-          asset_content_type: application/zip
+          PUTIO_SYNC_GIT_SHA: ${{ github.sha }}
+        run: |
+          rustup target add ${{ matrix.target }}
+          cargo build --release --locked --target ${{ matrix.target }} --package putio-sync-cli
 
-      - name: Upload SHA256 checksum
-        if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ${{ steps.create_archive.outputs.archive_name }}.sha256
-          asset_name: ${{ steps.create_archive.outputs.archive_name }}.sha256
-          asset_content_type: text/plain
+      - name: Check it runs
+        if: matrix.arch == 'x64'
+        run: target/${{ matrix.target }}/release/putio-sync.exe --version
 
-      - name: Upload artifact (for manual runs)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
-        with:
-          name: putio-sync-${{ matrix.target }}
-          path: |
-            ${{ steps.create_archive.outputs.archive_name }}
-            ${{ steps.create_archive.outputs.archive_name }}.sha256
+      - name: Zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path archive, dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/putio-sync.exe", README.md, LICENSE -Destination archive/
+          # winget installs this zip; keep the name and the leading v
+          Compress-Archive -Path archive/* -DestinationPath "dist/putio-sync-$env:VERSION-${{ matrix.target }}.zip"
 
-  build-summary:
-    name: Create Build Summary
-    needs: build-windows
+      - name: Installer
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+            $env:PATH += ";${env:ProgramFiles(x86)}\Inno Setup 6"
+          }
+          $version = $env:VERSION -replace '^v', ''
+          $exe = (Resolve-Path "target/${{ matrix.target }}/release/putio-sync.exe").Path
+          iscc "/DAppVersion=$version" "/DArch=${{ matrix.arch }}" "/DSourceExe=$exe" "/O$PWD\dist" packaging/windows/putio-sync.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-${{ matrix.arch }}
+          path: dist/*
+
+  checksums:
+    name: Checksums and upload
+    needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
-    if: always()
-
     steps:
-      - name: Create summary
-        shell: bash
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: SHA256SUMS
+        working-directory: dist
         run: |
-          echo "## Windows Binary Builds" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
 
-          if [ "${{ needs.build-windows.result }}" == "success" ]; then
-            echo "✅ All Windows builds completed successfully" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Built Targets" >> $GITHUB_STEP_SUMMARY
-            echo "- x86_64-pc-windows-msvc (x64)" >> $GITHUB_STEP_SUMMARY
-            echo "- aarch64-pc-windows-msvc (ARM64)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Some builds failed" >> $GITHUB_STEP_SUMMARY
-          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-all
+          path: dist/*
 
-          if [ "${{ github.event_name }}" == "release" ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Release Assets" >> $GITHUB_STEP_SUMMARY
-            echo "Binaries and checksums uploaded to: ${{ github.event.release.html_url }}" >> $GITHUB_STEP_SUMMARY
-          fi
+      - name: Upload to the release
+        if: inputs.upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$VERSION" dist/* --clobber
+
+      - name: Summary
+        run: |
+          {
+            echo "## Release binaries ${VERSION}"
+            echo ""
+            echo '```'
+            cat dist/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

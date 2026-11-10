@@ -47,3 +47,5 @@ snap/parts/
 snap/prime/
 snap/stage/
 snap/*.snap
+# Release builds (make dist-linux, dist-macos)
+/dist/

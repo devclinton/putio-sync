@@ -1,13 +1,23 @@
 name: Build Debian Packages
 
 on:
-  release:
-    types: [published]
+  # release.yml calls it (feature 053)
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      upload:
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       version:
         description: 'Version to build (e.g., v0.1.1)'
         required: true
+
+permissions:
+  contents: write
 
 jobs:
   build-deb:
@@ -29,11 +39,7 @@ jobs:
       - name: Get version
         id: get_version
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            VERSION="${{ github.event.release.tag_name }}"
-          else
-            VERSION="${{ github.event.inputs.version }}"
-          fi
+          VERSION="${{ inputs.version }}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "version_no_v=${VERSION#v}" >> $GITHUB_OUTPUT
 
@@ -64,29 +70,13 @@ jobs:
           dpkg-deb --info build/*.deb
 
       - name: Upload to release
-        if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
+        if: inputs.upload
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: build/putio-sync_${{ steps.get_version.outputs.version_no_v }}_${{ matrix.arch }}.deb
-          asset_name: putio-sync_${{ steps.get_version.outputs.version_no_v }}_${{ matrix.arch }}.deb
-          asset_content_type: application/vnd.debian.binary-package
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "${{ steps.get_version.outputs.version }}" build/*.deb build/*.sha256 --clobber
 
-      - name: Upload SHA256 checksum
-        if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: build/putio-sync_${{ steps.get_version.outputs.version_no_v }}_${{ matrix.arch }}.deb.sha256
-          asset_name: putio-sync_${{ steps.get_version.outputs.version_no_v }}_${{ matrix.arch }}.deb.sha256
-          asset_content_type: text/plain
-
-      - name: Upload artifact (for manual runs)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: debian-${{ matrix.arch }}
@@ -125,8 +115,8 @@ jobs:
             echo "❌ Some builds failed" >> $GITHUB_STEP_SUMMARY
           fi
 
-          if [ "${{ github.event_name }}" == "release" ]; then
+          if [ "${{ inputs.upload }}" == "true" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Release Assets" >> $GITHUB_STEP_SUMMARY
-            echo "Packages uploaded to: ${{ github.event.release.html_url }}" >> $GITHUB_STEP_SUMMARY
+            echo "Packages uploaded to release ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
           fi

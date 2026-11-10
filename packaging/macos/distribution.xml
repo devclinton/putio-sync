@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Put.io Sync @VERSION@</title>
+    <welcome file="welcome.html"/>
+    <license file="LICENSE.txt"/>
+    <options customize="allow" require-scripts="false" hostArchitectures="arm64"/>
+    <domains enable_localSystem="true"/>
+    <choices-outline>
+        <line choice="core"/>
+        <line choice="agent"/>
+    </choices-outline>
+    <choice id="core" title="putio-sync" enabled="false" selected="true"
+            description="The putio-sync command in /usr/local/bin and a Put.io Sync Web UI link in Applications.">
+        <pkg-ref id="com.devclinton.putio-sync"/>
+    </choice>
+    <choice id="agent" title="Start at login" start_selected="true"
+            description="A launchd agent that runs the putio-sync daemon for each user at login and restarts it if it stops. Its log is ~/Library/Logs/putio-sync.log.">
+        <pkg-ref id="com.devclinton.putio-sync.agent"/>
+    </choice>
+    <pkg-ref id="com.devclinton.putio-sync" version="@VERSION@">core.pkg</pkg-ref>
+    <pkg-ref id="com.devclinton.putio-sync.agent" version="@VERSION@">agent.pkg</pkg-ref>
+</installer-gui-script>

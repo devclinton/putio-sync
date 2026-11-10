@@ -1,4 +1,5 @@
 .PHONY: help build test clean fmt lint ci install run-cli dev release check doc i18n i18n-translate \
+	dist-linux dist-macos docker-dhi \
 	docker-build docker-test docker-run docker-push docker-clean \
 	build-deb build-snap build-flatpak packages \
 	ci-docker workflow-ci workflow-docker
@@ -346,6 +347,26 @@ packages: ## Build all packages (Debian, Snap, Flatpak)
 	$(MAKE) build-snap || echo "Snap build failed or skipped"
 	$(MAKE) build-flatpak || echo "Flatpak build failed or skipped"
 	@echo "Package builds completed!"
+
+# Release binaries and dhi.io images (feature 053). dhi.io needs `docker login dhi.io`.
+DIST_ARCH ?= $(shell uname -m | sed 's/arm64/aarch64/')
+DIST_PLATFORM = linux/$(if $(filter aarch64,$(DIST_ARCH)),arm64,amd64)
+DHI_TARGET ?= runtime
+
+dist-linux: ## Static musl Linux binary in dist/ (DIST_ARCH=x86_64|aarch64; other arch needs emulation)
+	docker buildx build -f Dockerfile.dhi --target binary --platform $(DIST_PLATFORM) \
+		--build-arg PUTIO_SYNC_GIT_SHA=$$(git rev-parse HEAD) \
+		--output type=local,dest=dist/linux-$(DIST_ARCH) .
+	file dist/linux-$(DIST_ARCH)/putio-sync
+
+dist-macos: ## macOS .pkg installer in dist/ from a release build (PACKAGE_VERSION=x.y.z)
+	cargo build --release --locked --package putio-sync-cli
+	bash packaging/macos/build-pkg.sh $(PACKAGE_VERSION) target/release/putio-sync dist
+
+docker-dhi: ## Build a dhi.io image (DHI_TARGET=runtime|runtime-ffmpeg|dev|dev-ffmpeg)
+	docker buildx build -f Dockerfile.dhi --target $(DHI_TARGET) --load \
+		--build-arg PUTIO_SYNC_GIT_SHA=$$(git rev-parse HEAD) \
+		-t putio-sync:$(subst runtime,dhi,$(DHI_TARGET)) .
 
 # ============================================================================
 # GitHub Workflow Local Execution

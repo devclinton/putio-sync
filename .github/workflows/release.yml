@@ -1,5 +1,10 @@
 name: Release
 
+# The one entry point for a release (feature 053). Pushing a v* tag, or running
+# it by hand with a version, creates a draft release, builds every artifact
+# into it, then publishes it and updates Homebrew and winget, which need the
+# public assets. The other release workflows are reusable (workflow_call) and
+# also run by hand for a dry run without touching any release.
 on:
   push:
     tags:
@@ -7,15 +12,17 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g., v0.1.2)'
+        description: 'Version tag (e.g., v0.1.2); the tag must exist'
         required: true
+
+permissions:
+  contents: write
 
 jobs:
   create-release:
-    name: Create GitHub Release
+    name: Create draft release
     runs-on: ubuntu-latest
     outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
       version: ${{ steps.get_version.outputs.version }}
     steps:
       - name: Checkout repository
@@ -24,172 +31,106 @@ jobs:
       - name: Get version
         id: get_version
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            VERSION="${GITHUB_REF#refs/tags/}"
-          else
-            VERSION="${{ github.event.inputs.version }}"
-          fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "version_no_v=${VERSION#v}" >> $GITHUB_OUTPUT
+          VERSION="${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Extract changelog
-        id: changelog
-        run: |
-          VERSION="${{ steps.get_version.outputs.version_no_v }}"
-
-          CHANGELOG=$(bash scripts/changelog-section.sh "$VERSION")
-          if [ -z "$CHANGELOG" ]; then
-            CHANGELOG="Release ${VERSION}"
-          fi
-
-          # Save to file for multiline handling
-          echo "$CHANGELOG" > /tmp/changelog.txt
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
+      - name: Create the draft
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ steps.get_version.outputs.version }}
-          release_name: Release ${{ steps.get_version.outputs.version }}
-          body_path: /tmp/changelog.txt
-          draft: false
-          prerelease: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.get_version.outputs.version }}
+        run: |
+          bash scripts/changelog-section.sh "${VERSION#v}" > /tmp/changelog.txt
+          [ -s /tmp/changelog.txt ] || echo "Release ${VERSION}" > /tmp/changelog.txt
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION exists; rebuilding its assets"
+          else
+            gh release create "$VERSION" --draft --verify-tag \
+              --title "Release $VERSION" --notes-file /tmp/changelog.txt
+          fi
 
-  # Trigger all platform-specific builds
-  build-windows:
-    name: Build Windows Binaries
+  build-binaries:
+    name: Binaries and installers
     needs: create-release
     uses: ./.github/workflows/release-binaries.yml
+    with:
+      version: ${{ needs.create-release.outputs.version }}
+      upload: true
     secrets: inherit
 
   build-debian:
-    name: Build Debian Packages
+    name: Debian packages
     needs: create-release
     uses: ./.github/workflows/debian.yml
+    with:
+      version: ${{ needs.create-release.outputs.version }}
+      upload: true
     secrets: inherit
 
   build-snap:
-    name: Build and Publish Snap
+    name: Snap (amd64, arm64)
     needs: create-release
     uses: ./.github/workflows/snap.yml
+    with:
+      version: ${{ needs.create-release.outputs.version }}
+      channel: stable
     secrets: inherit
 
-  build-flatpak:
-    name: Build Flatpak
-    needs: create-release
-    uses: ./.github/workflows/flatpak.yml
-    secrets: inherit
+  publish-release:
+    name: Publish release
+    needs: [create-release, build-binaries, build-debian]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "${{ needs.create-release.outputs.version }}" --draft=false --latest
 
   update-homebrew:
-    name: Update Homebrew Formula
-    needs: create-release
+    name: Homebrew formula
+    needs: [create-release, publish-release]
     uses: ./.github/workflows/homebrew.yml
+    with:
+      version: ${{ needs.create-release.outputs.version }}
     secrets: inherit
 
   publish-winget:
-    name: Publish to Winget
-    needs: create-release
+    name: winget
+    needs: [create-release, publish-release]
     uses: ./.github/workflows/winget.yml
+    with:
+      version: ${{ needs.create-release.outputs.version }}
     secrets: inherit
 
   release-summary:
-    name: Create Release Summary
+    name: Release summary
     needs:
       - create-release
-      - build-windows
+      - build-binaries
       - build-debian
       - build-snap
-      - build-flatpak
+      - publish-release
       - update-homebrew
       - publish-winget
     runs-on: ubuntu-latest
     if: always()
-
     steps:
-      - name: Generate Summary
+      - name: Summary
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
         run: |
-          VERSION="${{ needs.create-release.outputs.version }}"
-
-          echo "# Release $VERSION Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "## Build Status" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Windows
-          if [ "${{ needs.build-windows.result }}" == "success" ]; then
-            echo "✅ Windows binaries (x64, ARM64)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Windows binaries" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Debian
-          if [ "${{ needs.build-debian.result }}" == "success" ]; then
-            echo "✅ Debian packages (amd64, arm64)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Debian packages" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Snap
-          if [ "${{ needs.build-snap.result }}" == "success" ]; then
-            echo "✅ Snap package (published to Snap Store)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Snap package" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Flatpak
-          if [ "${{ needs.build-flatpak.result }}" == "success" ]; then
-            echo "✅ Flatpak bundle" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Flatpak bundle" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Homebrew
-          if [ "${{ needs.update-homebrew.result }}" == "success" ]; then
-            echo "✅ Homebrew formula updated" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Homebrew formula" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Winget
-          if [ "${{ needs.publish-winget.result }}" == "success" ]; then
-            echo "✅ Winget submission created" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Winget submission" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Installation Methods" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### macOS" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "brew tap devclinton/putio-sync" >> $GITHUB_STEP_SUMMARY
-          echo "brew install putio-sync" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Windows" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`powershell" >> $GITHUB_STEP_SUMMARY
-          echo "winget install putio.putio-sync" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Linux (Snap)" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "sudo snap install putio-sync" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Linux (Flatpak)" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "flatpak install flathub com.putio.PutioSync" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Linux (Debian/Ubuntu)" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "wget https://github.com/devclinton/putio-sync/releases/download/${VERSION}/putio-sync_${VERSION#v}_amd64.deb" >> $GITHUB_STEP_SUMMARY
-          echo "sudo dpkg -i putio-sync_${VERSION#v}_amd64.deb" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Release Assets" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "View all release assets: https://github.com/devclinton/putio-sync/releases/tag/${VERSION}" >> $GITHUB_STEP_SUMMARY
+          status() { [ "$2" = success ] && echo "- ✅ $1" || echo "- ❌ $1 ($2)"; }
+          {
+            echo "# Release $VERSION"
+            echo ""
+            status "Binaries and installers (Linux, macOS, Windows) with SHA256SUMS" "${{ needs.build-binaries.result }}"
+            status "Debian packages (amd64, arm64)" "${{ needs.build-debian.result }}"
+            status "Snap (amd64, arm64)" "${{ needs.build-snap.result }}"
+            status "Release published" "${{ needs.publish-release.result }}"
+            status "Homebrew formula" "${{ needs.update-homebrew.result }}"
+            status "winget submission" "${{ needs.publish-winget.result }}"
+            echo ""
+            echo "Assets: https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
+            echo ""
+            echo "Container images build from the same tag in docker.yml and docker-dhi.yml."
+          } >> "$GITHUB_STEP_SUMMARY"

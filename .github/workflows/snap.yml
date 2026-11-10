@@ -1,12 +1,19 @@
 name: Build and Publish Snap
 
-# Releases go to stable; to update edge, run it by hand:
+# Builds amd64 and arm64 on native runners (feature 053). release.yml calls it
+# for the stable channel; to update edge, run it by hand:
 #   gh workflow run snap.yml -f channel=edge
 # Publishing needs the SNAPCRAFT_TOKEN secret (`snapcraft export-login`);
 # without it the snap is only built, tested and uploaded as an artifact.
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      channel:
+        type: string
+        default: stable
+      version:
+        type: string
+        required: false
   workflow_dispatch:
     inputs:
       channel:
@@ -19,10 +26,16 @@ on:
 
 jobs:
   build-snap:
-    name: Build Snap Package
-    runs-on: ubuntu-latest
-    outputs:
-      snap_file: ${{ steps.snap_file.outputs.snap_file }}
+    name: Build Snap Package (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     env:
       HAS_STORE_TOKEN: ${{ secrets.SNAPCRAFT_TOKEN != '' }}
     steps:
@@ -33,20 +46,8 @@ jobs:
         id: get_version
         run: |
           CARGO_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
-          case "${{ github.event_name }}" in
-            release)
-              VERSION="${{ github.event.release.tag_name }}"
-              CHANNEL="stable"
-              ;;
-            workflow_dispatch)
-              VERSION="${{ github.event.inputs.version }}"
-              CHANNEL="${{ github.event.inputs.channel }}"
-              ;;
-            *)
-              VERSION=""
-              CHANNEL="edge"
-              ;;
-          esac
+          VERSION="${{ inputs.version }}"
+          CHANNEL="${{ inputs.channel || 'edge' }}"
           # Snap versions allow 32 characters: 0.1.1+git1a2b3c4 for untagged builds
           if [ -z "$VERSION" ]; then
             VERSION="${CARGO_VERSION}+git$(git rev-parse --short=7 HEAD)"
@@ -75,7 +76,7 @@ jobs:
       - name: Upload snap artifact
         uses: actions/upload-artifact@v4
         with:
-          name: snap-package
+          name: snap-package-${{ matrix.arch }}
           path: ${{ steps.build.outputs.snap }}
 
       - name: Publish to Snap Store
@@ -92,7 +93,7 @@ jobs:
           VERSION="${{ steps.get_version.outputs.version }}"
           CHANNEL="${{ steps.get_version.outputs.channel }}"
           {
-            echo "## Snap Package Built"
+            echo "## Snap Package Built (${{ matrix.arch }})"
             echo ""
             echo "- **Version**: ${VERSION}"
             echo "- **File**: ${{ steps.snap_file.outputs.snap_file }}"
@@ -112,21 +113,29 @@ jobs:
               echo "Not published: the SNAPCRAFT_TOKEN secret is not set. The snap is attached as an artifact."
             fi
             echo ""
-            bash scripts/build-notes.sh "${{ github.event_name == 'release' && steps.get_version.outputs.version || '' }}"
+            bash scripts/build-notes.sh "${{ inputs.version && steps.get_version.outputs.version || '' }}"
           } >> $GITHUB_STEP_SUMMARY
 
   test-snap:
-    name: Test Snap Installation
+    name: Test Snap Installation (${{ matrix.arch }})
     needs: build-snap
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Download snap artifact
         uses: actions/download-artifact@v4
         with:
-          name: snap-package
+          name: snap-package-${{ matrix.arch }}
 
       - name: Install snap
-        run: sudo snap install --dangerous "${{ needs.build-snap.outputs.snap_file }}"
+        run: sudo snap install --dangerous ./*.snap
 
       - name: Test the CLI
         run: |

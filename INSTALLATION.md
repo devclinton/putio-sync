@@ -34,6 +34,26 @@ brew install putio-sync
 putio-sync --version
 ```
 
+### Installer package
+
+Download `putio-sync-X.Y.Z-macos-arm64.pkg` from the
+[latest release](https://github.com/devclinton/putio-sync/releases/latest) (Apple silicon).
+It installs `/usr/local/bin/putio-sync`, a **Put.io Sync Web UI** link in Applications, and,
+unless you untick **Start at login** under Customize, a launchd agent that runs the daemon
+now and at every login. Its log is `~/Library/Logs/putio-sync.log`; with no config yet the
+daemon starts in setup mode, and the setup code is in that log.
+
+The package isn't signed with an Apple Developer ID, so Gatekeeper blocks it the first time.
+Either open it, then go to **System Settings › Privacy & Security** and click **Open
+Anyway**, or clear the download flag first:
+
+```bash
+xattr -d com.apple.quarantine ~/Downloads/putio-sync-*-macos-arm64.pkg
+```
+
+To remove it: `sudo /usr/local/share/putio-sync/uninstall.sh` (your config in
+`~/.putiosync` stays). A plain tarball, `putio-sync-X.Y.Z-macos-arm64.tar.gz`, is there too.
+
 ### Update
 
 ```bash
@@ -63,6 +83,22 @@ winget install putio.putio-sync
 # Verify installation
 putio-sync --version
 ```
+
+### Installer
+
+Download `putio-sync-X.Y.Z-windows-x64-setup.exe` (or `-arm64-setup.exe`) from the
+[latest release](https://github.com/devclinton/putio-sync/releases/latest) and run it. It
+asks how putio-sync should run:
+
+- **In the background at startup** (default): a `putio-sync` scheduled task runs the daemon
+  as SYSTEM, before anyone signs in. Its config and log are in `C:\ProgramData\putio-sync`.
+- **When you sign in**: a Startup shortcut runs the daemon in a minimized window, with your
+  own config in `%USERPROFILE%\.putiosync`.
+- **Manually**: run `putio-sync daemon` yourself.
+
+The Start menu gets **Put.io Sync Web UI** (`http://localhost:15432/`). The installer isn't
+code-signed, so SmartScreen may ask first: click **More info › Run anyway**. Uninstall from
+**Settings › Apps**.
 
 ### Manual Installation
 
@@ -132,6 +168,22 @@ sudo snap refresh putio-sync
 
 ```bash
 sudo snap remove putio-sync
+```
+
+---
+
+### Standalone binary (any distribution)
+
+`putio-sync-X.Y.Z-linux-x86_64.tar.gz` and `-linux-aarch64.tar.gz` hold a single static
+binary with the web UI built in. It needs no libraries, so it runs on any distribution,
+Alpine and NAS firmware included. Subtitle transcription also needs `ffmpeg` on `PATH`
+(or `transcription.ffmpeg_path`); nothing else does.
+
+```bash
+curl -LO https://github.com/devclinton/putio-sync/releases/latest/download/putio-sync-X.Y.Z-linux-x86_64.tar.gz
+tar -xzf putio-sync-X.Y.Z-linux-x86_64.tar.gz
+sudo install putio-sync-X.Y.Z-linux-x86_64/putio-sync /usr/local/bin/
+putio-sync --version
 ```
 
 ---
@@ -263,6 +315,22 @@ docker run -d \
 
 See the main README for Docker Compose examples.
 
+### Hardened images
+
+The same repository also has images built on
+[Docker Hardened Images](https://dhi.io): the static binary on a distroless base with no
+shell or package manager. They take the same volumes, ports, user (99:100) and command as
+the default image, so switching is a tag change.
+
+| Tag | What's in it |
+|-----|--------------|
+| `dhi-X.Y.Z`, `dhi` | putio-sync only |
+| `dhi-ffmpeg-X.Y.Z`, `dhi-ffmpeg` | plus static `ffmpeg`/`ffprobe`, for subtitle transcription |
+| `dev-X.Y.Z`, `dev` | putio-sync on a hardened Alpine with a shell and `apk`, for debugging |
+| `dev-ffmpeg-X.Y.Z`, `dev-ffmpeg` | the dev image plus `ffmpeg`/`ffprobe` |
+
+`latest`, `X.Y.Z` and `main` stay the Alpine image with ffmpeg.
+
 ### Media server (DLNA)
 
 TVs and players find putio-sync with multicast discovery, which Docker's default bridge
@@ -302,6 +370,12 @@ enter it (or the web UI token you set), and choose `/downloads` as the download 
 ---
 
 ## Verification
+
+Every release has a `SHA256SUMS` file covering its binaries and installers:
+
+```bash
+sha256sum --ignore-missing -c SHA256SUMS     # macOS: shasum -a 256 --ignore-missing -c SHA256SUMS
+```
 
 After installation, verify putio-sync is working:
 

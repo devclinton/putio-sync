@@ -1,8 +1,12 @@
 name: Publish to Winget
 
 on:
-  release:
-    types: [published]
+  # release.yml calls it (feature 053)
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       version:
@@ -18,11 +22,7 @@ jobs:
         id: get_version
         shell: pwsh
         run: |
-          if ("${{ github.event_name }}" -eq "release") {
-            $version = "${{ github.event.release.tag_name }}"
-          } else {
-            $version = "${{ github.event.inputs.version }}"
-          }
+          $version = "${{ inputs.version }}"
           echo "version=$version" >> $env:GITHUB_OUTPUT
           echo "version_no_v=$($version -replace '^v', '')" >> $env:GITHUB_OUTPUT
 

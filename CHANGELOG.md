@@ -16,6 +16,15 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 - The Snap Store description has a short summary of the main features in Spanish,
   Chinese, Hindi, French and Arabic (machine-translated), after the English text.
+- Release downloads for every platform, each listed in a `SHA256SUMS` file: standalone
+  Linux binaries for x86_64 and arm64 that need no libraries at all (static, web UI built
+  in), a macOS (Apple silicon) installer that can start the daemon at login, and Windows
+  x64 and arm64 installers that run it in the background at startup or when you sign in
+  and add a Start menu link to the web UI. The snap is now built for arm64 too.
+- Hardened container images on Docker Hardened Images, with no shell or package manager:
+  `ghcr.io/devclinton/putio-sync:dhi-<version>`, `:dhi-ffmpeg-<version>` with ffmpeg for
+  subtitles, and `:dev-<version>` / `:dev-ffmpeg-<version>` with a shell for debugging.
+  `latest`, `<version>` and `main` stay the Alpine image.
 - Home-server app store listings: an Unraid Community Applications template, Umbrel and
   CasaOS packages, and a Docker Compose file for TrueNAS SCALE, Runtipi, Portainer and
   Dockge custom apps (`packaging/STORES.md`). The project is MIT licensed, now with a
@@ -459,6 +468,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 - The README opens with a short overview, highlights, an install table and a Docker
   Compose quick start; the full manual follows.
+- HTTPS uses rustls instead of the system's OpenSSL, with Mozilla's root certificates built
+  in plus the system's own store, so a self-signed or company CA you trust still works.
 - The edge snap is no longer rebuilt on every push to main; it is published when a
   maintainer runs the snap workflow, so it can trail main by a few commits. The `:main`
   Docker image is rebuilt only when code or the Dockerfile changes, not for docs-only

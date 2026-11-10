@@ -182,10 +182,3 @@ BitTorrent peers (DHT and the metadata extension), with no piece data. Deferred
 in 043: it reveals the NAS's IP to the swarm and costs about 93 crates. The
 Stats page's "Held magnets" tile shows how often holds run out, which is what
 this would fix. Research is in `specs/043-magnet-cache-retry/research.md`.
-
-## Queued: packaging
-
-- **Minimal runtime image** on Docker Hardened Images (dhi.io), plus a
-  separate dev image. Settle which registry the NAS uses first.
-- **arm64 snap**: build on an arm64 runner or through Snapcraft's build
-  service; CI builds amd64 only today.

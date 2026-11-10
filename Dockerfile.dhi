@@ -1,0 +1,73 @@
+# syntax=docker/dockerfile:1
+#
+# putio-sync on Docker Hardened Images (dhi.io), feature 053. Pick a stage with
+# --target; each one is published under its own tag prefix:
+#
+#   binary          the static musl binary alone (release assets, not an image)
+#   runtime         dhi.io/static: no shell, no package manager      :dhi-<ver>
+#   runtime-ffmpeg  runtime plus static ffmpeg/ffprobe for subtitles :dhi-ffmpeg-<ver>
+#   dev             dhi.io/alpine-base -dev: shell and apk           :dev-<ver>
+#   dev-ffmpeg      dev plus the same static ffmpeg/ffprobe          :dev-ffmpeg-<ver>
+#
+# The plain Dockerfile (alpine, ffmpeg from apk) stays the :main/:<ver> image.
+# Pulling dhi.io needs `docker login dhi.io` with a Docker account.
+
+# DHI has no ffmpeg image, so the -ffmpeg stages copy a static build (musl,
+# amd64 and arm64) that runs without a libc.
+ARG FFMPEG_IMAGE=mwader/static-ffmpeg:8.0.1
+
+FROM dhi.io/rust:1.96-alpine3.22-dev AS builder
+WORKDIR /build
+COPY . .
+
+# Commit SHA for putio_sync_build_info (read by option_env! at compile time)
+ARG PUTIO_SYNC_GIT_SHA=unknown
+ENV PUTIO_SYNC_GIT_SHA=$PUTIO_SYNC_GIT_SHA
+
+# The *-linux-musl host target links statically by default: SQLite, Lua and
+# ring compile from vendored C, and TLS is rustls, so nothing is left to link.
+ARG TARGETARCH
+RUN --mount=type=cache,id=putio-sync-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=putio-sync-target-${TARGETARCH},target=/build/target \
+    cargo build --release --locked --bin putio-sync && \
+    cp target/release/putio-sync /putio-sync && \
+    if readelf -d /putio-sync | grep -q NEEDED; then \
+        echo "putio-sync is dynamically linked:"; readelf -d /putio-sync | grep NEEDED; exit 1; \
+    fi && \
+    mkdir -p /rootfs/config /rootfs/downloads /rootfs/watches
+
+FROM scratch AS binary
+COPY --from=builder /putio-sync /putio-sync
+
+FROM ${FFMPEG_IMAGE} AS ffmpeg
+
+FROM dhi.io/alpine-base:3.22-dev AS dev
+# The static base ships time zones; this one doesn't (bandwidth schedules use them)
+RUN apk add --no-cache tzdata
+COPY --from=builder --chown=99:100 /rootfs/ /
+COPY --from=builder /putio-sync /usr/local/bin/putio-sync
+COPY CHANGELOG.md /usr/share/doc/putio-sync/CHANGELOG.md
+# Same user as the alpine image (Unraid's nobody:users); override with --user
+USER 99:100
+ENV HOME=/config RUST_LOG=info
+VOLUME ["/config", "/downloads", "/watches"]
+WORKDIR /config
+EXPOSE 9742 15432
+CMD ["putio-sync", "--config", "/config/config.toml", "daemon", "--download-interval", "60", "--watch-interval", "60"]
+
+FROM dev AS dev-ffmpeg
+COPY --from=ffmpeg /ffmpeg /ffprobe /usr/local/bin/
+
+FROM dhi.io/static:20250419-debian13 AS runtime
+COPY --from=builder --chown=99:100 /rootfs/ /
+COPY --from=builder /putio-sync /usr/local/bin/putio-sync
+COPY CHANGELOG.md /usr/share/doc/putio-sync/CHANGELOG.md
+USER 99:100
+ENV HOME=/config RUST_LOG=info
+VOLUME ["/config", "/downloads", "/watches"]
+WORKDIR /config
+EXPOSE 9742 15432
+CMD ["putio-sync", "--config", "/config/config.toml", "daemon", "--download-interval", "60", "--watch-interval", "60"]
+
+FROM runtime AS runtime-ffmpeg
+COPY --from=ffmpeg /ffmpeg /ffprobe /usr/local/bin/

@@ -1,0 +1,148 @@
+name: Docker Hardened Images
+
+# The dhi.io images from Dockerfile.dhi (feature 053), pushed to the same ghcr
+# repository as docker.yml under their own tag prefixes. :main, :latest and
+# :<ver> stay the alpine image from the plain Dockerfile.
+#
+#   dhi-<ver>  dhi-<maj>.<min>  dhi          runtime (no shell)
+#   dhi-ffmpeg-<ver> ...        dhi-ffmpeg   runtime + ffmpeg/ffprobe
+#   dev-<ver> ...               dev          shell and apk
+#   dev-ffmpeg-<ver> ...        dev-ffmpeg   dev + ffmpeg/ffprobe
+#
+# Tags build all four; a manual run builds the branch as dhi-<branch> and so on.
+# Each architecture builds on its own runner, then a manifest joins them.
+# Needs DHI_USERNAME and DHI_TOKEN (a Docker account and access token).
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: docker-dhi-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to dhi.io
+        uses: docker/login-action@v3
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DHI_USERNAME }}
+          password: ${{ secrets.DHI_TOKEN }}
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # One builder, so the Rust build runs once and every stage reuses it
+      - name: Build and push by digest
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          mkdir -p digests
+          for target in runtime runtime-ffmpeg dev dev-ffmpeg; do
+            docker buildx build -f Dockerfile.dhi --target "$target" \
+              --platform "$PLATFORM" \
+              --build-arg PUTIO_SYNC_GIT_SHA=${{ github.sha }} \
+              --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
+              --label org.opencontainers.image.revision=${{ github.sha }} \
+              --output "type=image,name=${IMAGE},push-by-digest=true,name-canonical=true,push=true" \
+              --metadata-file "meta-$target.json" .
+            jq -r '."containerimage.digest"' "meta-$target.json" > "digests/$target"
+          done
+
+      - name: Smoke test the runtime image
+        run: |
+          image="${IMAGE}@$(cat digests/runtime)"
+          docker run --rm --platform ${{ matrix.platform }} "$image" putio-sync --version
+          image="${IMAGE}@$(cat digests/runtime-ffmpeg)"
+          docker run --rm --platform ${{ matrix.platform }} --entrypoint /usr/local/bin/ffmpeg "$image" -version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.runner }}
+          path: digests/*
+
+  merge:
+    name: Tag ${{ matrix.target }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - target: runtime
+            prefix: dhi
+          - target: runtime-ffmpeg
+            prefix: dhi-ffmpeg
+          - target: dev
+            prefix: dev
+          - target: dev-ffmpeg
+            prefix: dev-ffmpeg
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digests-*
+          path: digests
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},prefix=${{ matrix.prefix }}-
+            type=semver,pattern={{major}}.{{minor}},prefix=${{ matrix.prefix }}-
+            type=ref,event=branch,prefix=${{ matrix.prefix }}-
+            type=raw,value=${{ matrix.prefix }},enable=${{ github.ref_type == 'tag' }}
+
+      - name: Create the manifest
+        run: |
+          refs=$(for d in digests/*/${{ matrix.target }}; do echo "${IMAGE}@$(cat "$d")"; done)
+          tags=$(jq -r '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          # shellcheck disable=SC2086
+          docker buildx imagetools create $tags $refs
+          docker buildx imagetools inspect "${IMAGE}:$(jq -r '.tags[0] | split(":")[-1]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
+
+      - name: Summary
+        run: |
+          {
+            echo "## ${{ matrix.target }}"
+            jq -r '.tags[] | "- `" + . + "`"' <<< "$DOCKER_METADATA_OUTPUT_JSON"
+          } >> "$GITHUB_STEP_SUMMARY"

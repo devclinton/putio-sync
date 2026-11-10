@@ -1,0 +1,11 @@
+#!/bin/sh
+# Start the agent now for whoever is logged in; other users get it at login.
+plist=/Library/LaunchAgents/com.devclinton.putio-sync.plist
+chown root:wheel "$plist"
+user="$(stat -f %Su /dev/console)"
+if [ -n "$user" ] && [ "$user" != "root" ]; then
+    uid="$(id -u "$user")"
+    launchctl bootout "gui/$uid/com.devclinton.putio-sync" 2>/dev/null || true
+    launchctl bootstrap "gui/$uid" "$plist" || true
+fi
+exit 0

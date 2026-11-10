@@ -35,8 +35,12 @@ repository = "https://github.com/devclinton/putio-sync"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
-# HTTP client
-reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
+# HTTP client. rustls instead of the default native-tls (OpenSSL), so release
+# binaries link no system TLS library; Mozilla's roots plus the OS store.
+reqwest = { version = "0.12", default-features = false, features = [
+    "json", "stream", "multipart", "charset", "http2", "macos-system-configuration",
+    "rustls-tls", "rustls-tls-native-roots",
+] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
