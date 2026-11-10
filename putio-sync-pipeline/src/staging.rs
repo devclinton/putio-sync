@@ -48,7 +48,6 @@ pub fn final_path(staged: &Path) -> Option<PathBuf> {
 /// Whether every staging folder under `target` (at the top or one category down) is on the
 /// same filesystem as the folder it sits in, so the final rename is atomic
 pub fn check_same_device(target: &Path) -> Result<(), String> {
-    use std::os::unix::fs::MetadataExt;
     let mut homes = vec![target.to_path_buf()];
     if let Ok(entries) = std::fs::read_dir(target) {
         homes.extend(
@@ -63,7 +62,7 @@ pub fn check_same_device(target: &Path) -> Result<(), String> {
         let (Ok(a), Ok(b)) = (std::fs::metadata(&staging), std::fs::metadata(&home)) else {
             continue;
         };
-        if a.dev() != b.dev() {
+        if !same_device(&a, &b) {
             return Err(format!(
                 "{} is on another filesystem than {}, so an item cannot be moved into place in one rename",
                 staging.display(),
@@ -72,6 +71,19 @@ pub fn check_same_device(target: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn same_device(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev()
+}
+
+/// Windows has no stable volume id in `std`. A staging folder inside its home folder is
+/// only on another volume through a mount point, so it counts as the same.
+#[cfg(not(unix))]
+fn same_device(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
+    true
 }
 
 impl Settings {
