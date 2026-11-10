@@ -659,6 +659,11 @@ paths = []
   (or `source=Config`) shows which one is in effect.
 - `PUTIO_SYNC_API_TOKEN`, `PUTIO_SYNC_API_LISTEN`, `PUTIO_SYNC_API_BIND`: web UI and API
   listener, see [Web UI](#web-ui).
+- `PUTIO_SYNC_INSTALL`: how this copy was installed, when the update notice names the wrong
+  update command. One of `snap`, `flatpak`, `unraid`, `casaos`, `umbrel`, `container`,
+  `homebrew`, `deb`, `winget`, `pkg`, `setup`, `archive`, `unknown`. `GET /status` shows the
+  detected one as `install_channel`. The images set `PUTIO_SYNC_IMAGE` and
+  `PUTIO_SYNC_IMAGE_VARIANT` so the notice can name the right `docker pull`.
 
 ## Metrics
 

@@ -5,7 +5,7 @@
 // update checker (feature 055) shows a newer release with its notes.
 
 import { get, post } from "../api.js";
-import { empty, h, toast, toastError } from "../app.js";
+import { copyText, empty, h, toast, toastError } from "../app.js";
 import { relative } from "../format.js";
 import { linkParts } from "../settings/sections.js";
 
@@ -115,6 +115,25 @@ export async function checkUpdate() {
   }
 }
 
+/** A command with a Copy button */
+function command(text) {
+  const copy = h("button", { type: "button", class: "btn btn-small" }, "Copy");
+  copy.onclick = () => copyText(text).then(() => toast("Copied"), () => toast("Couldn't copy", "error", text));
+  return h("div", { class: "cmd" }, h("code", { text }), copy);
+}
+
+/** How a managed install gets the new version: a download, commands, a pinned
+ * alternative, then any steps. These channels never get an Update button (FR-010). */
+function howTo(i, releaseUrl) {
+  return [
+    i.link && i.link !== releaseUrl ? h("p", {}, h("a", { href: i.link, target: "_blank", rel: "noopener", text: `Download ${i.link.split("/").pop()}` })) : null,
+    i.commands.map(command),
+    i.alternatives.length ? h("p", { class: "muted", text: "Or pin the new version:" }) : null,
+    i.alternatives.map(command),
+    i.steps ? h("p", { text: i.steps }) : null,
+  ];
+}
+
 /** The update card: a newer release and its notes, or when the last check ran */
 function updateCard(u, reload) {
   const a = pending(u);
@@ -154,6 +173,8 @@ function updateCard(u, reload) {
     { class: "card", id: "card-update" },
     h("h2", { text: title }),
     h("p", { text: subtitle }),
+    h("p", { class: "muted", text: `Installed with ${u.channel.label}.` }),
+    a && u.channel.mode === "instructions" ? howTo(a.instruction, a.url) : null,
     a ? h("div", { class: "stack" }, notes(a.releases)) : null,
     status,
     h("div", { class: "dialog-actions" }, actions),

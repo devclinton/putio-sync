@@ -175,6 +175,10 @@ WORKDIR /config
 # default to info logging
 ENV RUST_LOG=info
 
+# The update checker names the right docker pull from these (feature 055)
+ARG PUTIO_SYNC_IMAGE=ghcr.io/devclinton/putio-sync
+ENV PUTIO_SYNC_IMAGE=$PUTIO_SYNC_IMAGE PUTIO_SYNC_IMAGE_VARIANT=latest
+
 # Prometheus metrics ([metrics] bind) and the API + web UI ([api] bind). The UI is
 # embedded in the binary; publish the ports with -p or the Unraid template.
 EXPOSE 9742 15432

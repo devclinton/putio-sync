@@ -7,6 +7,8 @@ services:
     user: "$PUID:$PGID"
     environment:
       TZ: $TZ
+      # Tells the update checker how this install is updated (feature 055)
+      PUTIO_SYNC_INSTALL: casaos
     ports:
       - target: 15432
         published: "15432"

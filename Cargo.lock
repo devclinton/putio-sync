@@ -2657,7 +2657,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-update"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "mockito",
@@ -2670,6 +2670,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

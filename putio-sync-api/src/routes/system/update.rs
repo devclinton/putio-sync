@@ -15,6 +15,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use putio_sync_update::channel::{deb_arch, Channel, Instruction, UpdateMode};
 use putio_sync_update::{CheckNowError, Snapshot, UpdateService};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -42,8 +43,13 @@ struct UpdateView {
 #[derive(Serialize)]
 struct ChannelView {
     kind: &'static str,
-    label: &'static str,
-    mode: putio_sync_update::channel::UpdateMode,
+    label: String,
+    mode: UpdateMode,
+    /// Container only
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -62,6 +68,8 @@ struct AvailableView {
     dismissed: bool,
     /// Every newer release, newest first, shaped like `GET /whats-new`'s
     releases: Vec<ReleaseView>,
+    /// How to update this channel to `version`
+    instruction: Instruction,
 }
 
 #[derive(Serialize)]
@@ -134,13 +142,20 @@ fn view(snapshot: Snapshot) -> UpdateView {
                 }
             })
             .collect(),
+        instruction: snapshot.channel.instruction(&latest.version, deb_arch()),
     });
+    let (image, variant) = match &snapshot.channel {
+        Channel::Container { image, variant } => (Some(image.clone()), variant.clone()),
+        _ => (None, None),
+    };
     UpdateView {
         current: snapshot.current.to_string(),
         channel: ChannelView {
             kind: snapshot.channel.kind(),
             label: snapshot.channel.label(),
             mode: snapshot.channel.mode(),
+            image,
+            variant,
         },
         check: CheckView {
             enabled: snapshot.settings.check,

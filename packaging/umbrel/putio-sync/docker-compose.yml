@@ -15,6 +15,8 @@ services:
     environment:
       # Unlocks the setup wizard and the web UI; Umbrel shows it as the app password.
       PUTIO_SYNC_API_TOKEN: ${APP_PASSWORD}
+      # Tells the update checker how this install is updated (feature 055)
+      PUTIO_SYNC_INSTALL: umbrel
     volumes:
       - ${APP_DATA_DIR}/data/config:/config
       - ${APP_DATA_DIR}/data/watch:/watches
