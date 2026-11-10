@@ -2,18 +2,24 @@
 
 This directory contains configuration and scripts for building and distributing putio-sync as a Flatpak package.
 
-## Installation (for users)
+## Status
 
-Once published to Flathub, users can install putio-sync with:
+putio-sync isn't on Flathub, and isn't likely to be: Flathub doesn't accept console
+software, and putio-sync is a daemon with a web UI rather than a desktop app. The manifest
+builds a local bundle (`make build-flatpak`, or the manual `flatpak.yml` workflow) for anyone who
+wants putio-sync sandboxed. The snap, the `.deb` files and the static binaries are the
+supported Linux packages.
+
+## Installation (from a bundle)
 
 ```bash
-flatpak install flathub com.putio.PutioSync
+flatpak install --user putio-sync.flatpak
 ```
 
 Run the application:
 
 ```bash
-flatpak run com.putio.PutioSync --version
+flatpak run io.github.devclinton.putio-sync --version
 ```
 
 ## Flatpak Configuration
@@ -21,11 +27,11 @@ flatpak run com.putio.PutioSync --version
 ### Manifest Location
 
 The Flatpak manifest is located at the project root:
-- `com.putio.PutioSync.yaml`
+- `io.github.devclinton.putio-sync.yaml`
 
 ### Runtime Details
 
-- **App ID**: `com.putio.PutioSync`
+- **App ID**: `io.github.devclinton.putio-sync`
 - **Runtime**: `org.freedesktop.Platform` version 23.08
 - **SDK**: `org.freedesktop.Sdk` with Rust extension
 - **Command**: `putio-sync`
@@ -94,7 +100,7 @@ Build the Flatpak:
 
 ```bash
 # From project root
-flatpak-builder --force-clean --user --install build-dir com.putio.PutioSync.yaml
+flatpak-builder --force-clean --user --install build-dir io.github.devclinton.putio-sync.yaml
 ```
 
 Options:
@@ -107,15 +113,15 @@ Options:
 Run the installed Flatpak:
 
 ```bash
-flatpak run com.putio.PutioSync --version
-flatpak run com.putio.PutioSync login
-flatpak run com.putio.PutioSync files list
+flatpak run io.github.devclinton.putio-sync --version
+flatpak run io.github.devclinton.putio-sync login
+flatpak run io.github.devclinton.putio-sync files list
 ```
 
 Create a desktop alias for convenience:
 
 ```bash
-alias putio-sync='flatpak run com.putio.PutioSync'
+alias putio-sync='flatpak run io.github.devclinton.putio-sync'
 ```
 
 ### Accessing Flatpak Data
@@ -124,13 +130,13 @@ Configuration and data are stored in:
 
 ```bash
 # Config location
-~/.var/app/com.putio.PutioSync/config/putio-sync/config.toml
+~/.var/app/io.github.devclinton.putio-sync/config/putio-sync/config.toml
 
 # Data directory
-~/.var/app/com.putio.PutioSync/data/putio-sync/
+~/.var/app/io.github.devclinton.putio-sync/data/putio-sync/
 
 # View all app data
-ls -la ~/.var/app/com.putio.PutioSync/
+ls -la ~/.var/app/io.github.devclinton.putio-sync/
 ```
 
 ### Debugging
@@ -138,83 +144,20 @@ ls -la ~/.var/app/com.putio.PutioSync/
 Run with verbose output:
 
 ```bash
-flatpak run --verbose com.putio.PutioSync
+flatpak run --verbose io.github.devclinton.putio-sync
 ```
 
 Access the app's filesystem:
 
 ```bash
-flatpak run --command=sh com.putio.PutioSync
+flatpak run --command=sh io.github.devclinton.putio-sync
 ```
 
 Override permissions for testing:
 
 ```bash
-flatpak run --filesystem=host com.putio.PutioSync
+flatpak run --filesystem=host io.github.devclinton.putio-sync
 ```
-
-## Flathub Submission
-
-### Prerequisites
-
-1. Create Flathub account on GitHub
-2. Application meets [Flathub requirements](https://github.com/flathub/flathub/wiki/App-Requirements)
-3. Repository is public
-
-### Submission Process
-
-1. Fork the Flathub repository:
-   ```bash
-   # Go to https://github.com/flathub/flathub
-   # Click "Fork"
-   ```
-
-2. Create a new repository for your app:
-   ```bash
-   # Repository name: com.putio.PutioSync
-   # Initialize with the manifest file
-   ```
-
-3. Add required files to the repository:
-   ```
-   com.putio.PutioSync/
-   ├── com.putio.PutioSync.yaml     # Flatpak manifest
-   ├── cargo-sources.json            # Generated cargo dependencies
-   ├── com.putio.PutioSync.appdata.xml  # AppStream metadata
-   └── com.putio.PutioSync.png       # Application icon (128x128)
-   ```
-
-4. Create AppStream metadata file:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<component type="console-application">
-  <id>com.putio.PutioSync</id>
-  <name>putio-sync</name>
-  <summary>CLI tool for syncing files from Put.io</summary>
-  <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MIT</project_license>
-  <description>
-    <p>
-      putio-sync is a command-line tool for downloading and managing
-      files from Put.io cloud storage service.
-    </p>
-  </description>
-  <url type="homepage">https://github.com/devclinton/putio-sync</url>
-  <url type="bugtracker">https://github.com/devclinton/putio-sync/issues</url>
-  <developer_name>Clinton Collins</developer_name>
-  <releases>
-    <release version="0.1.1" date="2025-11-14"/>
-  </releases>
-  <content_rating type="oars-1.1"/>
-</component>
-```
-
-5. Submit pull request to Flathub
-
-6. Address review feedback
-
-7. Once merged, app appears on Flathub within 24 hours
 
 ## Automated Builds
 
@@ -228,7 +171,7 @@ The GitHub Actions workflow (`.github/workflows/flatpak.yml`) automates:
 ## Manifest Structure Explained
 
 ```yaml
-app-id: com.putio.PutioSync
+app-id: io.github.devclinton.putio-sync
   # Reverse DNS format application ID
 
 runtime: org.freedesktop.Platform
@@ -260,11 +203,7 @@ When releasing a new version:
    bash packaging/flatpak/generate-cargo-sources.sh
    ```
 
-2. Update version in manifest if needed
-
-3. Commit and push to Flathub repository
-
-4. Flathub builds automatically
+2. Build the bundle (`make build-flatpak`, or run `flatpak.yml` by hand)
 
 ## Size Optimization
 
@@ -281,7 +220,7 @@ Flatpak supports multiple architectures:
 - x86_64
 - aarch64 (ARM64)
 
-Flathub builds for all architectures automatically.
+flatpak-builder builds for the host architecture.
 
 ## Testing on Different Distributions
 
@@ -316,7 +255,7 @@ Check finish-args in the manifest and add necessary permissions.
 
 Verify filesystem permissions:
 ```bash
-flatpak override --user --filesystem=home com.putio.PutioSync
+flatpak override --user --filesystem=home io.github.devclinton.putio-sync
 ```
 
 ## References

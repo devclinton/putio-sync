@@ -332,8 +332,8 @@ build-flatpak: ## Build Flatpak package
 	@echo "Generating cargo sources..."
 	bash packaging/flatpak/generate-cargo-sources.sh
 	@echo "Building Flatpak..."
-	flatpak-builder --force-clean --repo=repo build-flatpak com.putio.PutioSync.yaml
-	flatpak build-bundle repo putio-sync.flatpak com.putio.PutioSync
+	flatpak-builder --force-clean --repo=repo build-flatpak io.github.devclinton.putio-sync.yaml
+	flatpak build-bundle repo putio-sync.flatpak io.github.devclinton.putio-sync
 	@echo "Flatpak bundle built: putio-sync.flatpak"
 
 build-flatpak-clean: ## Clean Flatpak build artifacts

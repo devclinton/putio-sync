@@ -7,7 +7,7 @@ This directory contains the Winget package manifest for installing `putio-sync` 
 Once the package is published to the winget-pkgs repository, users can install putio-sync with:
 
 ```powershell
-winget install putio.putio-sync
+winget install devclinton.putio-sync
 ```
 
 Or search for it:
@@ -22,23 +22,23 @@ Winget uses a multi-file manifest format (schema version 1.6.0):
 
 ### Files
 
-1. **putio.putio-sync.yaml** - Version manifest
+1. **devclinton.putio-sync.yaml** - Version manifest
    - Defines the package identifier and version
    - Links to the other manifest files
 
-2. **putio.putio-sync.installer.yaml** - Installer manifest
+2. **devclinton.putio-sync.installer.yaml** - Installer manifest
    - Defines installer type, architecture, and download URLs
    - Includes SHA256 checksums for verification
    - Supports both x64 and ARM64 Windows
 
-3. **putio.putio-sync.locale.en-US.yaml** - Default locale manifest
+3. **devclinton.putio-sync.locale.en-US.yaml** - Default locale manifest
    - Package metadata (name, description, publisher)
    - License information
    - Tags and release notes
 
 ## Package Identifier
 
-The package uses the identifier: `putio.putio-sync`
+The package uses the identifier: `devclinton.putio-sync`
 
 Format: `{Publisher}.{PackageName}`
 
@@ -71,7 +71,7 @@ winget install --manifest packaging/winget/manifests/
 winget install wingetcreate
 
 # Update manifest for new version
-wingetcreate update putio.putio-sync --version 0.1.2 --urls https://github.com/devclinton/putio-sync/releases/download/v0.1.2/putio-sync-v0.1.2-x86_64-pc-windows-msvc.zip
+wingetcreate update devclinton.putio-sync --version 0.1.2 --urls https://github.com/devclinton/putio-sync/releases/download/v0.1.2/putio-sync-v0.1.2-x86_64-pc-windows-msvc.zip
 ```
 
 ## Manual Manifest Updates
