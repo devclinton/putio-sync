@@ -28,6 +28,7 @@ putio-sync-precheck = { path = "../putio-sync-precheck" }
 putio-sync-storage = { path = "../putio-sync-storage" }
 putio-sync-dlna = { path = "../putio-sync-dlna" }
 putio-sync-tailscale = { path = "../putio-sync-tailscale" }
+putio-sync-update = { path = "../putio-sync-update" }
 
 # Web framework
 axum = "0.7"

@@ -7,7 +7,7 @@ export const SECTIONS = [
     id: "general",
     title: "General",
     help: "How this page looks and which language it uses in this browser, which credentials are set, and how finished downloads are announced.",
-    cards: [["appearance", "Appearance"], ["language", "Language"], ["credentials", "Credentials"], ["notifications", "Notifications"]],
+    cards: [["appearance", "Appearance"], ["language", "Language"], ["credentials", "Credentials"], ["notifications", "Notifications"], ["updates", "Updates"]],
   },
   {
     id: "putio",
@@ -95,6 +95,7 @@ const KEY_SECTION = {
   api: "network",
   logging: "advanced",
   notifications: "general",
+  updates: "general",
   precheck: "rules",
   subtitles: "downloads",
   translation: "downloads",

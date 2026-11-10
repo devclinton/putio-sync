@@ -2189,6 +2189,7 @@ dependencies = [
  "putio-sync-tailscale",
  "putio-sync-telemetry",
  "putio-sync-translation",
+ "putio-sync-update",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2285,6 +2286,7 @@ dependencies = [
  "putio-sync-storage",
  "putio-sync-tailscale",
  "putio-sync-telemetry",
+ "putio-sync-update",
  "reqwest 0.12.28",
  "rpassword",
  "serde",
@@ -2651,6 +2653,23 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "putio-sync-update"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "mockito",
+ "putio-sync-core",
+ "putio-sync-db",
+ "putio-sync-telemetry",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

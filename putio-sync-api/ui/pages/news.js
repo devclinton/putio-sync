@@ -1,10 +1,12 @@
 // What's new (feature 017): the changelog built into the daemon. checkNews() shows the
 // entries an upgrade added in a panel once per page load, and closing it marks them seen;
 // the page lists every release. Entry text is markdown with `code`, [links](url) and
-// **bold** only, rendered as elements; everything else stays text.
+// **bold** only, rendered as elements; everything else stays text. Above the notes, the
+// update checker (feature 055) shows a newer release with its notes.
 
 import { get, post } from "../api.js";
-import { empty, h } from "../app.js";
+import { empty, h, toast, toastError } from "../app.js";
+import { relative } from "../format.js";
 import { linkParts } from "../settings/sections.js";
 
 const linked = (text) => linkParts(text).map((p) => (typeof p === "string" ? p : h("a", { href: p.href, text: p.text })));
@@ -97,10 +99,81 @@ export async function checkNews() {
   return true;
 }
 
+/** An undismissed newer release from the update checker, or null */
+const pending = (u) => (u && u.available && !u.available.dismissed ? u.available : null);
+
+/**
+ * Once per page load after sign-in: say so when the update checker knows a newer release
+ * that hasn't been dismissed.
+ */
+export async function checkUpdate() {
+  try {
+    const a = pending(await get("/update"));
+    if (a) toast(`putio-sync ${a.version} is available`, "ok", "See What's new, from the version on the Status page.");
+  } catch {
+    // no checker (setup mode) or offline: nothing to say
+  }
+}
+
+/** The update card: a newer release and its notes, or when the last check ran */
+function updateCard(u, reload) {
+  const a = pending(u);
+  const busy = (button, run) => async () => {
+    button.disabled = true;
+    try {
+      await run();
+      await reload();
+    } catch (e) {
+      if (e.error === "checked_recently") toast("Checked less than a minute ago", "ok", "Try again in a minute.");
+      else toastError(e);
+    } finally {
+      button.disabled = false;
+    }
+  };
+  const checkNow = h("button", { type: "button", class: "btn" }, "Check now");
+  checkNow.onclick = busy(checkNow, () => post("/update/check"));
+  const actions = [checkNow];
+  if (a) {
+    const dismiss = h("button", { type: "button", class: "btn" }, "Dismiss");
+    dismiss.onclick = busy(dismiss, () => post("/update/dismiss", { version: a.version }));
+    actions.unshift(h("a", { class: "btn btn-primary", href: a.url, target: "_blank", rel: "noopener", text: "Release page" }), dismiss);
+  }
+  const c = u.check;
+  const last = c.last_attempt_at ? `Last checked ${relative(c.last_attempt_at)}.` : "Not checked yet.";
+  const status = [
+    h("p", { class: "muted", text: c.enabled ? last : `${last} Checks are off in Settings › General › Updates.` }),
+    c.error ? h("p", { class: "error-text", text: `The last check failed: ${c.error}.` }) : null,
+    u.rolled_back ? h("p", { class: "error-text", text: `Rolled back from ${u.rolled_back.version}: ${u.rolled_back.reason}` }) : null,
+  ];
+  const title = a ? `${a.version} is available` : "Updates";
+  let subtitle = `You're running ${u.current}, the newest release known.`;
+  if (a) subtitle = a.date ? `Released ${a.date}. You're running ${u.current}.` : `You're running ${u.current}.`;
+  else if (u.available) subtitle = `You're running ${u.current}; you dismissed the notice for ${u.available.version}.`;
+  return h(
+    "section",
+    { class: "card", id: "card-update" },
+    h("h2", { text: title }),
+    h("p", { text: subtitle }),
+    a ? h("div", { class: "stack" }, notes(a.releases)) : null,
+    status,
+    h("div", { class: "dialog-actions" }, actions),
+  );
+}
+
 export async function mount(el) {
   const summary = h("p", { class: "muted", text: "Loading…" });
+  const update = h("div");
   const body = h("div", { class: "stack" });
-  el.append(h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "What's new" }), summary)), body);
+  el.append(h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "What's new" }), summary)), update, body);
+  const loadUpdate = async () => {
+    try {
+      const u = await get("/update");
+      if (update.isConnected) update.replaceChildren(updateCard(u, loadUpdate));
+    } catch {
+      update.replaceChildren(); // no checker (setup mode)
+    }
+  };
+  loadUpdate();
   try {
     const data = await get("/whats-new");
     const commit = data.commit ? ` (${data.commit.slice(0, 12)})` : "";

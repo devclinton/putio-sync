@@ -44,7 +44,7 @@ All routes sit behind the existing auth middleware (Principle VI). They are moun
 ## POST /update/check
 
 Runs a check now. `200` with the same body as GET. If a check ran less than 60 s ago it answers
-`429 {"error": "checked_recently"}` and makes no request. Allowed even when `check` is off (an
+`409 {"error": "checked_recently"}` (not 429: the web UI treats a 429 as the sign-in rate limit) and makes no request. Allowed even when `check` is off (an
 explicit user action).
 
 ## POST /update/dismiss

@@ -43,6 +43,10 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_storage_freed_files_total",
     "putio_sync_storage_freed_bytes_total",
     "putio_sync_tailscale_identity_total",
+    "putio_sync_update_checks_total",
+    "putio_sync_update_available",
+    "putio_sync_update_attempts_total",
+    "putio_sync_update_verify_failures_total",
     "putio_sync_dlna_up",
     "putio_sync_dlna_streams_active",
     "putio_sync_dlna_bytes_sent_total",
@@ -263,6 +267,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             let mut v = strs(PrecheckStage::ALL, PrecheckStage::as_str);
             v.extend(strs(PipelineStage::ALL, PipelineStage::as_str));
             v.extend(putio_sync_telemetry::steps::STAGES);
+            v.extend(putio_sync_telemetry::update::VERIFY_STAGES);
             v
         }
         // Host names from the config's cache list
@@ -290,6 +295,8 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v.extend(putio_sync_telemetry::verify::RESULTS);
             v.extend(putio_sync_telemetry::verify::RUN_RESULTS);
             v.extend(putio_sync_telemetry::steps::RESULTS);
+            v.extend(putio_sync_telemetry::update::CHECK_RESULTS);
+            v.extend(putio_sync_telemetry::update::ATTEMPT_RESULTS);
             v
         }
         "type" => putio_sync_telemetry::hooks::EVENT_TYPES.to_vec(),
@@ -312,6 +319,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v.extend(strs(FlagKind::ALL, FlagKind::as_str));
             v.extend(putio_sync_telemetry::steps::KINDS);
             v.extend(putio_sync_telemetry::dlna::KINDS);
+            v.extend(putio_sync_telemetry::update::ATTEMPT_KINDS);
             v
         }
         "state" => {

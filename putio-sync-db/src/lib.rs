@@ -46,6 +46,7 @@ pub mod sources;
 pub mod stats;
 pub mod storage;
 pub mod torrents;
+pub mod updates;
 pub mod verify;
 pub mod whats_new;
 
@@ -67,6 +68,7 @@ pub use sources::SourcesRepository;
 pub use stats::{ExtensionStats, StatsRepository};
 pub use storage::{NewRunFile, StorageRepository, StorageRun, StorageRunFile};
 pub use torrents::ProcessedTorrentsRepository;
+pub use updates::{UpdateState, UpdatesRepository};
 pub use verify::{NewProblem, RunCounts, VerifyProblem, VerifyRepository, VerifyRun};
 pub use whats_new::WhatsNewRepository;
 
@@ -285,6 +287,11 @@ impl Database {
         VerifyRepository::new(&self.pool)
     }
 
+    /// Get the update checker state repository (feature 055)
+    pub fn updates(&self) -> UpdatesRepository<'_> {
+        UpdatesRepository::new(&self.pool)
+    }
+
     /// Get the Put.io storage runs repository (feature 033)
     pub fn storage(&self) -> StorageRepository<'_> {
         StorageRepository::new(&self.pool)
@@ -500,6 +507,11 @@ impl Database {
             (
                 schema::CREATE_VERIFY_PROBLEMS_TABLE,
                 "Failed to create verify_problems table",
+            ),
+            // Update checker (feature 055)
+            (
+                schema::CREATE_UPDATE_STATE_TABLE,
+                "Failed to create update_state table",
             ),
         ] {
             sqlx::query(sql)

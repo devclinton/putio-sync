@@ -455,6 +455,23 @@ CREATE INDEX IF NOT EXISTS idx_verify_problems_run ON verify_problems(run_id);
 CREATE INDEX IF NOT EXISTS idx_verify_problems_file ON verify_problems(file_id)
 "#;
 
+/// SQL to create the update_state table (feature 055): one row with the last GitHub
+/// Releases check, its ETag and releases, the dismissed version, and the last rollback.
+/// Times are RFC 3339.
+pub const CREATE_UPDATE_STATE_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS update_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_attempt_at TEXT,
+    last_success_at TEXT,
+    last_error TEXT,
+    etag TEXT,
+    releases_json TEXT,
+    dismissed_version TEXT,
+    last_rolled_back TEXT,
+    rollback_reason TEXT
+)
+"#;
+
 /// SQL to create performance indexes
 /// These indexes optimize common query patterns
 pub const CREATE_INDEXES: &str = r#"

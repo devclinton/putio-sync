@@ -146,7 +146,10 @@ function route() {
   mount(name, { path, query });
   if (!newsChecked) {
     newsChecked = true;
-    news.checkNews().then((ok) => (newsChecked = ok));
+    news.checkNews().then((ok) => {
+      newsChecked = ok;
+      if (ok) news.checkUpdate();
+    });
   }
 }
 

@@ -718,6 +718,21 @@ enabled = true
 interval_minutes = 60
 
 # ============================================================================
+# Updates
+# ============================================================================
+# putio-sync asks GitHub Releases for a newer version about a minute after it
+# starts and then once a day. It sends only a User-Agent with its version.
+# A new version shows on the What's new page with its release notes.
+[updates]
+# Look for a newer release. Default: true
+check = true
+
+# Install updates by itself once no transfer is running. Only for a binary
+# downloaded from GitHub; package managers and containers update their own way.
+# Default: false
+auto_install = false
+
+# ============================================================================
 # API and Web UI
 # ============================================================================
 # `daemon` serves the JSON API and the web UI on one port (http://<host>:15432/).

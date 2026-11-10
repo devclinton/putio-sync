@@ -12,6 +12,13 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- putio-sync checks GitHub for a newer release about a minute after it starts and then
+  once a day, and the What's new page shows it with its release notes, a link to the
+  release, and Check now and Dismiss buttons. The check sends nothing about your install;
+  turn it off in Settings › General › Updates (`[updates] check = false`).
+
 ## [0.2.1] - 2026-11-09
 
 ### Fixed

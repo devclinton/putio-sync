@@ -210,6 +210,9 @@ pub struct Config {
     /// DLNA media server: show downloads and a Put.io folder to players (feature 022)
     #[serde(default)]
     pub dlna: DlnaConfig,
+    /// Update checks against GitHub Releases (feature 055)
+    #[serde(default, skip_serializing_if = "UpdatesConfig::is_default")]
+    pub updates: UpdatesConfig,
     /// Event hooks: commands and webhooks run for events (feature 027)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<crate::hooks::HookConfig>,
@@ -245,6 +248,33 @@ impl DoctorConfig {
     /// Time between scheduled runs
     pub fn interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_minutes.max(5) * 60)
+    }
+}
+
+/// `[updates]`: look for a newer release on GitHub (feature 055). Left out of a saved
+/// config while both keys are at their defaults, so older files round-trip unchanged.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct UpdatesConfig {
+    /// Check GitHub Releases about a minute after start and then once a day
+    pub check: bool,
+    /// Install an update by itself once no transfer is running (GitHub archive installs only)
+    pub auto_install: bool,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            check: true,
+            auto_install: false,
+        }
+    }
+}
+
+impl UpdatesConfig {
+    /// Both keys at their defaults
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
     }
 }
 
@@ -1835,6 +1865,7 @@ impl ConfigBuilder {
             storage: StorageConfig::default(),
             tailscale: TailscaleConfig::default(),
             dlna: DlnaConfig::default(),
+            updates: UpdatesConfig::default(),
             hooks: Vec::new(),
             plugins_dir: None,
             plugins: Vec::new(),
@@ -2912,6 +2943,24 @@ fn write_atomically(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn updates_section_defaults_and_round_trips() {
+        // feature 055: a config without [updates] checks, and saves without the section
+        let saved = toml::to_string(&super::Config::default()).unwrap();
+        assert!(!saved.contains("[updates]"), "{saved}");
+        let config: super::Config = toml::from_str(&saved).unwrap();
+        assert!(config.updates.check);
+        assert!(!config.updates.auto_install);
+        assert_eq!(toml::to_string(&config).unwrap(), saved);
+
+        let text = format!("{saved}\n[updates]\ncheck = false\nauto_install = true\n");
+        let config: super::Config = toml::from_str(&text).unwrap();
+        assert!(!config.updates.check);
+        assert!(config.updates.auto_install);
+        let saved = toml::to_string(&config).unwrap();
+        assert!(saved.contains("[updates]"), "{saved}");
+    }
+
+    #[test]
     fn old_pattern_values_load_and_bad_ones_are_refused() {
         // feature 020: comma lists and braces mean what they always meant
         for text in ["*.mkv,*.mp4", "*.{mkv,mp4}", "*.mkv, *.mp4"] {
@@ -3114,6 +3163,7 @@ mod tests {
             storage: StorageConfig::default(),
             tailscale: TailscaleConfig::default(),
             dlna: DlnaConfig::default(),
+            updates: UpdatesConfig::default(),
             hooks: Vec::new(),
             plugins_dir: None,
             plugins: Vec::new(),

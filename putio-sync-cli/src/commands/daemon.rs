@@ -303,6 +303,14 @@ pub async fn execute_daemon(
     media_server.update(&config).await;
     daemon = daemon.with_media_server(media_server.clone());
 
+    // One update checker for its schedule and the API (feature 055). Setup mode has none.
+    let updates = putio_sync_update::UpdateService::new(
+        config.updates.clone(),
+        daemon.get_database(),
+        putio_sync_update::channel::Channel::detect(),
+    );
+    updates.start();
+
     // API and web UI on the daemon's own engine (feature 004). Needs a local download
     // manager, so it is skipped when downloads are delegated to a remote API.
     match (daemon.get_client(), daemon.get_download_manager()) {
@@ -336,7 +344,8 @@ pub async fn execute_daemon(
             let state = state
                 .with_hooks(hooks.clone())
                 .with_plugins(plugins.clone())
-                .with_media_server(media_server.clone());
+                .with_media_server(media_server.clone())
+                .with_updates(updates.clone());
             crate::api_listener::start(&config, state).await?;
         }
         _ => warn!("API listener not started: no local download manager (api.enabled is set)"),

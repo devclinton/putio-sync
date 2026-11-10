@@ -331,6 +331,22 @@ async fn notification_settings_round_trip() {
     put_invalid(&app, path, body, "backend", json!("pigeon")).await;
 }
 
+#[tokio::test]
+async fn updates_settings_round_trip() {
+    let app = test_app().await;
+    let path = "/settings/updates";
+    let body = get_ok(&app, path).await;
+    assert_eq!(body, json!({"check": true, "auto_install": false}));
+
+    put_changed(&app, path, body.clone(), "check", json!(false)).await;
+    assert!(!saved(&app).updates.check);
+    let message = message(&app, path, "auto_install", json!(true)).await;
+    assert!(message.contains("Applies at the next check"), "{message}");
+    assert!(saved(&app).updates.auto_install);
+
+    put_invalid(&app, path, body, "check", json!("sometimes")).await;
+}
+
 // ---- Tokens are never written from the environment -----------------------------------
 
 #[tokio::test]
