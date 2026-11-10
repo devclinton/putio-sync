@@ -100,7 +100,7 @@ description: |
 
   غير تابع ل Put.io.
 
-website: https://github.com/devclinton/putio-sync
+website: https://devclinton.github.io/putio-sync/
 license: MIT
 grade: stable
 confinement: strict

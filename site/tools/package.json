@@ -1,0 +1,14 @@
+{
+  "name": "putio-sync-site-tools",
+  "private": true,
+  "description": "Screenshot capture and accessibility check for the project site (feature 054)",
+  "type": "module",
+  "scripts": {
+    "screenshots": "node screenshots.mjs",
+    "a11y": "node a11y.mjs"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "playwright": "1.61.1"
+  }
+}

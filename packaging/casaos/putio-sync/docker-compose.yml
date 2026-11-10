@@ -55,6 +55,10 @@ x-casaos:
   author: devclinton
   developer: devclinton
   icon: https://raw.githubusercontent.com/devclinton/putio-sync/main/snap/gui/putio-sync.png
+  screenshot_link:
+    - https://raw.githubusercontent.com/devclinton/putio-sync/main/site/screenshots/status-desktop-light.png
+    - https://raw.githubusercontent.com/devclinton/putio-sync/main/site/screenshots/transfers-desktop-light.png
+    - https://raw.githubusercontent.com/devclinton/putio-sync/main/site/screenshots/settings-desktop-light.png
   title:
     en_US: putio-sync
   tagline:
@@ -70,6 +74,6 @@ x-casaos:
       en_US: >-
         On first start, putio-sync prints a one-time setup code in the app's log. Open the
         web UI, enter the code, and choose /downloads as the download folder.
-  website: https://github.com/devclinton/putio-sync
+  website: https://devclinton.github.io/putio-sync/
   repo: https://github.com/devclinton/putio-sync
   support: https://github.com/devclinton/putio-sync/issues

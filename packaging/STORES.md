@@ -43,7 +43,8 @@ and open an update PR in their store repositories.
 2. Fork `getumbrel/umbrel-apps`, copy `umbrel/putio-sync/` to the repository root, run
    `npm run lint:apps -- putio-sync --check-images`, and test on umbrelOS (amd64 and
    arm64 if you can).
-3. Open a PR titled "Add putio-sync" using their template, with screenshots and the
+3. Open a PR titled "Add putio-sync" using their template, with screenshots (from
+   `site/screenshots/`, made by `site/tools/screenshots.mjs`) and the
    icon URL; Umbrel makes the gallery images. Set `submission` to the PR URL.
    `port: 15432` must not clash with another app; the linter checks it.
 
@@ -54,7 +55,7 @@ app password (`APP_PASSWORD`) is the web UI token, and the setup wizard accepts 
 
 1. Fork `IceWhaleTech/CasaOS-AppStore`, copy `casaos/putio-sync/` to
    `Apps/putio-sync/`, and add `icon.png` (from `snap/gui/putio-sync.png`) and one or
-   two screenshots.
+   two screenshots from `site/screenshots/`.
 2. Run `docker compose config -q` and `./scripts/build_dist.sh`, then open a PR saying
    it is a new app, what it does, and how you tested it.
 
