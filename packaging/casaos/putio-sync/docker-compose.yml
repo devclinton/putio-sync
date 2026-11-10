@@ -7,6 +7,8 @@ services:
     user: "$PUID:$PGID"
     environment:
       TZ: $TZ
+      # 0.2.1 leaves HOME at / for uids other than 99, where logs can't be written.
+      HOME: /config
     ports:
       - target: 15432
         published: "15432"

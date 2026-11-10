@@ -21,6 +21,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- The Docker image sets `HOME=/config`, so it no longer logs "Failed to create log
+  directory /.putiosync/logs: Permission denied" at every start when run as a user
+  other than 99 (`--user`). The Docker Compose, Umbrel and CasaOS listings set it
+  too, for 0.2.1. File logs are now kept in `/config/.putiosync/logs`.
 - The README, snap description and website give the daemon's idle memory on a NAS as
   about 33 MB; they said 11 MB. The docs site's dark themes have readable link and
   code colors, links in text are underlined, and code blocks can be scrolled from the
