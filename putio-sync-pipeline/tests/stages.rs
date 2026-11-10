@@ -268,7 +268,7 @@ async fn two_branches_in_one_stage_run_at_the_same_time() {
     assert_eq!(
         t.state,
         ItemState::Done,
-        "both finished, so they ran together"
+        "both finished, so they ran together: {t:#?}"
     );
     let post = &t.stages[5];
     assert_eq!(post.branches.as_ref().unwrap().len(), 2);

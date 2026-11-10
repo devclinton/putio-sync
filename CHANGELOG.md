@@ -408,6 +408,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- When a pipeline stage had parallel branches (such as one subtitle translation per
+  language), a branch could stop before it started with "database is locked" and leave
+  the item waiting for the operator; branches now wait their turn for the database.
 - A command hook whose script had just been written could fail to start on Linux
   with "text file busy"; the start is now retried briefly.
 - `cargo build --release` (and so `make ci`) failed on macOS after the October

@@ -242,7 +242,8 @@ impl Store {
     /// step per video). A step with the same stage, branch, kind and name is not added
     /// twice, so a scan that runs again changes nothing. Returns how many were added.
     pub async fn insert_steps(&self, item_key: &str, steps: &[PlannedStep]) -> Result<usize> {
-        let mut tx = self.pool.begin().await?;
+        // Read-then-write, so the write lock comes first (see `start_attempt`)
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let mut added = 0;
         for s in steps {
             let exists: Option<i64> = sqlx::query_scalar(
@@ -396,7 +397,9 @@ impl Store {
     /// Open an attempt for a step and mark the step running. Returns the attempt id and
     /// its number, from 1.
     pub async fn start_attempt(&self, step_id: i64) -> Result<(i64, i64)> {
-        let mut tx = self.pool.begin().await?;
+        // Read-then-write: take the write lock up front, so two branches starting at once
+        // wait for each other instead of one failing with "database is locked"
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let n: i64 =
             sqlx::query_scalar("SELECT COUNT(*) + 1 FROM pipeline_attempts WHERE step_id = ?")
                 .bind(step_id)
