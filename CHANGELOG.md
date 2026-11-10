@@ -12,6 +12,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-09
+
 ### Added
 
 - The Snap Store description has a short summary of the main features in Spanish,

@@ -1,6 +1,6 @@
 name: putio-sync
 base: core22
-version: '0.1.1'
+version: '0.2.0'
 title: Put.io Sync
 summary: Sync Put.io to your NAS or server, with a daemon and web UI
 description: |
