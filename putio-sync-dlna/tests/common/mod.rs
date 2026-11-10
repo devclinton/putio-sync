@@ -60,13 +60,28 @@ impl Fixture {
     ) -> Fixture {
         let downloads = tempfile::tempdir().unwrap();
         let config_dir = tempfile::tempdir().unwrap();
-        let port = free_port();
+        let mut port = free_port();
         let group = SocketAddrV4::new(Ipv4Addr::new(239, 255, 255, 250), free_udp_port());
         options.ssdp_group = group;
         let mut config = config_for(downloads.path(), port, roots);
         tweak(&mut config);
         let server = MediaServer::with_options(client, config_dir.path(), options);
         server.update(&config).await;
+        // `free_port` lets the port go before the server binds it, so a test running
+        // alongside can take the same one; pick another when the bind loses that race.
+        for _ in 0..5 {
+            let status = server.status();
+            let lost = status.state == putio_sync_dlna::State::Failed
+                && config.dlna.port == port
+                && status.reason.is_some_and(|r| r.starts_with("Can't listen"));
+            if !lost {
+                break;
+            }
+            port = free_port();
+            config.dlna.port = port;
+            config.dlna.bind = BindList::One(format!("127.0.0.1:{port}"));
+            server.update(&config).await;
+        }
         Fixture {
             downloads,
             config_dir,
