@@ -123,6 +123,8 @@ it from PATH.
 
 ## Linux
 
+<a id="snap"></a>
+
 ### Snap (All Distributions)
 
 **Works on**: Ubuntu, Debian, Fedora, Arch, openSUSE, Manjaro, and more.
@@ -174,6 +176,8 @@ putio-sync --version
 ```
 
 ---
+
+<a id="debian"></a>
 
 ### Debian/Ubuntu
 
@@ -341,6 +345,8 @@ says "No LAN interface: players can't find it".
 ---
 
 ## Home servers
+
+<a id="unraid"></a>
 
 putio-sync runs as a container, so home-server app stores install the same image:
 

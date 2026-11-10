@@ -5,6 +5,9 @@
 [![Snap](https://snapcraft.io/putio-sync/badge.svg)](https://snapcraft.io/putio-sync)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+**Website and docs: [devclinton.github.io/putio-sync](https://devclinton.github.io/putio-sync/)**
+
+<!-- ANCHOR: overview -->
 **Keep a NAS or server in sync with your [Put.io](https://put.io) account.** putio-sync
 downloads finished transfers to local storage, sends torrents and magnet links to
 Put.io, and works as a download client for Radarr and Sonarr. It is one small Rust
@@ -60,6 +63,7 @@ Open `http://<host>:15432/`, enter the setup code, and the wizard connects Put.i
 picks the download folder. The rest of this README is the full manual; what changed in
 each build is in [CHANGELOG.md](CHANGELOG.md), and planned work is in [ROADMAP.md](ROADMAP.md).
 
+<!-- ANCHOR_END: overview -->
 ## Contents
 
 - [All features](#all-features) · [First run](#first-run) · [Commands](#commands) · [Configuration](#configuration)
@@ -67,6 +71,7 @@ each build is in [CHANGELOG.md](CHANGELOG.md), and planned work is in [ROADMAP.m
 - [Radarr and Sonarr](#radarr-and-sonarr) · [Release check](#release-check) · [Event hooks](#event-hooks) · [Plugins](#plugins)
 - [Subtitles](#subtitles) · [Docker](#docker) · [Development](#development)
 
+<!-- ANCHOR: all-features -->
 ## All features
 
 
@@ -96,6 +101,8 @@ each build is in [CHANGELOG.md](CHANGELOG.md), and planned work is in [ROADMAP.m
 - **SQLite Database**: Local state tracking for downloads and history
 - **Progress Tracking**: Multiple progress bar styles with speed and ETA
 
+<!-- ANCHOR_END: all-features -->
+<!-- ANCHOR: using-putio-sync -->
 ## Using putio-sync
 
 ### First run
@@ -205,6 +212,8 @@ putio-sync history --limit 20
 putio-sync delete 123456 --yes
 ```
 
+<!-- ANCHOR_END: using-putio-sync -->
+<!-- ANCHOR: commands -->
 ## Commands
 
 ### `login`
@@ -463,6 +472,8 @@ putio-sync history --since "2025-01-01" --limit 100
 putio-sync history --output csv > history.csv
 ```
 
+<!-- ANCHOR_END: commands -->
+<!-- ANCHOR: configuration -->
 ## Configuration
 
 Configuration is stored at `~/.putiosync/config.toml`. See `config.example.toml` for a complete example with all options documented.
@@ -660,6 +671,8 @@ paths = []
 - `PUTIO_SYNC_API_TOKEN`, `PUTIO_SYNC_API_LISTEN`, `PUTIO_SYNC_API_BIND`: web UI and API
   listener, see [Web UI](#web-ui).
 
+<!-- ANCHOR_END: configuration -->
+<!-- ANCHOR: metrics -->
 ## Metrics
 
 Both `daemon` and `server` modes serve Prometheus metrics at
@@ -900,11 +913,17 @@ promtool tsdb create-blocks-from openmetrics metrics/putio-sync-metrics-2026-11-
 To restore the database, `gunzip` the `db/` file and use it as `.putiosync.db` with the
 daemon stopped.
 
+<!-- ANCHOR_END: metrics -->
+<!-- ANCHOR: web-ui -->
 ## Web UI
 
 `daemon` serves a browser UI and the JSON API on one port, by default
 `http://<nas>:15432/` (for example `http://192.168.1.50:15432/`). It works on a phone
-as well as a desktop. The pages:
+as well as a desktop.
+
+![The Status page: sync state, queue counts, a Put.io storage warning and the active transfers](site/screenshots/status-desktop-light.png)
+
+The pages:
 
 - **Status**: version, uptime, last and next sync, queue counts, active downloads,
   workers, watch folders, disk space and Put.io reachability. **Sync now** starts a
@@ -1267,6 +1286,8 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 The legacy `/api/*` placeholder routes are removed, and no CORS headers are sent: the
 UI is served from the same origin, and non-browser clients are unaffected.
 
+<!-- ANCHOR_END: web-ui -->
+<!-- ANCHOR: media-server -->
 ## Media Server
 
 putio-sync can show the files it downloads to TVs and media players on your home network
@@ -1302,6 +1323,8 @@ roots = ["downloads", "cat:radarr"]  # downloads, cat:<folder>, watch:<path>, pu
 - `PUTIO_SYNC_DLNA_ENABLED`, `PUTIO_SYNC_DLNA_NAME` and `PUTIO_SYNC_DLNA_PORT` override the
   matching settings.
 
+<!-- ANCHOR_END: media-server -->
+<!-- ANCHOR: tailscale -->
 ## Tailscale
 
 putio-sync reads Tailscale's state from tailscaled's socket
@@ -1363,6 +1386,8 @@ on: use `tailscale serve` instead.
   `172.17.0.1`), not loopback, so its identity headers are ignored. Use host
   networking, the sidecar layout, or the token.
 
+<!-- ANCHOR_END: tailscale -->
+<!-- ANCHOR: radarr-and-sonarr -->
 ## Radarr and Sonarr
 
 putio-sync can be a download client for Radarr and Sonarr. It answers the Transmission RPC
@@ -1505,6 +1530,8 @@ The password and API keys come from the config file or the env variables above, 
 They are never logged or sent back by the API. The UI shows only whether each one is set. A
 settings save from the UI keeps the ones in the file and never writes env-only values.
 
+<!-- ANCHOR_END: radarr-and-sonarr -->
+<!-- ANCHOR: release-check -->
 ## Release check
 
 Some releases are fakes: a "movie" that is only an `.exe`, or a password-protected `.7z` that
@@ -1557,6 +1584,8 @@ be undone, but a blocklist already sent stays. Stats sums up the reports and dow
 as CSV or JSON, with file types, sizes and tracker hosts, to share without giving anything
 away. Checks and reports older than 400 days are deleted.
 
+<!-- ANCHOR_END: release-check -->
+<!-- ANCHOR: event-hooks -->
 ## Event hooks
 
 A hook runs a command or calls a webhook when something happens: a download finishes or
@@ -1609,6 +1638,8 @@ the hook and field named. Up to 32 hooks.
 The doctor's Event hooks check reports a command hook whose program is missing or not
 executable, and a hook whose last run failed in the last day.
 
+<!-- ANCHOR_END: event-hooks -->
+<!-- ANCHOR: processing-pipeline -->
 ## Processing pipeline
 
 A download can pass through your own steps before it counts as finished. Give a hook a
@@ -1645,6 +1676,8 @@ The hook's input, results and the `pipeline.step_failed` and `pipeline.completed
 are in [EVENTS.md](EVENTS.md#pipeline-step-hooks). Settings › Integrations edits the steps
 and the pipeline settings.
 
+<!-- ANCHOR_END: processing-pipeline -->
+<!-- ANCHOR: subtitles -->
 ## Subtitles
 
 Set the languages you want and putio-sync saves subtitles next to each downloaded video,
@@ -1720,6 +1753,8 @@ Metrics: `putio_sync_subtitles_saved_total` (by `source` and `language`),
 `putio_sync_subtitles_skipped_total` (by `reason`), `putio_sync_opensubtitles_requests_total`
 and `putio_sync_subtitles_transcribed_seconds_total`.
 
+<!-- ANCHOR_END: subtitles -->
+<!-- ANCHOR: subtitle-translation -->
 ## Subtitle translation
 
 When a wanted subtitle language is still missing after the Subtitles stage, the Translating
@@ -1753,6 +1788,8 @@ file is saved as `Movie.es.srt` next to the video and is never written over an e
 Metrics: `putio_sync_translation_chunks_total`, `_chunk_retries_total`, `_rate_limited_total`,
 `_callbacks_waiting` and `_callbacks_refused_total` (by reason).
 
+<!-- ANCHOR_END: subtitle-translation -->
+<!-- ANCHOR: plugins -->
 ## Plugins
 
 Plugins are small Lua scripts that run inside putio-sync on the same events as hooks,
@@ -1786,6 +1823,8 @@ they can keep a small key-value store. A slow or failing plugin never holds up a
 Secret settings are masked everywhere and never logged. See [PLUGINS.md](PLUGINS.md) for
 the manifest, the `putio` API and the limits.
 
+<!-- ANCHOR_END: plugins -->
+<!-- ANCHOR: advanced-features -->
 ## Advanced Features
 
 ### Folder Rules
@@ -2062,6 +2101,8 @@ Run downloads continuously in the background:
 putio-sync download --all --daemon --interval 300 --filter "*.mkv"
 ```
 
+<!-- ANCHOR_END: advanced-features -->
+<!-- ANCHOR: running-periodic-sync-and-watch-simultaneously -->
 ## Running Periodic Sync and Watch Simultaneously
 
 You can run both periodic downloads and torrent watching at the same time using multiple terminal sessions, systemd services, or Docker containers. Here are several approaches:
@@ -2514,6 +2555,8 @@ Organize your watch directories by content type:
 
 Download tracking and history are stored in `~/.putiosync/putio-sync.db`
 
+<!-- ANCHOR_END: running-periodic-sync-and-watch-simultaneously -->
+<!-- ANCHOR: architecture -->
 ## Architecture
 
 This project is organized as a Cargo workspace with specialized crates following separation of concerns:
@@ -2577,6 +2620,8 @@ This project is organized as a Cargo workspace with specialized crates following
   - Served by `daemon` (on `[api] bind`) and by `server`
 
 
+<!-- ANCHOR_END: architecture -->
+<!-- ANCHOR: development -->
 ## Development
 
 ### Prerequisites
@@ -2602,6 +2647,8 @@ cargo test
 cargo run --bin putio-sync -- --help
 ```
 
+<!-- ANCHOR_END: development -->
+<!-- ANCHOR: docker -->
 ## Docker
 
 ### Pull from GitHub Container Registry
@@ -2765,6 +2812,8 @@ docker compose up -d
 docker compose logs putio-sync   # the one-time setup code
 ```
 
+<!-- ANCHOR_END: docker -->
+<!-- ANCHOR: file-formats--processing -->
 ## File Formats & Processing
 
 ### Torrent Files (.torrent)
@@ -2803,6 +2852,10 @@ When neither archive nor delete options are specified, putio-sync maintains a SQ
 
 Database location: `<target_directory>/.putiosync-torrents.db`
 
+<!-- ANCHOR_END: file-formats--processing -->
+<!-- ANCHOR: license -->
 ## License
 
 MIT, see [LICENSE](LICENSE). putio-sync is not affiliated with Put.io.
+
+<!-- ANCHOR_END: license -->

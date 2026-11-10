@@ -12,6 +12,13 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- A project website at <https://devclinton.github.io/putio-sync/>: a landing page with
+  install steps for every platform and screenshots, and the docs as a searchable book
+  built from the repository's Markdown. It loads nothing from other sites. The snap,
+  Unraid, Umbrel and CasaOS listings link to it.
+
 ### Fixed
 
 - The Windows install steps no longer say `winget install`: putio-sync isn't in winget

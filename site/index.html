@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>putio-sync: keep a NAS in sync with Put.io</title>
+  <meta name="description" content="putio-sync downloads finished Put.io transfers to your NAS or server, sends torrents to Put.io, and works as a download client for Radarr and Sonarr. One small binary with a web UI.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#install">Skip to install</a>
+  <header class="top">
+    <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">putio-sync</a>
+    <nav aria-label="Site">
+      <a href="#install">Install</a>
+      <a href="docs/">Docs</a>
+      <a href="https://github.com/devclinton/putio-sync">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="pitch">
+        <h1>Your Put.io downloads, already on your NAS.</h1>
+        <p class="lede">putio-sync watches your Put.io account and copies finished transfers to
+          local storage: parallel, resumable, checksum-verified. It sends torrents and magnet
+          links the other way, and works as a download client for Radarr and Sonarr.</p>
+        <p>One small Rust binary with a web UI, built to run unattended. On a NAS it idles at
+          about 11&nbsp;MB of memory.</p>
+        <p class="actions">
+          <a class="button" href="#install">Install version {{version}}</a>
+          <a class="quiet" href="docs/">Read the docs</a>
+        </p>
+      </div>
+
+      <figure class="ledger" aria-label="Example: transfers arriving in /downloads">
+        <figcaption><span class="path">/downloads</span><span class="when">synced just now</span></figcaption>
+        <ol>
+          <li class="done"><span class="name">Sintel.2010.1080p</span><span class="dest">Movies</span><span class="state">4.1 GB</span></li>
+          <li class="done"><span class="name">Example.Show.S01E01.mkv</span><span class="dest">TV</span><span class="state">1.2 GB</span></li>
+          <li class="live"><span class="name">Big.Buck.Bunny.2008.1080p</span><span class="dest">Movies</span><span class="state"><span class="bar"><span></span></span></span></li>
+          <li><span class="name">Photos/2026</span><span class="dest">Photos</span><span class="state">queued</span></li>
+        </ol>
+      </figure>
+    </section>
+
+    <section class="highlights" aria-labelledby="what">
+      <h2 id="what">What it does</h2>
+      <ul>
+        <li><strong>Hands-off downloads.</strong> New transfers land on your disk on their own, with bandwidth schedules and retries.</li>
+        <li><strong>A web UI for everything.</strong> Setup wizard, status, queue, Put.io browser, history, stats, logs and settings, on desktop or phone, in 27 languages.</li>
+        <li><strong>Radarr and Sonarr.</strong> It speaks the Transmission protocol, so the *arr apps send releases to Put.io and get them back on local disk.</li>
+        <li><strong>Watch folders.</strong> Drop <code>.torrent</code> and <code>.magnet</code> files into a folder and they go to Put.io.</li>
+        <li><strong>Per-folder rules.</strong> Video, audio or ebook presets, blocked file types, and deleting from Put.io after download.</li>
+        <li><strong>Keeps Put.io tidy.</strong> Storage warnings, empty-folder cleanup, and a Doctor page that finds stalled transfers and duplicates.</li>
+        <li><strong>Media extras.</strong> An optional DLNA server for TVs and Kodi, subtitles, and subtitle translation.</li>
+        <li><strong>Observable and scriptable.</strong> Prometheus metrics, event hooks, plugins and a full CLI.</li>
+      </ul>
+    </section>
+
+    <section class="shots" aria-labelledby="look">
+      <h2 id="look">The web UI</h2>
+      <div class="frames">
+        <figure class="wide">
+          <picture>
+            <source srcset="screenshots/status-desktop-dark.webp" media="(prefers-color-scheme: dark)" type="image/webp">
+            <source srcset="screenshots/status-desktop-light.webp" type="image/webp">
+            <img src="screenshots/status-desktop-light.png" width="1280" height="800" loading="lazy" decoding="async"
+                 alt="The Status page: sync state, queue counts, a Put.io storage warning and the active transfers.">
+          </picture>
+          <figcaption>Status: what is syncing, what is queued, and what needs attention.</figcaption>
+        </figure>
+        <figure class="phone">
+          <picture>
+            <source srcset="screenshots/transfers-phone-dark.webp" media="(prefers-color-scheme: dark)" type="image/webp">
+            <source srcset="screenshots/transfers-phone-light.webp" type="image/webp">
+            <img src="screenshots/transfers-phone-light.png" width="390" height="844" loading="lazy" decoding="async"
+                 alt="The Transfers page on a phone.">
+          </picture>
+          <figcaption>Every page works on a phone.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="install" id="install" aria-labelledby="install-title">
+      <h2 id="install-title">Install</h2>
+      <p>The latest release is <strong>{{version}}</strong>.
+        <a href="https://github.com/devclinton/putio-sync/releases/tag/v{{version}}">Release notes and all downloads</a>.
+        After installing, open <code>http://&lt;host&gt;:15432/</code> and enter the setup code from the log.</p>
+
+      <div class="filter" role="group" aria-label="Show install options for" hidden>
+        <button type="button" aria-pressed="true" data-show="all">All</button>
+        <button type="button" aria-pressed="false" data-show="server">Home server</button>
+        <button type="button" aria-pressed="false" data-show="linux">Linux</button>
+        <button type="button" aria-pressed="false" data-show="macos">macOS</button>
+        <button type="button" aria-pressed="false" data-show="windows">Windows</button>
+      </div>
+
+      <div class="ways">
+        <article data-for="server linux">
+          <h3>Docker Compose</h3>
+          <p>Runs anywhere Docker does. Edit the download path in the file first.</p>
+<pre tabindex="0"><code>curl -LO https://raw.githubusercontent.com/devclinton/putio-sync/v{{version}}/packaging/docker-compose/compose.yaml
+docker compose up -d</code></pre>
+          <p class="more"><a href="docs/installation.html#docker">Docker details</a></p>
+        </article>
+
+        <article data-for="server">
+          <h3>Unraid</h3>
+          <p>Until it is listed in Community Applications, save the template on the server, then pick
+            <em>putio-sync</em> under Docker › Add Container.</p>
+<pre tabindex="0"><code>curl -o /boot/config/plugins/dockerMan/templates-user/my-putio-sync.xml \
+  https://raw.githubusercontent.com/devclinton/putio-sync/v{{version}}/packaging/unraid/putio-sync.xml</code></pre>
+          <p class="more"><a href="docs/installation.html#unraid">Home server details</a></p>
+        </article>
+
+        <article data-for="server">
+          <h3>TrueNAS SCALE, Portainer, Dockge, Runtipi</h3>
+          <p>Add a custom app and paste the same <a href="https://github.com/devclinton/putio-sync/blob/v{{version}}/packaging/docker-compose/compose.yaml">compose.yaml</a>.
+            Umbrel and CasaOS packages are in <a href="https://github.com/devclinton/putio-sync/tree/main/packaging">packaging/</a>.</p>
+          <p class="more"><a href="docs/installation.html#unraid">Home server details</a></p>
+        </article>
+
+        <article data-for="linux">
+          <h3>Snap</h3>
+          <p>Any distribution with snapd. Updates itself.</p>
+<pre tabindex="0"><code>sudo snap install putio-sync</code></pre>
+          <p class="more"><a href="docs/installation.html#snap">Snap details</a></p>
+        </article>
+
+        <article data-for="linux">
+          <h3>Debian and Ubuntu</h3>
+          <p>Use <code>arm64</code> in place of <code>amd64</code> on ARM.</p>
+<pre tabindex="0"><code>curl -LO https://github.com/devclinton/putio-sync/releases/download/v{{version}}/putio-sync_{{version}}_amd64.deb
+sudo apt install ./putio-sync_{{version}}_amd64.deb</code></pre>
+          <p class="more"><a href="docs/installation.html#debian">Debian details</a></p>
+        </article>
+
+        <article data-for="linux">
+          <h3>Linux binary</h3>
+          <p>A single static binary for any distribution, NAS firmware included. Use <code>aarch64</code> on ARM.</p>
+<pre tabindex="0"><code>curl -LO https://github.com/devclinton/putio-sync/releases/download/v{{version}}/putio-sync-{{version}}-linux-x86_64.tar.gz
+tar -xzf putio-sync-{{version}}-linux-x86_64.tar.gz
+sudo install putio-sync-{{version}}-linux-x86_64/putio-sync /usr/local/bin/</code></pre>
+          <p class="more"><a href="docs/installation.html#standalone-binary-any-distribution">Binary details</a></p>
+        </article>
+
+        <article data-for="macos">
+          <h3>macOS</h3>
+          <p>With Homebrew, or the <a href="https://github.com/devclinton/putio-sync/releases/download/v{{version}}/putio-sync-{{version}}-macos-arm64.pkg">installer package</a> for Apple silicon, which also starts the daemon at login.</p>
+<pre tabindex="0"><code>brew install devclinton/putio-sync/putio-sync</code></pre>
+          <p class="more"><a href="docs/installation.html#macos">macOS details</a></p>
+        </article>
+
+        <article data-for="windows">
+          <h3>Windows</h3>
+          <p>Download and run the installer for
+            <a href="https://github.com/devclinton/putio-sync/releases/download/v{{version}}/putio-sync-{{version}}-windows-x64-setup.exe">x64</a> or
+            <a href="https://github.com/devclinton/putio-sync/releases/download/v{{version}}/putio-sync-{{version}}-windows-arm64-setup.exe">ARM64</a>.
+            It isn't code-signed, so SmartScreen may ask first: choose More info › Run anyway.</p>
+          <p class="more"><a href="docs/installation.html#windows">Windows details</a></p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>putio-sync is an independent, open-source project and is not affiliated with Put.io.</p>
+    <p>This site sets no cookies and loads nothing from other sites. It is hosted on GitHub Pages; see
+      <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub's privacy statement</a>.</p>
+    <p><a href="docs/">Docs</a> <a href="https://github.com/devclinton/putio-sync">GitHub</a> <a href="docs/license.html">MIT license</a></p>
+  </footer>
+  <script src="install.js" defer></script>
+</body>
+</html>
