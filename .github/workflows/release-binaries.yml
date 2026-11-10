@@ -71,7 +71,8 @@ jobs:
       - name: Check it is static and runs
         run: |
           file out/putio-sync
-          file out/putio-sync | grep -q 'statically linked'
+          # "statically linked", or "static-pie linked" from newer file(1)
+          file out/putio-sync | grep -qE 'static(ally|-pie) linked'
           out/putio-sync --version
 
       - name: Package

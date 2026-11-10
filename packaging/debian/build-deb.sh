@@ -100,8 +100,8 @@ fi
 
 # Copy binary to package
 info "Copying binary to package"
-cp "${BINARY_PATH}" "${PACKAGE_DIR}/usr/bin/putio-sync"
-chmod 755 "${PACKAGE_DIR}/usr/bin/putio-sync"
+# git doesn't track the empty usr/bin, so the copied tree lacks it
+install -D -m 755 "${BINARY_PATH}" "${PACKAGE_DIR}/usr/bin/putio-sync"
 
 # Compress man page
 info "Compressing man page"

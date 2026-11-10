@@ -12,6 +12,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- The Windows, `.deb` and x86_64 Linux downloads build again; 0.2.0 shipped without
+  them. On Windows the disk space metrics now come from the volume holding the download
+  folder.
+
 ## [0.2.0] - 2026-11-09
 
 ### Added
