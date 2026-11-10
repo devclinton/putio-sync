@@ -48,6 +48,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - A "Writing and debugging plugins" guide in the docs, and three starter plugins with a
   README each in `examples/plugins/`. The Plugins page, the workbench and the hooks card
   link to the matching docs pages.
+- The Unraid container menu has Read Me First (the Docker and Unraid docs page), Project
+  Page, Support (the docs) and More Info links. The README links the Snap Store and has
+  macOS and Windows install rows and badges.
 
 ### Fixed
 

@@ -7,8 +7,9 @@
   <MyIP/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/devclinton/putio-sync/issues</Support>
+  <Support>https://devclinton.github.io/putio-sync/docs/</Support>
   <Project>https://devclinton.github.io/putio-sync/</Project>
+  <ReadMe>https://devclinton.github.io/putio-sync/docs/docker.html</ReadMe>
   <Overview>Unofficial sync daemon for Put.io, not affiliated with Put.io. It downloads finished Put.io transfers to the array, sends .torrent and .magnet files from a watch folder to Put.io, and acts as a download client for Radarr and Sonarr. A web UI on port 15432 sets it up and shows the queue, transfers and stats. On first start it prints a setup code in the container log; open the web UI and enter the code, or the Web UI token below.</Overview>
   <Category>Downloaders: MediaApp:Video</Category>
   <WebUI>http://[IP]:[PORT:15432]/</WebUI>
