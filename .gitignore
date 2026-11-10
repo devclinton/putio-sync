@@ -49,3 +49,6 @@ snap/stage/
 snap/*.snap
 # Release builds (make dist-linux, dist-macos)
 /dist/
+
+# Project site (feature 054)
+site/tools/node_modules/
