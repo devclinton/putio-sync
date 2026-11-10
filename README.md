@@ -3,6 +3,8 @@
 [![CI](https://github.com/devclinton/putio-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/devclinton/putio-sync/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/devclinton/putio-sync)](https://github.com/devclinton/putio-sync/releases/latest)
 [![Snap](https://snapcraft.io/putio-sync/badge.svg)](https://snapcraft.io/putio-sync)
+[![macOS](https://img.shields.io/badge/macOS-.pkg%20%7C%20Homebrew-black?logo=apple)](https://github.com/devclinton/putio-sync/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-installer-0078D6?logo=windows)](https://github.com/devclinton/putio-sync/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Website and docs: [devclinton.github.io/putio-sync](https://devclinton.github.io/putio-sync/)**
@@ -41,9 +43,11 @@ putio-sync is an independent project and is not affiliated with Put.io.
 | Docker / Compose | `ghcr.io/devclinton/putio-sync`; ready-made [compose.yaml](packaging/docker-compose/compose.yaml) |
 | Unraid, Umbrel, CasaOS | Templates and app packages in [packaging/](packaging/STORES.md) |
 | TrueNAS SCALE, Runtipi, Portainer, Dockge | Custom app from the same [compose.yaml](packaging/docker-compose/compose.yaml) |
-| Linux (any distro) | `sudo snap install putio-sync`, see [snap/README.md](snap/README.md) |
+| Linux (any distro) | `sudo snap install putio-sync` from the [Snap Store](https://snapcraft.io/putio-sync), see [snap/README.md](snap/README.md) |
 | Debian / Ubuntu | `.deb` packages on [Releases](https://github.com/devclinton/putio-sync/releases/latest) |
-| Linux, macOS, Windows | Binaries and installers on [Releases](https://github.com/devclinton/putio-sync/releases/latest) |
+| macOS | `brew install devclinton/putio-sync/putio-sync` ([tap](https://github.com/devclinton/homebrew-putio-sync)), or the `.pkg` installer on [Releases](https://github.com/devclinton/putio-sync/releases/latest) |
+| Windows | `-setup.exe` installer (x64, arm64) on [Releases](https://github.com/devclinton/putio-sync/releases/latest) |
+| Linux, macOS, Windows | Plain binaries on [Releases](https://github.com/devclinton/putio-sync/releases/latest) |
 | From source | `cargo install --path putio-sync-cli` (Rust 1.96, pinned in `rust-toolchain.toml`) |
 
 [INSTALLATION.md](INSTALLATION.md) has the details for each.
