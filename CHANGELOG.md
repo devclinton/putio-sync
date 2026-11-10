@@ -457,6 +457,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- The README opens with a short overview, highlights, an install table and a Docker
+  Compose quick start; the full manual follows.
 - The edge snap is no longer rebuilt on every push to main; it is published when a
   maintainer runs the snap workflow, so it can trail main by a few commits. The `:main`
   Docker image is rebuilt only when code or the Dockerfile changes, not for docs-only

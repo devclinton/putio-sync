@@ -200,7 +200,7 @@ cargo install putio-sync-cli
 
 ### Requirements
 
-- Rust 1.70 or later
+- Rust 1.96 (pinned in `rust-toolchain.toml`)
 - `pkg-config`
 - `libssl-dev` (Debian/Ubuntu) or `openssl-devel` (Fedora)
 

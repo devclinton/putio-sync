@@ -1,10 +1,74 @@
 # putio-sync
 
-A high-performance Rust-based CLI tool for Put.io with support for downloads, transfers, and file management.
+[![CI](https://github.com/devclinton/putio-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/devclinton/putio-sync/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/devclinton/putio-sync)](https://github.com/devclinton/putio-sync/releases/latest)
+[![Snap](https://snapcraft.io/putio-sync/badge.svg)](https://snapcraft.io/putio-sync)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-What changed in each build is in [CHANGELOG.md](CHANGELOG.md); planned work is in [ROADMAP.md](ROADMAP.md).
+**Keep a NAS or server in sync with your [Put.io](https://put.io) account.** putio-sync
+downloads finished transfers to local storage, sends torrents and magnet links to
+Put.io, and works as a download client for Radarr and Sonarr. It is one small Rust
+binary with a web UI, built to run unattended on a home server: on a NAS it idles at
+about 11 MB of memory.
 
-## Features
+putio-sync is an independent project and is not affiliated with Put.io.
+
+## Highlights
+
+- **Hands-off downloads.** New transfers land on your disk on their own, with parallel,
+  resumable downloads, checksum verification and bandwidth schedules.
+- **A web UI for everything.** Setup wizard, status, queue, Put.io browser, transfers,
+  history, stats, logs and settings, on desktop or phone, light or dark, in 27 languages.
+- **Radarr and Sonarr.** It speaks the Transmission protocol, so the *arr apps send
+  releases to Put.io and get them back on local disk, with fake releases rejected first.
+- **Watch folders.** Drop `.torrent` and `.magnet` files into a folder and they go to Put.io.
+- **Per-folder rules.** Video, audio or ebook presets, blocked file types, skip folders,
+  delete from Put.io after download.
+- **Keeps Put.io tidy.** Empty-folder cleanup, storage warnings, and a Doctor page that
+  finds stalled transfers, duplicates and leftovers, with one-click fixes.
+- **Media extras.** An optional DLNA server for TVs and Kodi, subtitles from OpenSubtitles,
+  and subtitle translation.
+- **Observable and scriptable.** Prometheus metrics with a Grafana dashboard, event hooks,
+  plugins, and a full CLI.
+
+## Install
+
+| Where | How |
+|-------|-----|
+| Docker / Compose | `ghcr.io/devclinton/putio-sync`; ready-made [compose.yaml](packaging/docker-compose/compose.yaml) |
+| Unraid, Umbrel, CasaOS | Templates and app packages in [packaging/](packaging/STORES.md) |
+| TrueNAS SCALE, Runtipi, Portainer, Dockge | Custom app from the same [compose.yaml](packaging/docker-compose/compose.yaml) |
+| Linux (any distro) | `sudo snap install putio-sync`, see [snap/README.md](snap/README.md) |
+| Debian / Ubuntu | `.deb` packages on [Releases](https://github.com/devclinton/putio-sync/releases/latest) |
+| Linux, macOS, Windows | Binaries and installers on [Releases](https://github.com/devclinton/putio-sync/releases/latest) |
+| From source | `cargo install --path putio-sync-cli` (Rust 1.96, pinned in `rust-toolchain.toml`) |
+
+[INSTALLATION.md](INSTALLATION.md) has the details for each.
+
+## Quick start
+
+With Docker Compose:
+
+```bash
+mkdir putio-sync && cd putio-sync
+curl -fsSLO https://raw.githubusercontent.com/devclinton/putio-sync/main/packaging/docker-compose/compose.yaml
+docker compose up -d
+docker compose logs putio-sync   # shows a one-time setup code
+```
+
+Open `http://<host>:15432/`, enter the setup code, and the wizard connects Put.io and
+picks the download folder. The rest of this README is the full manual; what changed in
+each build is in [CHANGELOG.md](CHANGELOG.md), and planned work is in [ROADMAP.md](ROADMAP.md).
+
+## Contents
+
+- [All features](#all-features) · [First run](#first-run) · [Commands](#commands) · [Configuration](#configuration)
+- [Metrics](#metrics) · [Web UI](#web-ui) · [Media Server](#media-server) · [Tailscale](#tailscale)
+- [Radarr and Sonarr](#radarr-and-sonarr) · [Release check](#release-check) · [Event hooks](#event-hooks) · [Plugins](#plugins)
+- [Subtitles](#subtitles) · [Docker](#docker) · [Development](#development)
+
+## All features
+
 
 - **Fast Downloads**: Concurrent downloads with configurable workers
 - **Bandwidth Schedules**: download limits by time of day and day of week, plus Pause or Slow for an hour from the Status page ([details](#bandwidth-schedules))
@@ -32,124 +96,7 @@ What changed in each build is in [CHANGELOG.md](CHANGELOG.md); planned work is i
 - **SQLite Database**: Local state tracking for downloads and history
 - **Progress Tracking**: Multiple progress bar styles with speed and ETA
 
-## Architecture
-
-This project is organized as a Cargo workspace with specialized crates following separation of concerns:
-
-### Core Libraries
-
-- **putio-sync-client**: Put.io API client
-  - OAuth and app-specific password authentication
-  - File listing, download, and transfer management
-  - Asynchronous HTTP client with retry logic
-
-- **putio-sync-db**: SQLite database layer
-  - Download tracking and history
-  - Transfer and queue management
-  - Statistics repositories
-
-- **putio-sync-download**: Download manager
-  - Streaming downloads with buffered I/O
-  - Resume support with range requests
-  - Progress tracking and callbacks
-  - Concurrent download orchestration
-
-- **putio-sync-file-manager**: File system utilities
-  - Path sanitization and validation
-  - Empty directory cleanup
-  - Cross-platform path handling
-
-- **putio-sync-daemon**: Background daemon service
-  - Periodic download synchronization
-  - Torrent file watching and upload
-  - Worker scaling on settings changes from the API
-  - Worker pool management
-
-- **putio-sync-doctor**: Health checks and safe fixes
-  - Read-only checks of the Put.io account, the sync state, this machine and the connection
-  - Fixes that check again before acting; the ones that delete need confirmation
-  - Shared by the `doctor` command, the API and the daemon's scheduled runs
-
-- **putio-sync-core**: Shared utilities
-  - Configuration management
-  - File filtering and sorting
-  - Path utilities
-  - Logging and notifications
-
-### Applications
-
-- **putio-sync-cli**: Command-line interface
-  - `login`: Authenticate with Put.io via OAuth
-  - `list`: Browse files and folders with filtering
-  - `download`: Download files with workers and resume support
-  - `delete`: Remove files from Put.io
-  - `create`: Add torrents from files or magnet links
-  - `daemon`: Unified daemon for downloads and torrent watching
-  - `stat`: View download statistics
-  - `history`: View download and delete history
-
-- **putio-sync-api**: Web API and web UI
-  - REST API for status, queue, file, transfer, history and settings management
-  - Embedded browser UI (plain HTML, CSS and ES modules, no build step)
-  - Required bearer token, with a failed-attempt lockout
-  - Served by `daemon` (on `[api] bind`) and by `server`
-
-## Installation
-
-### macOS
-
-**Homebrew** (recommended):
-```bash
-brew tap devclinton/putio-sync
-brew install putio-sync
-```
-
-### Windows
-
-**Winget** (recommended):
-```powershell
-winget install putio.putio-sync
-```
-
-Or download the latest release from [GitHub Releases](https://github.com/devclinton/putio-sync/releases).
-
-### Linux
-
-**Snap** (all distributions; edge channel for now), with the daemon as a service:
-```bash
-sudo snap install putio-sync --edge
-sudo putio-sync login
-sudo snap set putio-sync api-token="$(openssl rand -hex 24)"
-sudo snap start --enable putio-sync.daemon
-```
-See [snap/README.md](snap/README.md) for where the config and downloads live.
-
-**Home servers**: Unraid, Umbrel, CasaOS, TrueNAS SCALE, Runtipi and other Docker hosts
-use the container image; see [packaging/STORES.md](packaging/STORES.md) and
-[packaging/docker-compose/compose.yaml](packaging/docker-compose/compose.yaml).
-
-**Debian/Ubuntu** (.deb):
-```bash
-# Download from releases
-wget https://github.com/devclinton/putio-sync/releases/latest/download/putio-sync_VERSION_amd64.deb
-sudo dpkg -i putio-sync_VERSION_amd64.deb
-```
-
-### From Source
-
-**Requirements**: Rust 1.70+
-
-```bash
-cargo install --path putio-sync-cli
-# Or for the latest release
-cargo install putio-sync-cli
-```
-
-See [INSTALLATION.md](INSTALLATION.md) for detailed installation instructions.
-
-## Quick Start
-
-The binary will be available at `./target/release/putio-sync`.
+## Using putio-sync
 
 ### First run
 
@@ -2567,11 +2514,74 @@ Organize your watch directories by content type:
 
 Download tracking and history are stored in `~/.putiosync/putio-sync.db`
 
+## Architecture
+
+This project is organized as a Cargo workspace with specialized crates following separation of concerns:
+
+### Core Libraries
+
+- **putio-sync-client**: Put.io API client
+  - OAuth and app-specific password authentication
+  - File listing, download, and transfer management
+  - Asynchronous HTTP client with retry logic
+
+- **putio-sync-db**: SQLite database layer
+  - Download tracking and history
+  - Transfer and queue management
+  - Statistics repositories
+
+- **putio-sync-download**: Download manager
+  - Streaming downloads with buffered I/O
+  - Resume support with range requests
+  - Progress tracking and callbacks
+  - Concurrent download orchestration
+
+- **putio-sync-file-manager**: File system utilities
+  - Path sanitization and validation
+  - Empty directory cleanup
+  - Cross-platform path handling
+
+- **putio-sync-daemon**: Background daemon service
+  - Periodic download synchronization
+  - Torrent file watching and upload
+  - Worker scaling on settings changes from the API
+  - Worker pool management
+
+- **putio-sync-doctor**: Health checks and safe fixes
+  - Read-only checks of the Put.io account, the sync state, this machine and the connection
+  - Fixes that check again before acting; the ones that delete need confirmation
+  - Shared by the `doctor` command, the API and the daemon's scheduled runs
+
+- **putio-sync-core**: Shared utilities
+  - Configuration management
+  - File filtering and sorting
+  - Path utilities
+  - Logging and notifications
+
+### Applications
+
+- **putio-sync-cli**: Command-line interface
+  - `login`: Authenticate with Put.io via OAuth
+  - `list`: Browse files and folders with filtering
+  - `download`: Download files with workers and resume support
+  - `delete`: Remove files from Put.io
+  - `create`: Add torrents from files or magnet links
+  - `daemon`: Unified daemon for downloads and torrent watching
+  - `stat`: View download statistics
+  - `history`: View download and delete history
+
+- **putio-sync-api**: Web API and web UI
+  - REST API for status, queue, file, transfer, history and settings management
+  - Embedded browser UI (plain HTML, CSS and ES modules, no build step)
+  - Required bearer token, with a failed-attempt lockout
+  - Served by `daemon` (on `[api] bind`) and by `server`
+
+
 ## Development
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.96 (pinned in `rust-toolchain.toml`)
 - SQLite 3
 
 ### Building
@@ -2793,19 +2803,6 @@ When neither archive nor delete options are specified, putio-sync maintains a SQ
 
 Database location: `<target_directory>/.putiosync-torrents.db`
 
-## Distribution
-
-- Compiled binaries for macOS, Linux, and Windows
-- Docker images via GitHub Container Registry
-
-## Development Principles
-
-- **Test-Driven Development**: Write tests first
-- **Documentation**: Document as we go
-- **Structured Logging**: Using tracing from day one
-- **Robust Error Handling**: Comprehensive error types
-- **Commit Frequency**: Commit after completing each feature
-
 ## License
 
-MIT
+MIT, see [LICENSE](LICENSE). putio-sync is not affiliated with Put.io.
