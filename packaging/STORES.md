@@ -24,16 +24,24 @@ and open an update PR in their store repositories.
 
 ## Unraid Community Applications
 
+The published template lives in its own repository,
+[devclinton/unraid-templates](https://github.com/devclinton/unraid-templates), with a
+`ca_profile.xml`. CA scans whole repositories for XML, and this one also holds
+`packaging/macos/distribution.xml`. [`unraid/putio-sync.xml`](unraid/putio-sync.xml) is
+the source copy. Change it here, then copy it over `putio-sync.xml` in unraid-templates.
+Both copies set `TemplateURL` to the unraid-templates raw URL.
+
 1. Load the template once on an Unraid server: Docker › Add Container › Template, paste
-   the raw URL of `unraid/putio-sync.xml`, check the fields, and **Apply**. CA only
-   supports XML as the Docker tab saves it, so copy the saved file from
-   `/boot/config/plugins/dockerMan/templates-user/my-putio-sync.xml` back over
-   `unraid/putio-sync.xml` (drop the `my-` fields such as `DateInstalled`) if it differs.
-2. CA scans whole repositories for templates. Either submit this repository, or keep a
-   small `devclinton/unraid-templates` repository with the XML and a `ca_profile.xml`.
-3. Submit the repository through the form linked from the "CA Application Policies"
-   thread on the Unraid forum, and open a support thread in the forum's Docker
-   Containers board. Approval takes up to 48 hours.
+   the raw URL, check the fields, and **Apply**. CA only supports XML as the Docker tab
+   saves it. If the saved file differs, carry the changes into the template by hand.
+   Don't copy `/boot/config/plugins/dockerMan/templates-user/my-putio-sync.xml` itself:
+   it holds your API token, your paths and `my-` fields such as `DateInstalled`.
+2. Open a support thread in the forum's Docker Containers board, and set `<Support>` in
+   both copies to it.
+3. Submit unraid-templates through the form linked from the "CA Application Policies"
+   thread on the Unraid forum, and confirm that two-factor authentication is on for the
+   GitHub account. Approval takes up to 48 hours. Check Apps › Statistics ›
+   Repositories, and Template Errors if the app doesn't show.
 
 ## Umbrel
 
