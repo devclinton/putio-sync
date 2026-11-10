@@ -72,10 +72,12 @@ putio-sync-v0.1.1-x86_64-pc-windows-msvc.zip
 
 ### For Users
 
-#### Method 1: Using Winget (Recommended)
+#### Method 1: Using Winget (once listed)
+
+putio-sync isn't in winget-pkgs yet. Once it is:
 
 ```powershell
-winget install putio.putio-sync
+winget install devclinton.putio-sync
 ```
 
 #### Method 2: Manual Installation

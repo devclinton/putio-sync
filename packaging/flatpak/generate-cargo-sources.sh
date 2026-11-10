@@ -68,8 +68,8 @@ if [ -f "${OUTPUT_FILE}" ]; then
     echo "  Entries: ${ENTRIES} dependencies"
     echo ""
     echo "Next steps:"
-    echo "1. Uncomment the cargo-sources.json line in com.putio.PutioSync.yaml"
-    echo "2. Test the build: flatpak-builder --force-clean build-dir com.putio.PutioSync.yaml"
+    echo "1. Uncomment the cargo-sources.json line in io.github.devclinton.putio-sync.yaml"
+    echo "2. Test the build: flatpak-builder --force-clean build-dir io.github.devclinton.putio-sync.yaml"
 else
     echo "Error: Failed to generate cargo-sources.json"
     exit 1

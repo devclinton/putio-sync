@@ -72,7 +72,7 @@ The workflow uses [vedantmgoyal2009/winget-releaser@v2](https://github.com/vedan
 ### Configuration
 
 ```yaml
-identifier: putio.putio-sync          # Package identifier
+identifier: devclinton.putio-sync          # Package identifier
 version: ${{ steps.get_version.outputs.version }}  # From release tag
 installers-regex: 'putio-sync-.*-windows-.*\.zip$'  # Match Windows ZIPs
 token: ${{ secrets.GITHUB_TOKEN }}    # GitHub authentication
@@ -114,7 +114,7 @@ Microsoft maintainers review:
 
 Once approved and validated:
 - PR is merged to microsoft/winget-pkgs
-- Package becomes available via `winget install putio.putio-sync`
+- Package becomes available via `winget install devclinton.putio-sync`
 - Updates typically appear within a few hours
 
 ## Monitoring Submissions
@@ -124,7 +124,7 @@ Once approved and validated:
 After the workflow runs:
 
 1. Go to https://github.com/microsoft/winget-pkgs/pulls
-2. Search for "putio.putio-sync" or your username
+2. Search for "devclinton.putio-sync" or your username
 3. Monitor the PR for:
    - Validation results
    - Review comments
@@ -224,7 +224,7 @@ If automated submission fails, submit manually:
    # Calculate SHA256
    Get-FileHash -Algorithm SHA256 x64.zip
 
-   # Update putio.putio-sync.installer.yaml with the checksum
+   # Update devclinton.putio-sync.installer.yaml with the checksum
    ```
 
 5. Create pull request to microsoft/winget-pkgs

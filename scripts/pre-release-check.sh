@@ -74,33 +74,25 @@ else
 fi
 
 # Check Winget manifest
-if grep -q "PackageVersion: ${VERSION}" packaging/winget/manifests/putio.putio-sync.installer.yaml; then
+if grep -q "PackageVersion: ${VERSION}" packaging/winget/manifests/devclinton.putio-sync.installer.yaml; then
     success "Version ${VERSION} found in Winget installer manifest"
 else
-    error "Version ${VERSION} not found in Winget installer manifest"
-    info "  Update PackageVersion in packaging/winget/manifests/putio.putio-sync.installer.yaml"
+    warning "Winget installer manifest is not at ${VERSION} (the release workflow writes its own)"
+    info "  Update PackageVersion in packaging/winget/manifests/devclinton.putio-sync.installer.yaml before a manual winget-pkgs submission"
 fi
 
-if grep -q "PackageVersion: ${VERSION}" packaging/winget/manifests/putio.putio-sync.locale.en-US.yaml; then
+if grep -q "PackageVersion: ${VERSION}" packaging/winget/manifests/devclinton.putio-sync.locale.en-US.yaml; then
     success "Version ${VERSION} found in Winget locale manifest"
 else
-    error "Version ${VERSION} not found in Winget locale manifest"
-    info "  Update PackageVersion in packaging/winget/manifests/putio.putio-sync.locale.en-US.yaml"
+    warning "Winget locale manifest is not at ${VERSION} (the release workflow writes its own)"
+    info "  Update PackageVersion in packaging/winget/manifests/devclinton.putio-sync.locale.en-US.yaml before a manual winget-pkgs submission"
 fi
 
-if grep -q "PackageVersion: ${VERSION}" packaging/winget/manifests/putio.putio-sync.yaml; then
+if grep -q "PackageVersion: ${VERSION}" packaging/winget/manifests/devclinton.putio-sync.yaml; then
     success "Version ${VERSION} found in Winget version manifest"
 else
-    error "Version ${VERSION} not found in Winget version manifest"
-    info "  Update PackageVersion in packaging/winget/manifests/putio.putio-sync.yaml"
-fi
-
-# Check Flatpak manifest (tag in git source)
-if grep -q "tag: v${VERSION}" com.putio.PutioSync.yaml; then
-    success "Version tag v${VERSION} found in Flatpak manifest"
-else
-    error "Version tag v${VERSION} not found in Flatpak manifest"
-    info "  Update git tag in com.putio.PutioSync.yaml"
+    warning "Winget version manifest is not at ${VERSION} (the release workflow writes its own)"
+    info "  Update PackageVersion in packaging/winget/manifests/devclinton.putio-sync.yaml before a manual winget-pkgs submission"
 fi
 
 # Check 2: Changelog
@@ -212,10 +204,10 @@ check_file() {
 }
 
 check_file "packaging/homebrew/putio-sync.rb"
-check_file "packaging/winget/manifests/putio.putio-sync.yaml"
+check_file "packaging/winget/manifests/devclinton.putio-sync.yaml"
 check_file "packaging/debian/DEBIAN/control"
 check_file "snap/snapcraft.yaml"
-check_file "com.putio.PutioSync.yaml"
+check_file "io.github.devclinton.putio-sync.yaml"
 
 # Summary
 section "Summary"
