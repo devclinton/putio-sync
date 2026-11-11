@@ -4,7 +4,7 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Turn on Pages with "GitHub Actions" as the source (maintainer, repository settings)
+- [X] T001 Turn on Pages with "GitHub Actions" as the source (maintainer, repository settings)
 - [X] T002 `site/book/book.toml` and `SUMMARY.md`; `site/tools/build.sh` that builds into `target/site`
 
 ## Phase 2: US2 Docs (P1)
