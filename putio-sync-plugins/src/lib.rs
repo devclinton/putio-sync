@@ -25,8 +25,10 @@ pub mod manifest;
 pub mod paths;
 pub mod sandbox;
 pub mod service;
+pub mod source;
 pub mod store;
 pub mod wasm;
+pub mod workbench;
 pub mod worker;
 
 pub use service::{

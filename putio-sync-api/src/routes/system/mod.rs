@@ -23,3 +23,4 @@ pub mod tailscale;
 pub mod translation;
 pub mod verify;
 pub mod whats_new;
+pub mod workbench;

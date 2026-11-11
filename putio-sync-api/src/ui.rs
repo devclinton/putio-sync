@@ -177,6 +177,12 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
         include_bytes!("../ui/settings/plugin_install.js"),
     ),
     (
+        "settings/workbench.js",
+        JS,
+        include_bytes!("../ui/settings/workbench.js"),
+    ),
+    ("workbench.js", JS, include_bytes!("../ui/workbench.js")),
+    (
         "settings/subtitles.js",
         JS,
         include_bytes!("../ui/settings/subtitles.js"),

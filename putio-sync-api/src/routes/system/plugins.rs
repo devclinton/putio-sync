@@ -8,6 +8,7 @@
 //!   written to the config like a Settings save
 //! - POST /plugins/install - Add a plugin to the plugins folder from a URL or uploaded files
 //!   (029); it starts disabled
+//! - /plugins/workbench/... - The plugin workbench (055); see [`super::workbench`]
 
 use crate::error::ApiError;
 use axum::{
@@ -38,6 +39,7 @@ pub fn router() -> Router<AppState> {
             "/install",
             post(install).layer(DefaultBodyLimit::max(INSTALL_BODY_BYTES)),
         )
+        .nest("/workbench", super::workbench::router())
 }
 
 /// A base64 module at the size limit, with room for the JSON around it

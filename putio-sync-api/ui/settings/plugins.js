@@ -1,9 +1,9 @@
-// Plugins section (features 028, 031, 048, 029): tabs for plugins that are on, a list of
-// the rest with Enable, Reload, and Install (plugin_install.js, loaded when opened).
+// Plugins section (features 028, 031, 048, 029, 055): tabs for plugins that are on, a list
+// of the rest with Enable, Reload, and the workbench (workbench.js, loaded when opened).
 
 import { get, post, put } from "../api.js";
 import * as plugins from "../plugins.js";
-import { confirm, fill, h, toast, toastError } from "../app.js";
+import { confirm, docs, fill, h, toast, toastError } from "../app.js";
 import { relative } from "../format.js";
 import { groupCard, quiet, reason } from "./form.js";
 
@@ -334,7 +334,7 @@ function pluginsExtra(data, form) {
     button.disabled = false;
   };
   return {
-    nodes: [h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn-small", onclick: reload }, "Reload plugins")), installer(load), list],
+    nodes: [h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn-small", onclick: reload }, "Reload plugins"), docs("plugins", "", "Plugin reference")), workbench(load), list],
     read: () => {
       if (!found) return { plugins: stored };
       const edited = rows.map(plugins.toSettings);
@@ -343,13 +343,13 @@ function pluginsExtra(data, form) {
   };
 }
 
-/** Install (029): its form loads when first opened, not with the page */
-function installer(load) {
+/** The workbench (055), Install (029) in it: loads when first opened, not with the page */
+function workbench(load) {
   const open = (ev) => {
     const box = ev.currentTarget;
     if (!box.open || box.dataset.ready) return;
     box.dataset.ready = "1";
-    import("./plugin_install.js").then((m) => box.append(...m.form(load))).catch(toastError);
+    import("./workbench.js").then((m) => box.append(...m.panel(load))).catch(toastError);
   };
-  return h("details", { class: "spaced", ontoggle: open }, h("summary", { text: "Install a plugin" }));
+  return h("details", { class: "spaced", ontoggle: open }, h("summary", { text: "Plugin workbench: make, edit, run and install plugins" }));
 }

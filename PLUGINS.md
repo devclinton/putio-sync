@@ -340,7 +340,7 @@ Lua function's arguments and returns JSON. The full ABI is in
 
 ### Installing a plugin
 
-Settings › Plugins › **Install a plugin** takes a URL, or files: one `.wasm` that carries
+Settings › Plugins › Plugin workbench › **Install or replace a plugin** takes a URL, or files: one `.wasm` that carries
 its manifest, or a `plugin.toml` with its entry file. A URL can point at a `.wasm` or at a
 `plugin.toml`, whose entry is fetched from the same folder. The plugin is written to its
 own folder in the plugins folder and starts off, with its hosts and folders listed for you
@@ -426,6 +426,30 @@ Working examples, one for each rule, are in [`examples/plugins/`](examples/plugi
 [`tv-folders`](examples/plugins/tv-folders/) (folder). Copy a folder into the plugins
 folder and reload.
 
+## The plugin workbench
+
+Settings › Plugins › **Plugin workbench** (feature 055) is a basic editor and debugger in
+the web UI, with no breakpoints or stepping:
+
+- **New plugin** writes a folder from a starter: `webhook-notifier`, `store-counter` or
+  `tick-poller`. The same starters are in `examples/plugins/`.
+- **The editor** shows `plugin.toml` and `main.lua` with line numbers. Save checks the
+  manifest (with the same `file: field: message` errors as a reload) and the Lua syntax,
+  keeps the old files as `.bak`, and reloads only that plugin. Bundled plugins are
+  read-only; **Copy to edit** makes a folder copy that replaces the bundled one. WebAssembly
+  plugins show their manifest only; install a new build over them.
+- **The Run panel** calls `on_event` with a sample of any event type, `on_tick`, `health`,
+  a settings action, or a sync rule (`filter`, `rename`, `folder`) with a sample file, for
+  Lua and WebAssembly plugins. A run is a dry run by default: HTTP requests are recorded
+  and not sent, `putio.fs.write` is recorded and not written, and the store is a scratch
+  copy. **Send for real** uses the approved hosts and the real store. It shows the result
+  or the error with its line, the time, memory, log lines, each request with its secrets
+  masked, and the store before and after. The last 20 runs can be run again.
+
+The editor is off by default: set `plugin_editor = true`, or tick **Edit plugins here**.
+Without it, plugins can be read and run but not changed. The guide,
+[Writing and debugging plugins](site/book/src/plugin-workbench.md), has the details.
+
 ## Limits and safety
 
 - **Sandbox.** Only `string`, `table`, `math` and `utf8` are loaded. `os`, `io`, `debug`,
@@ -449,8 +473,8 @@ folder and reload.
 
 - `GET /plugins` lists each plugin with its state, manifest (actions and fields with
   choices included), approved hosts, waiting events and last 20 runs. `POST /plugins/test`,
-  `POST /plugins/reload`, `POST /plugins/action` and `POST /plugins/install` do what the
-  Settings buttons do.
+  `POST /plugins/reload`, `POST /plugins/action`, `POST /plugins/install` and the
+  `/plugins/workbench` routes do what the Settings buttons do.
 - Metrics: `putio_sync_plugin_runs_total{plugin, event, result}`,
   `putio_sync_plugin_run_duration_seconds{plugin}` and
   `putio_sync_plugin_events_dropped_total{plugin}`, and each plugin's own counters as

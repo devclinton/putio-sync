@@ -491,6 +491,7 @@ run_at = "02:30"
 # has the details.
 # A top-level key: set it above the first [section] of this file.
 # plugins_dir = "/config/plugins"       # Default: "plugins" next to this file
+# plugin_editor = true                  # edit plugins in Settings › Plugins › Plugin workbench (feature 055). Default: false
 # [[plugins]]
 # name = "ntfy"
 # enabled = true                        # Default: false

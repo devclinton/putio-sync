@@ -1263,6 +1263,16 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /plugins/reload` | Read the plugins folder again → `{"message": "Reloaded 7 plugins"}` |
 | `POST /plugins/action` | `{"name", "action", "input"?, "config"?}`: run a plugin's settings action (Sign in with Plex, Load libraries) with unsaved non-secret `config` values for this call; answers `{message, code, open_url, choices, next, done, run}`, plus `saved` (key names) and `config` when it saved values. Saved secrets are never returned. 404 unknown plugin or action, 409 while one runs, 422 when it fails |
 | `POST /plugins/install` | `{"url"}`, `{"wasm"}` (base64) or `{"manifest", "entry"}` (base64), plus `"replace"?`: install a plugin into the plugins folder, turned off → `{"name", "message"}`. A URL must be http or https, at most 16 MiB, with redirects only on the same host. 400 bad body, 409 a plugin of that name exists (send `"replace": true`), 422 not a plugin or the download failed |
+| `GET /plugins/workbench` | The plugin workbench (feature 055) → `{editor, dir, starters, events, file}`: whether the editor is on, the plugins folder, the starter templates, a sample `data` per event type and a sample file for sync hooks |
+| `PUT /plugins/workbench/editor` | `{"enabled": true}`: turn the plugin editor on or off (`plugin_editor`) |
+| `POST /plugins/workbench/new` | `{"starter", "name"}`: make a plugin folder from a starter (webhook-notifier, store-counter, tick-poller), turned off. 403 editor off, 400 bad name, 409 name taken |
+| `GET /plugins/workbench/source/:name` | A plugin's files → `{name, runtime, source, editable, files: [{path, text, version}], other_files}`. Bundled and WASM plugins are read-only |
+| `POST /plugins/workbench/check` | `{"manifest", "script"}`: check without saving → `{problems: [{file, line?, message}]}` |
+| `PUT /plugins/workbench/source/:name` | `{"manifest", "script", "versions", "force"?}`: save a folder Lua plugin (the old files kept as `.bak`) and reload only it → `{problems, message}`. 403 editor off or read-only, 409 changed on disk since it was read (send `"force": true`) |
+| `POST /plugins/workbench/copy/:name` | Copy a bundled plugin into the plugins folder; the copy replaces it. 403 editor off or already a folder |
+| `POST /plugins/workbench/run` | `{"name", "call", "real"?, "reply"?, "manifest"?, "script"?}`: call one plugin function (`call.kind` event, tick, health, action or hook) → the run with its result, line, duration, memory, logs, HTTP requests (secrets masked), file writes and the store before and after. A dry run unless `"real": true`: requests are recorded and answered with `reply`, the store is a scratch copy. Unsaved `manifest`/`script` need the editor. 404 unknown plugin, 409 while one runs |
+| `GET /plugins/workbench/runs` | The last 20 workbench runs, newest first |
+| `POST /plugins/workbench/runs/:id` | Run one of them again; 404 when it is gone |
 | `GET /events/schema` | The JSON Schema of the events (see [EVENTS.md](EVENTS.md)) |
 | `GET /doctor` | The latest doctor report; 404 before the first run |
 | `POST /doctor/run` | Run every check now and answer with the report (a run already going is joined, not repeated) |
