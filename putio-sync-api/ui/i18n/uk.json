@@ -357,7 +357,6 @@
  "Email": "Електронна пошта",
  "Empty": "Порожній",
  "Empty downloads each file in one request": "Порожні завантаження кожного файлу в одному запиті",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "Порожній для плагінів поруч із файлом конфігурації; кожен плагін — це папка з файлами plugin.toml та main.lua",
  "Empty for the default; in Docker, mount the host's socket": "Порожній за замовчуванням; у Docker монтуйте сокет хоста",
  "Empty searches PATH": "Порожні пошуки ШЛЯХ",
  "Enable": "Увімкнути",

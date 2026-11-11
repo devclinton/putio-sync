@@ -357,7 +357,6 @@
  "Email": "電子郵件",
  "Empty": "空的",
  "Empty downloads each file in one request": "每個檔案在一次請求中都下載空檔",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "配置檔旁邊的插件區為空；每個插件是一個包含 plugin.toml 和 main.lua 的資料夾。",
  "Empty for the default; in Docker, mount the host's socket": "默認為空；在 Docker 中，將主機的套件連接到",
  "Empty searches PATH": "空的搜尋路徑",
  "Enable": "啟用",

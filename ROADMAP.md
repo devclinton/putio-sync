@@ -107,12 +107,13 @@ each called with a short time limit and passed over when it fails or is slow.
 Examples for each are in `examples/plugins/`. See
 `specs/028-lua-sync-extension-points/` for the design.
 
-### 029 WebAssembly plugins
+### 029 WebAssembly plugins (done)
 
-Sandboxed plugins compiled to WebAssembly, so they can be written in Go
-(TinyGo), Rust, JavaScript and other languages. Same events and API as 028,
-with permissions per plugin (network, file paths) and install from a file or
-URL.
+Plugins can be WebAssembly modules (`runtime = "wasm"`) with the same events,
+sync rules and API as 028, run by wasmi (an interpreter, about 1.4 MB, so every
+release target still builds). Per-plugin folder permissions (`putio.fs`) for
+both runtimes, and install from a file or URL. Rust and Go examples are in
+`examples/plugins/`; no JavaScript example yet. See `specs/029-wasm-plugins/`.
 
 ### 030 Notifications
 

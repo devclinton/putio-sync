@@ -357,7 +357,6 @@
  "Email": "البريد الإلكتروني",
  "Empty": "خالي",
  "Empty downloads each file in one request": "تحميلات فارغة لكل ملف في طلب واحد",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "خالي للمكونات الإضافية بجوار ملف الإعدادات؛ كل مكون إضافي هو مجلد يحتوي على ملفي plugin.toml و main.lua",
  "Empty for the default; in Docker, mount the host's socket": "خالي للوضع الافتراضي؛ في Docker، قم بتركيب منفذ المضيف",
  "Empty searches PATH": "مسارات عمليات البحث الفارغة",
  "Enable": "تمكين",

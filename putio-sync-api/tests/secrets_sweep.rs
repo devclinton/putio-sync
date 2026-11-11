@@ -155,6 +155,7 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         post("/plugins/test"),
         post("/plugins/reload"),
         post("/plugins/action"),
+        post("/plugins/install"),
         get("/settings/plugins"),
         (Method::PUT, "/settings/plugins", Some(json!({}))),
         post("/settings/plugins/preview"),

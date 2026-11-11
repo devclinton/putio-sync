@@ -357,7 +357,6 @@
  "Email": "อีเมล์",
  "Empty": "ว่างเปล่า",
  "Empty downloads each file in one request": "การดาวน์โหลดไฟล์แต่ละไฟล์ที่ว่างเปล่าในคำขอเดียว",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "ว่างสำหรับปลั๊กอินอยู่ข้างไฟล์คอนฟิกิวเรชัน; แต่ละปลั๊กอินคือโฟลเดอร์ที่มีไฟล์ plugin.toml และ main.lua",
  "Empty for the default; in Docker, mount the host's socket": "ว่างสำหรับค่าเริ่มต้น; ใน Docker ให้มอนต์พอร์ตของโฮสต์",
  "Empty searches PATH": "การค้นหาที่ว่างเปล่า PATH",
  "Enable": "เปิดใช้งาน",

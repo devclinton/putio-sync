@@ -357,7 +357,6 @@
  "Email": "이메일",
  "Empty": "비어 있는",
  "Empty downloads each file in one request": "한 요청에 파일별로 빈 다운로드",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "구성 파일 옆의 플러그인용 빈 공간; 각 플러그인은 plugin.toml 및 main.lua가 있는 폴더입니다.",
  "Empty for the default; in Docker, mount the host's socket": "기본값은 비어 있습니다; Docker에서 호스트의 소켓을 마운트합니다.",
  "Empty searches PATH": "빈 검색 PATH",
  "Enable": "할 수 있게 하다",

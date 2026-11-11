@@ -1,12 +1,14 @@
 //! # putio-sync-plugins
 //!
-//! Sandboxed Lua plugins run for events on the internal event bus (feature 028).
+//! Sandboxed Lua (feature 028) and WebAssembly (029) plugins run for events on the
+//! internal event bus.
 //!
-//! A plugin is a folder with a `plugin.toml` manifest ([`manifest`]) and a Lua script, or
-//! one of the plugins bundled in the binary ([`discover`]). Each enabled plugin gets its
-//! own thread and Lua state ([`sandbox`]) with a time and memory limit per call, and a
-//! host API ([`host`]): logging, its config, HTTP to approved hosts only, a key-value
-//! store ([`store`]), time and JSON. [`PluginsService`] feeds them events and keeps the
+//! A plugin is a folder with a `plugin.toml` manifest ([`manifest`]) and a Lua script or a
+//! `.wasm` module, or one of the plugins bundled in the binary ([`discover`]); [`install`]
+//! adds one from a file or a URL. Each enabled plugin gets its own thread and Lua state
+//! ([`sandbox`]) or WebAssembly instance ([`wasm`]) with a time and memory limit per call,
+//! and one host API ([`host`]): logging, its config, HTTP to approved hosts only, approved
+//! folders only, a key-value store ([`store`]), time and JSON. [`PluginsService`] feeds them events and keeps the
 //! last runs; a failing or slow plugin never holds anything else up.
 //!
 //! A plugin may also answer the sync's questions while it runs ([`hooks`]): a file
@@ -18,11 +20,13 @@ pub mod action;
 pub mod discover;
 pub mod hooks;
 pub mod host;
+pub mod install;
 pub mod manifest;
 pub mod paths;
 pub mod sandbox;
 pub mod service;
 pub mod store;
+pub mod wasm;
 pub mod worker;
 
 pub use service::{

@@ -482,9 +482,9 @@ run_at = "02:30"
 # Authorization = "Bearer ..."
 
 # ============================================================================
-# Lua plugins (feature 028)
+# Plugins (features 028, 029)
 # ============================================================================
-# Sandboxed Lua scripts run on the same events as hooks. ntfy, discord,
+# Sandboxed Lua scripts or WebAssembly modules run on the same events as hooks. ntfy, discord,
 # telegram and pushover notifiers and plex, jellyfin and emby library refresh
 # (feature 031) are bundled; your own go in a folder each under
 # plugins_dir. Settings › Plugins edits these and approves hosts. PLUGINS.md
@@ -495,6 +495,7 @@ run_at = "02:30"
 # name = "ntfy"
 # enabled = true                        # Default: false
 # approved_hosts = ["ntfy.sh"]          # hosts it may call; Settings writes these
+# approved_paths = []                   # folders it may use, "r:/dir" or "w:/dir"; Settings writes these
 # timeout_secs = 10                     # per call, 1 to 60. Default: 10
 # memory_mb = 32                        # 4 to 256. Default: 32
 # hook_timeout_ms = 500                 # per sync rule call, 50 to 5000. Default: 500

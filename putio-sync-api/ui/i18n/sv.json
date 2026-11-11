@@ -357,7 +357,6 @@
  "Email": "e-post",
  "Empty": "tom",
  "Empty downloads each file in one request": "Tomma nedladdningar för varje fil i en begäran",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "Tom för plugins bredvid konfigurationsfilen; varje plugin är en mapp med plugin.toml och main.lua",
  "Empty for the default; in Docker, mount the host's socket": "Tom för standardvärdet; i Docker, montera värdens socket",
  "Empty searches PATH": "Tomma sökningar PATH",
  "Enable": "möjliggöra",

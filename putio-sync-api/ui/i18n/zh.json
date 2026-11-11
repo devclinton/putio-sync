@@ -357,7 +357,6 @@
  "Email": "电子邮件",
  "Empty": "空的",
  "Empty downloads each file in one request": "每个文件在一次请求中都下载为空",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "配置文件的旁边是插件的空文件夹；每个插件是一个包含plugin.toml和main.lua的文件夹。",
  "Empty for the default; in Docker, mount the host's socket": "默认为空；在Docker中，挂载主机的套接管",
  "Empty searches PATH": "空搜索路径",
  "Enable": "启用",

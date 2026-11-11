@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use putio_sync_core::plugins::{valid_name, MAX_PLUGINS};
 
@@ -10,6 +11,8 @@ use crate::manifest::Manifest;
 
 /// Largest entry script read, in bytes
 pub const MAX_SCRIPT_BYTES: u64 = 1024 * 1024;
+/// Largest WebAssembly module read, in bytes (029)
+pub const MAX_WASM_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Bundled plugins: folder name, `plugin.toml`, entry script. The notifiers share
 /// `bundled/notifier.lua`, put in front of each script.
@@ -110,8 +113,10 @@ pub struct Found {
     pub source: Source,
     /// The manifest, when it parsed
     pub manifest: Option<Manifest>,
-    /// The entry script's text
+    /// The entry script's text (Lua)
     pub script: String,
+    /// The entry module (WebAssembly, 029)
+    pub wasm: Option<Arc<[u8]>>,
     /// Why it cannot load
     pub error: Option<String>,
 }
@@ -123,6 +128,7 @@ impl Found {
             source,
             manifest: None,
             script: String::new(),
+            wasm: None,
             error: Some(error),
         }
     }
@@ -147,6 +153,7 @@ fn bundled() -> Vec<Found> {
                     source: Source::Bundled,
                     manifest: Some(m),
                     script: script.to_string(),
+                    wasm: None,
                     error: None,
                 },
                 Err(e) => Found::broken(folder.to_string(), Source::Bundled, e),
@@ -176,24 +183,41 @@ fn from_folder(path: &Path) -> Found {
     };
     let entry = path.join(&manifest.entry);
     let entry_label = entry.display().to_string();
-    let script = match std::fs::metadata(&entry) {
-        Ok(meta) if meta.len() > MAX_SCRIPT_BYTES => Err(format!(
-            "{}: larger than {} KiB",
-            entry_label,
-            MAX_SCRIPT_BYTES / 1024
-        )),
-        Ok(_) => std::fs::read_to_string(&entry).map_err(|e| format!("{}: {}", entry_label, e)),
+    let wasm = manifest.runtime == "wasm";
+    let max = if wasm {
+        MAX_WASM_BYTES
+    } else {
+        MAX_SCRIPT_BYTES
+    };
+    let bytes = match std::fs::metadata(&entry) {
+        Ok(meta) if meta.len() > max => {
+            Err(format!("{}: larger than {} KiB", entry_label, max / 1024))
+        }
+        Ok(_) => std::fs::read(&entry).map_err(|e| format!("{}: {}", entry_label, e)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             Err(format!("{}: not found", entry_label))
         }
         Err(e) => Err(format!("{}: {}", entry_label, e)),
     };
-    match script {
-        Ok(script) => Found {
+    let code = bytes.and_then(|bytes| {
+        if wasm {
+            if !bytes.starts_with(crate::wasm::MAGIC) {
+                return Err(format!("{}: not a WebAssembly module", entry_label));
+            }
+            Ok((String::new(), Some(Arc::from(bytes))))
+        } else {
+            String::from_utf8(bytes)
+                .map(|text| (text, None))
+                .map_err(|_| format!("{}: stream did not contain valid UTF-8", entry_label))
+        }
+    });
+    match code {
+        Ok((script, wasm)) => Found {
             name: manifest.name.clone(),
             source,
             manifest: Some(manifest),
             script,
+            wasm,
             error: None,
         },
         Err(e) => Found {
@@ -201,6 +225,7 @@ fn from_folder(path: &Path) -> Found {
             source,
             manifest: Some(manifest),
             script: String::new(),
+            wasm: None,
             error: Some(e),
         },
     }

@@ -357,7 +357,6 @@
  "Email": "E-mail",
  "Empty": "vuoto",
  "Empty downloads each file in one request": "Download vuoti di ogni file in una richiesta",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "Vuoto per i plugin accanto al file di configurazione; ogni plugin è una cartella con plugin.toml e main.lua",
  "Empty for the default; in Docker, mount the host's socket": "Vuoto per impostazione predefinita; in Docker, monta il socket dell'host",
  "Empty searches PATH": "Ricerche vuote PERCORSO",
  "Enable": "permettere",

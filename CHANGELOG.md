@@ -57,6 +57,20 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   never deleted from Put.io, and Radarr/Sonarr files are left alone. Three working
   examples are in `examples/plugins/`: `min-size-filter`, `clean-names` and
   `tv-folders`. See PLUGINS.md.
+- WebAssembly plugins: a plugin with `runtime = "wasm"` in its `plugin.toml` is a
+  module built from Rust, Go or another language, with the same events, sync rules,
+  settings, actions, store and time and memory limits as Lua. It runs in a sandbox
+  (wasmi, about 1.4 MB on the binary) that offers only the plugin API: WASI calls for
+  files, sockets or the environment answer "not supported". Examples in Rust
+  (`rust-clean-names`) and Go (`go-min-size-filter`) with build steps are in
+  `examples/plugins/`.
+- File access for plugins: `[permissions.files]` names folders a plugin may read or
+  write, fixed or from its settings, and `putio.fs.read/write/list/exists` reach them
+  (Lua and WebAssembly alike). Settings › Plugins lists the folders, and turning the
+  plugin on approves them, as with hosts; `..` and links cannot lead out.
+- Install a plugin from Settings › Plugins or `POST /plugins/install`: from a URL (a
+  `.wasm` or a `plugin.toml` with its entry beside it) or from files. It starts off,
+  and an existing plugin is replaced only when asked.
 
 ### Changed
 

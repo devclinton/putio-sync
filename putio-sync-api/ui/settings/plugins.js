@@ -1,9 +1,5 @@
-// Plugins section (features 028, 031, 048). Each plugin that is on has a tab with its
-// state, the hosts it contacts, its settings by type (secrets shown only as set), time limit,
-// action buttons (031: Sign in with Plex, Load buttons for fields with choices), Send test
-// event with the lines it logged, and Disable. The others are one short list with Enable,
-// which names the hosts the plugin will contact and turns it on in a save of its own; the
-// save approves those hosts. Reload reads the plugins folder again.
+// Plugins section (features 028, 031, 048, 029): tabs for plugins that are on, a list of
+// the rest with Enable, Reload, and Install (plugin_install.js, loaded when opened).
 
 import { get, post, put } from "../api.js";
 import * as plugins from "../plugins.js";
@@ -15,7 +11,7 @@ const PLUGINS = {
   id: "plugins",
   key: "plugins",
   title: "Plugins",
-  fields: [["plugins_dir", "Plugins folder", "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua", "s?"]],
+  fields: [["plugins_dir", "Plugins folder", "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua or plugin.wasm", "s?"]],
   advanced: ["plugins_dir"],
   extra: pluginsExtra,
 };
@@ -201,7 +197,8 @@ function pluginsExtra(data, form) {
     const hosts = h("span");
     const showHosts = () => {
       const needed = row ? plugins.hostsFor(status, row.values) : status.hosts_needed;
-      hosts.textContent = needed.length ? `Contacts: ${needed.join(", ")}` : "No network access";
+      const folders = plugins.foldersText(status);
+      hosts.textContent = (needed.length ? `Contacts: ${needed.join(", ")}` : "No network access") + (folders ? ` · May ${folders}` : "");
     };
     showHosts();
     const head = [status.version ? `v${status.version}` : null, status.source, plugins.stateLabel(status.state)].filter(Boolean).join(" · ");
@@ -265,8 +262,7 @@ function pluginsExtra(data, form) {
     );
   };
 
-  // Enable or Disable: save that plugin's `enabled` alone on top of the saved settings, then
-  // draw again from what was saved. Other unsaved edits stay, and so does the unsaved mark.
+  // Enable or Disable, then draw again from what was saved; other unsaved edits stay
   const turn = async (status, on, button) => {
     const row = rows.find((r) => r.name === status.name) || plugins.fromStatus(status, null);
     const saved = plugins.fromStatus(status, stored.find((s) => s.name === status.name));
@@ -338,11 +334,22 @@ function pluginsExtra(data, form) {
     button.disabled = false;
   };
   return {
-    nodes: [h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn-small", onclick: reload }, "Reload plugins")), list],
+    nodes: [h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn-small", onclick: reload }, "Reload plugins")), installer(load), list],
     read: () => {
       if (!found) return { plugins: stored };
       const edited = rows.map(plugins.toSettings);
       return { plugins: [...edited, ...stored.filter((s) => !edited.some((e) => e.name === s.name))] };
     },
   };
+}
+
+/** Install (029): its form loads when first opened, not with the page */
+function installer(load) {
+  const open = (ev) => {
+    const box = ev.currentTarget;
+    if (!box.open || box.dataset.ready) return;
+    box.dataset.ready = "1";
+    import("./plugin_install.js").then((m) => box.append(...m.form(load))).catch(toastError);
+  };
+  return h("details", { class: "spaced", ontoggle: open }, h("summary", { text: "Install a plugin" }));
 }

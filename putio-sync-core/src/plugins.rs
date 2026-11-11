@@ -45,10 +45,14 @@ pub struct PluginSettings {
     /// Hosts the plugin may call, written by Settings saves
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approved_hosts: Vec<String>,
+    /// Folders the plugin may read (`r:<folder>`) or write (`w:<folder>`), written by
+    /// Settings saves (feature 029)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approved_paths: Vec<String>,
     /// Longest call, in seconds (1-60)
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
-    /// Memory for the whole Lua state, in MiB (4-256)
+    /// Memory for the whole Lua state or WebAssembly instance, in MiB (4-256)
     #[serde(default = "default_memory")]
     pub memory_mb: u64,
     /// Longest sync rule call (filter, rename, folder), in milliseconds (50-5000)
@@ -68,6 +72,7 @@ impl Default for PluginSettings {
             name: String::new(),
             enabled: false,
             approved_hosts: Vec::new(),
+            approved_paths: Vec::new(),
             timeout_secs: default_timeout(),
             memory_mb: default_memory(),
             hook_timeout_ms: default_hook_timeout(),
@@ -165,6 +170,15 @@ impl PluginSettings {
                 return bad(format!(
                     "{}.approved_hosts: \"{}\" is not a lowercase host name",
                     plugin, host
+                ));
+            }
+        }
+        for path in &self.approved_paths {
+            let folder = path.strip_prefix("r:").or_else(|| path.strip_prefix("w:"));
+            if folder.is_none_or(|f| f.is_empty() || f.chars().any(char::is_control)) {
+                return bad(format!(
+                    "{}.approved_paths: \"{}\" must be r:<folder> or w:<folder>",
+                    plugin, path
                 ));
             }
         }
