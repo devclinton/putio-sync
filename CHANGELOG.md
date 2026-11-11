@@ -20,6 +20,37 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   Unraid, Umbrel and CasaOS listings link to it.
 - The docs on the website in 19 more languages, machine-translated and marked as such,
   with a language picker in the menu bar.
+- Stream mode: `[download] mode = "stream"`, or `mode` on a folder rule, keeps media on
+  Put.io instead of downloading it, and the media server's Put.io root plays it from
+  there. New videos that aren't MP4 get an MP4 version requested from Put.io
+  (`stream_mp4`, on by default). Radarr/Sonarr items still download. Settings ›
+  Downloads has the mode and warns, with a fix button, when the media server or its
+  Put.io root is off; the rule editor and preview show the mode. The
+  `putio_sync_stream_mp4_requests_total` metric counts MP4 requests.
+- Organise TV shows on Put.io: with `[organise] tv = true`, streamed episodes are planned
+  to move into `TV Shows/Show/Season NN/` as `Show - S02E05 - Title.mkv`, read from the
+  release name. The Put.io page's **Organise** panel lists the moves to apply, undo or
+  dismiss, and **Find episodes** plans moves for files streamed earlier; `apply = "auto"`
+  moves at once. A target outside stream mode, a name already taken or a file gone from
+  Put.io is refused and shown. Plugins' folder and rename rules can place files instead.
+  The name reader was checked against 400 real Sonarr and 400 Radarr imports. `doctor`
+  warns when organising is on but nothing is streamed; `putio_sync_organise_moves_total`
+  counts the moves.
+
+- Sync rules for plugins: a plugin can declare `hooks = ["filter", "rename", "folder"]`
+  to decide during a sync whether a file is downloaded, streamed or skipped, what it is
+  called locally and which folder it goes in. Each call has `hook_timeout_ms` (500 ms by
+  default, shown in Settings › Plugins as **Sync rule time limit**); a plugin that
+  fails, is slow or answers wrong is passed over and the built-in rule applies, and
+  after 3 failures in a row its sync rules rest for 5 minutes. Files a plugin skips are
+  never deleted from Put.io, and Radarr/Sonarr files are left alone. Three working
+  examples are in `examples/plugins/`: `min-size-filter`, `clean-names` and
+  `tv-folders`. See PLUGINS.md.
+
+### Changed
+
+- The media server's Put.io root no longer needs `putio_folder`: without one it shows
+  the folder the sync mirrors.
 
 ### Fixed
 

@@ -106,6 +106,17 @@ on_existing = "resume"
 # Default: false
 delete_after_download = false
 
+# "download" fetches files; "stream" keeps them on Put.io and the media server
+# ([dlna] with the "putio" root) plays them from there. Folder rules can set
+# their own `mode`. Radarr/Sonarr items always download.
+# Default: "download"
+mode = "download"
+
+# In stream mode, ask Put.io for an MP4 version of each new video that isn't
+# MP4, for players that need it.
+# Default: true
+stream_mp4 = true
+
 # Progress bar display style
 # Options: "per-file", "overall", "individual", "rotating", "none"
 # - per-file: Show progress for each file + overall progress
@@ -166,6 +177,7 @@ blocked_extensions = ["exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs",
 #   include / exclude      Only / Never download patterns, as above; "" clears
 #                          an inherited one. Checked before the type filter.
 #   skip                   download nothing in this folder
+#   mode                   "download" or "stream" (keep on Put.io, see mode above)
 #   delete_blocked         delete files the rule blocks from Put.io (one call per sync)
 #   keep                   keep this folder and everything below out of the
 #                          empty-folder cleanup and the doctor ([cleanup] below)
@@ -485,6 +497,7 @@ run_at = "02:30"
 # approved_hosts = ["ntfy.sh"]          # hosts it may call; Settings writes these
 # timeout_secs = 10                     # per call, 1 to 60. Default: 10
 # memory_mb = 32                        # 4 to 256. Default: 32
+# hook_timeout_ms = 500                 # per sync rule call, 50 to 5000. Default: 500
 # [plugins.config]
 # topic = "my-nas-8f3k"
 # group_minutes = 5                     # repeats within this time are summed up
@@ -565,7 +578,34 @@ bind = []
 roots = ["downloads"]
 
 # The Put.io folder shown as "Put.io" when roots has "putio" (folder id).
+# Default: the folder the sync mirrors (the account root)
 # putio_folder = 123456789
+
+# ============================================================================
+# Organise on Put.io (feature 023)
+# ============================================================================
+# Moves files stream mode keeps on Put.io into tidy folders. Each move is listed
+# on the Put.io page's Organise panel, where it can be applied, undone or
+# dismissed.
+[organise]
+# Move TV episodes into "<tv_folder>/Show/Season NN/Show - S01E02 - Title.ext",
+# read from the release name.
+# Default: false
+tv = false
+
+# The Put.io folder for shows, from the Put.io root (no leading "/", no "..").
+# Must stay in stream mode, or the move is refused.
+# Default: "TV Shows"
+tv_folder = "TV Shows"
+
+# "preview" waits for Apply on the Organise panel; "auto" moves at once.
+# Default: "preview"
+apply = "preview"
+
+# Let plugins' folder and rename rules (PLUGINS.md, "Sync rules") place files
+# instead of the built-in names.
+# Default: true
+use_plugins = true
 
 # ============================================================================
 # Notification Configuration

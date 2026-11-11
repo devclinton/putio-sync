@@ -96,6 +96,7 @@ label_enum!(
         Skipped => "skipped",
         Blocked => "blocked",
         Failed => "failed",
+        Streamed => "streamed",
     }
 );
 
@@ -105,6 +106,34 @@ label_enum!(
         Blocked => "blocked",
         Skipped => "skipped",
         Deleted => "deleted",
+        Streamed => "streamed",
+    }
+);
+
+label_enum!(
+    /// What asking Put.io for a stream-mode file's MP4 version did (feature 022).
+    Mp4Request {
+        Requested => "requested",
+        Ready => "ready",
+        Gone => "gone",
+        Failed => "failed",
+    }
+);
+
+label_enum!(
+    /// What kind of media an organiser move is for (feature 023; 024 adds `movie`).
+    OrganiseMoveKind {
+        Tv => "tv",
+    }
+);
+
+label_enum!(
+    /// What happened to an organiser move (feature 023).
+    OrganiseResult {
+        Planned => "planned",
+        Applied => "applied",
+        Undone => "undone",
+        Failed => "failed",
     }
 );
 

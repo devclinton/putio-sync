@@ -19,6 +19,8 @@ const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_last_sync_files",
     "putio_sync_files_blocked_total",
     "putio_sync_rule_decisions_total",
+    "putio_sync_stream_mp4_requests_total",
+    "putio_sync_organise_moves_total",
     "putio_sync_sync_in_progress",
     "putio_sync_queue_items",
     "putio_sync_downloads_active",
@@ -284,6 +286,8 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             v.extend(strs(LookupResult::ALL, LookupResult::as_str));
             v.extend(strs(FallbackResult::ALL, FallbackResult::as_str));
             v.extend(strs(HoldResult::ALL, HoldResult::as_str));
+            v.extend(strs(Mp4Request::ALL, Mp4Request::as_str));
+            v.extend(strs(OrganiseResult::ALL, OrganiseResult::as_str));
             v.extend(putio_sync_telemetry::tailscale::RESULTS);
             v.extend(putio_sync_telemetry::dlna::RESULTS);
             v.extend(putio_sync_telemetry::hooks::RESULTS);
@@ -310,6 +314,7 @@ fn closed_set(label: &str) -> Vec<&'static str> {
             let mut v = strs(SyncKind::ALL, SyncKind::as_str);
             v.extend(strs(ArrSetupKind::ALL, ArrSetupKind::as_str));
             v.extend(strs(FlagKind::ALL, FlagKind::as_str));
+            v.extend(strs(OrganiseMoveKind::ALL, OrganiseMoveKind::as_str));
             v.extend(putio_sync_telemetry::steps::KINDS);
             v.extend(putio_sync_telemetry::dlna::KINDS);
             v

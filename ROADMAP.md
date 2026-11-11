@@ -29,18 +29,14 @@ with a username and password, and sign-in through OAuth providers: Google,
 GitHub, and Discord if its OAuth stays free. Limit who may sign in by account
 or email, and keep the API token for scripts and Radarr/Sonarr.
 
-### 022 Stream mode with DLNA
+### 023 Organise TV shows on Put.io (done)
 
-A mode that leaves media on Put.io instead of downloading it. putio-sync
-manages the files on Put.io and serves them to the home network as a DLNA
-media server, so TVs and players can browse and play them. It streams from
-Put.io on demand, using Put.io's MP4 conversions where a player needs them.
-
-### 023 Organise TV shows on Put.io
-
-For stream mode: move finished downloads into a `Show/Season NN/` layout on
-Put.io, with episodes named `Show - SNNEMM - Title`. Names are matched from the
-release name, with a preview before anything moves and an undo.
+For stream mode: files kept on Put.io move into `TV Shows/Show/Season NN/`, with
+episodes named `Show - SNNEMM - Title`, read from the release name. Moves wait
+on the Put.io page's **Organise** panel unless `apply = "auto"`, and each can be
+undone; plugins' folder and rename rules may place files instead. Shows whose
+names need a metadata lookup (TVDB titles, scene or anime absolute numbering)
+keep the release's name. See `specs/023-organise-tv-putio/`.
 
 ### 024 Organise movies on Put.io
 
@@ -100,13 +96,13 @@ chunks with timestamps kept exactly, and a test button checks the connection
 and model. A user-supplied service that answers now or calls back is supported too.
 See `specs/026-subtitle-translation/tasks.md` for the deviations.
 
-### 028 Lua plugins: sync extension points
+### 028 Lua plugins: sync extension points (done)
 
-Event-handler plugins are done (see PLUGINS.md). Still to do: plugins that
-decide things during a sync, called synchronously with a short time limit:
-custom file filters, rename rules and folder rules. They reuse the plugin
-manifest, sandbox and `putio` API, and need a safe answer when a plugin fails
-or is slow (fall back to the built-in rule).
+Event-handler plugins and sync rules are both done (see PLUGINS.md, "Sync
+rules"): a plugin can declare a file filter, a rename rule and a folder rule,
+each called with a short time limit and passed over when it fails or is slow.
+Examples for each are in `examples/plugins/`. See
+`specs/028-lua-sync-extension-points/` for the design.
 
 ### 029 WebAssembly plugins
 

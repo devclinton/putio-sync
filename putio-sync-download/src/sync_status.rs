@@ -118,6 +118,7 @@ mod tests {
             files_failed: 0,
             files_blocked: 1,
             files_deleted: 0,
+            files_streamed: 0,
         };
         status.finish(SyncOutcome::from(&stats));
 

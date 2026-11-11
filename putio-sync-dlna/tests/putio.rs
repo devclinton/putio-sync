@@ -227,10 +227,11 @@ async fn listings_are_reused_until_the_ttl_passes() {
         .with_body(r#"{"status":"OK","mp4":{"status":"NOT_AVAILABLE"}}"#)
         .create_async()
         .await;
-    let f = start(&server, Duration::from_millis(600)).await;
+    // A wide TTL, so a busy machine running the other tests can't expire it between reads
+    let f = start(&server, Duration::from_millis(2000)).await;
     f.children("putio/").await;
     f.children("putio/").await;
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    tokio::time::sleep(Duration::from_millis(2200)).await;
     f.children("putio/").await;
     mock.assert_async().await;
 }
@@ -278,4 +279,36 @@ async fn nothing_is_asked_of_put_io_when_it_is_not_shared() {
     let (status, _) = common::raw_get(f.port, "/media/putio/201").await;
     assert_eq!(status, 404);
     any.assert_async().await;
+}
+
+#[tokio::test]
+async fn without_a_folder_the_putio_root_is_the_synced_account_root() {
+    // Feature 022 (stream mode): no `putio_folder` lists the account root, id 0
+    let mut server = Server::new_async().await;
+    let _a = list_mock(&mut server, 0, &[file(301, "film.mkv", 0, 900, false)]).await;
+    let _m = server
+        .mock("GET", "/files/301/mp4")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"OK","mp4":{"status":"NOT_AVAILABLE"}}"#)
+        .create_async()
+        .await;
+    let client = Arc::new(
+        PutioApiClient::with_base_url("test_token".to_string(), server.url()).with_retry_policy(
+            putio_sync_client::RetryPolicy {
+                max_attempts: 2,
+                initial_delay: Duration::from_millis(5),
+                max_delay: Duration::from_millis(10),
+            },
+        ),
+    );
+    let f = Fixture::start_with(
+        &["downloads", "putio"],
+        Some(client),
+        |c| c.dlna.putio_folder = None,
+        Options::default(),
+    )
+    .await;
+    assert_eq!(f.children("0").await.titles(), ["Downloads", "Put.io"]);
+    assert_eq!(f.children("putio/").await.titles(), ["film.mkv"]);
 }

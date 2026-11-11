@@ -131,6 +131,9 @@ pub struct AppState {
     /// The DLNA media server (feature 022); `None` unless the daemon's is attached with
     /// [`AppState::with_media_server`]
     pub media_server: Option<Arc<putio_sync_dlna::MediaServer>>,
+    /// The Put.io organiser (feature 023); `None` unless the daemon's is attached with
+    /// [`AppState::with_organiser`]
+    pub organiser: Option<Arc<putio_sync_download::Organiser>>,
 }
 
 /// The engine behind the API (FR-018: a save says what applies now)
@@ -195,6 +198,7 @@ impl AppState {
             pipeline: None,
             opensubtitles_url: None,
             media_server: None,
+            organiser: None,
             cleanup,
             storage,
             doctor,
@@ -233,6 +237,12 @@ impl AppState {
         media_server: Arc<putio_sync_dlna::MediaServer>,
     ) -> AppState {
         self.media_server = Some(media_server);
+        self
+    }
+
+    /// Plan and make moves on Put.io with this organiser, the one the daemon runs
+    pub fn with_organiser(mut self, organiser: Arc<putio_sync_download::Organiser>) -> AppState {
+        self.organiser = Some(organiser);
         self
     }
 
@@ -442,6 +452,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/tailscale", routes::system::tailscale::router())
         .nest("/logs", routes::system::logs::router())
         .nest("/media-server", routes::system::media_server::router())
+        .nest("/organise", routes::system::organise::router())
         .route(
             "/listen",
             axum::routing::get(routes::system::network::get_listen),

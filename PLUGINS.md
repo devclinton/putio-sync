@@ -274,6 +274,84 @@ plugin subscribes to.
 - **Logs** go to putio-sync's log with the plugin's name. `print` logs at info. A test run
   also shows up to 20 of its lines in Settings.
 
+## Sync rules
+
+A plugin can also take part in a sync with up to three **sync rules**. They are called
+while the sync runs, so each call has a short time limit, and a plugin that fails or is
+slow is passed over: the built-in rules apply.
+
+| Rule | Asked | Returns |
+|---|---|---|
+| `filter` | for each file of a sync pass, after the folder rules and type filter | `"download"`, `"stream"` or `"skip"` (`true` and `false` mean download and skip), or `nil` to keep the built-in decision |
+| `rename` | before a download starts | a file name (no `/` or `\`, up to 255 bytes), or `nil` |
+| `folder` | before a download starts | a folder inside the download folder, such as `"TV/Show/Season 01"` (`""` for the folder itself, no `..`), or `nil` |
+
+Declare them in `plugin.toml` and return a function of the same name. `events` may then be
+left out, and `on_event` is needed only for the events listed:
+
+```toml
+name = "min-size-filter"
+version = "1.0.0"
+hooks = ["filter"]            # filter, rename, folder
+```
+
+```lua
+return {
+  filter = function(file)
+    if file.extension == "mkv" and file.size < 50 * 1024 * 1024 then return "skip" end
+    return nil
+  end,
+}
+```
+
+Each function gets one `file` table:
+
+| Field | |
+|---|---|
+| `id` | Put.io file id |
+| `name` | Put.io name |
+| `size` | bytes |
+| `extension` | lowercase, without the dot; `""` when none |
+| `folder` | Put.io folder relative to the synced folder, `""` at the top |
+| `decision` | the built-in decision: `download`, `stream`, `blocked` or `skipped` (`download` for rename and folder) |
+| `reason` | the built-in reason in words, `""` for a download |
+
+How answers are used:
+
+- Plugins are asked in name order, and the first answer that is not `nil` wins.
+- A filter's `"download"` or `"stream"` overrides a block or a skipped folder. `"skip"`
+  shows in the file list as "skipped by plugin <name>". A file a plugin skips is never
+  deleted from Put.io, even where **Delete blocked files** is on.
+- A folder answer replaces the Put.io folder; the processing pipeline may still stage the
+  file. A rename answer replaces the name, except on a retry that already chose a numbered
+  name after a clash. Names and folder parts are made safe as Put.io names are.
+- What happens when a file exists still goes by the file's Put.io folder rules.
+- Files Radarr or Sonarr asked for are never filtered, renamed or moved.
+- The preview and the dry run show the built-in rules only; plugins are not asked.
+- Files stream mode keeps on Put.io are placed too when `[organise]` is on and
+  `use_plugins` is true: the folder answer (read from the Put.io root) and the rename
+  answer become the file's planned move on Put.io, shown on the Organise panel before
+  anything moves unless `apply = "auto"`. `decision` is `stream` for these calls.
+
+Limits:
+
+- **Time.** Each call may take `hook_timeout_ms` (500 ms by default, 50 to 5000; Settings
+  shows it as **Sync rule time limit**). A slower call is stopped and passed over.
+- **Own worker.** A plugin with sync rules gets a second worker for them, sharing its
+  store and settings, so a sync never waits behind the plugin's queued events. `init` runs
+  in both.
+- **Pause.** An error, a timeout or an answer that does not check out is logged as a
+  warning and kept with the plugin's runs. After 3 in a row, the plugin's sync rules rest
+  for 5 minutes. An answer resets the count, and so does a reload or a settings change.
+- **Send test event** calls `on_event`, which a plugin with only sync rules does not have,
+  so its test fails. `putio-sync-plugins/tests/examples.rs` shows how to test sync rules.
+
+Working examples, one for each rule, are in [`examples/plugins/`](examples/plugins/):
+[`min-size-filter`](examples/plugins/min-size-filter/) (filter),
+[`clean-names`](examples/plugins/clean-names/) (rename) and
+[`tv-folders`](examples/plugins/tv-folders/) (folder). Copy a folder into the plugins
+folder and reload.
+
 ## Limits and safety
 
 - **Sandbox.** Only `string`, `table`, `math` and `utf8` are loaded. `os`, `io`, `debug`,
@@ -285,7 +363,8 @@ plugin subscribes to.
 - **Memory.** The plugin's whole Lua state may use `memory_mb`. Past that, the call fails
   and the state is built again for the next event.
 - **Never holds up a sync.** Each plugin has its own thread and queue. A slow or failing
-  plugin delays only its own events. Past 1 000 waiting events, the oldest are dropped and
+  plugin delays only its own events. Sync rules have a separate worker and a limit of
+  their own; see [Sync rules](#sync-rules). Past 1 000 waiting events, the oldest are dropped and
   counted.
 - **Secrets** are shown as `********` in the API, Settings and the export. Saving the mask
   keeps the stored value. Secret values are replaced with `********` in a plugin's errors
@@ -310,8 +389,9 @@ plugin subscribes to.
 
 ## Later
 
-- Plugins run on events only. Plugins that decide things during a sync, such as file
-  filters, rename rules and folder rules, are a follow-up.
+- Sync rules (feature 028) run in the sync pass and the queue worker only. The preview and
+  dry run do not ask plugins.
 - WebAssembly plugins (roadmap 029) are meant to use the same `plugin.toml`, with
-  `runtime = "wasm"`, and the same API as JSON imports. `runtime = "wasm"` is refused for
+  `runtime = "wasm"`, and the same API as JSON imports. Sync rules go through a
+  runtime-free interface (`SyncHooks` in `putio-sync-core`), so they can answer them too. `runtime = "wasm"` is refused for
   now.

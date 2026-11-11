@@ -117,6 +117,9 @@ export function fromStatus(plugin, settings) {
     enabled: s.enabled === true,
     timeout_secs: s.timeout_secs ?? 10,
     memory_mb: s.memory_mb ?? 32,
+    // Sync rules (028): their own time limit, sent only for plugins that have them
+    hooks: [...(plugin.hooks || [])],
+    hook_timeout_ms: s.hook_timeout_ms ?? 500,
     approved_hosts: [...(s.approved_hosts || [])],
     fields,
     values,
@@ -130,6 +133,7 @@ export function fromStatus(plugin, settings) {
  *  it was sends the mask, so the stored value is kept; one replaced with nothing is cleared. */
 export function toSettings(row) {
   const out = { name: row.name, enabled: row.enabled, timeout_secs: Number(row.timeout_secs), memory_mb: Number(row.memory_mb) };
+  if (row.hooks && row.hooks.length) out.hook_timeout_ms = Number(row.hook_timeout_ms);
   if (row.approved_hosts.length) out.approved_hosts = [...row.approved_hosts];
   const config = {};
   const secrets = {};
