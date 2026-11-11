@@ -1,0 +1,37 @@
+app_version: 0.2.1
+capabilities: []
+categories:
+- media
+changelog_url: https://github.com/devclinton/putio-sync/blob/main/CHANGELOG.md
+date_added: '2026-11-10'
+description: Unofficial sync daemon for Put.io, not affiliated with Put.io. It downloads
+  finished Put.io transfers, sends .torrent and .magnet files from a watch folder to
+  Put.io, and acts as a download client for Radarr and Sonarr.
+home: https://devclinton.github.io/putio-sync/
+host_mounts: []
+icon: https://media.sys.truenas.net/apps/putio-sync/icons/icon.png
+keywords:
+- media
+- download
+- torrent
+- putio
+lib_version: 2.3.18
+lib_version_hash: ed9839f681342ae8ca5f8c4c860ae22d0845a0919f472ba780d6edbc838f2633
+maintainers:
+- email: dev@truenas.com
+  name: truenas
+  url: https://www.truenas.com/
+name: putio-sync
+run_as_context:
+- description: Container [putio-sync] can run as any non-root user and group.
+  gid: 568
+  group_name: Host group is [apps]
+  uid: 568
+  user_name: Host user is [apps]
+screenshots: []
+sources:
+- https://apps.truenas.com/catalog/putio-sync_community/
+- https://github.com/devclinton/putio-sync
+title: putio-sync
+train: community
+version: 1.0.0
