@@ -60,12 +60,16 @@ without a restart.
 | `pushover` | Application token (secret), User key (secret), Priority, API server (default `https://api.pushover.net`) | The API server's host |
 
 Each one also has **Events** (default: download finished and failed, transfer failed, a
-failed sync run, low storage) and **Group repeats for (minutes)** (default 5). The first
+transfer stuck, a failed sync run, low storage, a doctor problem) and **Group repeats for (minutes)** (default 5). The first
 event of a kind is sent at once. Later events of the same kind within that time are counted
 and sent as one summary, for example "9 more downloads finished: File 1, …, File 5 and 4
 more". Set it to 0 to send every event.
 
-There is no email plugin. A plugin can only make HTTP requests.
+Settings › **Notifications** shows the four on one page: turn each on or off, pick its
+events and send a test. Their accounts and tokens stay on their tab in Settings › Plugins.
+
+There is no email plugin, as a plugin can only make HTTP requests. Email is built in:
+`[notifications.smtp]` in `config.toml`, or Settings › Notifications.
 
 ## Media servers: Plex, Jellyfin and Emby
 

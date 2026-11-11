@@ -1120,7 +1120,7 @@ daemon's download manager and watcher:
 | Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Release check | — | everything |
-| Notifications | — | everything |
+| Notifications | `smtp` (email), at once | the legacy `enabled`, `backend`, `webhook_url`, `email` |
 | Network | — | everything (`api_bind`, `metrics_bind`); the UI asks first when the new list wouldn't reach the page you're on |
 | Event hooks | everything, at once | — |
 | Plugins | everything, at once (a new `plugins_dir` is read on save) | — |
@@ -1240,6 +1240,7 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /settings/network/check` | The `network` PUT body → what each entry would listen on, `this_page` (`kept`, `cut_off` or `unknown`: whether the page you're on would still reach putio-sync), `listened_on`, `ui_at` and `warnings`; saves nothing |
 | `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck,tailscale,network,hooks,plugins}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
 | `POST /settings/{group}/preview` | The group's PUT body → `{"valid", "error", "changes": [{"key", "before", "after", "live"}], "when", "risks"}`; writes nothing |
+| `POST /settings/notifications/test` | Body: the `smtp` object from `GET /settings/notifications` (a masked password means the saved one). Sends a test email now, on or off, and answers `{"ok": true}` or `{"ok": false, "error": "..."}`; 422 for settings that do not validate. The `notifications` GET adds a read-only `smtp_status`: sent and failed counts since start and the last email |
 | `GET /settings/assistant` | Per group: what each field affects, the fields that apply live, the defaults; and the risks of the running config |
 | `GET /settings/export` | The settings as a TOML file, without `[auth]`, `api.auth_token` and `[arr]` |
 | `POST /settings/import` | `{"toml": "...", "apply": false}` → a preview with `changes` (dotted keys), `risks`, `unknown` and `ignored`; with `true`, saves it and adds `message`. 400 for invalid TOML (line number only), a refused config or a file over 1 MB |
@@ -1839,7 +1840,14 @@ with no other program to install. Seven come with it, all off until turned on. F
 **ntfy**, **Discord**, **Telegram** and **Pushover** notifications, which group repeats so a busy
 night sends a summary instead of a hundred messages. Settings › Plugins lists the ones that
 are off, one line each with **Enable**, and gives each one that is on a tab of its own that
-edits its settings, shows the hosts it contacts and sends a test event.
+edits its settings, shows the hosts it contacts and sends a test event. Settings ›
+**Notifications** shows email and the four notifiers on one page: each one's state, its
+events and a test button.
+
+Email is built in rather than a plugin: `[notifications.smtp]` (see `config.example.toml`)
+sends the chosen events as plain text over STARTTLS, TLS or, for a relay on the LAN, no
+encryption and no login, and groups repeats the same way. It runs under `daemon`;
+`server` keeps the settings and sends only the test email.
 
 **Plex**, **Jellyfin** and **Emby** plugins rescan just the folder of each finished
 download, so new episodes show up within seconds. Files landing in the same folder are

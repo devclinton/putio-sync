@@ -37,6 +37,9 @@ pub mod events;
 /// File filtering and sorting logic
 pub mod filter;
 
+/// `[notifications.smtp]`, the email channel: validation and password masking (feature 030)
+pub mod email;
+
 /// Event hook config: validation and secret masking (feature 027)
 pub mod hooks;
 

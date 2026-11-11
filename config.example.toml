@@ -631,7 +631,7 @@ enabled = false
 # Options: "none", "webhook", "email"
 # - none: No notifications (default)
 # - webhook: Send HTTP POST requests to a webhook URL
-# - email: Send email notifications (not yet implemented)
+# - email: Not used; email is sent from [notifications.smtp] below
 # Default: "none"
 backend = "none"
 
@@ -649,6 +649,41 @@ backend = "none"
 
 # Email address for notifications (when backend = "email", future)
 # email = "your.email@example.com"
+
+# Email notifications (feature 030): the chosen events as plain-text email. The first
+# event of a kind is sent at once; repeats within group_minutes come as one summary.
+# Settings › Notifications edits this and has a test button. Changes apply at once.
+[notifications.smtp]
+# Default: false
+enabled = false
+
+# Mail server host name, such as "smtp.example.com"
+host = ""
+
+# "starttls" (port 587, default): STARTTLS must succeed; nothing falls back to plain text
+# "tls" (port 465): TLS from the first byte
+# "none" (port 25): no encryption, for a relay on your LAN; no login is allowed
+security = "starttls"
+
+# Leave unset for the usual port of the security setting
+# port = 587
+
+# Login; leave username empty for a server that needs none. The password is a secret:
+# the API, the export and the logs show it as "********".
+username = ""
+password = ""
+
+# Sender and recipients
+from = ""            # such as "putio-sync <nas@example.com>"
+to = []              # such as ["me@example.com"]
+
+# Event types to send (see EVENTS.md).
+# Default: ["download.finished", "download.failed", "transfer.failed", "transfer.stuck",
+#           "sync.completed", "storage.low", "doctor.problem"]
+# events = ["download.finished", "doctor.problem"]
+
+# Minutes to group repeats of one kind into a summary; 0 sends each event. Default: 5
+group_minutes = 5
 
 # ============================================================================
 # Logging Configuration

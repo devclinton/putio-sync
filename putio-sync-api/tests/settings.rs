@@ -328,7 +328,47 @@ async fn notification_settings_round_trip() {
         Some("http://hooks.local/x")
     );
 
-    put_invalid(&app, path, body, "backend", json!("pigeon")).await;
+    put_invalid(&app, path, body.clone(), "backend", json!("pigeon")).await;
+    // Email turned on needs a server and addresses
+    put_invalid(&app, path, body, "smtp", json!({"enabled": true})).await;
+}
+
+/// `[notifications.smtp]` (feature 030): the password is masked, the mask keeps it, and a
+/// change applies without a restart
+#[tokio::test]
+async fn email_settings_keep_the_masked_password() {
+    let app = test_daemon_app(true).await;
+    let path = "/settings/notifications";
+    let mut body = get_ok(&app, path).await;
+    assert_eq!(body["smtp"]["enabled"], false);
+    assert_eq!(body["smtp"]["events"].as_array().unwrap().len(), 7);
+    assert_eq!(body["smtp_status"]["sent"], 0);
+    body["smtp"] = json!({
+        "enabled": true,
+        "host": "smtp.example.com",
+        "username": "nas",
+        "password": "smtp-pass-1",
+        "from": "nas@example.com",
+        "to": ["me@example.com"],
+    });
+    let (status, response) = put(&app, path, body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let text = response["message"].as_str().unwrap();
+    assert!(text.contains("Applies now: smtp"), "{text}");
+    assert_eq!(saved(&app).notifications.smtp.password, "smtp-pass-1");
+    assert!(app.state.email.status().enabled);
+
+    let mut body = get_ok(&app, path).await;
+    assert_eq!(body["smtp"]["password"], "********");
+    assert_eq!(body["smtp"]["port"], Value::Null);
+    body["smtp"]["group_minutes"] = json!(0);
+    let (status, response) = put(&app, path, body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let smtp = saved(&app).notifications.smtp;
+    assert_eq!(
+        (smtp.password.as_str(), smtp.group_minutes),
+        ("smtp-pass-1", 0)
+    );
 }
 
 // ---- Tokens are never written from the environment -----------------------------------

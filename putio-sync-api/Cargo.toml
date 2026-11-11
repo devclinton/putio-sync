@@ -16,6 +16,7 @@ putio-sync-client = { path = "../putio-sync-client" }
 putio-sync-db = { path = "../putio-sync-db" }
 putio-sync-doctor = { path = "../putio-sync-doctor" }
 putio-sync-hooks = { path = "../putio-sync-hooks" }
+putio-sync-notify = { path = "../putio-sync-notify" }
 putio-sync-plugins = { path = "../putio-sync-plugins" }
 putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-file-manager = { path = "../putio-sync-file-manager" }

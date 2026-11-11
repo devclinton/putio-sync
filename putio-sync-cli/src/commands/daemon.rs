@@ -9,6 +9,7 @@ use putio_sync_daemon::{DaemonConfig, PutioDaemon};
 use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadConfig;
 use putio_sync_hooks::HooksService;
+use putio_sync_notify::EmailService;
 use putio_sync_plugins::PluginsService;
 use putio_sync_storage::StorageService;
 use std::path::PathBuf;
@@ -241,6 +242,9 @@ pub async fn execute_daemon(
     // save reach the hooks that run (feature 027)
     let hooks = Arc::new(HooksService::new(config.hooks.clone()));
     hooks.start();
+    // Email notifications (feature 030), shared the same way
+    let email = EmailService::new(config.notifications.smtp.clone());
+    email.start();
 
     // What runs once for each file stream mode keeps on Put.io (feature 022). The MP4
     // step reads `download.stream_mp4` each pass; the organise step (feature 023) reads
@@ -359,6 +363,7 @@ pub async fn execute_daemon(
             };
             let state = state
                 .with_hooks(hooks.clone())
+                .with_email(email.clone())
                 .with_plugins(plugins.clone())
                 .with_media_server(media_server.clone());
             let state = match &organiser {

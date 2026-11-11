@@ -1018,8 +1018,10 @@ pub enum NotificationBackend {
     Email,
 }
 
-/// Notification configuration
+/// Notification configuration. Every field is optional, so `[notifications.smtp]` alone is
+/// enough.
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct NotificationConfig {
     /// Enable notifications
     pub enabled: bool,
@@ -1031,6 +1033,9 @@ pub struct NotificationConfig {
     /// Email address (used when backend is Email, future)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    /// The email channel (feature 030), separate from the legacy fields above
+    #[serde(default, skip_serializing_if = "crate::email::SmtpConfig::is_default")]
+    pub smtp: crate::email::SmtpConfig,
 }
 
 /// API/Daemon mode configuration
@@ -1289,6 +1294,7 @@ impl Default for NotificationConfig {
             backend: NotificationBackend::None,
             webhook_url: None,
             email: None,
+            smtp: crate::email::SmtpConfig::default(),
         }
     }
 }
@@ -1612,6 +1618,7 @@ impl Config {
         self.pipeline.validate()?;
         self.subtitles.validate()?;
         self.translation.validate()?;
+        self.notifications.smtp.validate()?;
         self.precheck.validate(&self.watch.paths)?;
         self.storage.validate()?;
         self.tailscale.validate()?;
@@ -4905,6 +4912,7 @@ impl Config {
             add(server.api_key.as_ref());
         }
         add(self.notifications.webhook_url.as_ref());
+        add(Some(&self.notifications.smtp.password));
         for hook in &self.hooks {
             add(hook.url.as_ref());
             hook.headers.values().for_each(|v| add(Some(v)));
@@ -4962,6 +4970,8 @@ mod secret_values_tests {
             api_key = "s-translation-key"
             [translation.callback.headers]
             Authorization = "s-translation-header"
+            [notifications.smtp]
+            password = "s-smtp-password"
             "#,
         )
         .unwrap();
@@ -4982,6 +4992,7 @@ mod secret_values_tests {
             "s-hook-header",
             "s-hook-env",
             "s-plugin-secret",
+            "s-smtp-password",
         ] {
             assert!(values.iter().any(|v| v == expected), "{expected} missing");
         }

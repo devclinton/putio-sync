@@ -1,26 +1,14 @@
-// General section (feature 046): appearance in this browser (feature 012), which credentials
-// are set, and notifications.
+// General section (feature 046): appearance in this browser (feature 012) and which
+// credentials are set.
 
 import { get } from "../api.js";
 import { h, toast } from "../app.js";
 import { LANGUAGES, choice, nativeName, setLanguage } from "../i18n.js";
-import { groupCard } from "./form.js";
 
-const NOTIFICATIONS = {
-  id: "notifications",
-  key: "notifications",
-  title: "Notifications",
-  fields: [
-    ["backend", "Backend", "How completed downloads are announced", ["None", "Webhook", "Email"]],
-    ["webhook_url", "Webhook URL", "Receives a POST per completed download", "s?"],
-    ["email", "Email", "For the email backend", "s?"],
-    ["enabled", "Enabled", "Send notifications", "b"],
-  ],
-};
 const PUTIO_AUTH = { token: "OAuth token set", app_password: "app password set", none: "not set" };
 const MODE_NAMES = { system: "System", light: "Light", dark: "Dark" };
 
-export const cards = (ctx) => [appearance(ctx), language(), credentials(ctx), groupCard(NOTIFICATIONS, ctx)];
+export const cards = (ctx) => [appearance(ctx), language(), credentials(ctx)];
 
 /** Mode and accent radios; a change applies at once and is saved in this browser. */
 function appearance(ctx) {

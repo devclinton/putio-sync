@@ -274,3 +274,54 @@ async fn discord_telegram_and_pushover_send_their_bodies() {
     telegram.assert_async().await;
     pushover.assert_async().await;
 }
+
+/// Feature 030's events are sent by default, with their own text
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stuck_transfers_and_doctor_problems_are_sent_by_default() {
+    let _turn = SERIAL.lock().await;
+    let mut server = mockito::Server::new_async().await;
+    let stuck = server
+        .mock("POST", "/")
+        .match_body(Matcher::PartialJson(json!({
+            "title": "Transfer stuck",
+            "message": "Some.Show.S01E02.1080p: no peers at 37%"
+        })))
+        .with_status(200)
+        .expect(1)
+        .create_async()
+        .await;
+    let doctor = server
+        .mock("POST", "/")
+        .match_body(Matcher::PartialJson(json!({
+            "title": "Doctor: Disk space",
+            "message": "2.1 GB free on /data, below the 5 GB minimum"
+        })))
+        .with_status(200)
+        .expect(1)
+        .create_async()
+        .await;
+    let clock = Clock::new(1_793_784_600.0);
+    let plugins = service(
+        vec![plugin(
+            "ntfy",
+            json!({"server": server.url(), "topic": "nas"}),
+            &[],
+        )],
+        &clock,
+    );
+    plugins.start();
+    for t in [EventType::TransferStuck, EventType::DoctorProblem] {
+        let payload = events::samples()
+            .into_iter()
+            .find(|p| p.event_type() == t)
+            .unwrap();
+        events::emit(payload);
+    }
+    wait_for("both runs", || {
+        runs_of(&plugins, "ntfy", "transfer.stuck") == 1
+            && runs_of(&plugins, "ntfy", "doctor.problem") == 1
+    })
+    .await;
+    stuck.assert_async().await;
+    doctor.assert_async().await;
+}
