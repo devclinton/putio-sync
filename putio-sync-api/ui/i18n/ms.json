@@ -357,7 +357,6 @@
  "Email": "E-mel",
  "Empty": "kosong",
  "Empty downloads each file in one request": "Muat turun kosong setiap fail dalam satu permintaan",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "Kosong untuk plugin di sebelah fail konfigurasi; setiap plugin adalah satu folder dengan plugin.toml dan main.lua",
  "Empty for the default; in Docker, mount the host's socket": "Kosong untuk lalai; dalam Docker, pasang soket hos",
  "Empty searches PATH": "Carian kosong JALAN",
  "Enable": "membolehkan",

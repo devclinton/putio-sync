@@ -1,6 +1,7 @@
-# Lua plugins
+# Plugins
 
-A plugin is a small Lua script that putio-sync runs on its events: a download finished or
+A plugin is a small Lua script, or a WebAssembly module built from Rust, Go or another
+language (see [WebAssembly plugins](#webassembly-plugins)), that putio-sync runs on its events: a download finished or
 failed, a Put.io transfer was added, finished or failed, a sync run ended, or Put.io storage
 runs low. The events are the same as for [event hooks](EVENTS.md), but a plugin runs inside
 putio-sync. It needs no other program, it is limited in what it may do, and it is set up
@@ -263,6 +264,7 @@ plugin subscribes to.
 | `putio.path.parent(path)` / `within(path, folder)` | The folder above / whether `path` is `folder` or below it | — |
 | `putio.metrics.count(name, n?)` | Adds `n` (default 1) to `putio_sync_plugin_counter_total{plugin, name}`; up to 16 names, `[a-z0-9_]` | — |
 | `putio.download_dir` | The daemon's download folder, or `""` | — |
+| `putio.fs.read(path)` / `write(path, text)` / `list(folder)` / `exists(path)` | text / `true` / `{name, dir, size}` list / bool, or `nil, error` | `files` |
 
 - **HTTP** goes only to http(s) hosts the manifest names and the user approved. Any other
   host returns `nil, "host not approved: example.com"`. Up to 3 redirects to the same host
@@ -271,8 +273,76 @@ plugin subscribes to.
 - **Store** is a JSON object per plugin, kept in `plugin-data/<name>.json` next to the config
   and kept across reloads and restarts. Keys can be up to 128 bytes, values up to 64 KiB,
   and the whole store up to 1 MiB.
+- **Files** (feature 029) are reached only inside the folders the manifest asks for and the
+  user approved; see [File access](#file-access). Reads and writes are up to 1 MiB, and a
+  list gives at most 1 000 entries.
 - **Logs** go to putio-sync's log with the plugin's name. `print` logs at info. A test run
   also shows up to 20 of its lines in Settings.
+
+### File access
+
+A plugin that reads or writes files names its folders in the manifest:
+
+```toml
+[permissions.files]
+read = ["{download_dir}"]            # absolute folders, or {download_dir} and below
+write = ["{download_dir}/.cache"]    # a write folder can be read too
+read_from_config = ["library"]       # string settings that hold a folder
+write_from_config = []
+```
+
+Settings › Plugins lists these folders on the plugin ("May read /downloads; read and
+write /media/notes"), and turning the plugin on and saving approves them, as with hosts.
+They are kept in `approved_paths` on the plugin's `[[plugins]]` entry. When a setting that
+names a folder changes, the plugin waits in **Needs approval** until the next save. Paths
+are checked after `..` and links are resolved, so a plugin cannot step or link out of its
+folders.
+
+## WebAssembly plugins
+
+A plugin can be a WebAssembly module instead of Lua. It uses the same `plugin.toml`, with
+two more lines, and gets the same events, sync rules, settings, actions, store, limits and
+run history:
+
+```toml
+runtime = "wasm"            # "lua" by default
+entry = "plugin.wasm"       # the default for wasm
+```
+
+The module talks to putio-sync in JSON through its memory, with three imports from a
+`putio` module: `call` makes one API call (`{"fn": "http.request", "args": [...]}`, the same
+calls as the Lua table above) and returns the reply's length, `reply` copies the reply out,
+and `fail` ends the call with a message. Each plugin function (`init`, `on_event`,
+`filter`, `rename`, `folder`, `on_tick`, `on_action`, `health`) takes a JSON array of the
+Lua function's arguments and returns JSON. The full ABI is in
+[specs/029-wasm-plugins/contracts/wasm-abi.md](specs/029-wasm-plugins/contracts/wasm-abi.md).
+
+- **Examples.** [`rust-clean-names`](examples/plugins/rust-clean-names/) (Rust, rename) and
+  [`go-min-size-filter`](examples/plugins/go-min-size-filter/) (Go, filter) each have a
+  small `putio` binding you can copy, and build steps in their README. Tests build or load
+  both, so they keep working.
+- **WASI.** Modules built for `wasm32-wasip1` load: clocks and random numbers are real,
+  stdout and stderr become log lines, and every other WASI call (files, sockets,
+  environment) answers "not supported". The only way out of the sandbox is the `putio` API.
+- **Limits.** Modules are up to 16 MiB. The plugin's `memory_mb` covers its whole memory,
+  and `timeout_secs` (or the sync-rule limit) each call. Over either, or a trap or
+  `proc_exit`, the call fails and the next one starts a fresh instance. A module that
+  imports something the host does not offer, or exports `_start`, is **Broken** with a
+  message that says why.
+- **One file.** A module can carry its `plugin.toml` in a custom section named
+  `putio-plugin`, so it installs as a single `.wasm` (the Rust example does this).
+- **JavaScript** and other languages work through a WebAssembly build of their runtime
+  (such as Javy for JavaScript); no example ships for them.
+
+### Installing a plugin
+
+Settings › Plugins › **Install a plugin** takes a URL, or files: one `.wasm` that carries
+its manifest, or a `plugin.toml` with its entry file. A URL can point at a `.wasm` or at a
+`plugin.toml`, whose entry is fetched from the same folder. The plugin is written to its
+own folder in the plugins folder and starts off, with its hosts and folders listed for you
+to check before turning it on. Installing over a plugin of the same name needs **Replace a plugin of the same name**,
+which keeps its settings and store. `POST /plugins/install` does the same from scripts; see
+the [README](README.md#http-api).
 
 ## Sync rules
 
@@ -356,11 +426,12 @@ folder and reload.
 
 - **Sandbox.** Only `string`, `table`, `math` and `utf8` are loaded. `os`, `io`, `debug`,
   `coroutine`, `package`, `require`, `dofile`, `loadfile`, `collectgarbage` and
-  `string.dump` are missing, and `load` takes text only. A plugin cannot read files, run
-  programs or open sockets.
+  `string.dump` are missing, and `load` takes text only. A plugin cannot run programs or
+  open sockets, and reaches files only through `putio.fs` in its approved folders.
+  WebAssembly plugins get only the `putio` API and a WASI layer with no real access.
 - **Time.** Each call (`init`, `on_event`, `on_tick`, `on_action`, `health`) may run for `timeout_secs`, including
   the HTTP requests it makes. A call that runs longer is stopped and recorded as a timeout.
-- **Memory.** The plugin's whole Lua state may use `memory_mb`. Past that, the call fails
+- **Memory.** The plugin's whole Lua state, or a module's memory, may use `memory_mb`. Past that, the call fails
   and the state is built again for the next event.
 - **Never holds up a sync.** Each plugin has its own thread and queue. A slow or failing
   plugin delays only its own events. Sync rules have a separate worker and a limit of
@@ -374,7 +445,8 @@ folder and reload.
 
 - `GET /plugins` lists each plugin with its state, manifest (actions and fields with
   choices included), approved hosts, waiting events and last 20 runs. `POST /plugins/test`,
-  `POST /plugins/reload` and `POST /plugins/action` do what the Settings buttons do.
+  `POST /plugins/reload`, `POST /plugins/action` and `POST /plugins/install` do what the
+  Settings buttons do.
 - Metrics: `putio_sync_plugin_runs_total{plugin, event, result}`,
   `putio_sync_plugin_run_duration_seconds{plugin}` and
   `putio_sync_plugin_events_dropped_total{plugin}`, and each plugin's own counters as
@@ -391,7 +463,3 @@ folder and reload.
 
 - Sync rules (feature 028) run in the sync pass and the queue worker only. The preview and
   dry run do not ask plugins.
-- WebAssembly plugins (roadmap 029) are meant to use the same `plugin.toml`, with
-  `runtime = "wasm"`, and the same API as JSON imports. Sync rules go through a
-  runtime-free interface (`SyncHooks` in `putio-sync-core`), so they can answer them too. `runtime = "wasm"` is refused for
-  now.

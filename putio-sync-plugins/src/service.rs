@@ -39,7 +39,7 @@ pub enum PluginState {
     Enabled,
     /// The manifest, the script, a value or `init` failed
     Broken,
-    /// Enabled, but a host it needs is not approved
+    /// Enabled, but a host or folder it needs is not approved
     NeedsApproval,
     /// Enabled, but a required value is unset
     MissingConfig,
@@ -77,6 +77,15 @@ pub struct PluginStatus {
     pub hosts_needed: Vec<String>,
     /// The hosts approved in its settings
     pub approved_hosts: Vec<String>,
+    /// `lua` or `wasm` (029)
+    #[serde(default)]
+    pub runtime: String,
+    /// The `r:`/`w:` folders it would use with the current settings (029)
+    #[serde(default)]
+    pub paths_needed: Vec<String>,
+    /// The folders approved in its settings
+    #[serde(default)]
+    pub approved_paths: Vec<String>,
     /// Whether it has `on_tick` (known once running)
     pub has_tick: bool,
     /// Jobs waiting
@@ -247,6 +256,12 @@ fn state_of(found: &Found, settings: Option<&PluginSettings>) -> (PluginState, O
         .hosts_needed(settings)
         .into_iter()
         .filter(|h| !settings.approved_hosts.contains(h))
+        .chain(
+            manifest
+                .paths_needed(settings)
+                .into_iter()
+                .filter(|p| !settings.approved_paths.contains(p)),
+        )
         .collect();
     if !unapproved.is_empty() {
         return (
@@ -269,11 +284,18 @@ fn spec_of(found: &Found, settings: Option<&PluginSettings>) -> Option<Spec> {
         .into_iter()
         .filter(|h| approved.contains(h))
         .collect();
+    let paths = manifest
+        .paths_needed(&settings)
+        .into_iter()
+        .filter(|p| settings.approved_paths.contains(p))
+        .collect();
     Some(Spec {
         manifest,
         script: found.script.clone(),
+        wasm: found.wasm.clone(),
         settings,
         allowed,
+        paths,
     })
 }
 
@@ -411,6 +433,18 @@ impl PluginsService {
         (state.found.len(), broken)
     }
 
+    /// Install a plugin into the plugins folder and reload. A new plugin starts disabled.
+    pub fn install(
+        &self,
+        package: crate::install::Package,
+        replace: bool,
+    ) -> Result<String, crate::install::InstallError> {
+        let dir = self.dir().ok_or(crate::install::InstallError::NoFolder)?;
+        let name = crate::install::install(&dir, package, replace)?;
+        self.reload();
+        Ok(name)
+    }
+
     /// Use another plugins folder and reload
     pub fn set_dir(&self, dir: Option<PathBuf>) -> (usize, usize) {
         self.inner.state.lock().unwrap().dir = dir;
@@ -462,6 +496,15 @@ impl PluginsService {
                     },
                     approved_hosts: settings
                         .map(|s| s.approved_hosts.clone())
+                        .unwrap_or_default(),
+                    runtime: manifest.map(|m| m.runtime.clone()).unwrap_or_default(),
+                    paths_needed: match (manifest, settings) {
+                        (Some(m), Some(s)) => m.paths_needed(s),
+                        (Some(m), None) => m.paths_needed(&PluginSettings::default()),
+                        _ => Vec::new(),
+                    },
+                    approved_paths: settings
+                        .map(|s| s.approved_paths.clone())
                         .unwrap_or_default(),
                     has_tick: slot.is_some_and(|s| s.has_tick()),
                     queued: slot.map(|s| s.queued()).unwrap_or(0),
@@ -562,6 +605,7 @@ impl PluginsService {
                 m.check_values(&s)?;
                 if s.enabled {
                     s.approved_hosts = m.hosts_needed(&s);
+                    s.approved_paths = m.paths_needed(&s);
                 }
             }
             out.push(s);
@@ -708,8 +752,10 @@ impl PluginsService {
         let _busy = self.begin(name)?;
         let spec = Spec {
             allowed: manifest.hosts_needed(&merged).into_iter().collect(),
+            paths: manifest.paths_needed(&merged),
             manifest: manifest.clone(),
             script: found.script.clone(),
+            wasm: found.wasm.clone(),
             settings: merged.clone(),
         };
         let reply = self

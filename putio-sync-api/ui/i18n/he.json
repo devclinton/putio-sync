@@ -357,7 +357,6 @@
  "Email": "דוא\"ל",
  "Empty": "רֵיק",
  "Empty downloads each file in one request": "הורדות ריקות לכל קובץ בבקשה אחת",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "ריק עבור התוספים ליד קובץ ההגדרות; כל תוסף הוא תיקייה עם plugin.toml ו-main.lua",
  "Empty for the default; in Docker, mount the host's socket": "ריק עבור הגדרת ברירת המחדל; ב-Docker, התקן את נקודת החיבור של המארח",
  "Empty searches PATH": "חיפוש ריק נתיב",
  "Enable": "אִפְשֵׁר",

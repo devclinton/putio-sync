@@ -1,6 +1,6 @@
 //! `plugin.toml`: what a plugin is, which events it wants, what it may do and which
-//! settings it takes (contracts/manifest.md). The same file is meant for 029's
-//! WebAssembly plugins, with `runtime = "wasm"`.
+//! settings it takes (contracts/manifest.md). WebAssembly plugins (029) use the same file
+//! with `runtime = "wasm"`, and may ask for folders under `[permissions.files]`.
 
 use std::collections::HashSet;
 
@@ -24,9 +24,17 @@ fn default_runtime() -> String {
     "lua".to_string()
 }
 
-fn default_entry() -> String {
-    "main.lua".to_string()
+/// The entry when the manifest names none, by runtime
+pub fn default_entry(runtime: &str) -> &'static str {
+    if runtime == "wasm" {
+        "plugin.wasm"
+    } else {
+        "main.lua"
+    }
 }
+
+/// `{download_dir}` in a `[permissions.files]` folder
+pub const DOWNLOAD_DIR: &str = "{download_dir}";
 
 /// A parsed and checked `plugin.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -39,11 +47,12 @@ pub struct Manifest {
     /// At most 300 characters
     #[serde(default)]
     pub description: String,
-    /// `lua`; `wasm` is kept for 029
+    /// `lua` or `wasm` (029)
     #[serde(default = "default_runtime")]
     pub runtime: String,
-    /// The script, a plain file name in the plugin's folder
-    #[serde(default = "default_entry")]
+    /// The script or module, a plain file name in the plugin's folder; `main.lua` or
+    /// `plugin.wasm` when not set
+    #[serde(default)]
     pub entry: String,
     /// Event types, or `*` for all; may be empty when `hooks` is not
     #[serde(default)]
@@ -91,6 +100,50 @@ pub struct Permissions {
     /// A small key-value store kept across restarts
     #[serde(default)]
     pub store: bool,
+    /// `[permissions.files]` (029)
+    #[serde(default, skip_serializing_if = "FilesPermission::is_empty")]
+    pub files: FilesPermission,
+}
+
+/// `[permissions.files]`: folders a plugin may read or write (029). A folder is absolute,
+/// or `{download_dir}` and below.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilesPermission {
+    /// Folders to read
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read: Vec<String>,
+    /// Folders to read and write
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub write: Vec<String>,
+    /// Keys of string fields holding a folder to read
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_from_config: Vec<String>,
+    /// Keys of string fields holding a folder to write
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub write_from_config: Vec<String>,
+}
+
+impl FilesPermission {
+    /// Whether the plugin asks for no folder
+    pub fn is_empty(&self) -> bool {
+        self.read.is_empty()
+            && self.write.is_empty()
+            && self.read_from_config.is_empty()
+            && self.write_from_config.is_empty()
+    }
+}
+
+/// Whether `folder` is one `[permissions.files]` takes: absolute, or `{download_dir}` and
+/// below, with no `..` part
+pub fn valid_folder(folder: &str) -> bool {
+    let rest = match folder.strip_prefix(DOWNLOAD_DIR) {
+        Some(rest) if rest.is_empty() || rest.starts_with(['/', '\\']) => rest,
+        Some(_) => return false,
+        None if std::path::Path::new(folder).is_absolute() => folder,
+        None => return false,
+    };
+    !folder.chars().any(char::is_control) && !rest.split(['/', '\\']).any(|part| part == "..")
 }
 
 /// `[permissions.http]`: the hosts a plugin may call
@@ -224,10 +277,13 @@ pub fn url_host(url: &str) -> Option<String> {
 impl Manifest {
     /// Parse and check `text`; `file` names the file in messages
     pub fn parse(text: &str, file: &str) -> Result<Manifest, String> {
-        let manifest: Manifest = toml::from_str(text).map_err(|e| {
+        let mut manifest: Manifest = toml::from_str(text).map_err(|e| {
             let msg = e.message().to_string();
             format!("{}: {}", file, msg)
         })?;
+        if manifest.entry.is_empty() {
+            manifest.entry = default_entry(&manifest.runtime).to_string();
+        }
         manifest
             .validate()
             .map_err(|e| format!("{}: {}", file, e))?;
@@ -251,13 +307,7 @@ impl Manifest {
             return Err("description: at most 300 characters".to_string());
         }
         match self.runtime.as_str() {
-            "lua" => {}
-            "wasm" => {
-                return Err(
-                    "runtime: WebAssembly plugins need a later putio-sync (feature 029)"
-                        .to_string(),
-                )
-            }
+            "lua" | "wasm" => {}
             other => return Err(format!("runtime: unknown runtime \"{}\"", other)),
         }
         let plain = !self.entry.is_empty()
@@ -374,6 +424,29 @@ impl Manifest {
                 ));
             }
         }
+        let files = &self.permissions.files;
+        for (part, folders) in [("read", &files.read), ("write", &files.write)] {
+            if let Some(bad) = folders.iter().find(|f| !valid_folder(f)) {
+                return Err(format!(
+                    "permissions.files.{}: \"{}\" must be an absolute folder or start with {} (no ..)",
+                    part, bad, DOWNLOAD_DIR
+                ));
+            }
+        }
+        for (part, keys) in [
+            ("read_from_config", &files.read_from_config),
+            ("write_from_config", &files.write_from_config),
+        ] {
+            for key in keys {
+                let field = self.config.iter().find(|f| &f.key == key);
+                if field.is_none_or(|f| f.kind != FieldType::String || f.secret) {
+                    return Err(format!(
+                        "permissions.files.{}: \"{}\" is not a string config field",
+                        part, key
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -430,6 +503,30 @@ impl Manifest {
         hosts.sort();
         hosts.dedup();
         hosts
+    }
+
+    /// The folders the plugin would use with these settings, as `r:<folder>` and
+    /// `w:<folder>`: the fixed ones plus each `*_from_config` value that is a valid folder.
+    /// `{download_dir}` stays as written. Sorted, no repeats.
+    pub fn paths_needed(&self, settings: &PluginSettings) -> Vec<String> {
+        let files = &self.permissions.files;
+        let mut paths = Vec::new();
+        for (mode, fixed, keys) in [
+            ("r", &files.read, &files.read_from_config),
+            ("w", &files.write, &files.write_from_config),
+        ] {
+            let from_config = keys.iter().filter_map(|key| {
+                self.value(settings, key)
+                    .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
+                    .filter(|s| valid_folder(s))
+            });
+            for folder in fixed.iter().cloned().chain(from_config) {
+                paths.push(format!("{}:{}", mode, folder));
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        paths
     }
 
     /// Required fields with no value, set or default
@@ -594,8 +691,8 @@ default = 5
                 "only sent by a test button",
             ),
             (
-                with("events = [\"*\"]\nruntime = \"wasm\""),
-                "runtime: WebAssembly plugins need",
+                with("events = [\"*\"]\n[permissions.files]\nread = [\"media\"]"),
+                "permissions.files.read: \"media\" must be an absolute folder",
             ),
             (
                 with("events = [\"*\"]\nruntime = \"js\""),
@@ -822,5 +919,44 @@ default = 5
         assert!(err(&with("hooks = [\"filter\", \"filter\"]"))
             .contains("hooks: \"filter\" listed twice"));
         assert!(err(&with("hooks = []")).contains("events: list at least one event"));
+    }
+
+    #[test]
+    fn wasm_runtime_and_folders() {
+        let m = parse(&with("events = [\"*\"]\nruntime = \"wasm\"")).unwrap();
+        assert_eq!(m.entry, "plugin.wasm");
+        let m = parse(&with(
+            "events = [\"*\"]\nruntime = \"wasm\"\nentry = \"x.wasm\"",
+        ))
+        .unwrap();
+        assert_eq!(m.entry, "x.wasm");
+        let text = format!(
+            "{}\n[[config]]\nkey = \"library\"\ntype = \"string\"\n",
+            with("events = [\"*\"]\n[permissions.files]\nread = [\"{download_dir}\", \"/media\"]\nwrite = [\"{download_dir}/.cache\"]\nread_from_config = [\"library\"]")
+        );
+        let m = parse(&text).unwrap();
+        let mut s = settings();
+        assert_eq!(
+            m.paths_needed(&s),
+            vec!["r:/media", "r:{download_dir}", "w:{download_dir}/.cache"]
+        );
+        s.config
+            .insert("library".into(), serde_json::json!("/srv/library"));
+        assert!(m.paths_needed(&s).contains(&"r:/srv/library".to_string()));
+        s.config
+            .insert("library".into(), serde_json::json!("relative/dir"));
+        assert_eq!(m.paths_needed(&s).len(), 3);
+        for bad in [
+            "media",
+            "/a/../b",
+            "{download_dir}x",
+            "{download_dir}/../etc",
+        ] {
+            assert!(!valid_folder(bad), "{bad}");
+        }
+        assert!(err(&with(
+            "events = [\"*\"]\n[permissions.files]\nwrite_from_config = [\"token\"]"
+        ))
+        .contains("write_from_config: \"token\" is not a string config field"));
     }
 }

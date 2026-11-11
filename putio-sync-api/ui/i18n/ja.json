@@ -357,7 +357,6 @@
  "Email": "Eメール",
  "Empty": "空き",
  "Empty downloads each file in one request": "1回のリクエストで各ファイルが空のダウンロード",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "構成ファイルの隣にあるプラグイン用の空欄です。各プラグインは、plugin.tomlとmain.luaを含むフォルダです。",
  "Empty for the default; in Docker, mount the host's socket": "デフォルトでは空です。Dockerではホストのソケットをマウントします。",
  "Empty searches PATH": "検索の空欄 PATH",
  "Enable": "有効にする",

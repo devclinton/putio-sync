@@ -1261,6 +1261,7 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /plugins/test` | `{"name": "..."}`: send a `plugin.test` event to that plugin, even when it is off, and answer with the run and its logged lines; 404 for an unknown plugin, 409 while a test of it runs, 422 when it cannot load |
 | `POST /plugins/reload` | Read the plugins folder again → `{"message": "Reloaded 7 plugins"}` |
 | `POST /plugins/action` | `{"name", "action", "input"?, "config"?}`: run a plugin's settings action (Sign in with Plex, Load libraries) with unsaved non-secret `config` values for this call; answers `{message, code, open_url, choices, next, done, run}`, plus `saved` (key names) and `config` when it saved values. Saved secrets are never returned. 404 unknown plugin or action, 409 while one runs, 422 when it fails |
+| `POST /plugins/install` | `{"url"}`, `{"wasm"}` (base64) or `{"manifest", "entry"}` (base64), plus `"replace"?`: install a plugin into the plugins folder, turned off → `{"name", "message"}`. A URL must be http or https, at most 16 MiB, with redirects only on the same host. 400 bad body, 409 a plugin of that name exists (send `"replace": true`), 422 not a plugin or the download failed |
 | `GET /events/schema` | The JSON Schema of the events (see [EVENTS.md](EVENTS.md)) |
 | `GET /doctor` | The latest doctor report; 404 before the first run |
 | `POST /doctor/run` | Run every check now and answer with the report (a run already going is joined, not repeated) |
@@ -1857,10 +1858,11 @@ topic = "my-nas-8f3k"
 ```
 
 Your own plugins go in a folder per plugin under `plugins_dir` (default `plugins` next to
-the config file), each with a `plugin.toml` and a `main.lua`. They run sandboxed: no
-files, programs or sockets, a time limit per call (default 10 s) and a memory limit
-(default 32 MiB). They can only reach the HTTP hosts they declare and you approve, and
-they can keep a small key-value store. A slow or failing plugin never holds up a sync.
+the config file), each with a `plugin.toml` and a `main.lua`, or a `plugin.wasm` built
+from Rust, Go or another language; **Install a plugin** in Settings takes a URL or the
+files. They run sandboxed: no programs or sockets, a time limit per call (default 10 s)
+and a memory limit (default 32 MiB). They can only reach the HTTP hosts and folders they
+declare and you approve, and they can keep a small key-value store. A slow or failing plugin never holds up a sync.
 Secret settings are masked everywhere and never logged. See [PLUGINS.md](PLUGINS.md) for
 the manifest, the `putio` API and the limits.
 

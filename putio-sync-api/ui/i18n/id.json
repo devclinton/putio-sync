@@ -357,7 +357,6 @@
  "Email": "Surel",
  "Empty": "Kosong",
  "Empty downloads each file in one request": "Unduhan kosong untuk setiap file dalam satu permintaan",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "Kosong untuk plugin di sebelah file konfigurasi; setiap plugin adalah folder dengan plugin.toml dan main.lua",
  "Empty for the default; in Docker, mount the host's socket": "Kosong untuk default; di Docker, pasang socket host",
  "Empty searches PATH": "Pencarian kosong PATH",
  "Enable": "Aktifkan",

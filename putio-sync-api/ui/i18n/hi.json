@@ -357,7 +357,6 @@
  "Email": "ई-मेल",
  "Empty": "खाली",
  "Empty downloads each file in one request": "एक अनुरोध में प्रत्येक फ़ाइल के लिए खाली डाउनलोड",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "कॉन्फ़िगरेशन फ़ाइल के बगल में प्लगइन्स के लिए खाली; प्रत्येक प्लगइन एक फ़ोल्डर है जिसमें plugin.toml और main.lua हैं।",
  "Empty for the default; in Docker, mount the host's socket": "डिफ़ॉल्ट के लिए खाली; डॉकर में होस्ट के सॉकेट को माउंट करें",
  "Empty searches PATH": "खाली खोजें पथ",
  "Enable": "सक्षम करें",

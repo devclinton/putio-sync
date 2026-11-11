@@ -357,7 +357,6 @@
  "Email": "E-posta",
  "Empty": "boş",
  "Empty downloads each file in one request": "Her dosyanın boş indirmelerini tek bir istekte yapın",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "Ayar dosyası yanındaki eklentiler için boş; her eklenti, plugin.toml ve main.lua içeren bir klasördür.",
  "Empty for the default; in Docker, mount the host's socket": "Varsayılan için boş; Docker'da, ana bilgisayarın soketini monte edin.",
  "Empty searches PATH": "Boş aramalar YOL",
  "Enable": "Etkinleştir",

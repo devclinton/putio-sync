@@ -1,8 +1,6 @@
-// Lua plugins (feature 028): the rows of the Settings › Plugins editor, from `GET /plugins`
-// and `GET /settings/plugins` and back to `[[plugins]]` entries, and states and runs for
-// people. Feature 031 adds settings actions (sign-in steps, loaded choices) and path rules;
-// feature 048 splits plugins into tabs (enabled) and a list (the rest) and words Enable.
-// No DOM here, so tests/ui/plugins.test.mjs runs it in node.
+// The Settings › Plugins editor (features 028, 031, 048, 029): rows from `GET /plugins` and
+// `GET /settings/plugins` and back, states, runs, actions, path rules, tabs and Enable
+// wording. No DOM here, so tests/ui/plugins.test.mjs runs it in node.
 
 export const MASK = "********";
 
@@ -35,8 +33,7 @@ export function pathMapText(value) {
   return value.map((r) => `${r.from ?? ""} => ${r.to ?? ""}`).join("\n");
 }
 
-/** `from => to` lines as path rules; a line without `=>` goes as typed, so the save names
- *  the field */
+/** `from => to` lines as path rules; a line without `=>` goes as typed */
 export function parsePathMap(text) {
   const rules = [];
   for (const line of String(text).split("\n").map((s) => s.trim()).filter(Boolean)) {
@@ -83,8 +80,7 @@ function urlHost(text) {
   }
 }
 
-/** The hosts a plugin would contact with these editor values: its fixed hosts and the host
- *  of each URL field it names, sorted, as the save approves them */
+/** The hosts a plugin would contact with these values (fixed hosts and URL fields), sorted */
 export function hostsFor(plugin, values) {
   const http = (plugin.permissions && plugin.permissions.http) || {};
   const hosts = [...(http.hosts || [])];
@@ -121,6 +117,7 @@ export function fromStatus(plugin, settings) {
     hooks: [...(plugin.hooks || [])],
     hook_timeout_ms: s.hook_timeout_ms ?? 500,
     approved_hosts: [...(s.approved_hosts || [])],
+    approved_paths: [...(s.approved_paths || [])],
     fields,
     values,
     secrets,
@@ -129,12 +126,13 @@ export function fromStatus(plugin, settings) {
   };
 }
 
-/** An editor row as the `[[plugins]]` entry `PUT /settings/plugins` takes. A secret left as
- *  it was sends the mask, so the stored value is kept; one replaced with nothing is cleared. */
+/** A row as the `[[plugins]]` entry `PUT /settings/plugins` takes; an unchanged secret sends
+ *  the mask, so it is kept */
 export function toSettings(row) {
   const out = { name: row.name, enabled: row.enabled, timeout_secs: Number(row.timeout_secs), memory_mb: Number(row.memory_mb) };
   if (row.hooks && row.hooks.length) out.hook_timeout_ms = Number(row.hook_timeout_ms);
   if (row.approved_hosts.length) out.approved_hosts = [...row.approved_hosts];
+  if (row.approved_paths && row.approved_paths.length) out.approved_paths = [...row.approved_paths];
   const config = {};
   const secrets = {};
   for (const f of row.fields) {
@@ -148,8 +146,7 @@ export function toSettings(row) {
       continue;
     }
     const value = fromText(f, row.values[f.key]);
-    // A value equal to the default is left out, so a later default applies; an unticked
-    // box with no default is the same as no value
+    // A value equal to the default is left out, so a later default applies
     const fallback = f.default ?? (f.type === "boolean" ? false : null);
     if (value !== undefined && JSON.stringify(value) !== JSON.stringify(fallback)) config[f.key] = value;
   }
@@ -158,8 +155,7 @@ export function toSettings(row) {
   return out;
 }
 
-/** The editor's values that are not secret, as `POST /plugins/action` takes them: what is
- *  typed counts for the call, and an empty field is `null` (no value) */
+/** The values that are not secret, as `POST /plugins/action` takes them; empty is `null` */
 export function overrides(row) {
   const config = {};
   for (const f of row.fields) {
@@ -223,9 +219,13 @@ export function summary(text) {
   return at < 0 ? line : line.slice(0, at + 1);
 }
 
-/** What Enable asks: the hosts the plugin will contact with its saved values (`hosts_needed`
- *  from `GET /plugins`, which knows saved secrets), and the URL fields still empty, whose
- *  host is approved when they are saved */
+/** The folders a plugin may use (`paths_needed`: `r:` or `w:` each), as words */
+export function foldersText(plugin) {
+  const of = (k) => (plugin.paths_needed || []).filter((p) => p[0] === k).map((p) => p.slice(2)).join(", ");
+  return [of("r") && `read ${of("r")}`, of("w") && `read and write ${of("w")}`].filter(Boolean).join("; ");
+}
+
+/** What Enable asks: the hosts and folders it approves, and the URL fields still empty */
 export function approvalText(plugin, row) {
   const hosts = plugin.hosts_needed || hostsFor(plugin, row.values);
   const http = (plugin.permissions && plugin.permissions.http) || {};
@@ -240,11 +240,12 @@ export function approvalText(plugin, row) {
   if (hosts.length) parts.push(`${plugin.name} will contact ${hosts.join(", ")}. Turning it on approves ${hosts.length === 1 ? "this host" : "these hosts"}.`);
   else if (!unset.length) parts.push(`${plugin.name} makes no network calls.`);
   if (unset.length) parts.push(`It will also contact the server you enter in ${unset.join(", ")}; saving that setting approves it.`);
+  const folders = foldersText(plugin);
+  if (folders) parts.push(`It may ${folders}; turning it on approves ${(plugin.paths_needed || []).length === 1 ? "this folder" : "these folders"}.`);
   return parts.join(" ");
 }
 
-/** The `[[plugins]]` list with one plugin turned on or off and every other entry as saved;
- *  a plugin with no entry gets one from its defaults */
+/** The `[[plugins]]` list with one plugin turned on or off and the rest as saved */
 export function withEnabled(stored, plugin, on) {
   const list = stored || [];
   const entry = list.find((s) => s.name === plugin.name) || toSettings(fromStatus(plugin));

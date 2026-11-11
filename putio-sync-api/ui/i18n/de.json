@@ -357,7 +357,6 @@
  "Email": "Die E-Mail",
  "Empty": "Leer",
  "Empty downloads each file in one request": "Leere Downloads jedes Dateis in einer Anfrage",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "Leer für Plugins neben der Konfigurationsdatei; jedes Plugin ist ein Ordner mit plugin.toml und main.lua",
  "Empty for the default; in Docker, mount the host's socket": "Leere für die Standardeinstellung; in Docker den Socket des Hosts anbringen",
  "Empty searches PATH": "Leere Suchanfragen PATH",
  "Enable": "Aktivieren",

@@ -207,6 +207,8 @@ fn a_full_queue_drops_the_oldest_and_keeps_one_tick() {
         script: String::new(),
         settings: settings("q", 32),
         allowed: Default::default(),
+        wasm: None,
+        paths: Vec::new(),
     });
     slot.push(Job::Tick);
     slot.push(Job::Tick);

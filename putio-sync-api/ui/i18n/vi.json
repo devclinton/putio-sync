@@ -357,7 +357,6 @@
  "Email": "Thư điện tử",
  "Empty": "Rỗng",
  "Empty downloads each file in one request": "Tải xuống rỗng mỗi tệp trong một yêu cầu",
- "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua": "Rỗng cho các plugin bên cạnh tệp cấu hình; mỗi plugin là một thư mục với plugin.toml và main.lua",
  "Empty for the default; in Docker, mount the host's socket": "Rỗng mặc định; trong Docker, gắn kết cổng của máy chủ",
  "Empty searches PATH": "Tìm kiếm trống ĐƯỜNG DẪN",
  "Enable": "Bật",
