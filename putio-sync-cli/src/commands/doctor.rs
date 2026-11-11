@@ -60,7 +60,8 @@ async fn build(config_path: Option<PathBuf>) -> Result<Doctor> {
     let config =
         Config::load(&path).with_context(|| format!("Could not load {}", path.display()))?;
     let client = Arc::new(build_client(&config)?);
-    let db_path = config.download.target_directory.join(".putiosync.db");
+    // Not `prepare`: the doctor only looks, and reports a database left in the download folder
+    let db_path = putio_sync_core::database::path_for(&config, Some(&path));
     let db = if db_path.is_file() {
         Some(Arc::new(Database::new(&db_path).await.with_context(
             || format!("Could not open the database {}", db_path.display()),

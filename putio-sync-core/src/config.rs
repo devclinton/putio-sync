@@ -162,6 +162,12 @@ pub struct Config {
     /// Download configuration
     #[serde(default)]
     pub download: DownloadConfig,
+    /// State database location (`[database]`)
+    #[serde(
+        default,
+        skip_serializing_if = "crate::database::DatabaseConfig::is_empty"
+    )]
+    pub database: crate::database::DatabaseConfig,
     /// Watch configuration
     #[serde(default)]
     pub watch: WatchConfig,
@@ -1469,6 +1475,10 @@ impl Config {
         }
         self.watch.paths = expanded_watch_paths;
 
+        if let Some(db) = &self.database.path {
+            self.database.path = Some(expand_path(db)?);
+        }
+
         // The daemon moves uploaded watch files here (`~/processed` in the README)
         if let Some(archive) = &self.watch.archive_directory {
             self.watch.archive_directory = Some(expand_path(archive)?);
@@ -1838,6 +1848,7 @@ impl ConfigBuilder {
             hooks: Vec::new(),
             plugins_dir: None,
             plugins: Vec::new(),
+            database: Default::default(),
         }
     }
 }
@@ -3117,6 +3128,7 @@ mod tests {
             hooks: Vec::new(),
             plugins_dir: None,
             plugins: Vec::new(),
+            database: Default::default(),
         }
     }
 

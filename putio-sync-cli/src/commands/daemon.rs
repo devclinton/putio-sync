@@ -99,9 +99,13 @@ pub async fn execute_daemon(
         warn!("--delete-torrents flag not yet supported in daemon mode, ignoring");
     }
 
+    // Moves a 0.2.x database out of the download folder on the first start
+    let database_path = putio_sync_core::database::prepare(&config, Some(&config_file_path)).await;
+
     // Create daemon configuration
     let mut daemon_config = daemon_config(
         &config,
+        database_path,
         oauth_token,
         watch_dirs,
         watch_interval,
@@ -356,6 +360,7 @@ pub async fn execute_daemon(
 /// `[download]` setting goes through the shared `DownloadConfig::from` conversion.
 fn daemon_config(
     config: &Config,
+    database_path: PathBuf,
     oauth_token: String,
     watch_dirs: Vec<PathBuf>,
     watch_interval: u64,
@@ -364,7 +369,7 @@ fn daemon_config(
 ) -> DaemonConfig {
     DaemonConfig {
         oauth_token,
-        database_path: Some(config.download.target_directory.join(".putiosync.db")),
+        database_path: Some(database_path),
         download: DownloadConfig::from(&config.download),
         watch_dirs,
         watch_interval,
@@ -397,7 +402,15 @@ mod tests {
         let mut config = Config::default();
         config.transfers.stall_threshold_hours = 12;
         config.transfers.stall_check_interval_secs = 120;
-        let daemon = daemon_config(&config, "t".to_string(), vec![], 60, 300, None);
+        let daemon = daemon_config(
+            &config,
+            PathBuf::from("/config/.putiosync.db"),
+            "t".to_string(),
+            vec![],
+            60,
+            300,
+            None,
+        );
         assert_eq!(
             daemon.stall_threshold,
             std::time::Duration::from_secs(12 * 3600)
@@ -410,7 +423,15 @@ mod tests {
     fn daemon_config_takes_the_precheck() {
         let mut config = Config::default();
         config.precheck.dry_run = true;
-        let daemon = daemon_config(&config, "t".to_string(), vec![], 60, 300, None);
+        let daemon = daemon_config(
+            &config,
+            PathBuf::from("/config/.putiosync.db"),
+            "t".to_string(),
+            vec![],
+            60,
+            300,
+            None,
+        );
         assert!(daemon.precheck.is_some_and(|p| p.dry_run));
     }
 
@@ -430,7 +451,15 @@ mod tests {
         config.download.retry_initial_delay_secs = 6;
         config.download.blocked_extensions = vec!["iso".to_string()];
 
-        let daemon = daemon_config(&config, "t".to_string(), vec![], 60, 300, None);
+        let daemon = daemon_config(
+            &config,
+            PathBuf::from("/config/.putiosync.db"),
+            "t".to_string(),
+            vec![],
+            60,
+            300,
+            None,
+        );
         assert_eq!(
             daemon.download,
             DownloadConfig {
@@ -451,7 +480,7 @@ mod tests {
         );
         assert_eq!(
             daemon.database_path,
-            Some(PathBuf::from("/srv/putio/.putiosync.db"))
+            Some(PathBuf::from("/config/.putiosync.db"))
         );
     }
 }

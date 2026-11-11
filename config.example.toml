@@ -59,6 +59,16 @@ remote_parent_id = 0
 delete_after_download = false
 
 # ============================================================================
+# State Database
+# ============================================================================
+# The queue, history and stats. Default: .putiosync.db next to this file
+# (/config/.putiosync.db in Docker). A database left in the download folder by 0.2.x
+# moves here on the first start. A relative path is relative to this file's folder.
+# Keep it on a local disk: SQLite locking is unreliable on NFS and SMB shares.
+# [database]
+# path = "/config/.putiosync.db"
+
+# ============================================================================
 # Download Configuration
 # ============================================================================
 [download]

@@ -50,6 +50,7 @@ pub async fn execute_download(
 
     let config = Config::load(&config_file_path)
         .context("Failed to load configuration. Have you run 'putio-sync login'?")?;
+    let db_path = putio_sync_core::database::prepare(&config, Some(&config_file_path)).await;
 
     let auth = config.auth.ok_or_else(|| {
         anyhow!("No authentication credentials found. Please run 'putio-sync login' first.")
@@ -168,6 +169,7 @@ pub async fn execute_download(
         run_daemon_mode(
             client_arc,
             download_config,
+            db_path,
             filter,
             all,
             files,
@@ -184,6 +186,7 @@ pub async fn execute_download(
         run_single_download(
             client_arc,
             download_config,
+            db_path,
             filter,
             all,
             files,
@@ -203,6 +206,7 @@ pub async fn execute_download(
 async fn run_single_download(
     client: Arc<PutioApiClient>,
     download_config: DownloadConfig,
+    db_path: PathBuf,
     filter: Option<String>,
     all: bool,
     file_ids: Vec<i64>,
@@ -230,7 +234,6 @@ async fn run_single_download(
     }
 
     // Initialize database - use fallback if it fails
-    let db_path = download_config.target_directory.join(".putiosync.db");
     let database = match Database::new(&db_path).await {
         Ok(db) => {
             info!(
@@ -403,6 +406,7 @@ async fn run_single_download(
 async fn run_daemon_mode(
     client: Arc<PutioApiClient>,
     download_config: DownloadConfig,
+    db_path: PathBuf,
     filter: Option<String>,
     all: bool,
     files: Vec<i64>,
@@ -441,6 +445,7 @@ async fn run_daemon_mode(
         match run_single_download(
             client.clone(),
             download_config.clone(),
+            db_path.clone(),
             filter.clone(),
             all,
             files.clone(),

@@ -8,7 +8,7 @@ use putio_sync_db::models::{QueueItem, QueueStatus};
 use putio_sync_db::pipeline::NAS_DOWNLOADS_PAUSED;
 use putio_sync_db::{Database, QueueStats};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
 /// Queue statistics for display
@@ -43,8 +43,8 @@ pub async fn execute_list(
 ) -> Result<()> {
     info!("Starting queue list command");
 
-    let config = load_config(config_path)?;
-    let db = open_database(&config).await?;
+    let config = load_config(config_path.clone())?;
+    let db = open_database(&config, config_path.as_deref()).await?;
     let queue_repo = db.queue();
 
     // Get queue items
@@ -87,9 +87,9 @@ pub async fn execute_add(
 ) -> Result<()> {
     info!("Starting queue add command");
 
-    let config = load_config(config_path)?;
+    let config = load_config(config_path.clone())?;
     let client = create_api_client(&config)?;
-    let db = open_database(&config).await?;
+    let db = open_database(&config, config_path.as_deref()).await?;
     let queue_repo = db.queue();
 
     // Determine which files to add
@@ -165,8 +165,8 @@ pub async fn execute_add(
 pub async fn execute_pause(file_ids: Vec<i64>, config_path: Option<PathBuf>) -> Result<()> {
     info!("Starting queue pause command");
 
-    let config = load_config(config_path)?;
-    let db = open_database(&config).await?;
+    let config = load_config(config_path.clone())?;
+    let db = open_database(&config, config_path.as_deref()).await?;
     let queue_repo = db.queue();
 
     let count = if file_ids.is_empty() {
@@ -199,8 +199,8 @@ pub async fn execute_pause(file_ids: Vec<i64>, config_path: Option<PathBuf>) -> 
 pub async fn execute_resume(file_ids: Vec<i64>, config_path: Option<PathBuf>) -> Result<()> {
     info!("Starting queue resume command");
 
-    let config = load_config(config_path)?;
-    let db = open_database(&config).await?;
+    let config = load_config(config_path.clone())?;
+    let db = open_database(&config, config_path.as_deref()).await?;
     let queue_repo = db.queue();
 
     let count = if file_ids.is_empty() {
@@ -237,8 +237,8 @@ pub async fn execute_remove(file_ids: Vec<i64>, config_path: Option<PathBuf>) ->
         anyhow::bail!("Must specify at least one file ID to remove");
     }
 
-    let config = load_config(config_path)?;
-    let db = open_database(&config).await?;
+    let config = load_config(config_path.clone())?;
+    let db = open_database(&config, config_path.as_deref()).await?;
     let queue_repo = db.queue();
 
     for file_id in &file_ids {
@@ -258,8 +258,8 @@ pub async fn execute_remove(file_ids: Vec<i64>, config_path: Option<PathBuf>) ->
 pub async fn execute_clear(yes: bool, config_path: Option<PathBuf>) -> Result<()> {
     info!("Starting queue clear command");
 
-    let config = load_config(config_path)?;
-    let db = open_database(&config).await?;
+    let config = load_config(config_path.clone())?;
+    let db = open_database(&config, config_path.as_deref()).await?;
     let queue_repo = db.queue();
 
     // Check how many completed items exist
@@ -311,8 +311,8 @@ pub async fn execute_priority(
 ) -> Result<()> {
     info!("Starting queue priority command");
 
-    let config = load_config(config_path)?;
-    let db = open_database(&config).await?;
+    let config = load_config(config_path.clone())?;
+    let db = open_database(&config, config_path.as_deref()).await?;
     let queue_repo = db.queue();
 
     queue_repo
@@ -329,8 +329,8 @@ pub async fn execute_priority(
 pub async fn execute_stats(output_format: String, config_path: Option<PathBuf>) -> Result<()> {
     info!("Starting queue stats command");
 
-    let config = load_config(config_path)?;
-    let db = open_database(&config).await?;
+    let config = load_config(config_path.clone())?;
+    let db = open_database(&config, config_path.as_deref()).await?;
     let queue_repo = db.queue();
 
     let stats = queue_repo
@@ -403,8 +403,8 @@ fn create_api_client(config: &Config) -> Result<PutioApiClient> {
 }
 
 /// Open database connection
-async fn open_database(config: &Config) -> Result<Database> {
-    let db_path = config.download.target_directory.join(".putiosync.db");
+async fn open_database(config: &Config, config_path: Option<&Path>) -> Result<Database> {
+    let db_path = putio_sync_core::database::prepare(config, config_path).await;
     debug!("Opening database at: {:?}", db_path);
 
     Database::new(&db_path)

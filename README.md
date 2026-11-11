@@ -353,8 +353,8 @@ Options:
 ```
 
 It prints each file (size, id, date added, Put.io path and local copy) and the totals,
-then asks before deleting unless `--yes`. It needs the download database in the download
-folder. The exit code is non-zero when any delete fails.
+then asks before deleting unless `--yes`. It needs the download database (see
+[Database Location](#database-location)). The exit code is non-zero when any delete fails.
 
 ### `doctor`
 
@@ -910,8 +910,8 @@ promtool tsdb create-blocks-from openmetrics metrics/putio-sync-metrics-2026-11-
 # move the blocks into Prometheus's data directory and restart it
 ```
 
-To restore the database, `gunzip` the `db/` file and use it as `.putiosync.db` with the
-daemon stopped.
+To restore the database, `gunzip` the `db/` file and use it as `.putiosync.db` next to the
+config file (or at `[database] path`) with the daemon stopped.
 
 <!-- ANCHOR_END: metrics -->
 <!-- ANCHOR: web-ui -->
@@ -1114,7 +1114,7 @@ daemon's download manager and watcher:
 | Group | Applies live | Needs a restart |
 |---|---|---|
 | Logging | `level`, `module_filters`, within 10 s (ignored while `RUST_LOG` is set) | `console_format`, `console_enabled`, `file_*` |
-| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`, `slow_limit_bytes_per_sec` (running downloads too), `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, `verify`, `verify_max_redownloads`, `verify_read_limit_mb_per_sec`, `verify_follow_bandwidth_pause`, for the next download or verify run | `target_directory` (new downloads go there at once, but the queue database and disk figures stay on the startup folder), and the rest of the group |
+| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`, `slow_limit_bytes_per_sec` (running downloads too), `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, `verify`, `verify_max_redownloads`, `verify_read_limit_mb_per_sec`, `verify_follow_bandwidth_pause`, for the next download or verify run | `target_directory` (new downloads go there at once, but the disk figures stay on the startup folder), and the rest of the group |
 | Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Release check | — | everything |
@@ -2553,7 +2553,20 @@ Organize your watch directories by content type:
 
 ### Database Location
 
-Download tracking and history are stored in `~/.putiosync/putio-sync.db`
+The queue, download history and stats are stored in `.putiosync.db` next to the config
+file: `~/.putiosync/.putiosync.db`, or `/config/.putiosync.db` in Docker. Set another
+place with:
+
+```toml
+[database]
+path = "/var/lib/putio-sync/putio.db"   # relative paths are relative to the config folder
+```
+
+Keep it on a local disk; SQLite locking is unreliable on NFS and SMB shares. Up to 0.2.x
+the database was `<download folder>/.putiosync.db`. The first start of a newer version
+moves it next to the config file (with its `-wal` and `-shm` files) and logs one line
+saying where. If both exist, the new one is used and the daemon and `putio-sync doctor`
+warn about the old one, which you can delete.
 
 <!-- ANCHOR_END: running-periodic-sync-and-watch-simultaneously -->
 <!-- ANCHOR: architecture -->
@@ -2736,7 +2749,7 @@ docker run -d \
 
 The Docker image uses the following directories:
 
-- `/config` - Configuration directory (mount your config.toml here)
+- `/config` - Configuration directory: `config.toml` and the state database `.putiosync.db`
 - `/downloads` - Default download directory
 - `/watches` - Directory for watching .torrent and .magnet files (optional)
 
