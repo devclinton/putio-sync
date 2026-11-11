@@ -4,7 +4,7 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Turn on Pages with "GitHub Actions" as the source (maintainer, repository settings)
+- [X] T001 Turn on Pages with "GitHub Actions" as the source (maintainer, repository settings)
 - [X] T002 `site/book/book.toml` and `SUMMARY.md`; `site/tools/build.sh` that builds into `target/site`
 
 ## Phase 2: US2 Docs (P1)
@@ -35,7 +35,7 @@
 
 ## Phase 6: US4 Translations (P3)
 
-- [ ] T015 [US4] Landing page strings in es, zh, hi, fr, ar (RTL), machine-translated and marked
+- [X] T015 [US4] Docs in the 19 atranslate languages (ar RTL), machine-translated and marked, with a language picker (revised from five landing-page languages)
 
 ## Phase 7: Polish
 

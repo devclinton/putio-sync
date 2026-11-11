@@ -22,6 +22,20 @@ esac
 rm -rf "$out"
 mkdir -p "$out"
 mdbook build "$root/site/book"
+# One more book per catalog in site/i18n (machine-translated, see
+# site/tools/translate-docs.py), each under docs/<lang>/
+langs='"en"'
+for catalog in "$root"/site/i18n/*.json; do
+    [ -e "$catalog" ] || continue
+    lang="$(basename "$catalog" .json)"
+    MDBOOK_BOOK__LANGUAGE="$lang" \
+    MDBOOK_BUILD__BUILD_DIR="$out/docs/$lang" \
+    MDBOOK_OUTPUT__HTML__SITE_URL="/putio-sync/docs/$lang/" \
+        mdbook build "$root/site/book"
+    langs="$langs,\"$lang\""
+done
+# Read by the language picker (site/book/lang-picker.js)
+echo "[$langs]" > "$out/docs/languages.json"
 # mdBook's sidebar toggle is a <label> with aria-expanded, which axe flags as
 # critical; role="button" makes the attribute valid. Code blocks scroll
 # sideways, so they need to take keyboard focus.

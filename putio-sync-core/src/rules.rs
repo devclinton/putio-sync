@@ -16,8 +16,11 @@
 //!
 //! Feature 021 adds `keep`: the empty-folder cleanup (and so the doctor) leaves the folder
 //! and everything below it alone.
+//!
+//! Feature 022 adds `mode`: a file every other rule accepts is downloaded, or in stream
+//! mode kept on Put.io ([`Decision::Stream`]). Skip, patterns and the type filter come first.
 
-use crate::config::{DownloadConfig, ExistingFile};
+use crate::config::{DownloadConfig, ExistingFile, SyncMode};
 use crate::error::{CoreError, CoreResult};
 use crate::pattern::{self, Pattern};
 use serde::{Deserialize, Serialize};
@@ -64,6 +67,9 @@ pub struct FolderRule {
     /// Keep this folder out of the empty-folder cleanup (feature 021)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep: Option<bool>,
+    /// Download, or keep on Put.io for streaming (feature 022)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<SyncMode>,
 }
 
 impl FolderRule {
@@ -80,6 +86,7 @@ impl FolderRule {
             && self.on_existing.is_none()
             && self.skip_existing.is_none()
             && self.keep.is_none()
+            && self.mode.is_none()
     }
 
     /// This rule's choice for existing files: `on_existing`, else the old `skip_existing`
@@ -431,6 +438,8 @@ pub struct Effective {
     pub on_existing: Sourced<ExistingFile>,
     /// Keep the folder out of the empty-folder cleanup
     pub keep: Sourced<bool>,
+    /// Download or stream what the other settings accept
+    pub mode: Sourced<SyncMode>,
     /// The folder this was resolved for, for path patterns
     #[serde(skip)]
     pub folder: String,
@@ -476,7 +485,12 @@ impl Effective {
                 reason,
                 rule: self.filter.from.clone(),
             },
-            None => Decision::Download,
+            None => match self.mode.value {
+                SyncMode::Download => Decision::Download,
+                SyncMode::Stream => Decision::Stream {
+                    rule: self.mode.from.clone(),
+                },
+            },
         }
     }
 }
@@ -506,12 +520,18 @@ pub enum Reason {
         /// The pattern text
         pattern: String,
     },
+    /// A plugin's filter skips it (feature 028); never deleted from Put.io
+    Plugin {
+        /// The plugin's name
+        name: String,
+    },
 }
 
 impl fmt::Display for Reason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Reason::Blocked { extension } => write!(f, "extension {extension} is blocked"),
+            Reason::Plugin { name } => write!(f, "skipped by plugin {name}"),
             Reason::Excluded { pattern } => write!(f, "matches never-download pattern `{pattern}`"),
             Reason::NotIncluded { pattern } => {
                 write!(f, "doesn't match only-download pattern `{pattern}`")
@@ -547,6 +567,11 @@ pub enum Decision {
         /// The rule path that set `skip`
         rule: Option<String>,
     },
+    /// Accepted, and kept on Put.io for streaming (feature 022)
+    Stream {
+        /// The rule path that set `mode`, `None` for `[download]`
+        rule: Option<String>,
+    },
 }
 
 impl Decision {
@@ -554,7 +579,9 @@ impl Decision {
     pub fn rule(&self) -> Option<&str> {
         match self {
             Decision::Download => None,
-            Decision::Blocked { rule, .. } | Decision::Skipped { rule } => rule.as_deref(),
+            Decision::Blocked { rule, .. }
+            | Decision::Skipped { rule }
+            | Decision::Stream { rule } => rule.as_deref(),
         }
     }
 
@@ -564,6 +591,7 @@ impl Decision {
             Decision::Download => String::new(),
             Decision::Blocked { reason, .. } => reason.to_string(),
             Decision::Skipped { .. } => "folder is skipped".to_string(),
+            Decision::Stream { .. } => "kept on Put.io (stream mode)".to_string(),
         }
     }
 }
@@ -578,6 +606,7 @@ pub struct RuleSet {
     exclude: Pattern,
     delete_after_download: bool,
     on_existing: ExistingFile,
+    mode: SyncMode,
     rules: HashMap<String, FolderRule>,
     presets: BTreeMap<String, Preset>,
 }
@@ -622,9 +651,19 @@ impl RuleSet {
             exclude: Pattern::parse(config.blacklist_patterns.as_deref().unwrap_or("")),
             delete_after_download: config.delete_after_download,
             on_existing: config.on_existing(),
+            mode: config.mode,
             rules,
             presets,
         }
+    }
+
+    /// Whether any file can be in stream mode: the account mode or any rule's
+    pub fn uses_stream(&self) -> bool {
+        self.mode == SyncMode::Stream
+            || self
+                .rules
+                .values()
+                .any(|r| r.mode == Some(SyncMode::Stream))
     }
 
     /// True when no folder rule, account-wide preset or pattern exists
@@ -659,6 +698,7 @@ impl RuleSet {
             delete_after_download: Sourced::global(self.delete_after_download),
             on_existing: Sourced::global(self.on_existing),
             keep: Sourced::global(false),
+            mode: Sourced::global(self.mode),
             folder: folder_path
                 .split('/')
                 .filter(|s| !s.is_empty())
@@ -715,6 +755,7 @@ impl RuleSet {
             .set(rule.delete_after_download, path);
         effective.on_existing.set(rule.existing(), path);
         effective.keep.set(rule.keep, path);
+        effective.mode.set(rule.mode, path);
     }
 
     /// What happens to `name` in `folder_path`
@@ -1221,5 +1262,86 @@ mod tests {
             &presets
         )
         .is_ok());
+    }
+
+    fn mode_rule(path: &str, mode: SyncMode) -> FolderRule {
+        FolderRule {
+            mode: Some(mode),
+            ..rule(path)
+        }
+    }
+
+    #[test]
+    fn account_stream_mode_keeps_accepted_files_on_putio() {
+        let rules = RuleSet::from_config(&DownloadConfig {
+            mode: SyncMode::Stream,
+            ..DownloadConfig::default()
+        });
+        assert!(rules.uses_stream());
+        assert_eq!(
+            rules.decide("Movies", "film.mkv"),
+            Decision::Stream { rule: None }
+        );
+        assert_eq!(
+            rules.decide("", "film.mkv").reason(),
+            "kept on Put.io (stream mode)"
+        );
+        // The type filter still comes first
+        assert!(matches!(
+            rules.decide("", "setup.exe"),
+            Decision::Blocked { .. }
+        ));
+    }
+
+    #[test]
+    fn a_rule_streams_its_folder_and_a_deeper_rule_downloads_again() {
+        let rules = set(vec![
+            mode_rule("Movies", SyncMode::Stream),
+            mode_rule("Movies/Keep", SyncMode::Download),
+        ]);
+        assert!(rules.uses_stream());
+        assert!(downloads(&rules, "", "a.mkv"));
+        assert_eq!(
+            rules.decide("Movies/Film", "b.mkv"),
+            Decision::Stream {
+                rule: Some("Movies".to_string())
+            }
+        );
+        assert_eq!(rules.decide("Movies/Film", "b.mkv").rule(), Some("Movies"));
+        assert!(downloads(&rules, "Movies/Keep", "c.mkv"));
+        let effective = rules.resolve("Movies/Keep/x");
+        assert_eq!(effective.mode.value, SyncMode::Download);
+        assert_eq!(effective.mode.from.as_deref(), Some("Movies/Keep"));
+    }
+
+    #[test]
+    fn skip_wins_over_stream_mode() {
+        let rules = set(vec![
+            mode_rule("Movies", SyncMode::Stream),
+            FolderRule {
+                skip: Some(true),
+                ..rule("Movies/Old")
+            },
+        ]);
+        assert!(matches!(
+            rules.decide("Movies/Old", "a.mkv"),
+            Decision::Skipped { .. }
+        ));
+    }
+
+    #[test]
+    fn download_mode_everywhere_does_not_use_stream() {
+        assert!(!set(vec![mode_rule("TV", SyncMode::Download)]).uses_stream());
+        assert!(!RuleSet::default().uses_stream());
+    }
+
+    #[test]
+    fn mode_round_trips_in_toml() {
+        let rule: FolderRule = toml::from_str("path = \"Movies\"\nmode = \"stream\"").unwrap();
+        assert_eq!(rule.mode, Some(SyncMode::Stream));
+        assert!(!rule.is_empty());
+        assert!(toml::from_str::<FolderRule>("path = \"x\"\nmode = \"cloud\"").is_err());
+        let text = toml::to_string(&rule).unwrap();
+        assert!(text.contains("mode = \"stream\""), "{text}");
     }
 }

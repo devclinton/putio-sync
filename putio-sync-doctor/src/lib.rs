@@ -23,6 +23,7 @@ use futures_util::future::join_all;
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::{Config, DoctorConfig};
+use putio_sync_core::events::{self, DoctorProblem, Payload};
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::Database;
 use putio_sync_telemetry::doctor as metrics;
@@ -187,7 +188,20 @@ impl Doctor {
             }
             metrics::record_run(clock.elapsed());
         }
-        *self.latest.write().unwrap_or_else(|e| e.into_inner()) = Some(report.clone());
+        let previous = self
+            .latest
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .replace(report.clone());
+        for check in new_problems(previous.as_ref(), &report) {
+            events::emit(Payload::DoctorProblem(DoctorProblem {
+                check: check.id.as_str().to_string(),
+                title: check.title.clone(),
+                summary: check.summary.clone(),
+                area: check.area.title().to_string(),
+                item_count: check.item_count,
+            }));
+        }
         self.runs.fetch_add(1, Ordering::SeqCst);
         report
     }
@@ -245,4 +259,66 @@ fn record(check: &CheckResult) {
         check.status.metric_value(),
         check.item_count,
     );
+}
+
+/// The checks that are a problem in `report` and were not in `previous` (feature 030).
+/// A first run counts every problem as new.
+fn new_problems<'a>(previous: Option<&Report>, report: &'a Report) -> Vec<&'a CheckResult> {
+    let was_problem = |id: CheckId| {
+        previous.is_some_and(|p| {
+            p.checks
+                .iter()
+                .any(|c| c.id == id && c.status == Status::Problem)
+        })
+    };
+    report
+        .checks
+        .iter()
+        .filter(|c| c.status == Status::Problem && !was_problem(c.id))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report(problems: &[CheckId]) -> Report {
+        let checks = CheckId::ALL
+            .iter()
+            .map(|id| CheckResult {
+                id: *id,
+                area: Area::Local,
+                title: id.as_str().to_string(),
+                status: if problems.contains(id) {
+                    Status::Problem
+                } else {
+                    Status::Ok
+                },
+                summary: String::new(),
+                suggestion: None,
+                item_count: 0,
+                items: Vec::new(),
+                fixes: Vec::new(),
+            })
+            .collect();
+        Report::new(Utc::now(), std::time::Duration::ZERO, checks)
+    }
+
+    fn ids(previous: Option<&Report>, now: &Report) -> Vec<CheckId> {
+        new_problems(previous, now).iter().map(|c| c.id).collect()
+    }
+
+    #[test]
+    fn only_checks_that_become_a_problem_are_new() {
+        let [a, b] = [CheckId::ALL[0], CheckId::ALL[1]];
+        let first = report(&[a]);
+        assert_eq!(ids(None, &first), vec![a]);
+        // Still a problem: nothing new. Another one: that one.
+        let second = report(&[a, b]);
+        assert_eq!(ids(Some(&first), &second), vec![b]);
+        // Fixed, then a problem again: new again
+        let fixed = report(&[b]);
+        assert_eq!(ids(Some(&second), &fixed), Vec::<CheckId>::new());
+        assert_eq!(ids(Some(&fixed), &report(&[a, b])), vec![a]);
+    }
 }

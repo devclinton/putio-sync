@@ -1,9 +1,11 @@
-//! One plugin's worker (research R3): a thread that owns the plugin's Lua state and runs
-//! the jobs queued for it, one at a time, each under the plugin's time limit.
+//! One plugin's worker (research R3): a thread that owns the plugin's Lua state, or its
+//! WebAssembly instance (029), and runs the jobs queued for it, one at a time, each under
+//! the plugin's time limit. Both runtimes are called the same way: JSON arguments in, JSON
+//! out.
 //!
-//! A timeout or memory error throws the state away; the next job builds a new one (load
-//! the script, call `init`). A state that cannot be built stays broken until the next
-//! reload or settings change.
+//! A timeout or memory error (or a WebAssembly trap) throws the state away; the next job
+//! builds a new one (load the script or module, call `init`). A state that cannot be built
+//! stays broken until the next reload or settings change.
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -17,18 +19,25 @@ use chrono::{SecondsFormat, Utc};
 use mlua::{Function, Lua, Table, Value as LuaValue};
 use putio_sync_core::events::Event;
 use putio_sync_core::plugins::PluginSettings;
+use putio_sync_core::sync_hooks::Hook;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::oneshot;
 
-use crate::host::{self, Clock, Counters, Host, Http, LogLine, Logs};
+use crate::host::{self, Clock, Counters, Files, Host, Http, LogLine, Logs};
 use crate::manifest::Manifest;
 use crate::sandbox::{self, Deadline, TIME_LIMIT};
 use crate::store::{SharedStore, Store};
+use crate::wasm::{self, Failure};
+use crate::workbench::{Tap, MAX_WORKBENCH_LOG_LINES};
 
 /// Jobs kept per plugin; the oldest event is dropped past this
 pub const MAX_QUEUE: usize = 1000;
 /// Runs kept per plugin
 pub const MAX_RUNS: usize = 20;
+/// A plugin thread's stack: room for the WebAssembly interpreter's translator and Lua's
+/// C calls, with a margin for debug builds
+const STACK_BYTES: usize = 8 * 1024 * 1024;
 
 /// How a run ended
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,12 +98,16 @@ pub type DownloadDir = Arc<Mutex<Option<PathBuf>>>;
 pub struct Spec {
     /// The checked manifest
     pub manifest: Manifest,
-    /// The entry script
+    /// The entry script (Lua)
     pub script: String,
+    /// The module (WebAssembly, 029)
+    pub wasm: Option<Arc<[u8]>>,
     /// The plugin's settings
     pub settings: PluginSettings,
     /// Hosts both needed and approved
     pub allowed: HashSet<String>,
+    /// `r:`/`w:` folders both needed and approved (029)
+    pub paths: Vec<String>,
 }
 
 /// What every worker shares
@@ -116,6 +129,8 @@ pub struct Env {
     pub counters: CounterNames,
     /// `putio.download_dir`
     pub download_dir: DownloadDir,
+    /// A workbench run's recorder (055); such a worker is not counted or kept in the runs
+    pub tap: Option<Tap>,
 }
 
 impl Env {
@@ -177,6 +192,8 @@ pub enum Job {
         kind: String,
         /// Its arguments, as JSON
         args: Vec<serde_json::Value>,
+        /// The time limit when not the plugin's `timeout_secs` (028: sync hooks)
+        limit: Option<Duration>,
         /// Where the answer goes
         reply: oneshot::Sender<CallReply>,
     },
@@ -228,6 +245,7 @@ impl Slot {
         let slot = self.clone();
         std::thread::Builder::new()
             .name(format!("plugin-{}", self.name))
+            .stack_size(STACK_BYTES)
             .spawn(move || Worker::new(slot, env).run())
             .map(|_| ())
     }
@@ -334,11 +352,35 @@ impl Slot {
     }
 }
 
+enum Runtime {
+    Lua { lua: Lua, module: Table },
+    Wasm(Box<wasm::Instance>),
+}
+
 struct Loaded {
-    lua: Lua,
-    module: Table,
+    runtime: Runtime,
     logs: Logs,
     secrets: Rc<Vec<String>>,
+}
+
+impl Loaded {
+    /// Memory the state uses now: Lua's allocations, or the module's linear memory
+    fn memory_bytes(&self) -> u64 {
+        match &self.runtime {
+            Runtime::Lua { lua, .. } => lua.used_memory() as u64,
+            Runtime::Wasm(instance) => instance.memory_bytes(),
+        }
+    }
+
+    /// Whether the plugin defines the function `name`
+    fn defines(&self, name: &str) -> bool {
+        match &self.runtime {
+            Runtime::Lua { module, .. } => {
+                matches!(module.get::<LuaValue>(name), Ok(LuaValue::Function(_)))
+            }
+            Runtime::Wasm(instance) => instance.has(name),
+        }
+    }
 }
 
 struct Outcome {
@@ -369,6 +411,9 @@ impl Worker {
     }
 
     fn run(mut self) {
+        if self.env.tap.is_some() {
+            host::LOG_LIMIT.with(|l| l.set(MAX_WORKBENCH_LOG_LINES));
+        }
         while let Some((job, generation, spec)) = self.slot.next() {
             if self.state.as_ref().is_some_and(|(g, _)| *g != generation) {
                 self.state = None;
@@ -404,12 +449,14 @@ impl Worker {
                 error: Some(error),
                 logs: Vec::new(),
             };
-            putio_sync_telemetry::plugins::record_run(
-                &self.slot.name,
-                &run.event_type,
-                run.result.as_str(),
-                Duration::ZERO,
-            );
+            if self.env.tap.is_none() {
+                putio_sync_telemetry::plugins::record_run(
+                    &self.slot.name,
+                    &run.event_type,
+                    run.result.as_str(),
+                    Duration::ZERO,
+                );
+            }
             let _ = reply.send(CallReply {
                 run,
                 value: None,
@@ -435,12 +482,11 @@ impl Worker {
 
     fn build(&mut self, generation: u64, spec: &Spec) -> Result<(), String> {
         let m = &spec.manifest;
-        let lua = sandbox::new_state(spec.settings.memory_mb, self.deadline.clone())
-            .map_err(|e| sandbox::error_text(&e))?;
         let secrets: Rc<Vec<String>> = Rc::new(spec.settings.secrets.values().cloned().collect());
         let logs: Logs = Rc::default();
         if m.permissions.store && self.store.is_none() {
-            self.store = Some(self.env.store_for(&m.name));
+            let scratch = self.env.tap.as_ref().and_then(|t| t.store.clone());
+            self.store = Some(scratch.unwrap_or_else(|| self.env.store_for(&m.name)));
         }
         let host = Host {
             name: m.name.clone(),
@@ -451,53 +497,60 @@ impl Worker {
                 allowed: spec.allowed.clone(),
                 client: self.env.client.clone(),
                 handle: self.env.handle.clone(),
+                tap: self.env.tap.clone(),
             }),
             store: if m.permissions.store {
                 self.store.clone()
             } else {
                 None
             },
+            files: (!m.permissions.files.is_empty()).then(|| {
+                let mut files = Files::new(&spec.paths, &spec.paths, &self.env.download_dir_text());
+                files.tap = self.env.tap.clone();
+                Rc::new(files)
+            }),
             download_dir: self.env.download_dir_text(),
             counters: self.env.counters_for(&m.name),
             deadline: self.deadline.clone(),
             logs: logs.clone(),
             clock: self.env.clock.clone(),
         };
-        host::install(&lua, host).map_err(|e| sandbox::error_text(&e))?;
-
         let timeout = spec.settings.timeout();
         let started = Instant::now();
         self.deadline.set(Some(started + timeout));
-        let loaded = lua
-            .load(spec.script.as_str())
-            .set_name(format!("@{}", m.entry))
-            .eval::<LuaValue>();
+        let runtime = self.load(spec, host, &secrets, started, timeout);
         self.deadline.set(None);
-        let module = match loaded {
-            Ok(LuaValue::Table(t)) => t,
-            Ok(_) => return Err(format!("{}: must return a table", m.entry)),
-            Err(e) => return Err(host::scrub(&describe(&e, started, timeout), &secrets)),
-        };
-        if !matches!(
-            module.get::<LuaValue>("on_event"),
-            Ok(LuaValue::Function(_))
-        ) {
-            return Err(format!(
-                "{}: the returned table has no on_event function",
-                m.entry
-            ));
-        }
-        let has_tick = matches!(module.get::<LuaValue>("on_tick"), Ok(LuaValue::Function(_)));
-        self.slot.has_tick.store(has_tick, Ordering::Relaxed);
-        let loaded = Loaded {
-            lua,
-            module,
+        let mut loaded = Loaded {
+            runtime: runtime?,
             logs,
             secrets,
         };
-        if let Ok(LuaValue::Function(init)) = loaded.module.get::<LuaValue>("init") {
+        let (what, table) = match loaded.runtime {
+            Runtime::Lua { .. } => ("the returned table", "function"),
+            Runtime::Wasm(_) => ("the module", "export"),
+        };
+        if !m.events.is_empty() && !loaded.defines("on_event") {
+            return Err(format!("{}: {} has no on_event {}", m.entry, what, table));
+        }
+        // A plugin that only answers sync hooks needs no on_event (028)
+        for hook in &m.hooks {
+            if !loaded.defines(hook) {
+                return Err(format!("{}: {} has no {} {}", m.entry, what, hook, table));
+            }
+        }
+        self.slot
+            .has_tick
+            .store(loaded.defines("on_tick"), Ordering::Relaxed);
+        if loaded.defines("init") {
             let started_at = now_text();
-            let (out, _) = self.call(&loaded, &init, Vec::new(), timeout);
+            let (out, _) = call(
+                &self.deadline,
+                &mut loaded,
+                "init",
+                Vec::new(),
+                timeout,
+                false,
+            );
             let run = PluginRun {
                 event_type: "init".to_string(),
                 event_id: String::new(),
@@ -519,111 +572,111 @@ impl Worker {
         Ok(())
     }
 
-    /// Call `f` under the time limit; the outcome and the first value it returned
-    fn call(
+    /// The plugin's Lua state with its script run, or its WebAssembly instance
+    fn load(
         &self,
-        loaded: &Loaded,
-        f: &Function,
-        args: Vec<LuaValue>,
+        spec: &Spec,
+        host: Host,
+        secrets: &[String],
+        started: Instant,
         timeout: Duration,
-    ) -> (Outcome, LuaValue) {
-        loaded.logs.borrow_mut().clear();
-        let started = Instant::now();
-        self.deadline.set(Some(started + timeout));
-        let result = f.call::<LuaValue>(mlua::MultiValue::from_vec(args));
-        self.deadline.set(None);
-        let late = started.elapsed() >= timeout;
-        let outcome = match result {
-            Ok(_) if late => Outcome {
-                result: RunResult::Timeout,
-                error: Some(limit_text(timeout)),
-                rebuild: true,
-            },
-            Ok(value) => {
-                return (
-                    Outcome {
-                        result: RunResult::Success,
-                        error: None,
-                        rebuild: false,
-                    },
-                    value,
-                )
-            }
-            Err(e) => {
-                let timed_out = late || sandbox::error_text(&e).contains(TIME_LIMIT);
-                let memory = sandbox::is_memory_error(&e);
-                Outcome {
-                    result: if timed_out {
-                        RunResult::Timeout
-                    } else {
-                        RunResult::Failure
-                    },
-                    error: Some(host::scrub(
-                        &describe(&e, started, timeout),
-                        &loaded.secrets,
-                    )),
-                    rebuild: timed_out || memory,
+    ) -> Result<Runtime, String> {
+        let m = &spec.manifest;
+        if let Some(bytes) = &spec.wasm {
+            let memory_mb = spec.settings.memory_mb;
+            return match wasm::Instance::new(bytes, host, memory_mb) {
+                Ok(instance) => Ok(Runtime::Wasm(Box::new(instance))),
+                Err(failure) => {
+                    let text = match failure {
+                        Failure::Timeout => limit_text(timeout),
+                        Failure::Memory => format!("{} ({} MiB)", wasm::MEMORY_LIMIT, memory_mb),
+                        Failure::Trap(t) | Failure::Error(t) => t,
+                    };
+                    Err(host::scrub(&format!("{}: {}", m.entry, text), secrets))
                 }
-            }
-        };
-        (outcome, LuaValue::Nil)
+            };
+        }
+        let lua = sandbox::new_state(spec.settings.memory_mb, self.deadline.clone())
+            .map_err(|e| sandbox::error_text(&e))?;
+        host::install(&lua, host).map_err(|e| sandbox::error_text(&e))?;
+        let loaded = lua
+            .load(spec.script.as_str())
+            .set_name(format!("@{}", m.entry))
+            .eval::<LuaValue>();
+        match loaded {
+            Ok(LuaValue::Table(module)) => Ok(Runtime::Lua { lua, module }),
+            Ok(_) => Err(format!("{}: must return a table", m.entry)),
+            Err(e) => Err(host::scrub(&describe(&e, started, timeout), secrets)),
+        }
     }
 
     fn execute(&mut self, job: Job, spec: &Spec) {
-        let Some((_, loaded)) = &self.state else {
+        let Some((generation, mut loaded)) = self.state.take() else {
             return;
         };
+        let rebuild = self.execute_on(&mut loaded, job, spec);
+        if !rebuild {
+            self.state = Some((generation, loaded));
+        }
+    }
+
+    /// Run `job` on `loaded`; whether the state must be built again
+    fn execute_on(&mut self, loaded: &mut Loaded, job: Job, spec: &Spec) -> bool {
         let timeout = spec.settings.timeout();
         let (event_type, event_id, function, arg, reply) = match job {
             Job::Call {
                 function,
                 kind,
                 args,
+                limit,
                 reply,
             } => {
-                self.execute_call(function, kind, args, reply, timeout);
-                return;
+                return self.execute_call(
+                    loaded,
+                    function,
+                    kind,
+                    args,
+                    reply,
+                    limit.unwrap_or(timeout),
+                );
             }
             Job::Tick => {
-                let Ok(LuaValue::Function(f)) = loaded.module.get::<LuaValue>("on_tick") else {
-                    return;
-                };
-                ("tick".to_string(), String::new(), f, LuaValue::Nil, None)
+                if !loaded.defines("on_tick") {
+                    return false;
+                }
+                ("tick".to_string(), String::new(), "on_tick", None, None)
             }
-            Job::Event(event) => {
-                let (f, arg) = match prepare(loaded, &event) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        tracing::warn!(plugin = %self.slot.name, error = %e, "Plugin event not delivered");
-                        return;
-                    }
-                };
-                (
+            Job::Event(event) => match serde_json::to_value(&*event) {
+                Ok(arg) => (
                     event.event_type().as_str().to_string(),
                     event.id.clone(),
-                    f,
-                    arg,
+                    "on_event",
+                    Some(arg),
                     None,
-                )
-            }
-            Job::Test(event, reply) => match prepare(loaded, &event) {
-                Ok((f, arg)) => (
+                ),
+                Err(e) => {
+                    tracing::warn!(plugin = %self.slot.name, error = %e, "Plugin event not delivered");
+                    return false;
+                }
+            },
+            Job::Test(event, reply) => match serde_json::to_value(&*event) {
+                Ok(arg) => (
                     event.event_type().as_str().to_string(),
                     event.id.clone(),
-                    f,
-                    arg,
+                    "on_event",
+                    Some(arg),
                     Some(reply),
                 ),
                 Err(e) => {
-                    self.refuse(Job::Test(event, reply), e);
-                    return;
+                    self.refuse(Job::Test(event, reply), e.to_string());
+                    return false;
                 }
             },
         };
         let started_at = now_text();
         let started = Instant::now();
-        let args = if arg.is_nil() { Vec::new() } else { vec![arg] };
-        let (out, _) = self.call(loaded, &function, args, timeout);
+        let args = arg.into_iter().collect();
+        let (out, _) = call(&self.deadline, loaded, function, args, timeout, false);
         let took = started.elapsed();
         let test = reply.is_some();
         let run = PluginRun {
@@ -641,29 +694,26 @@ impl Worker {
         };
         let quiet = run.event_type == "tick" && run.result == RunResult::Success;
         self.finished(&run, took, quiet);
-        if out.rebuild {
-            self.state = None;
-        }
         if let Some(reply) = reply {
             self.slot.testing.store(false, Ordering::Release);
             let _ = reply.send(run);
         }
+        out.rebuild
     }
 
-    /// Run a [`Job::Call`]: counted and logged like any run, kept out of the history
+    /// Run a [`Job::Call`]: counted and logged like any run, kept out of the history.
+    /// Whether the state must be built again.
     fn execute_call(
         &mut self,
+        loaded: &mut Loaded,
         function: String,
         kind: String,
-        args: Vec<serde_json::Value>,
+        args: Vec<Value>,
         reply: oneshot::Sender<CallReply>,
         timeout: Duration,
-    ) {
-        let Some((_, loaded)) = &self.state else {
-            return;
-        };
+    ) -> bool {
         let started_at = now_text();
-        let Ok(LuaValue::Function(f)) = loaded.module.get::<LuaValue>(function.as_str()) else {
+        if !loaded.defines(&function) {
             let _ = reply.send(CallReply {
                 run: PluginRun {
                     event_type: kind,
@@ -677,46 +727,14 @@ impl Worker {
                 value: None,
                 defined: false,
             });
-            return;
-        };
-        let mut lua_args = Vec::with_capacity(args.len());
-        for a in &args {
-            match host::to_lua(&loaded.lua, a) {
-                Ok(v) => lua_args.push(v),
-                Err(e) => {
-                    let error = sandbox::error_text(&e);
-                    self.refuse(
-                        Job::Call {
-                            function,
-                            kind,
-                            args,
-                            reply,
-                        },
-                        error,
-                    );
-                    return;
-                }
-            }
+            return false;
         }
         let started = Instant::now();
-        let (mut out, value) = self.call(loaded, &f, lua_args, timeout);
+        let (out, value) = call(&self.deadline, loaded, &function, args, timeout, true);
         let took = started.elapsed();
-        let value = match (out.result, value) {
-            (RunResult::Success, LuaValue::Nil) => Some(serde_json::Value::Null),
-            (RunResult::Success, v) => match host::from_lua(&loaded.lua, v) {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    out.result = RunResult::Failure;
-                    out.error = Some(format!(
-                        "{} returned a value that is not JSON: {}",
-                        function,
-                        host::scrub(&e, &loaded.secrets)
-                    ));
-                    None
-                }
-            },
-            _ => None,
-        };
+        if let Some(tap) = &self.env.tap {
+            tap.set_memory(loaded.memory_bytes());
+        }
         let run = PluginRun {
             event_type: kind,
             event_id: String::new(),
@@ -726,19 +744,22 @@ impl Worker {
             error: out.error,
             logs: loaded.logs.borrow().clone(),
         };
-        self.finished(&run, took, true);
-        if out.rebuild {
-            self.state = None;
-        }
+        // A failed sync hook is kept with the runs, so Settings shows why it fell back
+        let quiet = run.result == RunResult::Success || kind_is_settings(&run.event_type);
+        self.finished(&run, took, quiet);
         let _ = reply.send(CallReply {
             run,
             value,
             defined: true,
         });
+        out.rebuild
     }
 
     /// Log, count and keep a run; `quiet` runs are counted only
     fn finished(&self, run: &PluginRun, took: Duration, quiet: bool) {
+        if self.env.tap.is_some() {
+            return;
+        }
         putio_sync_telemetry::plugins::record_run(
             &self.slot.name,
             &run.event_type,
@@ -766,6 +787,9 @@ impl Worker {
     }
 
     fn record(&self, run: &PluginRun, count: bool) {
+        if self.env.tap.is_some() {
+            return;
+        }
         if count {
             putio_sync_telemetry::plugins::record_run(
                 &self.slot.name,
@@ -783,14 +807,112 @@ impl Worker {
     }
 }
 
-fn prepare(loaded: &Loaded, event: &Event) -> Result<(Function, LuaValue), String> {
-    let f: Function = loaded
-        .module
-        .get("on_event")
-        .map_err(|e| sandbox::error_text(&e))?;
-    let value = serde_json::to_value(event).map_err(|e| e.to_string())?;
-    let arg = host::to_lua(&loaded.lua, &value).map_err(|e| sandbox::error_text(&e))?;
-    Ok((f, arg))
+/// Whether a call's kind is a settings action or health check, not a sync hook
+fn kind_is_settings(kind: &str) -> bool {
+    kind.parse::<Hook>().is_err()
+}
+
+/// Call `function` with `args` under the time limit: the outcome and, when `want` is set,
+/// what it returned as JSON (`null` for nothing)
+fn call(
+    deadline: &Deadline,
+    loaded: &mut Loaded,
+    function: &str,
+    args: Vec<Value>,
+    timeout: Duration,
+    want: bool,
+) -> (Outcome, Option<Value>) {
+    loaded.logs.borrow_mut().clear();
+    let started = Instant::now();
+    deadline.set(Some(started + timeout));
+    let result = match &mut loaded.runtime {
+        Runtime::Lua { lua, module } => {
+            call_lua(lua, module, function, args, started, timeout, want)
+        }
+        Runtime::Wasm(instance) => match instance.call(function, &args) {
+            Ok(value) => Ok(want.then(|| value.unwrap_or(Value::Null))),
+            Err(failure) => Err((
+                failure == Failure::Timeout,
+                failure.rebuild(),
+                instance.describe(&failure, timeout),
+            )),
+        },
+    };
+    deadline.set(None);
+    let late = started.elapsed() >= timeout;
+    match result {
+        Ok(_) if late => (
+            Outcome {
+                result: RunResult::Timeout,
+                error: Some(limit_text(timeout)),
+                rebuild: true,
+            },
+            None,
+        ),
+        Ok(value) => (
+            Outcome {
+                result: RunResult::Success,
+                error: None,
+                rebuild: false,
+            },
+            value,
+        ),
+        Err((timed_out, rebuild, error)) => {
+            let timed_out = timed_out || late;
+            (
+                Outcome {
+                    result: if timed_out {
+                        RunResult::Timeout
+                    } else {
+                        RunResult::Failure
+                    },
+                    error: Some(host::scrub(
+                        &if timed_out {
+                            limit_text(timeout)
+                        } else {
+                            error
+                        },
+                        &loaded.secrets,
+                    )),
+                    rebuild: timed_out || rebuild,
+                },
+                None,
+            )
+        }
+    }
+}
+
+/// A Lua call: what it returned, or (timed out, rebuild, error)
+fn call_lua(
+    lua: &Lua,
+    module: &Table,
+    function: &str,
+    args: Vec<Value>,
+    started: Instant,
+    timeout: Duration,
+    want: bool,
+) -> Result<Option<Value>, (bool, bool, String)> {
+    let f: Function = module
+        .get(function)
+        .map_err(|e| (false, false, sandbox::error_text(&e)))?;
+    let mut lua_args = Vec::with_capacity(args.len());
+    for a in &args {
+        let v = host::to_lua(lua, a).map_err(|e| (false, false, sandbox::error_text(&e)))?;
+        lua_args.push(v);
+    }
+    match f.call::<LuaValue>(mlua::MultiValue::from_vec(lua_args)) {
+        Ok(_) if !want => Ok(None),
+        Ok(LuaValue::Nil) => Ok(Some(Value::Null)),
+        Ok(v) => host::from_lua(lua, v).map(Some).map_err(|e| {
+            let text = format!("{} returned a value that is not JSON: {}", function, e);
+            (false, false, text)
+        }),
+        Err(e) => {
+            let timed_out = sandbox::error_text(&e).contains(TIME_LIMIT);
+            let memory = sandbox::is_memory_error(&e);
+            Err((timed_out, memory, describe(&e, started, timeout)))
+        }
+    }
 }
 
 fn describe(e: &mlua::Error, started: Instant, timeout: Duration) -> String {
@@ -806,7 +928,7 @@ fn limit_text(timeout: Duration) -> String {
     format!("{} ({} s)", TIME_LIMIT, timeout.as_secs())
 }
 
-fn now_text() -> String {
+pub(crate) fn now_text() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 

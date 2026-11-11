@@ -16,7 +16,7 @@ pub mod matching;
 pub mod modes;
 pub mod naming;
 pub mod opensubtitles;
-pub mod release;
+pub use putio_sync_core::release;
 pub mod score;
 pub mod srt;
 pub mod transcribe;

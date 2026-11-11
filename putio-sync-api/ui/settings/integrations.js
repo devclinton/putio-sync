@@ -4,7 +4,7 @@
 
 import { get, post } from "../api.js";
 import { RUNS_AS, blankHook, eventChoices, fromSettings, moveRow, runLabel, stagePosition, targetLabel, toSettings } from "../hooks.js";
-import { h, toast } from "../app.js";
+import { docs, h, toast } from "../app.js";
 import { relative } from "../format.js";
 import { arrCard } from "./arr.js";
 import { groupCard, reason } from "./form.js";
@@ -34,7 +34,7 @@ function hooksExtra(data) {
   const saved = new Set(rows.map((r) => r.name));
   const status = new Map();
   const list = h("div", { class: "stack" });
-  const none = h("p", { class: "muted", text: "No hooks. A hook runs a command or calls a webhook with each event as JSON; see EVENTS.md for the fields." });
+  const none = h("p", { class: "muted" }, "No hooks. A hook runs a command or calls a webhook with each event as JSON. ", docs("events", "", "Event reference"));
   const changed = () => list.closest("form")?.dispatchEvent(new Event("change"));
   const redraw = () => {
     draw();

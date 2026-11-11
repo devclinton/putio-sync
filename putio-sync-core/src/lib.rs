@@ -40,6 +40,9 @@ pub mod events;
 /// File filtering and sorting logic
 pub mod filter;
 
+/// `[notifications.smtp]`, the email channel: validation and password masking (feature 030)
+pub mod email;
+
 /// Event hook config: validation and secret masking (feature 027)
 pub mod hooks;
 
@@ -85,13 +88,22 @@ pub mod pipeline_gate;
 /// Shortened forms of values that may carry secrets (feature 027)
 pub mod redact;
 
+/// Organising files stream mode keeps on Put.io: settings and target names (feature 023)
+pub mod organise;
+
 /// Per-folder file rules: presets, inheritance and decisions
 pub mod rules;
+
+/// Reading release names: title, year, season, episode and quality (features 050, 023)
+pub mod release;
 
 pub mod setup;
 
 /// Stalled Put.io transfer detection
 pub mod stall;
+
+/// Sync extension points plugins provide: file filters, rename and folder rules
+pub mod sync_hooks;
 
 /// Re-export commonly used types
 pub mod prelude {

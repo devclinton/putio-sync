@@ -29,23 +29,22 @@ with a username and password, and sign-in through OAuth providers: Google,
 GitHub, and Discord if its OAuth stays free. Limit who may sign in by account
 or email, and keep the API token for scripts and Radarr/Sonarr.
 
-### 022 Stream mode with DLNA
+### 023 Organise TV shows on Put.io (done)
 
-A mode that leaves media on Put.io instead of downloading it. putio-sync
-manages the files on Put.io and serves them to the home network as a DLNA
-media server, so TVs and players can browse and play them. It streams from
-Put.io on demand, using Put.io's MP4 conversions where a player needs them.
+For stream mode: files kept on Put.io move into `TV Shows/Show/Season NN/`, with
+episodes named `Show - SNNEMM - Title`, read from the release name. Moves wait
+on the Put.io page's **Organise** panel unless `apply = "auto"`, and each can be
+undone; plugins' folder and rename rules may place files instead. Shows whose
+names need a metadata lookup (TVDB titles, scene or anime absolute numbering)
+keep the release's name. See `specs/023-organise-tv-putio/`.
 
-### 023 Organise TV shows on Put.io
+### 024 Organise movies on Put.io (done)
 
-For stream mode: move finished downloads into a `Show/Season NN/` layout on
-Put.io, with episodes named `Show - SNNEMM - Title`. Names are matched from the
-release name, with a preview before anything moves and an undo.
-
-### 024 Organise movies on Put.io
-
-The same for movies: `Movie (Year)/Movie (Year).ext`, with extras and samples
-kept apart or removed.
+The same for movies: `Movie (Year)/Movie (Year).ext`, read from the release
+name or its release folder. Extras go into the film's `Trailers`,
+`Featurettes`… folders; samples are left out of the library, not deleted.
+Titles that need a metadata lookup (TMDB names, years one off) keep the
+release's name. See `specs/024-organise-movies-putio/`.
 
 ### 025 Subtitles (partly done)
 
@@ -100,29 +99,28 @@ chunks with timestamps kept exactly, and a test button checks the connection
 and model. A user-supplied service that answers now or calls back is supported too.
 See `specs/026-subtitle-translation/tasks.md` for the deviations.
 
-### 028 Lua plugins: sync extension points
+### 028 Lua plugins: sync extension points (done)
 
-Event-handler plugins are done (see PLUGINS.md). Still to do: plugins that
-decide things during a sync, called synchronously with a short time limit:
-custom file filters, rename rules and folder rules. They reuse the plugin
-manifest, sandbox and `putio` API, and need a safe answer when a plugin fails
-or is slow (fall back to the built-in rule).
+Event-handler plugins and sync rules are both done (see PLUGINS.md, "Sync
+rules"): a plugin can declare a file filter, a rename rule and a folder rule,
+each called with a short time limit and passed over when it fails or is slow.
+Examples for each are in `examples/plugins/`. See
+`specs/028-lua-sync-extension-points/` for the design.
 
-### 029 WebAssembly plugins
+### 029 WebAssembly plugins (done)
 
-Sandboxed plugins compiled to WebAssembly, so they can be written in Go
-(TinyGo), Rust, JavaScript and other languages. Same events and API as 028,
-with permissions per plugin (network, file paths) and install from a file or
-URL.
+Plugins can be WebAssembly modules (`runtime = "wasm"`) with the same events,
+sync rules and API as 028, run by wasmi (an interpreter, about 1.4 MB, so every
+release target still builds). Per-plugin folder permissions (`putio.fs`) for
+both runtimes, and install from a file or URL. Rust and Go examples are in
+`examples/plugins/`; no JavaScript example yet. See `specs/029-wasm-plugins/`.
 
-### 030 Notifications
+### 030 Notifications (done)
 
-Send notifications for finished, failed and stuck downloads, failed transfers,
-low Put.io storage and doctor problems. The ntfy, Discord, Telegram and
-Pushover channels already exist as bundled plugins from 028 (each picks its
-events, has a test button, and groups repeats). Still to do: email (SMTP),
-which cannot be a plugin, stuck-download and doctor-problem events, and a
-simpler Notifications page over the bundled channels.
+Email over SMTP (lettre with rustls, about 0.85 MB), `transfer.stuck` and
+`doctor.problem` events for hooks and both plugin runtimes, and a Settings ›
+Notifications page over email and the bundled ntfy, Discord, Telegram and
+Pushover plugins. See `specs/030-notifications/`.
 
 ### 035 Mobile app
 
@@ -175,6 +173,19 @@ come from the daemon. A translated Snap Store listing is not possible: the store
 summary and description per snap (see `specs/051-ui-i18n/research.md`); a Flathub listing
 could carry translations through AppStream.
 
+### 055 Plugin workbench (done)
+
+A basic editor and debugger on the Plugins page, with no breakpoints or stepping. New
+plugin from three starters (webhook notifier, store counter, tick poller); an editor with
+line numbers that checks, saves (keeping `.bak` files) and reloads only that plugin, off by
+default behind `plugin_editor`; Copy to edit for bundled plugins and a read-only manifest
+with re-install for WASM ones. A Run panel for events, `on_tick`, `health`, settings
+actions and sync rules, for Lua and WASM, dry by default (requests recorded, scratch store),
+with the last 20 runs kept for Run again. A "Writing and debugging plugins" guide in the
+docs book, the starters in `examples/plugins/`, and docs links from the UI. The whole
+workbench loads with `import()`, outside the always-loaded UI. See
+`specs/055-plugin-workbench/`.
+
 ### Magnet file lists from peers (deferred from 043)
 
 When the .torrent caches never have a magnet's file list, fetch it from
@@ -182,9 +193,3 @@ BitTorrent peers (DHT and the metadata extension), with no piece data. Deferred
 in 043: it reveals the NAS's IP to the swarm and costs about 93 crates. The
 Stats page's "Held magnets" tile shows how often holds run out, which is what
 this would fix. Research is in `specs/043-magnet-cache-retry/research.md`.
-
-## Queued: packaging
-
-- **054 Project website** on GitHub Pages: a landing page with screenshots and an
-  install picker, and the docs generated from the repository Markdown
-  (`specs/054-project-site`).

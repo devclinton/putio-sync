@@ -116,6 +116,17 @@ on_existing = "resume"
 # Default: false
 delete_after_download = false
 
+# "download" fetches files; "stream" keeps them on Put.io and the media server
+# ([dlna] with the "putio" root) plays them from there. Folder rules can set
+# their own `mode`. Radarr/Sonarr items always download.
+# Default: "download"
+mode = "download"
+
+# In stream mode, ask Put.io for an MP4 version of each new video that isn't
+# MP4, for players that need it.
+# Default: true
+stream_mp4 = true
+
 # Progress bar display style
 # Options: "per-file", "overall", "individual", "rotating", "none"
 # - per-file: Show progress for each file + overall progress
@@ -176,6 +187,7 @@ blocked_extensions = ["exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs",
 #   include / exclude      Only / Never download patterns, as above; "" clears
 #                          an inherited one. Checked before the type filter.
 #   skip                   download nothing in this folder
+#   mode                   "download" or "stream" (keep on Put.io, see mode above)
 #   delete_blocked         delete files the rule blocks from Put.io (one call per sync)
 #   keep                   keep this folder and everything below out of the
 #                          empty-folder cleanup and the doctor ([cleanup] below)
@@ -480,21 +492,24 @@ run_at = "02:30"
 # Authorization = "Bearer ..."
 
 # ============================================================================
-# Lua plugins (feature 028)
+# Plugins (features 028, 029)
 # ============================================================================
-# Sandboxed Lua scripts run on the same events as hooks. ntfy, discord,
+# Sandboxed Lua scripts or WebAssembly modules run on the same events as hooks. ntfy, discord,
 # telegram and pushover notifiers and plex, jellyfin and emby library refresh
 # (feature 031) are bundled; your own go in a folder each under
 # plugins_dir. Settings › Plugins edits these and approves hosts. PLUGINS.md
 # has the details.
 # A top-level key: set it above the first [section] of this file.
 # plugins_dir = "/config/plugins"       # Default: "plugins" next to this file
+# plugin_editor = true                  # edit plugins in Settings › Plugins › Plugin workbench (feature 055). Default: false
 # [[plugins]]
 # name = "ntfy"
 # enabled = true                        # Default: false
 # approved_hosts = ["ntfy.sh"]          # hosts it may call; Settings writes these
+# approved_paths = []                   # folders it may use, "r:/dir" or "w:/dir"; Settings writes these
 # timeout_secs = 10                     # per call, 1 to 60. Default: 10
 # memory_mb = 32                        # 4 to 256. Default: 32
+# hook_timeout_ms = 500                 # per sync rule call, 50 to 5000. Default: 500
 # [plugins.config]
 # topic = "my-nas-8f3k"
 # group_minutes = 5                     # repeats within this time are summed up
@@ -575,7 +590,45 @@ bind = []
 roots = ["downloads"]
 
 # The Put.io folder shown as "Put.io" when roots has "putio" (folder id).
+# Default: the folder the sync mirrors (the account root)
 # putio_folder = 123456789
+
+# ============================================================================
+# Organise on Put.io (feature 023)
+# ============================================================================
+# Moves files stream mode keeps on Put.io into tidy folders. Each move is listed
+# on the Put.io page's Organise panel, where it can be applied, undone or
+# dismissed.
+[organise]
+# Move TV episodes into "<tv_folder>/Show/Season NN/Show - S01E02 - Title.ext",
+# read from the release name.
+# Default: false
+tv = false
+
+# The Put.io folder for shows, from the Put.io root (no leading "/", no "..").
+# Must stay in stream mode, or the move is refused.
+# Default: "TV Shows"
+tv_folder = "TV Shows"
+
+# Move movies into "<movies_folder>/Movie (Year)/Movie (Year).ext", read from
+# the release name (or its release folder). Trailers, featurettes and other
+# extras go into the film's "Trailers", "Featurettes"... folder; samples are
+# left where they are.
+# Default: false
+movies = false
+
+# The Put.io folder for movies, from the Put.io root (no leading "/", no "..").
+# Default: "Movies"
+movies_folder = "Movies"
+
+# "preview" waits for Apply on the Organise panel; "auto" moves at once.
+# Default: "preview"
+apply = "preview"
+
+# Let plugins' folder and rename rules (PLUGINS.md, "Sync rules") place files
+# instead of the built-in names.
+# Default: true
+use_plugins = true
 
 # ============================================================================
 # Notification Configuration
@@ -589,7 +642,7 @@ enabled = false
 # Options: "none", "webhook", "email"
 # - none: No notifications (default)
 # - webhook: Send HTTP POST requests to a webhook URL
-# - email: Send email notifications (not yet implemented)
+# - email: Not used; email is sent from [notifications.smtp] below
 # Default: "none"
 backend = "none"
 
@@ -607,6 +660,41 @@ backend = "none"
 
 # Email address for notifications (when backend = "email", future)
 # email = "your.email@example.com"
+
+# Email notifications (feature 030): the chosen events as plain-text email. The first
+# event of a kind is sent at once; repeats within group_minutes come as one summary.
+# Settings › Notifications edits this and has a test button. Changes apply at once.
+[notifications.smtp]
+# Default: false
+enabled = false
+
+# Mail server host name, such as "smtp.example.com"
+host = ""
+
+# "starttls" (port 587, default): STARTTLS must succeed; nothing falls back to plain text
+# "tls" (port 465): TLS from the first byte
+# "none" (port 25): no encryption, for a relay on your LAN; no login is allowed
+security = "starttls"
+
+# Leave unset for the usual port of the security setting
+# port = 587
+
+# Login; leave username empty for a server that needs none. The password is a secret:
+# the API, the export and the logs show it as "********".
+username = ""
+password = ""
+
+# Sender and recipients
+from = ""            # such as "putio-sync <nas@example.com>"
+to = []              # such as ["me@example.com"]
+
+# Event types to send (see EVENTS.md).
+# Default: ["download.finished", "download.failed", "transfer.failed", "transfer.stuck",
+#           "sync.completed", "storage.low", "doctor.problem"]
+# events = ["download.finished", "doctor.problem"]
+
+# Minutes to group repeats of one kind into a summary; 0 sends each event. Default: 5
+group_minutes = 5
 
 # ============================================================================
 # Logging Configuration

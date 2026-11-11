@@ -59,9 +59,17 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
         include_bytes!("../ui/media_server.js"),
     ),
     ("media_text.js", JS, include_bytes!("../ui/media_text.js")),
+    ("organise.js", JS, include_bytes!("../ui/organise.js")),
+    (
+        "organise_text.js",
+        JS,
+        include_bytes!("../ui/organise_text.js"),
+    ),
+    ("stream_mode.js", JS, include_bytes!("../ui/stream_mode.js")),
     ("hooks.js", JS, include_bytes!("../ui/hooks.js")),
     ("timeline.js", JS, include_bytes!("../ui/timeline.js")),
     ("plugins.js", JS, include_bytes!("../ui/plugins.js")),
+    ("notify.js", JS, include_bytes!("../ui/notify.js")),
     ("verify.js", JS, include_bytes!("../ui/verify.js")),
     (
         "transcription.js",
@@ -158,6 +166,22 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
         JS,
         include_bytes!("../ui/settings/plugins.js"),
     ),
+    (
+        "settings/notifications.js",
+        JS,
+        include_bytes!("../ui/settings/notifications.js"),
+    ),
+    (
+        "settings/plugin_install.js",
+        JS,
+        include_bytes!("../ui/settings/plugin_install.js"),
+    ),
+    (
+        "settings/workbench.js",
+        JS,
+        include_bytes!("../ui/settings/workbench.js"),
+    ),
+    ("workbench.js", JS, include_bytes!("../ui/workbench.js")),
     (
         "settings/subtitles.js",
         JS,

@@ -2,7 +2,10 @@
 
 use std::time::Duration;
 
-use crate::{global, unix_now, RuleDecision, SyncKind, SyncResult, Telemetry};
+use crate::{
+    global, unix_now, Mp4Request, OrganiseMoveKind, OrganiseResult, RuleDecision, SyncKind,
+    SyncResult, Telemetry,
+};
 
 impl Telemetry {
     /// Mark a sync run as in progress, until [`Telemetry::sync_run`] records its end.
@@ -43,6 +46,22 @@ impl Telemetry {
     }
 }
 
+impl Telemetry {
+    /// Count one MP4 request for a stream-mode file (feature 022).
+    pub fn sync_stream_mp4_request(&self, result: Mp4Request) {
+        self.stream_mp4_requests
+            .with_label_values(&[result.as_str()])
+            .inc();
+    }
+
+    /// Count one organiser move outcome (feature 023).
+    pub fn sync_organise_move(&self, kind: OrganiseMoveKind, result: OrganiseResult) {
+        self.organise_moves
+            .with_label_values(&[kind.as_str(), result.as_str()])
+            .inc();
+    }
+}
+
 /// Mark a sync run as in progress on the global instance.
 pub fn started() {
     global().sync_started();
@@ -61,6 +80,16 @@ pub fn file_blocked() {
 /// Count a folder rule decision on the global instance.
 pub fn rule_decision(decision: RuleDecision) {
     global().sync_rule_decision(decision);
+}
+
+/// Count one MP4 request for a stream-mode file on the global instance.
+pub fn stream_mp4_request(result: Mp4Request) {
+    global().sync_stream_mp4_request(result);
+}
+
+/// Count one organiser move outcome on the global instance.
+pub fn organise_move(kind: OrganiseMoveKind, result: OrganiseResult) {
+    global().sync_organise_move(kind, result);
 }
 
 #[cfg(test)]

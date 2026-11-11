@@ -1,0 +1,16 @@
+name = "rust-clean-names"
+version = "1.0.0"
+description = "Drop release tags from video names, written in Rust: Show.S01E02.1080p.WEB.x264-GRP.mkv becomes Show S01E02.mkv"
+runtime = "wasm"
+entry = "plugin.wasm"
+events = ["download.finished"]
+hooks = ["rename"]
+
+[permissions]
+store = true
+
+[[config]]
+key = "extensions"
+type = "string_list"
+label = "Extensions to rename"
+default = ["mkv", "mp4", "avi", "m4v"]

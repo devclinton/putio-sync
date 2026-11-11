@@ -1,0 +1,10 @@
+name = "clean-names"
+version = "1.0.0"
+description = "Drop release tags from video names: Show.S01E02.1080p.WEB.x264-GRP.mkv becomes Show S01E02.mkv"
+hooks = ["rename"]
+
+[[config]]
+key = "extensions"
+type = "string_list"
+label = "Extensions to rename"
+default = ["mkv", "mp4", "avi", "m4v"]

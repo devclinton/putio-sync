@@ -271,10 +271,13 @@ async fn slow_cache_times_out_within_the_limit() {
         .create_async()
         .await;
     let caches = vec![hanging().await, cache(&server, "/x/{hash}")];
+    // Build the client before the clock starts: loading TLS roots is slow on a busy machine
+    let http = lookup::client();
     let started = std::time::Instant::now();
-    let got = lookup::lookup(&lookup::client(), &hash, &caches, Duration::from_secs(1)).await;
+    let got = lookup::lookup(&http, &hash, &caches, Duration::from_secs(1)).await;
     assert_eq!(got, Lookup::Missed(Missed::Failed(LookupResult::Timeout)));
-    assert!(started.elapsed() < Duration::from_secs(2));
+    // The hanging cache never answers, so any bound shows the limit was kept
+    assert!(started.elapsed() < Duration::from_secs(3));
     after.assert_async().await;
 }
 

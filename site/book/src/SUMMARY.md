@@ -29,6 +29,7 @@
 - [Event reference](events.md)
 - [Plugins](plugins-overview.md)
 - [Plugin reference](plugins.md)
+- [Writing and debugging plugins](plugin-workbench.md)
 
 # Reference
 

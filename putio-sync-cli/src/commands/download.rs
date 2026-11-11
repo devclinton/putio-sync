@@ -117,6 +117,7 @@ pub async fn execute_download(
         retry_initial_delay_secs: old_config.retry_initial_delay_secs,
         workers: workers_count,
         delete_after_download,
+        stream_mp4: old_config.stream_mp4,
         rules: putio_sync_core::rules::RuleSet::from_config(&old_config),
         verify: putio_sync_download::manager::VerifySettings::from(&old_config),
     };
