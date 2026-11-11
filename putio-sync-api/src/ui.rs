@@ -69,6 +69,7 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("hooks.js", JS, include_bytes!("../ui/hooks.js")),
     ("timeline.js", JS, include_bytes!("../ui/timeline.js")),
     ("plugins.js", JS, include_bytes!("../ui/plugins.js")),
+    ("notify.js", JS, include_bytes!("../ui/notify.js")),
     ("verify.js", JS, include_bytes!("../ui/verify.js")),
     (
         "transcription.js",
@@ -164,6 +165,11 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
         "settings/plugins.js",
         JS,
         include_bytes!("../ui/settings/plugins.js"),
+    ),
+    (
+        "settings/notifications.js",
+        JS,
+        include_bytes!("../ui/settings/notifications.js"),
     ),
     (
         "settings/plugin_install.js",

@@ -115,14 +115,12 @@ release target still builds). Per-plugin folder permissions (`putio.fs`) for
 both runtimes, and install from a file or URL. Rust and Go examples are in
 `examples/plugins/`; no JavaScript example yet. See `specs/029-wasm-plugins/`.
 
-### 030 Notifications
+### 030 Notifications (done)
 
-Send notifications for finished, failed and stuck downloads, failed transfers,
-low Put.io storage and doctor problems. The ntfy, Discord, Telegram and
-Pushover channels already exist as bundled plugins from 028 (each picks its
-events, has a test button, and groups repeats). Still to do: email (SMTP),
-which cannot be a plugin, stuck-download and doctor-problem events, and a
-simpler Notifications page over the bundled channels.
+Email over SMTP (lettre with rustls, about 0.85 MB), `transfer.stuck` and
+`doctor.problem` events for hooks and both plugin runtimes, and a Settings ›
+Notifications page over email and the bundled ntfy, Discord, Telegram and
+Pushover plugins. See `specs/030-notifications/`.
 
 ### 035 Mobile app
 

@@ -37,6 +37,7 @@ use axum::{
     routing::{get, post, put},
     Json, Router,
 };
+use putio_sync_core::email::SmtpConfig;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -224,7 +225,7 @@ pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
         group(
             "notifications",
             json(serde_json::to_value(notification_view(&defaults))),
-            (&[], ""),
+            live_notifications(),
         ),
         group(
             "precheck",
@@ -450,6 +451,21 @@ pub struct NotificationSettings {
     pub backend: String,
     pub webhook_url: Option<String>,
     pub email: Option<String>,
+    /// Email over SMTP (feature 030), password masked; left out keeps the current one
+    #[serde(default)]
+    pub smtp: Option<SmtpConfig>,
+    /// What the email channel has sent; read-only
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub smtp_status: Option<putio_sync_notify::EmailStatus>,
+}
+
+/// The result of a test email
+#[derive(Debug, Serialize)]
+pub struct EmailTestResult {
+    /// Whether the server took it
+    pub ok: bool,
+    /// Why it failed
+    pub error: Option<String>,
 }
 
 /// Put.io empty-folder cleanup settings (`[cleanup]`)
@@ -640,6 +656,7 @@ pub fn router() -> Router<AppState> {
         .route("/logging", put(update_logging_settings))
         .route("/notifications", get(get_notification_settings))
         .route("/notifications", put(update_notification_settings))
+        .route("/notifications/test", post(test_email))
         .route("/cleanup", get(get_cleanup_settings))
         .route("/cleanup", put(update_cleanup_settings))
         .route("/storage", get(get_storage_settings))
@@ -714,10 +731,12 @@ async fn preview_notifications(
     settings: Result<Json<NotificationSettings>, JsonRejection>,
 ) -> Result<Json<Preview>, ApiError> {
     let settings = body(settings)?;
-    Ok(preview(&state, notification_view, (&[], ""), |c| {
-        apply_notifications(settings, c)
-    })
-    .await)
+    Ok(
+        preview(&state, notification_view, live_notifications(), |c| {
+            apply_notifications(settings, c)
+        })
+        .await,
+    )
 }
 
 /// POST /settings/cleanup/preview
@@ -978,6 +997,8 @@ fn notification_view(config: &Config) -> NotificationSettings {
         backend: format!("{:?}", config.notifications.backend),
         webhook_url: config.notifications.webhook_url.clone(),
         email: config.notifications.email.clone(),
+        smtp: Some(config.notifications.smtp.masked()),
+        smtp_status: None,
     }
 }
 
@@ -1249,7 +1270,9 @@ pub(crate) fn live_logging(state: &AppState) -> (&'static [&'static str], &'stat
 async fn get_notification_settings(
     State(state): State<AppState>,
 ) -> Result<Json<NotificationSettings>, ApiError> {
-    Ok(Json(notification_view(&*state.config.read().await)))
+    let mut view = notification_view(&*state.config.read().await);
+    view.smtp_status = Some(state.email.status());
+    Ok(Json(view))
 }
 
 /// Update notification settings
@@ -1260,14 +1283,45 @@ async fn update_notification_settings(
     settings: Result<Json<NotificationSettings>, JsonRejection>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
     let settings = body(settings)?;
-    // Notifications are set up at startup, so every change needs a restart
-    let changed = update(&state, notification_view, |config| {
+    let before = state.config.read().await.notifications.smtp.clone();
+    // Email applies now; the legacy backend is set up at startup
+    let mut changed = update(&state, notification_view, |config| {
         apply_notifications(settings, config)
     })
     .await?;
+    let smtp = state.config.read().await.notifications.smtp.clone();
+    // The view masks the password, so a new password alone shows no change there
+    if smtp != before && !changed.iter().any(|f| f == "smtp") {
+        changed.push("smtp".to_string());
+    }
+    state.email.configure(smtp);
 
     Ok(Json(SuccessResponse {
-        message: saved_message("Notification", &changed, &[], "", &[]),
+        message: {
+            let (live, when) = live_notifications();
+            saved_message("Notification", &changed, live, when, &[])
+        },
+    }))
+}
+
+/// Send a test email with the settings in the body, saved or not; a masked password is
+/// the stored one
+///
+/// POST /settings/notifications/test
+async fn test_email(
+    State(state): State<AppState>,
+    smtp: Result<Json<SmtpConfig>, JsonRejection>,
+) -> Result<Json<EmailTestResult>, ApiError> {
+    let smtp = body(smtp)?.unmasked(&state.config.read().await.notifications.smtp);
+    let smtp = SmtpConfig {
+        enabled: true,
+        ..smtp
+    };
+    smtp.validate().map_err(invalid)?;
+    let result = state.email.test(&smtp).await;
+    Ok(Json(EmailTestResult {
+        ok: result.is_ok(),
+        error: result.err(),
     }))
 }
 
@@ -1280,6 +1334,9 @@ fn apply_notifications(
     config.notifications.enabled = settings.enabled;
     config.notifications.webhook_url = settings.webhook_url;
     config.notifications.email = settings.email;
+    if let Some(smtp) = settings.smtp {
+        config.notifications.smtp = smtp.unmasked(&config.notifications.smtp);
+    }
     Ok(())
 }
 
@@ -1393,6 +1450,11 @@ fn apply_hooks(settings: HooksSettings, config: &mut Config) -> Result<(), ApiEr
     config.hooks =
         putio_sync_core::hooks::unmask(&settings.hooks, &config.hooks).map_err(invalid)?;
     Ok(())
+}
+
+/// Email applies now; the legacy backend is set up at startup
+pub(crate) fn live_notifications() -> (&'static [&'static str], &'static str) {
+    (&["smtp"], "Applies now")
 }
 
 /// Hooks apply without a restart under both engines

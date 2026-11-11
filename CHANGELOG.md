@@ -12,6 +12,21 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- Email notifications: `[notifications.smtp]` sends the events you choose as plain-text
+  email through your mail server, over STARTTLS (the default, never falling back to plain
+  text), TLS or, for a relay on your LAN, no encryption and no login. Repeats of one kind
+  are grouped into a summary like the notifier plugins do. The password is masked like
+  other secrets.
+- Two new events: `transfer.stuck`, once when a Put.io transfer stalls, and
+  `doctor.problem`, once when a doctor check becomes a problem. Event hooks and Lua and
+  WebAssembly plugins get them, and the bundled ntfy, Discord, Telegram and Pushover
+  notifiers send both by default.
+- Settings › Notifications: email settings with a test button, and the bundled notifier
+  plugins on one page, each with its state, settings at a glance, events and a test
+  button. It replaces the notifications card in Settings › General.
+
 ## [0.2.2] - 2026-11-10
 
 ### Added

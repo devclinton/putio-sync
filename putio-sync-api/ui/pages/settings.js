@@ -1,9 +1,10 @@
 // Settings (features 015, 046, 048): every settings card, in sections shown one at a time.
 // `#/settings/<section>?field=<address>` opens a section and jumps to a field. All sections
 // load at once, so search covers every field and the section list marks unsaved changes and
-// problems anywhere. Advanced fields are hidden per section until Show advanced is on.
+// problems anywhere; Notifications (030) loads when opened. Advanced fields are hidden per
+// section until Show advanced is on.
 
-import { h, navigate } from "../app.js";
+import { h, navigate, toastError } from "../app.js";
 import { SECTIONS, fieldId, sectionOf, sectionOfKey, settingsHref } from "../settings/sections.js";
 import { assistant, riskList } from "../settings/form.js";
 import * as general from "../settings/general.js";
@@ -16,6 +17,7 @@ import * as media from "../settings/media.js";
 import { advancedCards, networkCards } from "../settings/advanced.js";
 
 const BUILD = { general: general.cards, putio: putio.cards, downloads: downloads.cards, rules: filters.cards, integrations: integrations.cards, plugins: plugins.cards, "media-server": media.cards, network: networkCards, advanced: advancedCards };
+const LAZY = { notifications: () => import("../settings/notifications.js") };
 const ADV_KEY = "putio-sync.settings.advanced";
 
 let seq = 0;
@@ -64,8 +66,10 @@ export function mount(el, params) {
       "section",
       { class: "settings-panel", dataset: { section: s.id }, hidden: true },
       h("div", { class: "panel-head" }, h("div", {}, h("h2", { text: s.title }), h("p", { class: "muted", text: s.help })), advRow),
-      h("div", { class: "stack" }, BUILD[s.id](ctx)),
+      h("div", { class: "stack" }, LAZY[s.id] ? [] : BUILD[s.id](ctx)),
     );
+    let lazy;
+    const load = () => LAZY[s.id] && (lazy ||= LAZY[s.id]().then((m) => mine === seq && node.lastChild.append(...m.cards(ctx)), (e) => toastError(e, (lazy = null))));
     const showAdv = (on) => {
       node.classList.toggle("show-adv", on);
       toggle.checked = on;
@@ -82,7 +86,7 @@ export function mount(el, params) {
     });
     showAdv(Boolean(adv[s.id]));
     const link = h("a", { href: settingsHref(s.id) }, h("span", { text: s.title }), mark, count);
-    panels[s.id] = { node, link, mark, count, advRow, toggleLabel, showAdv };
+    panels[s.id] = { node, link, mark, count, advRow, toggleLabel, showAdv, load };
     return link;
   });
 
@@ -185,6 +189,7 @@ export function mount(el, params) {
       if (x.id === s.id) p.link.setAttribute("aria-current", "page");
       else p.link.removeAttribute("aria-current");
     }
+    panels[s.id].load();
     // The pills scroll sideways at phone width; keep the current one in view
     const link = panels[s.id].link;
     const nav = link.parentElement;
