@@ -12,6 +12,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-10
+
 ### Added
 
 - A project website at <https://devclinton.github.io/putio-sync/>: a landing page with

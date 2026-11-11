@@ -1,7 +1,7 @@
 name: putio-sync
 services:
   putio-sync:
-    image: ghcr.io/devclinton/putio-sync:0.2.1
+    image: ghcr.io/devclinton/putio-sync:0.2.2
     container_name: putio-sync
     restart: unless-stopped
     user: "$PUID:$PGID"
@@ -50,7 +50,7 @@ x-casaos:
   port_map: "15432"
   scheme: http
   category: Media
-  version: "0.2.1"
+  version: "0.2.2"
   architectures:
     - amd64
     - arm64
