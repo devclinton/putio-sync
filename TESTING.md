@@ -62,8 +62,9 @@ brew install putio-sync
 
 **Procedure**:
 ```powershell
-# 1. Install via Winget
-winget install putio.putio-sync
+# 1. Install from the local manifests (not in winget-pkgs yet)
+winget settings --enable LocalManifestFiles
+winget install --manifest packaging/winget/manifests/
 
 # 2. Verify installation
 where.exe putio-sync
@@ -74,11 +75,11 @@ putio-sync --help
 putio-sync login --help
 
 # 4. Test uninstallation
-winget uninstall putio.putio-sync
+winget uninstall devclinton.putio-sync
 where.exe putio-sync  # Should return nothing
 
 # 5. Reinstall for further testing
-winget install putio.putio-sync
+winget install --manifest packaging/winget/manifests/
 ```
 
 **Expected Results**:
@@ -146,36 +147,34 @@ sudo snap install putio-sync
 
 **Procedure**:
 ```bash
-# 1. Install from Flathub (if published) or bundle
-flatpak install flathub com.putio.PutioSync
-# OR from bundle:
-flatpak install putio-sync-VERSION.flatpak
+# 1. Install the bundle (putio-sync isn't on Flathub)
+flatpak install --user putio-sync.flatpak
 
 # 2. Verify installation
 flatpak list | grep putio
-flatpak run com.putio.PutioSync --version
+flatpak run io.github.devclinton.putio-sync --version
 
 # 3. Create alias for convenience
-alias putio-sync='flatpak run com.putio.PutioSync'
+alias putio-sync='flatpak run io.github.devclinton.putio-sync'
 
 # 4. Test basic functionality
-flatpak run com.putio.PutioSync --help
-flatpak run com.putio.PutioSync login --help
+flatpak run io.github.devclinton.putio-sync --help
+flatpak run io.github.devclinton.putio-sync login --help
 
 # 5. Test permissions
-flatpak run com.putio.PutioSync files list
+flatpak run io.github.devclinton.putio-sync files list
 
 # 6. Test uninstallation
-flatpak uninstall com.putio.PutioSync
+flatpak uninstall io.github.devclinton.putio-sync
 flatpak list | grep putio  # Should return nothing
 
 # 7. Reinstall for further testing
-flatpak install flathub com.putio.PutioSync
+flatpak install --user putio-sync.flatpak
 ```
 
 **Expected Results**:
 - ✅ Installation completes without errors
-- ✅ Application runs via `flatpak run com.putio.PutioSync`
+- ✅ Application runs via `flatpak run io.github.devclinton.putio-sync`
 - ✅ Version matches release version
 - ✅ Sandboxing works correctly
 - ✅ Filesystem access works as expected

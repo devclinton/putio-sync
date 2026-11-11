@@ -38,6 +38,7 @@ pub mod error;
 pub mod held;
 pub mod history;
 pub mod models;
+pub mod organise_moves;
 pub mod pipeline;
 pub mod queue;
 pub mod releases;
@@ -45,6 +46,7 @@ pub mod schema;
 pub mod sources;
 pub mod stats;
 pub mod storage;
+pub mod stream_files;
 pub mod torrents;
 pub mod updates;
 pub mod verify;
@@ -56,6 +58,7 @@ pub use downloads::DownloadRepository;
 pub use error::{DbError, DbResult};
 pub use held::{Held, HeldRepository, HoldStats, NewHeld};
 pub use history::{DailyTotals, HistoryRepository};
+pub use organise_moves::{MoveStatus, NewMove, OrganiseMove, OrganiseMovesRepository};
 pub use pipeline::{
     DeferredDelete, DeferredDeletesRepository, FinishedRepository, FlagsRepository, HoldsRepository,
 };
@@ -67,6 +70,7 @@ pub use releases::{
 pub use sources::SourcesRepository;
 pub use stats::{ExtensionStats, StatsRepository};
 pub use storage::{NewRunFile, StorageRepository, StorageRun, StorageRunFile};
+pub use stream_files::{StreamFile, StreamFilesRepository};
 pub use torrents::ProcessedTorrentsRepository;
 pub use updates::{UpdateState, UpdatesRepository};
 pub use verify::{NewProblem, RunCounts, VerifyProblem, VerifyRepository, VerifyRun};
@@ -257,6 +261,16 @@ impl Database {
         RuleDecisionsRepository::new(&self.pool)
     }
 
+    /// Get a stream files repository (feature 022)
+    pub fn stream_files(&self) -> StreamFilesRepository<'_> {
+        StreamFilesRepository::new(&self.pool)
+    }
+
+    /// Get an organise moves repository (feature 023)
+    pub fn organise_moves(&self) -> OrganiseMovesRepository<'_> {
+        OrganiseMovesRepository::new(&self.pool)
+    }
+
     /// Get a processed torrents repository
     pub fn processed_torrents(&self) -> ProcessedTorrentsRepository<'_> {
         ProcessedTorrentsRepository::new(&self.pool)
@@ -426,6 +440,16 @@ impl Database {
             (
                 schema::CREATE_RULE_DECISIONS_TABLE,
                 "Failed to create rule_decisions table",
+            ),
+            // Stream mode (feature 022)
+            (
+                schema::CREATE_STREAM_FILES_TABLE,
+                "Failed to create stream_files table",
+            ),
+            // Organise on Put.io (feature 023)
+            (
+                schema::CREATE_ORGANISE_MOVES_TABLE,
+                "Failed to create organise_moves table",
             ),
             // Active transfers pipeline (feature 039)
             (

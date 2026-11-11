@@ -300,7 +300,7 @@ docker-cache-info: ## Show Docker cache information
 # Package Build Targets
 # ============================================================================
 
-PACKAGE_VERSION ?= 0.2.1
+PACKAGE_VERSION ?= 0.2.2
 DEB_ARCH ?= amd64
 
 build-deb: ## Build Debian package (use DEB_ARCH=amd64|arm64|armhf PACKAGE_VERSION=x.y.z)
@@ -332,8 +332,8 @@ build-flatpak: ## Build Flatpak package
 	@echo "Generating cargo sources..."
 	bash packaging/flatpak/generate-cargo-sources.sh
 	@echo "Building Flatpak..."
-	flatpak-builder --force-clean --repo=repo build-flatpak com.putio.PutioSync.yaml
-	flatpak build-bundle repo putio-sync.flatpak com.putio.PutioSync
+	flatpak-builder --force-clean --repo=repo build-flatpak io.github.devclinton.putio-sync.yaml
+	flatpak build-bundle repo putio-sync.flatpak io.github.devclinton.putio-sync
 	@echo "Flatpak bundle built: putio-sync.flatpak"
 
 build-flatpak-clean: ## Clean Flatpak build artifacts

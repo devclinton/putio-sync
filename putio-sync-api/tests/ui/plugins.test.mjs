@@ -1,5 +1,6 @@
 // Features 028, 031: the Settings plugin editor's rows, hosts, labels, path rules and
-// settings actions in ui/plugins.js; feature 048's tabs, list and Enable wording.
+// settings actions in ui/plugins.js; feature 048's tabs, list and Enable wording; 029's
+// folder approvals.
 // Run with `node --test`; tests/ui_js.rs runs it in cargo test.
 
 import assert from "node:assert/strict";
@@ -7,7 +8,7 @@ import { test } from "node:test";
 import {
   FLOW_LIMIT_MS, MASK, applyAnswer, choiceFields, fromStatus, hostsFor, nextWait, overrides,
   parsePathMap, pathMapText, runLabel, stateLabel, tick, ticked, toSettings,
-  approvalText, split, summary, withEnabled, carryFlow, linkLabel,
+  approvalText, split, summary, withEnabled, carryFlow, linkLabel, foldersText,
 } from "../../ui/plugins.js";
 
 const ntfy = {
@@ -52,6 +53,15 @@ test("a plugin with no settings starts off with its defaults", () => {
   assert.deepEqual(row.secrets.token, { set: false, value: "" });
   // Defaults are left out of the save
   assert.deepEqual(toSettings(row), { name: "ntfy", enabled: false, timeout_secs: 10, memory_mb: 32 });
+});
+
+test("a plugin with sync rules saves their time limit", () => {
+  const filter = { name: "min-size-filter", hooks: ["filter"], config_fields: [] };
+  const row = fromStatus(filter, null);
+  assert.equal(row.hook_timeout_ms, 500);
+  row.hook_timeout_ms = "250";
+  assert.deepEqual(toSettings(row), { name: "min-size-filter", enabled: false, timeout_secs: 10, memory_mb: 32, hook_timeout_ms: 250 });
+  assert.equal(fromStatus(filter, { name: "min-size-filter", hook_timeout_ms: 1200 }).hook_timeout_ms, 1200);
 });
 
 test("settings round trip and a kept secret sends the mask", () => {
@@ -203,3 +213,23 @@ test("linkLabel is host and path", () => {
   assert.equal(linkLabel("https://example.com/"), "example.com");
   assert.equal(linkLabel("not a url"), "not a url");
 });
+
+test("folders a plugin may use are named on Enable and kept on save (029)", () => {
+  const sorter = {
+    name: "sorter",
+    permissions: { http: { hosts: [], host_from_config: [] }, store: false },
+    config_fields: [],
+    hosts_needed: [],
+    paths_needed: ["r:/media/in", "w:/media/out"],
+  };
+  assert.equal(foldersText(sorter), "read /media/in; read and write /media/out");
+  assert.equal(foldersText({ ...sorter, paths_needed: [] }), "");
+  const row = fromStatus(sorter, { name: "sorter", approved_paths: ["r:/media/in"] });
+  assert.equal(
+    approvalText(sorter, row),
+    "sorter makes no network calls. It may read /media/in; read and write /media/out; turning it on approves these folders.",
+  );
+  assert.deepEqual(toSettings(row).approved_paths, ["r:/media/in"]);
+  assert.equal(toSettings(fromStatus(sorter, null)).approved_paths, undefined);
+});
+

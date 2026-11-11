@@ -72,19 +72,9 @@ brew untap devclinton/putio-sync
 
 ## Windows
 
-### Windows Package Manager (Recommended)
+putio-sync isn't in the Windows Package Manager (winget) yet; use the installer or the zip.
 
-**Requirements**: Windows 10 1809+ or Windows 11
-
-```powershell
-# Install
-winget install putio.putio-sync
-
-# Verify installation
-putio-sync --version
-```
-
-### Installer
+### Installer (Recommended)
 
 Download `putio-sync-X.Y.Z-windows-x64-setup.exe` (or `-arm64-setup.exe`) from the
 [latest release](https://github.com/devclinton/putio-sync/releases/latest) and run it. It
@@ -122,19 +112,18 @@ code-signed, so SmartScreen may ask first: click **More info › Run anyway**. U
 
 ### Update
 
-```powershell
-winget upgrade putio.putio-sync
-```
+Run the newer installer over the old one, or replace `putio-sync.exe` from the newer zip.
 
 ### Uninstall
 
-```powershell
-winget uninstall putio.putio-sync
-```
+Installer: **Settings › Apps › Put.io Sync › Uninstall**. Zip: delete the folder and remove
+it from PATH.
 
 ---
 
 ## Linux
+
+<a id="snap"></a>
 
 ### Snap (All Distributions)
 
@@ -187,6 +176,8 @@ putio-sync --version
 ```
 
 ---
+
+<a id="debian"></a>
 
 ### Debian/Ubuntu
 
@@ -355,6 +346,8 @@ says "No LAN interface: players can't find it".
 
 ## Home servers
 
+<a id="unraid"></a>
+
 putio-sync runs as a container, so home-server app stores install the same image:
 
 - **Unraid**: search for putio-sync in Community Applications (once listed), or add
@@ -473,17 +466,6 @@ brew update
 
 # Reinstall
 brew reinstall putio-sync
-```
-
-### Winget not found
-
-Install Windows Package Manager from Microsoft Store or:
-```powershell
-# Check Windows version (need 1809+)
-winver
-
-# Install App Installer from Microsoft Store
-# Or download from: https://aka.ms/getwinget
 ```
 
 ---

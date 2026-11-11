@@ -29,11 +29,12 @@ jobs:
       - name: Publish to winget-pkgs using winget-releaser
         uses: vedantmgoyal2009/winget-releaser@v2
         with:
-          identifier: putio.putio-sync
+          identifier: devclinton.putio-sync
           version: ${{ steps.get_version.outputs.version }}
           installers-regex: 'putio-sync-.*-windows-.*\.zip$'
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fork-user: github-actions[bot]
+          # A classic PAT with public_repo: the action forks winget-pkgs into
+          # the token owner's account and opens the PR from there
+          token: ${{ secrets.WINGET_TOKEN }}
           max-versions-to-keep: 5
 
       - name: Create submission summary
@@ -44,10 +45,10 @@ jobs:
           echo "## Winget Submission Created" >> $env:GITHUB_STEP_SUMMARY
           echo "" >> $env:GITHUB_STEP_SUMMARY
           echo "- **Version**: $version" >> $env:GITHUB_STEP_SUMMARY
-          echo "- **Package**: putio.putio-sync" >> $env:GITHUB_STEP_SUMMARY
+          echo "- **Package**: devclinton.putio-sync" >> $env:GITHUB_STEP_SUMMARY
           echo "- **Status**: PR created to microsoft/winget-pkgs" >> $env:GITHUB_STEP_SUMMARY
           echo "" >> $env:GITHUB_STEP_SUMMARY
           echo "### Next Steps" >> $env:GITHUB_STEP_SUMMARY
           echo "1. Monitor the PR in [winget-pkgs](https://github.com/microsoft/winget-pkgs/pulls)" >> $env:GITHUB_STEP_SUMMARY
           echo "2. Address any validation errors or review feedback" >> $env:GITHUB_STEP_SUMMARY
-          echo "3. Once merged, the package will be available via ``winget install putio.putio-sync``" >> $env:GITHUB_STEP_SUMMARY
+          echo "3. Once merged, the package will be available via ``winget install devclinton.putio-sync``" >> $env:GITHUB_STEP_SUMMARY

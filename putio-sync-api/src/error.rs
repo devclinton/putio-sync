@@ -25,6 +25,8 @@ pub enum ApiError {
     Internal(String),
     /// Internal error (alias for Internal)
     InternalError(String),
+    /// Turned off or not allowed (403)
+    Forbidden(String),
     /// Conflict with the current state (409)
     Conflict(String),
     /// A dependency the route needs is missing (503)
@@ -60,6 +62,7 @@ impl fmt::Display for ApiError {
             ApiError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
             ApiError::Internal(msg) => write!(f, "Internal error: {}", msg),
             ApiError::InternalError(msg) => write!(f, "Internal error: {}", msg),
+            ApiError::Forbidden(msg) => write!(f, "Forbidden: {}", msg),
             ApiError::Conflict(msg) => write!(f, "Conflict: {}", msg),
             ApiError::ServiceUnavailable(msg) => write!(f, "Service unavailable: {}", msg),
             ApiError::Unprocessable(msg) => write!(f, "Unprocessable: {}", msg),
@@ -110,6 +113,7 @@ impl IntoResponse for ApiError {
             ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
             ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
             ApiError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+            ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             ApiError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg.clone()),
             ApiError::Unprocessable(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg.clone()),

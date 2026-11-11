@@ -1,5 +1,6 @@
 //! Download manager for orchestrating downloads
 
+use crate::arrived::{self, ArrivedFile, ArrivedStep};
 use crate::error::{DownloadError, DownloadResult};
 use crate::files::{
     check_resume, cleanup_partial, crc32_file, crc32_prefix, crc_equal, create_temp_path,
@@ -20,8 +21,9 @@ use putio_sync_core::bandwidth::{
 use putio_sync_core::config::{ExistingFile, ExistingOutcome};
 use putio_sync_core::events::{self, Payload};
 use putio_sync_core::redact;
-use putio_sync_core::rules::{extension, Decision, Effective, RuleSet};
+use putio_sync_core::rules::{extension, Decision, Effective, Reason, RuleSet};
 use putio_sync_core::stall::StallTracker;
+use putio_sync_core::sync_hooks::{FilterAnswer, Hook, HookFile, SyncHooks};
 use putio_sync_db::models::{DownloadSource, DownloadStatus, Origin, QueueStatus, SourceType};
 use putio_sync_db::pipeline::{FileState, NAS_DOWNLOADS_PAUSED, TRANSFER_EVENTS_SEEN};
 use putio_sync_db::Database;
@@ -62,6 +64,8 @@ pub struct DownloadConfig {
     pub workers: usize,
     /// Delete files from Put.io after successful download
     pub delete_after_download: bool,
+    /// Ask Put.io for an MP4 version of streamed videos (feature 022)
+    pub stream_mp4: bool,
     /// Folder rules with the global `blocked_extensions` as the root filter
     pub rules: RuleSet,
     /// Download verification (feature 034)
@@ -138,6 +142,7 @@ impl Default for DownloadConfig {
             retry_initial_delay_secs: 2,
             workers: 1,
             delete_after_download: false,
+            stream_mp4: true,
             rules: RuleSet::default(),
             verify: VerifySettings::default(),
         }
@@ -161,6 +166,7 @@ impl From<&putio_sync_core::config::DownloadConfig> for DownloadConfig {
             retry_initial_delay_secs: settings.retry_initial_delay_secs,
             workers: settings.workers,
             delete_after_download: settings.delete_after_download,
+            stream_mp4: settings.stream_mp4,
             rules: RuleSet::from_config(settings),
             verify: VerifySettings::from(settings),
         }
@@ -335,6 +341,8 @@ pub struct SyncStats {
     pub files_blocked: usize,
     /// Type-blocked files deleted from Put.io by `delete_blocked`
     pub files_deleted: usize,
+    /// Files kept on Put.io by stream mode (feature 022)
+    pub files_streamed: usize,
 }
 
 /// What `enqueue_tree_report` did with one file
@@ -348,6 +356,8 @@ pub enum TreeDecision {
     Blocked(String),
     /// A folder rule skips its folder
     Skipped,
+    /// Stream mode keeps it on Put.io (feature 022)
+    Streamed,
     /// Adding it to the queue failed
     Failed,
 }
@@ -422,9 +432,11 @@ pub struct RulePreview {
     pub blocked: usize,
     /// Files in skipped folders
     pub skipped: usize,
+    /// Files kept on Put.io by stream mode (feature 022)
+    pub stream: usize,
     /// Blocked files that would be deleted from Put.io
     pub would_delete: usize,
-    /// Blocked and skipped files, the first `PREVIEW_ITEMS`
+    /// Blocked, skipped and streamed files, the first `PREVIEW_ITEMS`
     pub items: Vec<PreviewItem>,
     /// More blocked or skipped files than `items` holds
     pub truncated: bool,
@@ -615,6 +627,10 @@ pub struct DownloadManager {
     /// Holds back the Put.io delete of a downloaded file while the pipeline works on it
     /// (feature 025)
     delete_gate: Arc<std::sync::RwLock<Option<Arc<dyn RemoteDeleteGate>>>>,
+    /// What runs once for each file stream mode keeps on Put.io (feature 022)
+    arrived_steps: Arc<std::sync::RwLock<Vec<Arc<dyn ArrivedStep>>>>,
+    /// The plugins' sync rules: filter, rename and folder (feature 028)
+    sync_hooks: Arc<std::sync::RwLock<Option<Arc<dyn SyncHooks>>>>,
 }
 
 /// What [`DownloadManager::delete_remote`] did
@@ -724,6 +740,8 @@ impl DownloadManager {
             verifier: crate::verify::VerifyRunner::default(),
             redirect: Arc::new(std::sync::RwLock::new(None)),
             delete_gate: Arc::new(std::sync::RwLock::new(None)),
+            arrived_steps: Arc::new(std::sync::RwLock::new(Vec::new())),
+            sync_hooks: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -762,6 +780,8 @@ impl DownloadManager {
             verifier: crate::verify::VerifyRunner::default(),
             redirect: Arc::new(std::sync::RwLock::new(None)),
             delete_gate: Arc::new(std::sync::RwLock::new(None)),
+            arrived_steps: Arc::new(std::sync::RwLock::new(Vec::new())),
+            sync_hooks: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -1136,9 +1156,56 @@ impl DownloadManager {
         *self.redirect.write().unwrap() = Some(redirect);
     }
 
+    /// Let plugins filter, rename and place the files of a sync (feature 028)
+    pub fn set_sync_hooks(&self, hooks: Arc<dyn SyncHooks>) {
+        *self.sync_hooks.write().unwrap() = Some(hooks);
+    }
+
+    /// The sync hooks, when one provides `hook`
+    pub(crate) fn hooks_for(&self, hook: Hook) -> Option<Arc<dyn SyncHooks>> {
+        self.sync_hooks
+            .read()
+            .unwrap()
+            .clone()
+            .filter(|h| h.provides(hook))
+    }
+
+    /// The local folder and name plugins give a download, `None` for the usual ones. The
+    /// *arr's files keep theirs; a numbered name from an earlier attempt is kept.
+    async fn placed(&self, file: &DownloadFile) -> (Option<String>, Option<String>) {
+        if file.fixed_path {
+            return (None, None);
+        }
+        let asked = hook_file(
+            file.file_id,
+            &file.filename,
+            file.file_size,
+            &file.relative_path,
+            &Decision::Download,
+        );
+        let folder = match self.hooks_for(Hook::Folder) {
+            Some(hooks) => hooks.folder(&asked).await,
+            None => None,
+        };
+        let name = match self.hooks_for(Hook::Rename) {
+            Some(hooks) if file.save_as.is_none() => hooks.rename(&asked).await,
+            _ => None,
+        };
+        if folder.is_some() || name.is_some() {
+            debug!(file_id = file.file_id, folder = ?folder, name = ?name, "Plugin placed download");
+        }
+        (folder, name)
+    }
+
     /// Let the pipeline hold back deletes from Put.io (feature 025)
     pub fn set_delete_gate(&self, gate: Arc<dyn RemoteDeleteGate>) {
         *self.delete_gate.write().unwrap() = Some(gate);
+    }
+
+    /// The steps each newly streamed file gets, in order (feature 022). Files already
+    /// recorded keep the steps they were given.
+    pub fn set_arrived_steps(&self, steps: Vec<Arc<dyn ArrivedStep>>) {
+        *self.arrived_steps.write().unwrap() = steps;
     }
 
     /// Delete files from Put.io that the pipeline held back and now released. Each id is
@@ -1220,13 +1287,16 @@ impl DownloadManager {
             callback.on_file_start(file_id, &filename, file.file_size);
         }
 
-        // Construct the folder, preserving directory structure. The pipeline may stage it (038).
+        // Construct the folder, preserving directory structure. A plugin may place or
+        // rename it (028), then the pipeline may stage it (038).
+        let (placed, renamed) = self.placed(&file).await;
+        let folder = placed.unwrap_or_else(|| file.relative_path.clone());
         let redirect = self.redirect.read().unwrap().clone();
         let relative_path = match redirect {
-            Some(r) => r.redirect(file_id, &file.relative_path).await,
+            Some(r) => r.redirect(file_id, &folder).await,
             None => None,
         }
-        .unwrap_or_else(|| file.relative_path.clone());
+        .unwrap_or(folder);
         let dir = if relative_path.is_empty() {
             config.target_directory.clone()
         } else {
@@ -1245,6 +1315,7 @@ impl DownloadManager {
         let name = file
             .save_as
             .as_deref()
+            .or(renamed.as_deref())
             .map(sanitize_filename)
             .unwrap_or_else(|| filename.clone());
         let mut target_path = dir.join(&name);
@@ -1928,6 +1999,7 @@ impl DownloadManager {
                 (SyncKind::Skipped, stats.files_skipped),
                 (SyncKind::Blocked, stats.files_blocked),
                 (SyncKind::Failed, stats.files_failed),
+                (SyncKind::Streamed, stats.files_streamed),
             ],
         );
         events::emit(Payload::SyncCompleted(events::SyncCompleted {
@@ -1947,7 +2019,7 @@ impl DownloadManager {
 
     async fn sync_downloads_inner(&self) -> DownloadResult<SyncStats> {
         info!("Starting download sync...");
-        self.enqueue_tree(0).await
+        Ok(self.enqueue_tree_inner(0, false, true).await?.stats)
     }
 
     /// Queue every file under a Put.io folder, or a single file, through the same
@@ -1964,10 +2036,22 @@ impl DownloadManager {
     /// root's name on disk. The *arr download client (feature 011) uses it to know which
     /// files an item waits for, and passes `fixed_path`: its files then overwrite an
     /// existing file rather than get a numbered name (feature 040, R6).
+    ///
+    /// Stream mode (feature 022) is not honoured here: the *arr needs local files, and a
+    /// folder queued from the UI was asked for. Only the sync pass keeps files on Put.io.
     pub async fn enqueue_tree_report(
         &self,
         root_id: i64,
         fixed_path: bool,
+    ) -> DownloadResult<TreeReport> {
+        self.enqueue_tree_inner(root_id, fixed_path, false).await
+    }
+
+    async fn enqueue_tree_inner(
+        &self,
+        root_id: i64,
+        fixed_path: bool,
+        honour_stream: bool,
     ) -> DownloadResult<TreeReport> {
         let mut stats = SyncStats::default();
         let mut report_files = Vec::new();
@@ -2020,11 +2104,29 @@ impl DownloadManager {
         let mut folders: HashMap<String, Effective> = HashMap::new();
         // Type-blocked files to delete from Put.io, in one call after the loop
         let mut to_delete = Vec::new();
+        // Files stream mode keeps on Put.io, recorded after the loop; the ones already
+        // recorded are read once so a pass over them costs no query each (SC-005)
+        let mut streamed = Vec::new();
+        let known_streamed = if honour_stream {
+            db.stream_files().ids().await.unwrap_or_else(|e| {
+                warn!(error = %e, "Failed to read streamed files");
+                HashSet::new()
+            })
+        } else {
+            HashSet::new()
+        };
         // Transfers whose release check waits for Put.io (feature 042, research R8)
         let gated = self.gated_transfers(db).await;
         if !gated.is_empty() {
             transfers = Some(self.transfers_by_file().await);
         }
+
+        // Asked after the built-in rules (feature 028); not for the *arr's files
+        let filter_hooks = if fixed_path {
+            None
+        } else {
+            self.hooks_for(Hook::Filter)
+        };
 
         // Check which files need to be added to queue
         for (file, relative_path) in downloadable_files {
@@ -2054,14 +2156,58 @@ impl DownloadManager {
             let rules = folders
                 .entry(relative_path.clone())
                 .or_insert_with(|| config.effective(&relative_path));
-            let decision = rules.decide(&file.name);
+            let mut decision = rules.decide(&file.name);
+            if let Some(hooks) = &filter_hooks {
+                decision = filtered(hooks.as_ref(), &file, &relative_path, decision).await;
+            }
+            if let Decision::Stream { rule } = &decision {
+                if honour_stream
+                    && !known_streamed.contains(&file.id)
+                    && self.has_download(db, file.id).await
+                {
+                    // Queued or downloaded anyway (the *arr, or "Download" on the Put.io page)
+                    stats.files_skipped += 1;
+                    decide(TreeDecision::Known);
+                    continue;
+                }
+                if honour_stream {
+                    stats.files_streamed += 1;
+                    decide(TreeDecision::Streamed);
+                    streamed.push(ArrivedFile {
+                        file_id: file.id,
+                        name: file.name.clone(),
+                        folder: relative_path.clone(),
+                        size: file.size,
+                    });
+                    continue;
+                }
+                if fixed_path {
+                    info!(
+                        file_id = file.id,
+                        name = %file.name,
+                        rule = rule.as_deref().unwrap_or("global"),
+                        "Stream mode ignored: Radarr/Sonarr need the file downloaded"
+                    );
+                }
+                decision = Decision::Download;
+            }
             if decision != Decision::Download {
                 stats.files_blocked += 1;
                 decide(match decision {
                     Decision::Skipped { .. } => TreeDecision::Skipped,
                     _ => TreeDecision::Blocked(extension(&file.name).unwrap_or_default()),
                 });
-                if matches!(decision, Decision::Blocked { .. }) && rules.delete_blocked.value {
+                let by_plugin = matches!(
+                    decision,
+                    Decision::Blocked {
+                        reason: Reason::Plugin { .. },
+                        ..
+                    }
+                );
+                if matches!(decision, Decision::Blocked { .. })
+                    && !by_plugin
+                    && rules.delete_blocked.value
+                {
                     to_delete.push((
                         file.id,
                         file.name.clone(),
@@ -2176,13 +2322,27 @@ impl DownloadManager {
         }
 
         stats.files_deleted = self.delete_blocked(db, to_delete).await;
+        if honour_stream {
+            let steps: Vec<Arc<dyn ArrivedStep>> = self
+                .arrived_steps
+                .read()
+                .unwrap()
+                .iter()
+                .filter(|s| s.enabled(&config))
+                .cloned()
+                .collect();
+            self.note_streamed(db, &streamed, &known_streamed, &steps, root_id == 0)
+                .await;
+            arrived::run_pending(db, &steps, arrived::STEPS_PER_PASS).await;
+        }
 
         info!(
-            "Sync complete - Queued: {}, Skipped: {}, Blocked: {}, Deleted: {}, Failed: {}",
+            "Sync complete - Queued: {}, Skipped: {}, Blocked: {}, Deleted: {}, Streamed: {}, Failed: {}",
             stats.files_downloaded,
             stats.files_skipped,
             stats.files_blocked,
             stats.files_deleted,
+            stats.files_streamed,
             stats.files_failed
         );
 
@@ -2191,6 +2351,46 @@ impl DownloadManager {
             files: report_files,
             root_name,
         })
+    }
+
+    /// Record files stream mode keeps on Put.io the first time a pass sees them, with
+    /// the arrived steps they need. After a pass over the whole tree (`full`), forget
+    /// recorded files it no longer streams: deleted, moved out or downloaded now.
+    async fn note_streamed(
+        &self,
+        db: &Database,
+        streamed: &[ArrivedFile],
+        known: &HashSet<i64>,
+        steps: &[Arc<dyn ArrivedStep>],
+        full: bool,
+    ) {
+        let repo = db.stream_files();
+        let steps: Vec<&'static str> = steps.iter().map(|s| s.name()).collect();
+        for file in streamed.iter().filter(|f| !known.contains(&f.file_id)) {
+            self.forget_decision(db, file.file_id).await;
+            telemetry::sync::rule_decision(RuleDecision::Streamed);
+            info!(
+                file_id = file.file_id,
+                name = %file.name,
+                folder = %file.folder,
+                "Kept on Put.io (stream mode)"
+            );
+            if let Err(e) = repo
+                .add(file.file_id, &file.name, &file.folder, file.size, &steps)
+                .await
+            {
+                warn!(file_id = file.file_id, error = %e, "Failed to record streamed file");
+            }
+        }
+        if full {
+            let seen: HashSet<i64> = streamed.iter().map(|f| f.file_id).collect();
+            let gone: Vec<i64> = known.difference(&seen).copied().collect();
+            match repo.remove(&gone).await {
+                Ok(0) => {}
+                Ok(n) => debug!(count = n, "Forgot files no longer streamed"),
+                Err(e) => warn!(error = %e, "Failed to forget files no longer streamed"),
+            }
+        }
     }
 
     /// Log, count and record a rule decision the first time this process sees the file
@@ -2341,6 +2541,10 @@ impl DownloadManager {
                     preview.skipped += 1;
                     false
                 }
+                Decision::Stream { .. } => {
+                    preview.stream += 1;
+                    false
+                }
                 Decision::Blocked { .. } => {
                     preview.blocked += 1;
                     rules.delete_blocked.value && !self.is_queued(file.id).await
@@ -2362,6 +2566,17 @@ impl DownloadManager {
             }
         }
         Ok(preview)
+    }
+
+    /// The file is in the queue or its download completed
+    async fn has_download(&self, db: &Database, file_id: i64) -> bool {
+        if matches!(db.queue().get_by_file_id(file_id).await, Ok(Some(_))) {
+            return true;
+        }
+        matches!(
+            db.downloads().find_by_file_id(file_id).await,
+            Ok(Some(record)) if record.status == "completed"
+        )
     }
 
     async fn is_queued(&self, file_id: i64) -> bool {
@@ -3565,6 +3780,59 @@ fn internal(e: putio_sync_db::DbError) -> DownloadError {
 }
 
 /// The transfer whose file or folder holds `file_id`, walking up the listed parents
+/// What a plugin is told about a file of the sync (feature 028)
+pub(crate) fn hook_file(
+    id: i64,
+    name: &str,
+    size: u64,
+    folder: &str,
+    decision: &Decision,
+) -> HookFile {
+    HookFile {
+        id,
+        name: name.to_string(),
+        size,
+        extension: extension(name).unwrap_or_default(),
+        folder: folder.to_string(),
+        decision: match decision {
+            Decision::Download => "download",
+            Decision::Stream { .. } => "stream",
+            Decision::Blocked { .. } => "blocked",
+            Decision::Skipped { .. } => "skipped",
+        }
+        .to_string(),
+        reason: decision.reason(),
+    }
+}
+
+/// The built-in decision, or a plugin filter's answer when one gives it
+async fn filtered(
+    hooks: &dyn SyncHooks,
+    file: &FileEntry,
+    folder: &str,
+    decision: Decision,
+) -> Decision {
+    let asked = hook_file(
+        file.id,
+        &file.name,
+        file.size.max(0) as u64,
+        folder,
+        &decision,
+    );
+    let Some((answer, plugin)) = hooks.filter(&asked).await else {
+        return decision;
+    };
+    debug!(file_id = file.id, plugin = %plugin, answer = ?answer, "Plugin filter answered");
+    match answer {
+        FilterAnswer::Download => Decision::Download,
+        FilterAnswer::Stream => Decision::Stream { rule: None },
+        FilterAnswer::Skip => Decision::Blocked {
+            reason: Reason::Plugin { name: plugin },
+            rule: None,
+        },
+    }
+}
+
 fn matching_transfer<'t>(
     file_id: i64,
     parents: &HashMap<i64, Option<i64>>,

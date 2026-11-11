@@ -55,16 +55,16 @@ jobs:
       - name: Update manifest with cargo sources
         run: |
           # Uncomment the cargo-sources.json line
-          sed -i 's|# - cargo-sources.json|- cargo-sources.json|' com.putio.PutioSync.yaml
+          sed -i 's|# - cargo-sources.json|- cargo-sources.json|' io.github.devclinton.putio-sync.yaml
 
           echo "Updated manifest:"
-          grep -A2 "sources:" com.putio.PutioSync.yaml
+          grep -A2 "sources:" io.github.devclinton.putio-sync.yaml
 
       - name: Build Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: putio-sync.flatpak
-          manifest-path: com.putio.PutioSync.yaml
+          manifest-path: io.github.devclinton.putio-sync.yaml
           cache-key: flatpak-builder-${{ github.sha }}
 
       - name: Verify Flatpak bundle
@@ -112,11 +112,8 @@ jobs:
             echo "flatpak install --user putio-sync-${VERSION}.flatpak" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "# Run the app" >> $GITHUB_STEP_SUMMARY
-            echo "flatpak run com.putio.PutioSync" >> $GITHUB_STEP_SUMMARY
+            echo "flatpak run io.github.devclinton.putio-sync" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           fi
 
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Flathub Submission" >> $GITHUB_STEP_SUMMARY
-          echo "For Flathub distribution, submit to:" >> $GITHUB_STEP_SUMMARY
-          echo "https://github.com/flathub/flathub" >> $GITHUB_STEP_SUMMARY

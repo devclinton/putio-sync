@@ -1,0 +1,7 @@
+name = "store-counter"
+version = "0.1.0"
+description = "Count finished downloads per day in the plugin's store"
+events = ["download.finished"]
+
+[permissions]
+store = true

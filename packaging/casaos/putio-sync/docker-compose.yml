@@ -1,12 +1,14 @@
 name: putio-sync
 services:
   putio-sync:
-    image: ghcr.io/devclinton/putio-sync:0.2.1
+    image: ghcr.io/devclinton/putio-sync:0.2.2
     container_name: putio-sync
     restart: unless-stopped
     user: "$PUID:$PGID"
     environment:
       TZ: $TZ
+      # 0.2.1 leaves HOME at / for uids other than 99, where logs can't be written.
+      HOME: /config
     ports:
       - target: 15432
         published: "15432"
@@ -48,13 +50,17 @@ x-casaos:
   port_map: "15432"
   scheme: http
   category: Media
-  version: "0.2.1"
+  version: "0.2.2"
   architectures:
     - amd64
     - arm64
   author: devclinton
   developer: devclinton
   icon: https://raw.githubusercontent.com/devclinton/putio-sync/main/snap/gui/putio-sync.png
+  screenshot_link:
+    - https://raw.githubusercontent.com/devclinton/putio-sync/main/site/screenshots/status-desktop-light.png
+    - https://raw.githubusercontent.com/devclinton/putio-sync/main/site/screenshots/transfers-desktop-light.png
+    - https://raw.githubusercontent.com/devclinton/putio-sync/main/site/screenshots/settings-desktop-light.png
   title:
     en_US: putio-sync
   tagline:
@@ -70,6 +76,6 @@ x-casaos:
       en_US: >-
         On first start, putio-sync prints a one-time setup code in the app's log. Open the
         web UI, enter the code, and choose /downloads as the download folder.
-  website: https://github.com/devclinton/putio-sync
+  website: https://devclinton.github.io/putio-sync/
   repo: https://github.com/devclinton/putio-sync
   support: https://github.com/devclinton/putio-sync/issues

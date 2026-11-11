@@ -5,11 +5,14 @@
 [![Snap](https://snapcraft.io/putio-sync/badge.svg)](https://snapcraft.io/putio-sync)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+**Website and docs: [devclinton.github.io/putio-sync](https://devclinton.github.io/putio-sync/)**
+
+<!-- ANCHOR: overview -->
 **Keep a NAS or server in sync with your [Put.io](https://put.io) account.** putio-sync
 downloads finished transfers to local storage, sends torrents and magnet links to
 Put.io, and works as a download client for Radarr and Sonarr. It is one small Rust
 binary with a web UI, built to run unattended on a home server: on a NAS it idles at
-about 11 MB of memory.
+about 33 MB of memory.
 
 putio-sync is an independent project and is not affiliated with Put.io.
 
@@ -60,6 +63,7 @@ Open `http://<host>:15432/`, enter the setup code, and the wizard connects Put.i
 picks the download folder. The rest of this README is the full manual; what changed in
 each build is in [CHANGELOG.md](CHANGELOG.md), and planned work is in [ROADMAP.md](ROADMAP.md).
 
+<!-- ANCHOR_END: overview -->
 ## Contents
 
 - [All features](#all-features) · [First run](#first-run) · [Commands](#commands) · [Configuration](#configuration)
@@ -67,6 +71,7 @@ each build is in [CHANGELOG.md](CHANGELOG.md), and planned work is in [ROADMAP.m
 - [Radarr and Sonarr](#radarr-and-sonarr) · [Release check](#release-check) · [Event hooks](#event-hooks) · [Plugins](#plugins)
 - [Subtitles](#subtitles) · [Docker](#docker) · [Development](#development)
 
+<!-- ANCHOR: all-features -->
 ## All features
 
 
@@ -96,6 +101,8 @@ each build is in [CHANGELOG.md](CHANGELOG.md), and planned work is in [ROADMAP.m
 - **SQLite Database**: Local state tracking for downloads and history
 - **Progress Tracking**: Multiple progress bar styles with speed and ETA
 
+<!-- ANCHOR_END: all-features -->
+<!-- ANCHOR: using-putio-sync -->
 ## Using putio-sync
 
 ### First run
@@ -205,6 +212,8 @@ putio-sync history --limit 20
 putio-sync delete 123456 --yes
 ```
 
+<!-- ANCHOR_END: using-putio-sync -->
+<!-- ANCHOR: commands -->
 ## Commands
 
 ### `login`
@@ -463,6 +472,8 @@ putio-sync history --since "2025-01-01" --limit 100
 putio-sync history --output csv > history.csv
 ```
 
+<!-- ANCHOR_END: commands -->
+<!-- ANCHOR: configuration -->
 ## Configuration
 
 Configuration is stored at `~/.putiosync/config.toml`. See `config.example.toml` for a complete example with all options documented.
@@ -660,6 +671,8 @@ paths = []
 - `PUTIO_SYNC_API_TOKEN`, `PUTIO_SYNC_API_LISTEN`, `PUTIO_SYNC_API_BIND`: web UI and API
   listener, see [Web UI](#web-ui).
 
+<!-- ANCHOR_END: configuration -->
+<!-- ANCHOR: metrics -->
 ## Metrics
 
 Both `daemon` and `server` modes serve Prometheus metrics at
@@ -725,7 +738,9 @@ H = histogram.
 | `putio_sync_last_success_timestamp_seconds` | gauge | — | Unix time the last successful run finished; absent until the first one |
 | `putio_sync_last_sync_files` | gauge | `kind` | Counts from the latest run |
 | `putio_sync_files_blocked_total` | counter | — | Files blocked or skipped by a folder rule or the blocked-extension list (once per file id) |
-| `putio_sync_rule_decisions_total` | counter | `decision` | Folder rule decisions: `blocked`, `skipped`, `deleted` (from Put.io) |
+| `putio_sync_rule_decisions_total` | counter | `decision` | Folder rule decisions: `blocked`, `skipped`, `deleted` (from Put.io), `streamed` (kept on Put.io) |
+| `putio_sync_stream_mp4_requests_total` | counter | `result` | MP4 versions asked of Put.io for streamed files: `requested`, `ready`, `gone`, `failed` |
+| `putio_sync_organise_moves_total` | counter | `kind`, `result` | Moves on Put.io: `kind` is `tv` or `movie`; `result` is `planned`, `applied`, `undone`, `failed` |
 | `putio_sync_sync_in_progress` | gauge | — | 1 while a sync run is in progress, else 0 |
 | `putio_sync_queue_items` | gauge | `state` | Queue rows by state, refreshed every 15 s and at startup |
 | `putio_sync_downloads_active` | gauge | — | Downloads in progress |
@@ -904,11 +919,17 @@ promtool tsdb create-blocks-from openmetrics metrics/putio-sync-metrics-2026-11-
 To restore the database, `gunzip` the `db/` file and use it as `.putiosync.db` with the
 daemon stopped.
 
+<!-- ANCHOR_END: metrics -->
+<!-- ANCHOR: web-ui -->
 ## Web UI
 
 `daemon` serves a browser UI and the JSON API on one port, by default
 `http://<nas>:15432/` (for example `http://192.168.1.50:15432/`). It works on a phone
-as well as a desktop. The pages:
+as well as a desktop.
+
+![The Status page: sync state, queue counts, a Put.io storage warning and the active transfers](site/screenshots/status-desktop-light.png)
+
+The pages:
 
 - **Status**: version, uptime, last and next sync, queue counts, active downloads,
   workers, watch folders, disk space and Put.io reachability. **Sync now** starts a
@@ -1103,7 +1124,7 @@ daemon's download manager and watcher:
 | Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Release check | — | everything |
-| Notifications | — | everything |
+| Notifications | `smtp` (email), at once | the legacy `enabled`, `backend`, `webhook_url`, `email` |
 | Network | — | everything (`api_bind`, `metrics_bind`); the UI asks first when the new list wouldn't reach the page you're on |
 | Event hooks | everything, at once | — |
 | Plugins | everything, at once (a new `plugins_dir` is read on save) | — |
@@ -1223,6 +1244,7 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /settings/network/check` | The `network` PUT body → what each entry would listen on, `this_page` (`kept`, `cut_off` or `unknown`: whether the page you're on would still reach putio-sync), `listened_on`, `ui_at` and `warnings`; saves nothing |
 | `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck,tailscale,network,hooks,plugins}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
 | `POST /settings/{group}/preview` | The group's PUT body → `{"valid", "error", "changes": [{"key", "before", "after", "live"}], "when", "risks"}`; writes nothing |
+| `POST /settings/notifications/test` | Body: the `smtp` object from `GET /settings/notifications` (a masked password means the saved one). Sends a test email now, on or off, and answers `{"ok": true}` or `{"ok": false, "error": "..."}`; 422 for settings that do not validate. The `notifications` GET adds a read-only `smtp_status`: sent and failed counts since start and the last email |
 | `GET /settings/assistant` | Per group: what each field affects, the fields that apply live, the defaults; and the risks of the running config |
 | `GET /settings/export` | The settings as a TOML file, without `[auth]`, `api.auth_token` and `[arr]` |
 | `POST /settings/import` | `{"toml": "...", "apply": false}` → a preview with `changes` (dotted keys), `risks`, `unknown` and `ignored`; with `true`, saves it and adds `message`. 400 for invalid TOML (line number only), a refused config or a file over 1 MB |
@@ -1244,6 +1266,17 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 | `POST /plugins/test` | `{"name": "..."}`: send a `plugin.test` event to that plugin, even when it is off, and answer with the run and its logged lines; 404 for an unknown plugin, 409 while a test of it runs, 422 when it cannot load |
 | `POST /plugins/reload` | Read the plugins folder again → `{"message": "Reloaded 7 plugins"}` |
 | `POST /plugins/action` | `{"name", "action", "input"?, "config"?}`: run a plugin's settings action (Sign in with Plex, Load libraries) with unsaved non-secret `config` values for this call; answers `{message, code, open_url, choices, next, done, run}`, plus `saved` (key names) and `config` when it saved values. Saved secrets are never returned. 404 unknown plugin or action, 409 while one runs, 422 when it fails |
+| `POST /plugins/install` | `{"url"}`, `{"wasm"}` (base64) or `{"manifest", "entry"}` (base64), plus `"replace"?`: install a plugin into the plugins folder, turned off → `{"name", "message"}`. A URL must be http or https, at most 16 MiB, with redirects only on the same host. 400 bad body, 409 a plugin of that name exists (send `"replace": true`), 422 not a plugin or the download failed |
+| `GET /plugins/workbench` | The plugin workbench (feature 055) → `{editor, dir, starters, events, file}`: whether the editor is on, the plugins folder, the starter templates, a sample `data` per event type and a sample file for sync hooks |
+| `PUT /plugins/workbench/editor` | `{"enabled": true}`: turn the plugin editor on or off (`plugin_editor`) |
+| `POST /plugins/workbench/new` | `{"starter", "name"}`: make a plugin folder from a starter (webhook-notifier, store-counter, tick-poller), turned off. 403 editor off, 400 bad name, 409 name taken |
+| `GET /plugins/workbench/source/:name` | A plugin's files → `{name, runtime, source, editable, files: [{path, text, version}], other_files}`. Bundled and WASM plugins are read-only |
+| `POST /plugins/workbench/check` | `{"manifest", "script"}`: check without saving → `{problems: [{file, line?, message}]}` |
+| `PUT /plugins/workbench/source/:name` | `{"manifest", "script", "versions", "force"?}`: save a folder Lua plugin (the old files kept as `.bak`) and reload only it → `{problems, message}`. 403 editor off or read-only, 409 changed on disk since it was read (send `"force": true`) |
+| `POST /plugins/workbench/copy/:name` | Copy a bundled plugin into the plugins folder; the copy replaces it. 403 editor off or already a folder |
+| `POST /plugins/workbench/run` | `{"name", "call", "real"?, "reply"?, "manifest"?, "script"?}`: call one plugin function (`call.kind` event, tick, health, action or hook) → the run with its result, line, duration, memory, logs, HTTP requests (secrets masked), file writes and the store before and after. A dry run unless `"real": true`: requests are recorded and answered with `reply`, the store is a scratch copy. Unsaved `manifest`/`script` need the editor. 404 unknown plugin, 409 while one runs |
+| `GET /plugins/workbench/runs` | The last 20 workbench runs, newest first |
+| `POST /plugins/workbench/runs/:id` | Run one of them again; 404 when it is gone |
 | `GET /events/schema` | The JSON Schema of the events (see [EVENTS.md](EVENTS.md)) |
 | `GET /doctor` | The latest doctor report; 404 before the first run |
 | `POST /doctor/run` | Run every check now and answer with the report (a run already going is joined, not repeated) |
@@ -1271,6 +1304,8 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
 The legacy `/api/*` placeholder routes are removed, and no CORS headers are sent: the
 UI is served from the same origin, and non-browser clients are unaffected.
 
+<!-- ANCHOR_END: web-ui -->
+<!-- ANCHOR: media-server -->
 ## Media Server
 
 putio-sync can show the files it downloads to TVs and media players on your home network
@@ -1285,7 +1320,7 @@ name = "putio-sync"                  # what players show, up to 64 characters
 port = 8200                          # not 1900, and not the API's or metrics' port
 bind = []                            # empty is every LAN IPv4 address
 roots = ["downloads", "cat:radarr"]  # downloads, cat:<folder>, watch:<path>, putio
-# putio_folder = 123456              # the Put.io folder shown as "Put.io" (for roots with putio)
+# putio_folder = 123456              # the Put.io folder shown as "Put.io"; unset is the synced folder
 ```
 
 - **Shared folders** are `downloads` (the download folder), `cat:<name>` (one subfolder, so
@@ -1294,7 +1329,46 @@ roots = ["downloads", "cat:radarr"]  # downloads, cat:<folder>, watch:<path>, pu
   symlinks that leave the shared folder are never shown or served.
 - **Put.io** shows one Put.io folder and plays its files without downloading them first. A
   video Put.io has converted to MP4 plays as the MP4; otherwise the original plays. If Put.io
-  can't be reached, the local folders keep working and Settings shows the error.
+  can't be reached, the local folders keep working and Settings shows the error. With no
+  `putio_folder`, it shows the folder the sync mirrors (your whole Put.io account).
+- **Stream mode** keeps media on Put.io instead of downloading it, and the `putio` root
+  serves it. Set it for the whole account or per folder:
+
+  ```toml
+  [download]
+  mode = "stream"      # or "download" (the default); a folder rule's `mode` overrides it
+  stream_mp4 = true    # ask Put.io for an MP4 version of each new non-MP4 video (default)
+  ```
+
+  Files in stream mode are never queued and never deleted after download. The type filter,
+  patterns and `delete_blocked` still apply, so junk can still be removed from Put.io.
+  Radarr/Sonarr items and a "Download" click on the Put.io page download anyway. Settings ›
+  Downloads warns when stream mode is used but the media server or its Put.io root is off,
+  with a button that turns them on; `doctor` reports the same.
+- **Organise TV shows on Put.io**: the Put.io page's **Organise** panel can move streamed
+  episodes into `TV Shows/Show/Season NN/` and name them `Show - S02E05 - Title.mkv`, read
+  from the release name (season packs, `1x05`, `S01E01E02`, years and subtitle languages
+  included). Each move is planned first and made when you tick it and press **Apply**,
+  or at once with `apply = "auto"`; **Undo** puts the file back in its folder under its
+  old name. **Find files** plans moves for files streamed before you turned it on.
+  A target folder outside stream mode is refused, so a move never makes the next sync
+  download the file. Plugins' folder and rename rules win when `use_plugins` is on.
+- **Organise movies on Put.io**: the same panel moves streamed films into
+  `Movies/Movie (Year)/Movie (Year).mkv`. A file with an obfuscated name takes the film
+  from its release folder; `CD2` becomes `- part2`. Trailers, featurettes,
+  behind-the-scenes, deleted scenes and interviews go into the film's `Trailers`,
+  `Featurettes`, `Behind The Scenes`, `Deleted Scenes` or `Interviews` folder, which Plex
+  and Jellyfin read as extras. Samples are never moved. Names without a year are left alone.
+
+  ```toml
+  [organise]
+  tv = true
+  tv_folder = "TV Shows"   # from the Put.io root
+  movies = true
+  movies_folder = "Movies"
+  apply = "preview"        # or "auto"
+  use_plugins = true
+  ```
 - **Who can see it**: anyone on your home network can browse and play what you share. There
   is no password in UPnP, so share only what the whole household may see.
 - **Docker**: discovery uses multicast, which bridge networking hides. Run the container
@@ -1306,6 +1380,8 @@ roots = ["downloads", "cat:radarr"]  # downloads, cat:<folder>, watch:<path>, pu
 - `PUTIO_SYNC_DLNA_ENABLED`, `PUTIO_SYNC_DLNA_NAME` and `PUTIO_SYNC_DLNA_PORT` override the
   matching settings.
 
+<!-- ANCHOR_END: media-server -->
+<!-- ANCHOR: tailscale -->
 ## Tailscale
 
 putio-sync reads Tailscale's state from tailscaled's socket
@@ -1367,6 +1443,8 @@ on: use `tailscale serve` instead.
   `172.17.0.1`), not loopback, so its identity headers are ignored. Use host
   networking, the sidecar layout, or the token.
 
+<!-- ANCHOR_END: tailscale -->
+<!-- ANCHOR: radarr-and-sonarr -->
 ## Radarr and Sonarr
 
 putio-sync can be a download client for Radarr and Sonarr. It answers the Transmission RPC
@@ -1509,6 +1587,8 @@ The password and API keys come from the config file or the env variables above, 
 They are never logged or sent back by the API. The UI shows only whether each one is set. A
 settings save from the UI keeps the ones in the file and never writes env-only values.
 
+<!-- ANCHOR_END: radarr-and-sonarr -->
+<!-- ANCHOR: release-check -->
 ## Release check
 
 Some releases are fakes: a "movie" that is only an `.exe`, or a password-protected `.7z` that
@@ -1561,6 +1641,8 @@ be undone, but a blocklist already sent stays. Stats sums up the reports and dow
 as CSV or JSON, with file types, sizes and tracker hosts, to share without giving anything
 away. Checks and reports older than 400 days are deleted.
 
+<!-- ANCHOR_END: release-check -->
+<!-- ANCHOR: event-hooks -->
 ## Event hooks
 
 A hook runs a command or calls a webhook when something happens: a download finishes or
@@ -1613,6 +1695,8 @@ the hook and field named. Up to 32 hooks.
 The doctor's Event hooks check reports a command hook whose program is missing or not
 executable, and a hook whose last run failed in the last day.
 
+<!-- ANCHOR_END: event-hooks -->
+<!-- ANCHOR: processing-pipeline -->
 ## Processing pipeline
 
 A download can pass through your own steps before it counts as finished. Give a hook a
@@ -1649,6 +1733,8 @@ The hook's input, results and the `pipeline.step_failed` and `pipeline.completed
 are in [EVENTS.md](EVENTS.md#pipeline-step-hooks). Settings › Integrations edits the steps
 and the pipeline settings.
 
+<!-- ANCHOR_END: processing-pipeline -->
+<!-- ANCHOR: subtitles -->
 ## Subtitles
 
 Set the languages you want and putio-sync saves subtitles next to each downloaded video,
@@ -1724,6 +1810,8 @@ Metrics: `putio_sync_subtitles_saved_total` (by `source` and `language`),
 `putio_sync_subtitles_skipped_total` (by `reason`), `putio_sync_opensubtitles_requests_total`
 and `putio_sync_subtitles_transcribed_seconds_total`.
 
+<!-- ANCHOR_END: subtitles -->
+<!-- ANCHOR: subtitle-translation -->
 ## Subtitle translation
 
 When a wanted subtitle language is still missing after the Subtitles stage, the Translating
@@ -1757,6 +1845,8 @@ file is saved as `Movie.es.srt` next to the video and is never written over an e
 Metrics: `putio_sync_translation_chunks_total`, `_chunk_retries_total`, `_rate_limited_total`,
 `_callbacks_waiting` and `_callbacks_refused_total` (by reason).
 
+<!-- ANCHOR_END: subtitle-translation -->
+<!-- ANCHOR: plugins -->
 ## Plugins
 
 Plugins are small Lua scripts that run inside putio-sync on the same events as hooks,
@@ -1764,7 +1854,14 @@ with no other program to install. Seven come with it, all off until turned on. F
 **ntfy**, **Discord**, **Telegram** and **Pushover** notifications, which group repeats so a busy
 night sends a summary instead of a hundred messages. Settings › Plugins lists the ones that
 are off, one line each with **Enable**, and gives each one that is on a tab of its own that
-edits its settings, shows the hosts it contacts and sends a test event.
+edits its settings, shows the hosts it contacts and sends a test event. Settings ›
+**Notifications** shows email and the four notifiers on one page: each one's state, its
+events and a test button.
+
+Email is built in rather than a plugin: `[notifications.smtp]` (see `config.example.toml`)
+sends the chosen events as plain text over STARTTLS, TLS or, for a relay on the LAN, no
+encryption and no login, and groups repeats the same way. It runs under `daemon`;
+`server` keeps the settings and sends only the test email.
 
 **Plex**, **Jellyfin** and **Emby** plugins rescan just the folder of each finished
 download, so new episodes show up within seconds. Files landing in the same folder are
@@ -1783,13 +1880,16 @@ topic = "my-nas-8f3k"
 ```
 
 Your own plugins go in a folder per plugin under `plugins_dir` (default `plugins` next to
-the config file), each with a `plugin.toml` and a `main.lua`. They run sandboxed: no
-files, programs or sockets, a time limit per call (default 10 s) and a memory limit
-(default 32 MiB). They can only reach the HTTP hosts they declare and you approve, and
-they can keep a small key-value store. A slow or failing plugin never holds up a sync.
+the config file), each with a `plugin.toml` and a `main.lua`, or a `plugin.wasm` built
+from Rust, Go or another language; **Install a plugin** in Settings takes a URL or the
+files. They run sandboxed: no programs or sockets, a time limit per call (default 10 s)
+and a memory limit (default 32 MiB). They can only reach the HTTP hosts and folders they
+declare and you approve, and they can keep a small key-value store. A slow or failing plugin never holds up a sync.
 Secret settings are masked everywhere and never logged. See [PLUGINS.md](PLUGINS.md) for
 the manifest, the `putio` API and the limits.
 
+<!-- ANCHOR_END: plugins -->
+<!-- ANCHOR: advanced-features -->
 ## Advanced Features
 
 ### Folder Rules
@@ -1806,6 +1906,7 @@ no rule sets comes from `[download]`.
 | `include` | Only download files matching this pattern ("Only download"); `""` clears an inherited one |
 | `exclude` | Never download files matching this pattern ("Never download"); `""` clears an inherited one |
 | `skip` | Download nothing in this folder |
+| `mode` | `download` or `stream`: stream keeps the files on Put.io for the [media server](#media-server) |
 | `delete_blocked` | Delete the files this rule blocks from Put.io, with one call per sync (with `include`, every file that doesn't match it) |
 | `delete_after_download`, `on_existing` | Override the `[download]` values for this folder (an old rule's `skip_existing` is still read) |
 
@@ -2066,6 +2167,8 @@ Run downloads continuously in the background:
 putio-sync download --all --daemon --interval 300 --filter "*.mkv"
 ```
 
+<!-- ANCHOR_END: advanced-features -->
+<!-- ANCHOR: running-periodic-sync-and-watch-simultaneously -->
 ## Running Periodic Sync and Watch Simultaneously
 
 You can run both periodic downloads and torrent watching at the same time using multiple terminal sessions, systemd services, or Docker containers. Here are several approaches:
@@ -2518,6 +2621,8 @@ Organize your watch directories by content type:
 
 Download tracking and history are stored in `~/.putiosync/putio-sync.db`
 
+<!-- ANCHOR_END: running-periodic-sync-and-watch-simultaneously -->
+<!-- ANCHOR: architecture -->
 ## Architecture
 
 This project is organized as a Cargo workspace with specialized crates following separation of concerns:
@@ -2581,6 +2686,8 @@ This project is organized as a Cargo workspace with specialized crates following
   - Served by `daemon` (on `[api] bind`) and by `server`
 
 
+<!-- ANCHOR_END: architecture -->
+<!-- ANCHOR: development -->
 ## Development
 
 ### Prerequisites
@@ -2606,6 +2713,8 @@ cargo test
 cargo run --bin putio-sync -- --help
 ```
 
+<!-- ANCHOR_END: development -->
+<!-- ANCHOR: docker -->
 ## Docker
 
 ### Pull from GitHub Container Registry
@@ -2769,6 +2878,8 @@ docker compose up -d
 docker compose logs putio-sync   # the one-time setup code
 ```
 
+<!-- ANCHOR_END: docker -->
+<!-- ANCHOR: file-formats--processing -->
 ## File Formats & Processing
 
 ### Torrent Files (.torrent)
@@ -2807,6 +2918,10 @@ When neither archive nor delete options are specified, putio-sync maintains a SQ
 
 Database location: `<target_directory>/.putiosync-torrents.db`
 
+<!-- ANCHOR_END: file-formats--processing -->
+<!-- ANCHOR: license -->
 ## License
 
 MIT, see [LICENSE](LICENSE). putio-sync is not affiliated with Put.io.
+
+<!-- ANCHOR_END: license -->

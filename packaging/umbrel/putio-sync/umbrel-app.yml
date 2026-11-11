@@ -4,7 +4,7 @@ storage:
   dataRoot: data
 category: files
 name: putio-sync
-version: "0.2.1"
+version: "0.2.2"
 tagline: Download your Put.io transfers automatically
 description: >-
   putio-sync is an unofficial sync daemon for Put.io; it is not affiliated with Put.io.
@@ -23,7 +23,7 @@ description: >-
   When the setup wizard asks for a code, enter the password shown on this page.
 releaseNotes: ""
 developer: devclinton
-website: https://github.com/devclinton/putio-sync
+website: https://devclinton.github.io/putio-sync/
 dependencies: []
 repo: https://github.com/devclinton/putio-sync
 support: https://github.com/devclinton/putio-sync/issues

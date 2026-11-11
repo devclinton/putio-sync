@@ -4,7 +4,11 @@
 //! downloading transfer when its byte count last changed. A transfer whose bytes have not
 //! moved for the threshold is stalled. The API reads the verdicts to badge the Transfers
 //! page. State is in memory only: after a restart the clock starts again.
+//!
+//! A transfer that becomes stalled sends one `transfer.stuck` event (feature 030); it
+//! sends another only after it moves and stalls again.
 
+use crate::events::{self, Payload, TransferStuck};
 use putio_sync_client::Transfer;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -82,10 +86,12 @@ impl StallTracker {
     }
 
     /// Update from a full transfer list fetched at `now`; returns how many are stalled.
+    /// Each transfer that has just become stalled sends `transfer.stuck`.
     ///
     /// Only transfers in the `DOWNLOADING` state that report `downloaded` are tracked;
     /// any other transfer, and any transfer missing from `transfers`, is forgotten.
     pub fn observe(&self, transfers: &[Transfer], now: SystemTime) -> usize {
+        let mut stuck = Vec::new();
         let mut records = self.lock();
         let mut seen = HashMap::with_capacity(transfers.len());
         for transfer in transfers {
@@ -98,10 +104,14 @@ impl StallTracker {
                     let still = now
                         .duration_since(record.changed_at)
                         .unwrap_or(Duration::ZERO);
+                    let was_stalled = record.stall.is_some();
                     record.stall = (still >= self.threshold).then(|| Stall {
                         since: record.changed_at,
                         reason: StallReason::of(transfer),
                     });
+                    if let (false, Some(stall)) = (was_stalled, record.stall) {
+                        stuck.push(stuck_event(transfer, stall));
+                    }
                     record
                 }
                 _ => Record {
@@ -113,7 +123,12 @@ impl StallTracker {
             seen.insert(transfer.id, record);
         }
         *records = seen;
-        records.values().filter(|r| r.stall.is_some()).count()
+        let stalled = records.values().filter(|r| r.stall.is_some()).count();
+        drop(records);
+        for event in stuck {
+            events::emit(Payload::TransferStuck(event));
+        }
+        stalled
     }
 
     /// The verdict for transfer `id`, if it is stalled
@@ -129,6 +144,17 @@ impl StallTracker {
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<i64, Record>> {
         // A panic while holding the lock leaves plain data behind; keep using it
         self.records.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+fn stuck_event(transfer: &Transfer, stall: Stall) -> TransferStuck {
+    TransferStuck {
+        transfer_id: transfer.id,
+        name: transfer.name.clone(),
+        reason: stall.reason.label(),
+        stalled_since: stall.since.into(),
+        size_bytes: transfer.size,
+        percent_done: transfer.percent_done.unwrap_or(0).into(),
     }
 }
 
@@ -189,6 +215,45 @@ mod tests {
             1
         );
         assert_eq!(tracker.get(1).unwrap().since, at(8));
+    }
+
+    #[test]
+    fn each_stall_sends_one_stuck_event() {
+        // An id no other test uses, as the bus is shared
+        const ID: i64 = 30_001;
+        let mut rx = events::subscribe();
+        let tracker = StallTracker::new(6 * HOUR);
+        let mut t = transfer(ID, "DOWNLOADING", 970);
+        t.size = Some(2000);
+        t.percent_done = Some(48);
+        for hour in [0, 6, 7, 8] {
+            tracker.observe(std::slice::from_ref(&t), at(hour));
+        }
+        // Moves, then stalls again
+        t.downloaded = Some(971);
+        tracker.observe(std::slice::from_ref(&t), at(9));
+        tracker.observe(std::slice::from_ref(&t), at(15));
+        let mut stuck = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let Payload::TransferStuck(s) = &event.payload {
+                if s.transfer_id == ID {
+                    stuck.push(s.clone());
+                }
+            }
+        }
+        assert_eq!(stuck.len(), 2, "{stuck:?}");
+        let first = &stuck[0];
+        assert_eq!(first.name, format!("t{ID}"));
+        assert_eq!(first.reason, "no progress");
+        assert_eq!(
+            first.stalled_since,
+            chrono::DateTime::<chrono::Utc>::from(at(0))
+        );
+        assert_eq!((first.size_bytes, first.percent_done), (Some(2000), 48));
+        assert_eq!(
+            stuck[1].stalled_since,
+            chrono::DateTime::<chrono::Utc>::from(at(9))
+        );
     }
 
     /// Put.io restarting a transfer lowers its bytes; that is a change too

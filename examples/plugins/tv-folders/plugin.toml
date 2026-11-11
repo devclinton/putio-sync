@@ -1,0 +1,11 @@
+name = "tv-folders"
+version = "1.0.0"
+description = "Put episodes in TV/<Show>/Season NN, whatever folder they have on Put.io"
+hooks = ["folder"]
+
+[[config]]
+key = "root"
+type = "string"
+label = "TV folder"
+help = "Inside the download folder"
+default = "TV"

@@ -17,9 +17,10 @@ use tokio::sync::oneshot;
 
 use crate::action::{self, ActionResult, HealthItem};
 use crate::discover::{discover, Found};
+use crate::hooks::HookSlot;
 use crate::host::{system_clock, Clock};
 use crate::manifest::{Action, ConfigField, Permissions};
-use crate::worker::{CallReply, Env, History, Job, PluginRun, RunResult, Slot, Spec};
+use crate::worker::{CallReply, Env, History, Job, PluginRun, RunResult, Slot, Spec, MAX_RUNS};
 
 /// How often `on_tick` runs when the manifest sets no `tick_seconds`
 pub const TICK: Duration = Duration::from_secs(60);
@@ -38,7 +39,7 @@ pub enum PluginState {
     Enabled,
     /// The manifest, the script, a value or `init` failed
     Broken,
-    /// Enabled, but a host it needs is not approved
+    /// Enabled, but a host or folder it needs is not approved
     NeedsApproval,
     /// Enabled, but a required value is unset
     MissingConfig,
@@ -63,6 +64,9 @@ pub struct PluginStatus {
     pub error: Option<String>,
     /// The events it handles
     pub events: Vec<String>,
+    /// The sync rules it provides: `filter`, `rename`, `folder` (feature 028)
+    #[serde(default)]
+    pub hooks: Vec<String>,
     /// What it may do
     pub permissions: Permissions,
     /// Its settings form
@@ -73,6 +77,15 @@ pub struct PluginStatus {
     pub hosts_needed: Vec<String>,
     /// The hosts approved in its settings
     pub approved_hosts: Vec<String>,
+    /// `lua` or `wasm` (029)
+    #[serde(default)]
+    pub runtime: String,
+    /// The `r:`/`w:` folders it would use with the current settings (029)
+    #[serde(default)]
+    pub paths_needed: Vec<String>,
+    /// The folders approved in its settings
+    #[serde(default)]
+    pub approved_paths: Vec<String>,
     /// Whether it has `on_tick` (known once running)
     pub has_tick: bool,
     /// Jobs waiting
@@ -175,6 +188,8 @@ struct State {
     found: Vec<Found>,
     settings: Vec<PluginSettings>,
     slots: HashMap<String, Arc<Slot>>,
+    /// The second worker of each running plugin with sync hooks
+    hook_slots: HashMap<String, Arc<HookSlot>>,
     env: Option<Env>,
 }
 
@@ -187,10 +202,12 @@ struct Inner {
     counters: crate::worker::CounterNames,
     download_dir: crate::worker::DownloadDir,
     busy: Mutex<HashSet<String>>,
+    /// The workbench's last runs (055)
+    runs: crate::workbench::Runs,
 }
 
 /// Holds a plugin's place in the busy set until dropped
-struct BusyGuard<'a> {
+pub(crate) struct BusyGuard<'a> {
     inner: &'a Inner,
     name: String,
 }
@@ -206,6 +223,9 @@ impl Drop for Inner {
         if let Ok(state) = self.state.get_mut() {
             for slot in state.slots.values() {
                 slot.stop();
+            }
+            for hook in state.hook_slots.values() {
+                hook.slot.stop();
             }
         }
     }
@@ -238,6 +258,12 @@ fn state_of(found: &Found, settings: Option<&PluginSettings>) -> (PluginState, O
         .hosts_needed(settings)
         .into_iter()
         .filter(|h| !settings.approved_hosts.contains(h))
+        .chain(
+            manifest
+                .paths_needed(settings)
+                .into_iter()
+                .filter(|p| !settings.approved_paths.contains(p)),
+        )
         .collect();
     if !unapproved.is_empty() {
         return (
@@ -260,11 +286,18 @@ fn spec_of(found: &Found, settings: Option<&PluginSettings>) -> Option<Spec> {
         .into_iter()
         .filter(|h| approved.contains(h))
         .collect();
+    let paths = manifest
+        .paths_needed(&settings)
+        .into_iter()
+        .filter(|p| settings.approved_paths.contains(p))
+        .collect();
     Some(Spec {
         manifest,
         script: found.script.clone(),
+        wasm: found.wasm.clone(),
         settings,
         allowed,
+        paths,
     })
 }
 
@@ -281,6 +314,7 @@ impl PluginsService {
                     found,
                     settings: options.settings,
                     slots: HashMap::new(),
+                    hook_slots: HashMap::new(),
                     env: None,
                 }),
                 data_dir: options.data_dir,
@@ -290,6 +324,7 @@ impl PluginsService {
                 counters: Default::default(),
                 download_dir: Arc::new(Mutex::new(options.download_dir)),
                 busy: Mutex::new(HashSet::new()),
+                runs: Default::default(),
             }),
         }
     }
@@ -309,7 +344,42 @@ impl PluginsService {
             stores: self.inner.stores.clone(),
             counters: self.inner.counters.clone(),
             download_dir: self.inner.download_dir.clone(),
+            tap: None,
         }
+    }
+
+    /// The workers' shared environment, or a new one before [`PluginsService::start`]
+    pub(crate) fn current_env(&self) -> Env {
+        let state = self.inner.state.lock().unwrap();
+        match &state.env {
+            Some(env) => env.clone(),
+            None => self.env(tokio::runtime::Handle::current()),
+        }
+    }
+
+    /// `name` as found, broken or not, with its saved settings (disabled defaults when none)
+    pub(crate) fn found_with_settings(&self, name: &str) -> Option<(Found, PluginSettings)> {
+        let state = self.inner.state.lock().unwrap();
+        let found = state.found.iter().find(|f| f.name == name)?.clone();
+        let settings = state
+            .settings
+            .iter()
+            .find(|s| s.name == name)
+            .cloned()
+            .unwrap_or_else(|| PluginSettings {
+                name: name.to_string(),
+                ..PluginSettings::default()
+            });
+        Some((found, settings))
+    }
+
+    /// The spec a worker for `found` would get
+    pub(crate) fn spec_for(&self, found: &Found, settings: &PluginSettings) -> Option<Spec> {
+        spec_of(found, Some(settings))
+    }
+
+    pub(crate) fn workbench_runs_lock(&self) -> &crate::workbench::Runs {
+        &self.inner.runs
     }
 
     /// Start the enabled plugins, the event dispatcher and the ticker. Call from inside
@@ -322,7 +392,7 @@ impl PluginsService {
                 return;
             }
             state.env = Some(self.env(handle.clone()));
-            apply(&mut state, false);
+            apply(&mut state, Changed::Nothing);
         }
         let weak = Arc::downgrade(&self.inner);
         let mut events = events::subscribe();
@@ -385,20 +455,40 @@ impl PluginsService {
     pub fn configure(&self, settings: Vec<PluginSettings>) {
         let mut state = self.inner.state.lock().unwrap();
         state.settings = settings;
-        apply(&mut state, true);
+        apply(&mut state, Changed::All);
     }
 
     /// Find the plugins again; returns how many were found and how many are broken
     pub fn reload(&self) -> (usize, usize) {
         let mut state = self.inner.state.lock().unwrap();
         state.found = discover(state.dir.as_deref());
-        apply(&mut state, true);
+        apply(&mut state, Changed::All);
         let broken = state
             .found
             .iter()
             .filter(|f| f.loadable().is_none())
             .count();
         (state.found.len(), broken)
+    }
+
+    /// Find the plugins again, rebuilding only `names`' workers; the others keep their
+    /// state (055: a workbench save)
+    pub fn reload_only(&self, names: &[String]) {
+        let mut state = self.inner.state.lock().unwrap();
+        state.found = discover(state.dir.as_deref());
+        apply(&mut state, Changed::Only(names));
+    }
+
+    /// Install a plugin into the plugins folder and reload. A new plugin starts disabled.
+    pub fn install(
+        &self,
+        package: crate::install::Package,
+        replace: bool,
+    ) -> Result<String, crate::install::InstallError> {
+        let dir = self.dir().ok_or(crate::install::InstallError::NoFolder)?;
+        let name = crate::install::install(&dir, package, replace)?;
+        self.reload();
+        Ok(name)
     }
 
     /// Use another plugins folder and reload
@@ -423,7 +513,11 @@ impl PluginsService {
                 let settings = state.settings.iter().find(|s| s.name == found.name);
                 let slot = state.slots.get(&found.name);
                 let (mut plugin_state, mut error) = state_of(found, settings);
-                if let Some(e) = slot.and_then(|s| s.load_error()) {
+                let hook_error = state
+                    .hook_slots
+                    .get(&found.name)
+                    .and_then(|h| h.slot.load_error());
+                if let Some(e) = slot.and_then(|s| s.load_error()).or(hook_error) {
                     plugin_state = PluginState::Broken;
                     error = Some(e);
                 }
@@ -437,6 +531,7 @@ impl PluginsService {
                     state: plugin_state,
                     error,
                     events: manifest.map(|m| m.events.clone()).unwrap_or_default(),
+                    hooks: manifest.map(|m| m.hooks.clone()).unwrap_or_default(),
                     permissions: manifest.map(|m| m.permissions.clone()).unwrap_or_default(),
                     config_fields: manifest.map(|m| m.config.clone()).unwrap_or_default(),
                     actions: manifest.map(|m| m.actions.clone()).unwrap_or_default(),
@@ -447,6 +542,15 @@ impl PluginsService {
                     },
                     approved_hosts: settings
                         .map(|s| s.approved_hosts.clone())
+                        .unwrap_or_default(),
+                    runtime: manifest.map(|m| m.runtime.clone()).unwrap_or_default(),
+                    paths_needed: match (manifest, settings) {
+                        (Some(m), Some(s)) => m.paths_needed(s),
+                        (Some(m), None) => m.paths_needed(&PluginSettings::default()),
+                        _ => Vec::new(),
+                    },
+                    approved_paths: settings
+                        .map(|s| s.approved_paths.clone())
                         .unwrap_or_default(),
                     has_tick: slot.is_some_and(|s| s.has_tick()),
                     queued: slot.map(|s| s.queued()).unwrap_or(0),
@@ -547,6 +651,7 @@ impl PluginsService {
                 m.check_values(&s)?;
                 if s.enabled {
                     s.approved_hosts = m.hosts_needed(&s);
+                    s.approved_paths = m.paths_needed(&s);
                 }
             }
             out.push(s);
@@ -573,7 +678,29 @@ impl PluginsService {
         })
     }
 
-    fn begin(&self, name: &str) -> Result<BusyGuard<'_>, CallError> {
+    /// The running plugins' hook workers
+    pub(crate) fn hook_workers(&self) -> Vec<Arc<HookSlot>> {
+        let state = self.inner.state.lock().unwrap();
+        state.hook_slots.values().cloned().collect()
+    }
+
+    /// Keep a run with the plugin's last runs, and count it
+    pub(crate) fn keep_run(&self, name: &str, run: PluginRun) {
+        putio_sync_telemetry::plugins::record_run(
+            name,
+            &run.event_type,
+            run.result.as_str(),
+            Duration::ZERO,
+        );
+        let mut history = self.inner.history.lock().unwrap();
+        let runs = history.entry(name.to_string()).or_default();
+        if runs.len() >= MAX_RUNS {
+            runs.pop_front();
+        }
+        runs.push_back(run);
+    }
+
+    pub(crate) fn begin(&self, name: &str) -> Result<BusyGuard<'_>, CallError> {
         if !self.inner.busy.lock().unwrap().insert(name.to_string()) {
             return Err(CallError::Busy);
         }
@@ -604,6 +731,7 @@ impl PluginsService {
             function: function.to_string(),
             kind: kind.to_string(),
             args,
+            limit: None,
             reply,
         });
         slot.finish();
@@ -670,8 +798,10 @@ impl PluginsService {
         let _busy = self.begin(name)?;
         let spec = Spec {
             allowed: manifest.hosts_needed(&merged).into_iter().collect(),
+            paths: manifest.paths_needed(&merged),
             manifest: manifest.clone(),
             script: found.script.clone(),
+            wasm: found.wasm.clone(),
             settings: merged.clone(),
         };
         let reply = self
@@ -775,9 +905,16 @@ fn dispatch(inner: &Inner, event: Arc<Event>) {
     }
 }
 
+/// Which running workers [`apply`] rebuilds
+enum Changed<'a> {
+    Nothing,
+    All,
+    Only(&'a [String]),
+}
+
 /// Start, update and stop workers to match what is found and the settings. `changed`
-/// makes running workers rebuild.
-fn apply(state: &mut State, changed: bool) {
+/// running workers rebuild.
+fn apply(state: &mut State, changed: Changed) {
     let Some(env) = state.env.clone() else {
         return;
     };
@@ -791,7 +928,42 @@ fn apply(state: &mut State, changed: bool) {
             continue;
         };
         keep.insert(found.name.clone());
+        let changed = match changed {
+            Changed::Nothing => false,
+            Changed::All => true,
+            Changed::Only(names) => names.contains(&found.name),
+        };
         putio_sync_telemetry::plugins::record_configured(&found.name);
+        if spec.manifest.hooks.is_empty() {
+            if let Some(hook) = state.hook_slots.remove(&found.name) {
+                hook.slot.stop();
+            }
+        } else {
+            match state.hook_slots.get(&found.name) {
+                Some(hook) => {
+                    if changed {
+                        hook.slot.update(spec.clone());
+                        let fresh = Arc::new(HookSlot::new(hook.slot.clone()));
+                        state.hook_slots.insert(found.name.clone(), fresh);
+                    }
+                }
+                None => {
+                    let slot = Slot::new(spec.clone());
+                    match slot.spawn(env.clone()) {
+                        Ok(()) => {
+                            state
+                                .hook_slots
+                                .insert(found.name.clone(), Arc::new(HookSlot::new(slot)));
+                        }
+                        Err(e) => tracing::error!(
+                            plugin = %found.name,
+                            error = %e,
+                            "Plugin sync hook thread not started"
+                        ),
+                    }
+                }
+            }
+        }
         match state.slots.get(&found.name) {
             Some(slot) => {
                 if changed {
@@ -812,6 +984,13 @@ fn apply(state: &mut State, changed: bool) {
             }
         }
     }
+    state.hook_slots.retain(|name, hook| {
+        let kept = keep.contains(name);
+        if !kept {
+            hook.slot.stop();
+        }
+        kept
+    });
     state.slots.retain(|name, slot| {
         let kept = keep.contains(name);
         if !kept {

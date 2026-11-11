@@ -1,0 +1,30 @@
+[package]
+name = "putio-sync-notify"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Email notifications for putio-sync - send chosen events from the internal event bus over SMTP"
+
+[dependencies]
+# Internal dependencies
+putio-sync-core = { path = "../putio-sync-core" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# SMTP. rustls with ring (already in the tree through reqwest), so no OpenSSL and no C
+# toolchain on any release target; the OS certificate store, as the Docker image ships one.
+lettre = { version = "0.11", default-features = false, features = [
+    "smtp-transport", "builder", "tokio1-rustls", "ring", "rustls-native-certs",
+] }
+
+# Serialization
+serde = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Delivery timestamps
+chrono = { version = "0.4", features = ["serde"] }
