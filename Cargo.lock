@@ -2164,7 +2164,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-api"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -2208,7 +2208,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-archive"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "chrono",
  "flate2",
@@ -2227,7 +2227,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-arr"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2251,7 +2251,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-cli"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2319,7 +2319,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2395,7 +2395,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-dlna"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "axum",
  "bytes",
@@ -2426,7 +2426,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-doctor"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "chrono",
  "filetime",
@@ -2499,7 +2499,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-hooks"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "chrono",
  "libc",
@@ -2516,7 +2516,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-pipeline"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "mockito",
  "putio-sync-client",
@@ -2539,7 +2539,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-plugins"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "chrono",
  "mlua",
@@ -2557,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-precheck"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "mockito",
  "putio-sync-client",
@@ -2574,7 +2574,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-storage"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "mockito",
  "putio-sync-client",
@@ -2592,7 +2592,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-subtitles"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "encoding_rs",
  "mockito",
@@ -2610,7 +2610,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-tailscale"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -2621,7 +2621,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-telemetry"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "axum",
  "prometheus",
@@ -2636,7 +2636,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-translation"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "mockito",
  "putio-sync-core",
