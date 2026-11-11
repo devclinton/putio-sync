@@ -38,6 +38,8 @@ pub enum EventType {
     TransferFinished,
     /// A Put.io transfer failed
     TransferFailed,
+    /// A Put.io transfer stopped moving for the stall threshold (feature 030)
+    TransferStuck,
     /// A sync run ended
     SyncCompleted,
     /// Put.io storage fell below the warning level
@@ -52,6 +54,8 @@ pub enum EventType {
     PipelineStepFailed,
     /// An item finished its processing pipeline with warnings (feature 038)
     PipelineCompleted,
+    /// A doctor check became a problem (feature 030)
+    DoctorProblem,
     /// Sent by the "send test event" button only
     HookTest,
     /// Sent by a plugin's "send test event" button only
@@ -60,12 +64,13 @@ pub enum EventType {
 
 impl EventType {
     /// Every type, in documentation order.
-    pub const ALL: [EventType; 14] = [
+    pub const ALL: [EventType; 16] = [
         EventType::DownloadFinished,
         EventType::DownloadFailed,
         EventType::TransferAdded,
         EventType::TransferFinished,
         EventType::TransferFailed,
+        EventType::TransferStuck,
         EventType::SyncCompleted,
         EventType::StorageLow,
         EventType::VerifyPassed,
@@ -73,6 +78,7 @@ impl EventType {
         EventType::VerifyRedownload,
         EventType::PipelineStepFailed,
         EventType::PipelineCompleted,
+        EventType::DoctorProblem,
         EventType::HookTest,
         EventType::PluginTest,
     ];
@@ -85,6 +91,7 @@ impl EventType {
             EventType::TransferAdded => "transfer.added",
             EventType::TransferFinished => "transfer.finished",
             EventType::TransferFailed => "transfer.failed",
+            EventType::TransferStuck => "transfer.stuck",
             EventType::SyncCompleted => "sync.completed",
             EventType::StorageLow => "storage.low",
             EventType::VerifyPassed => "verify.passed",
@@ -92,6 +99,7 @@ impl EventType {
             EventType::VerifyRedownload => "verify.redownload",
             EventType::PipelineStepFailed => "pipeline.step_failed",
             EventType::PipelineCompleted => "pipeline.completed",
+            EventType::DoctorProblem => "doctor.problem",
             EventType::HookTest => "hook.test",
             EventType::PluginTest => "plugin.test",
         }
@@ -225,6 +233,9 @@ pub enum Payload {
     /// `transfer.failed`
     #[serde(rename = "transfer.failed")]
     TransferFailed(TransferChanged),
+    /// `transfer.stuck`
+    #[serde(rename = "transfer.stuck")]
+    TransferStuck(TransferStuck),
     /// `sync.completed`
     #[serde(rename = "sync.completed")]
     SyncCompleted(SyncCompleted),
@@ -246,6 +257,9 @@ pub enum Payload {
     /// `pipeline.completed`
     #[serde(rename = "pipeline.completed")]
     PipelineCompleted(PipelineCompleted),
+    /// `doctor.problem`
+    #[serde(rename = "doctor.problem")]
+    DoctorProblem(DoctorProblem),
     /// `hook.test`
     #[serde(rename = "hook.test")]
     HookTest(HookTest),
@@ -263,6 +277,7 @@ impl Payload {
             Payload::TransferAdded(_) => EventType::TransferAdded,
             Payload::TransferFinished(_) => EventType::TransferFinished,
             Payload::TransferFailed(_) => EventType::TransferFailed,
+            Payload::TransferStuck(_) => EventType::TransferStuck,
             Payload::SyncCompleted(_) => EventType::SyncCompleted,
             Payload::StorageLow(_) => EventType::StorageLow,
             Payload::VerifyPassed(_) => EventType::VerifyPassed,
@@ -270,6 +285,7 @@ impl Payload {
             Payload::VerifyRedownload(_) => EventType::VerifyRedownload,
             Payload::PipelineStepFailed(_) => EventType::PipelineStepFailed,
             Payload::PipelineCompleted(_) => EventType::PipelineCompleted,
+            Payload::DoctorProblem(_) => EventType::DoctorProblem,
             Payload::HookTest(_) => EventType::HookTest,
             Payload::PluginTest(_) => EventType::PluginTest,
         }
@@ -366,6 +382,24 @@ pub struct TransferChanged {
     pub file_id: Option<i64>,
     /// Put.io's error message, set on `transfer.failed`
     pub error: Option<String>,
+}
+
+/// `transfer.stuck`: sent once each time a transfer stalls (feature 007's verdict)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TransferStuck {
+    /// Put.io transfer id
+    pub transfer_id: i64,
+    /// Transfer name
+    pub name: String,
+    /// Why it counts as stuck: `availability N%`, `no peers` or `no progress`
+    pub reason: String,
+    /// When it stopped moving
+    #[serde(serialize_with = "millis")]
+    pub stalled_since: DateTime<Utc>,
+    /// Size in bytes, when Put.io knows it
+    pub size_bytes: Option<i64>,
+    /// Put.io's percent done
+    pub percent_done: i64,
 }
 
 /// `sync.completed`
@@ -543,6 +577,21 @@ pub fn subscribe() -> broadcast::Receiver<Arc<Event>> {
     bus().subscribe()
 }
 
+/// `doctor.problem`: a check that is a problem now and was not in the previous run
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DoctorProblem {
+    /// The check's id, such as `putio_token`
+    pub check: String,
+    /// The check's title
+    pub title: String,
+    /// What it found
+    pub summary: String,
+    /// The area it belongs to: `Put.io`, `Sync`, `Local` or `Connectivity`
+    pub area: String,
+    /// How many items it found; 0 for checks that do not count
+    pub item_count: u64,
+}
+
 /// One sample payload of every type, for tests and the docs check.
 #[doc(hidden)]
 pub fn samples() -> Vec<Payload> {
@@ -585,6 +634,14 @@ pub fn samples() -> Vec<Payload> {
             status: "ERROR".to_string(),
             error: Some("no seeders".to_string()),
             ..transfer
+        }),
+        Payload::TransferStuck(TransferStuck {
+            transfer_id: 992,
+            name: "Some.Show.S01E02.1080p".to_string(),
+            reason: "no peers".to_string(),
+            stalled_since: Utc::now(),
+            size_bytes: Some(1_400_000_000),
+            percent_done: 37,
         }),
         Payload::SyncCompleted(SyncCompleted {
             trigger: "schedule".to_string(),
@@ -650,6 +707,13 @@ pub fn samples() -> Vec<Payload> {
             key: "transfer:991".to_string(),
             name: "Some.Show.S01E01.1080p".to_string(),
             warnings: vec!["tidy".to_string()],
+        }),
+        Payload::DoctorProblem(DoctorProblem {
+            check: "disk_space".to_string(),
+            title: "Disk space".to_string(),
+            summary: "2.1 GB free on /data, below the 5 GB minimum".to_string(),
+            area: "Local".to_string(),
+            item_count: 0,
         }),
         Payload::HookTest(HookTest {
             hook: "home-assistant".to_string(),

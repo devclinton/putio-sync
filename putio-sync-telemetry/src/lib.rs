@@ -77,6 +77,8 @@ pub struct Telemetry {
     pub(crate) files_blocked: IntCounter,
     pub(crate) sync_in_progress: IntGauge,
     pub(crate) rule_decisions: IntCounterVec,
+    pub(crate) stream_mp4_requests: IntCounterVec,
+    pub(crate) organise_moves: IntCounterVec,
 
     pub(crate) queue_items: IntGaugeVec,
     pub(crate) downloads_active: IntGauge,
@@ -285,9 +287,25 @@ impl Telemetry {
             rule_decisions: IntCounterVec::new(
                 opts(
                     "rule_decisions_total",
-                    "Folder rule decisions: files blocked, skipped or deleted from Put.io.",
+                    "Folder rule decisions: files blocked, skipped or deleted from Put.io, or kept there for streaming.",
                 ),
                 &["decision"],
+            )
+            .unwrap(),
+            stream_mp4_requests: IntCounterVec::new(
+                opts(
+                    "stream_mp4_requests_total",
+                    "MP4 versions asked of Put.io for files kept there for streaming, by result.",
+                ),
+                &["result"],
+            )
+            .unwrap(),
+            organise_moves: IntCounterVec::new(
+                opts(
+                    "organise_moves_total",
+                    "Moves of files kept on Put.io into a show layout, by kind and result.",
+                ),
+                &["kind", "result"],
             )
             .unwrap(),
 
@@ -939,6 +957,8 @@ impl Telemetry {
             Box::new(self.files_blocked.clone()),
             Box::new(self.sync_in_progress.clone()),
             Box::new(self.rule_decisions.clone()),
+            Box::new(self.stream_mp4_requests.clone()),
+            Box::new(self.organise_moves.clone()),
             Box::new(self.queue_items.clone()),
             Box::new(self.downloads_active.clone()),
             Box::new(self.download_workers.clone()),
@@ -1057,6 +1077,15 @@ impl Telemetry {
         }
         for d in RuleDecision::ALL {
             self.rule_decisions.with_label_values(&[d.as_str()]);
+        }
+        for r in Mp4Request::ALL {
+            self.stream_mp4_requests.with_label_values(&[r.as_str()]);
+        }
+        for k in OrganiseMoveKind::ALL {
+            for r in OrganiseResult::ALL {
+                self.organise_moves
+                    .with_label_values(&[k.as_str(), r.as_str()]);
+            }
         }
         for s in QueueState::ALL {
             self.queue_items.with_label_values(&[s.as_str()]);

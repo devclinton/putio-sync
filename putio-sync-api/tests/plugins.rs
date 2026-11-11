@@ -1,5 +1,5 @@
-//! Lua plugin routes (features 028, 031): the plugin list, test events, reload and
-//! settings actions
+//! Plugin routes (features 028, 029, 031): the plugin list, test events, reload, settings
+//! actions and installing
 
 mod common;
 
@@ -61,6 +61,7 @@ async fn needs_a_token() {
         (Method::POST, "/plugins/test"),
         (Method::POST, "/plugins/reload"),
         (Method::POST, "/plugins/action"),
+        (Method::POST, "/plugins/install"),
     ] {
         let response = app.req(method, path, None, None).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
@@ -301,4 +302,162 @@ async fn an_unknown_plugin_or_action_is_404() {
         .post_json("/plugins/action", json!({"name": "signin"}))
         .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// The Rust example: a module with its manifest inside
+fn clean_names() -> Vec<u8> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../examples/plugins/rust-clean-names/plugin.wasm");
+    std::fs::read(path).unwrap()
+}
+
+fn b64(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn listed(list: &serde_json::Value, name: &str) -> Option<serde_json::Value> {
+    list["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == name)
+        .cloned()
+}
+
+#[tokio::test]
+async fn install_from_files_starts_disabled_and_needs_replace_to_overwrite() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path(), vec![]).await;
+    let manifest = "name = \"fresh\"\nversion = \"1\"\nevents = [\"download.finished\"]\n";
+    let body = json!({ "manifest": manifest, "entry": b64(ECHO.as_bytes()) });
+    let response = app.post_json("/plugins/install", body.clone()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await["name"], "fresh");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("fresh/main.lua")).unwrap(),
+        ECHO
+    );
+    let fresh = listed(&body_json(app.get("/plugins").await).await, "fresh").unwrap();
+    assert_eq!(fresh["state"], "disabled");
+
+    let again = app.post_json("/plugins/install", body.clone()).await;
+    assert_eq!(again.status(), StatusCode::CONFLICT);
+    let mut replace = body;
+    replace["replace"] = json!(true);
+    replace["manifest"] = json!(manifest.replace("\"1\"", "\"2\""));
+    let response = app.post_json("/plugins/install", replace).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let fresh = listed(&body_json(app.get("/plugins").await).await, "fresh").unwrap();
+    assert_eq!(fresh["version"], "2");
+}
+
+#[tokio::test]
+async fn install_a_module_uploaded_or_from_a_url() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path(), vec![]).await;
+    let wasm = clean_names();
+    let response = app
+        .post_json("/plugins/install", json!({ "wasm": b64(&wasm) }))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let list = body_json(app.get("/plugins").await).await;
+    let plugin = listed(&list, "rust-clean-names").unwrap();
+    assert_eq!(plugin["runtime"], "wasm");
+    assert_eq!(plugin["hooks"], json!(["rename"]));
+
+    let mut server = mockito::Server::new_async().await;
+    let module = server
+        .mock("GET", "/clean.wasm")
+        .with_body(wasm.clone())
+        .create_async()
+        .await;
+    let moved = server
+        .mock("GET", "/moved")
+        .with_status(302)
+        .with_header("location", "/clean.wasm")
+        .create_async()
+        .await;
+    let away = server
+        .mock("GET", "/away")
+        .with_status(302)
+        .with_header("location", "http://example.invalid/clean.wasm")
+        .create_async()
+        .await;
+    let response = app
+        .post_json(
+            "/plugins/install",
+            json!({ "url": format!("{}/moved", server.url()), "replace": true }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    moved.assert_async().await;
+    module.assert_async().await;
+
+    let response = app
+        .post_json(
+            "/plugins/install",
+            json!({ "url": format!("{}/away", server.url()), "replace": true }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    away.assert_async().await;
+    let text = body_text(response).await;
+    assert!(text.contains("another host"), "{text}");
+
+    // A manifest URL brings the entry from the same folder
+    let toml = server
+        .mock("GET", "/lua/hello/plugin.toml")
+        .with_body("name = \"hello\"\nversion = \"1\"\nevents = [\"*\"]\n")
+        .create_async()
+        .await;
+    let lua = server
+        .mock("GET", "/lua/hello/main.lua")
+        .with_body("return {}")
+        .create_async()
+        .await;
+    let response = app
+        .post_json(
+            "/plugins/install",
+            json!({ "url": format!("{}/lua/hello/plugin.toml", server.url()) }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    toml.assert_async().await;
+    lua.assert_async().await;
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("hello/main.lua")).unwrap(),
+        "return {}"
+    );
+}
+
+#[tokio::test]
+async fn bad_installs_say_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path(), vec![]).await;
+    for (body, status, want) in [
+        (json!({}), StatusCode::BAD_REQUEST, "send one of"),
+        (
+            json!({ "url": "file:///etc/passwd" }),
+            StatusCode::BAD_REQUEST,
+            "http",
+        ),
+        (json!({ "wasm": "%%%" }), StatusCode::BAD_REQUEST, "base64"),
+        (
+            json!({ "wasm": b64(b"\0asm\x01\0\0\0") }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "section",
+        ),
+        (
+            json!({ "manifest": "name = 1", "entry": b64(b"") }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "plugin.toml",
+        ),
+    ] {
+        let response = app.post_json("/plugins/install", body.clone()).await;
+        assert_eq!(response.status(), status, "{body}");
+        let text = body_text(response).await;
+        assert!(text.contains(want), "{body}: {text}");
+    }
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }

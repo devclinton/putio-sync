@@ -1,0 +1,23 @@
+name = "go-min-size-filter"
+version = "1.0.0"
+description = "Skip videos smaller than a size, written in Go: samples, trailers and extras stay on Put.io"
+runtime = "wasm"
+entry = "plugin.wasm"
+events = ["download.finished"]
+hooks = ["filter"]
+
+[permissions]
+store = true
+
+[[config]]
+key = "min_mb"
+type = "integer"
+label = "Smallest video (MB)"
+help = "Videos below this are not downloaded"
+default = 50
+
+[[config]]
+key = "extensions"
+type = "string_list"
+label = "Video extensions"
+default = ["mkv", "mp4", "avi", "m4v", "mov", "wmv", "ts"]

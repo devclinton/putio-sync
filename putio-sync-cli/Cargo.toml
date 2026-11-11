@@ -35,6 +35,7 @@ putio-sync-dlna = { path = "../putio-sync-dlna" }
 putio-sync-update = { path = "../putio-sync-update" }
 putio-sync-doctor = { path = "../putio-sync-doctor" }
 putio-sync-hooks = { path = "../putio-sync-hooks" }
+putio-sync-notify = { path = "../putio-sync-notify" }
 putio-sync-pipeline = { path = "../putio-sync-pipeline" }
 putio-sync-plugins = { path = "../putio-sync-plugins" }
 putio-sync-storage = { path = "../putio-sync-storage" }

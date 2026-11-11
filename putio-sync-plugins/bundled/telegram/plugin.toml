@@ -33,7 +33,7 @@ key = "notify"
 type = "string_list"
 label = "Events"
 help = "Event types to send"
-default = ["download.finished", "download.failed", "transfer.failed", "sync.completed", "storage.low"]
+default = ["download.finished", "download.failed", "transfer.failed", "transfer.stuck", "sync.completed", "storage.low", "doctor.problem"]
 
 [[config]]
 key = "group_minutes"

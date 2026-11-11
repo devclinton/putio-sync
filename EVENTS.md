@@ -210,6 +210,40 @@ The fields are those of `transfer.added`; `error` holds Put.io's message.
 }
 ```
 
+### `transfer.stuck`
+
+A Put.io transfer has been downloading without new bytes for the stall threshold (feature 030,
+using feature 007's stall check, 6 hours by default). It is sent once per stall: a transfer
+that moves again and then stalls again sends it again. Stall state lives in memory, so after a
+restart the clock starts again.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `transfer_id` | integer | Put.io transfer id |
+| `name` | string | transfer name |
+| `reason` | string | `availability N%`, `no peers` or `no progress` |
+| `stalled_since` | string | when it last made progress (RFC 3339) |
+| `size_bytes` | integer or null | size, when Put.io knows it |
+| `percent_done` | integer | Put.io's percent done |
+
+```json
+{
+  "schema_version": 1,
+  "id": "0f6b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d",
+  "type": "transfer.stuck",
+  "occurred_at": "2026-11-11T16:00:03.118Z",
+  "source": { "app": "putio-sync", "version": "0.2.2", "host": "nas01" },
+  "data": {
+    "transfer_id": 98767,
+    "name": "Some.Show.S01E02.1080p",
+    "reason": "availability 92%",
+    "stalled_since": "2026-11-11T10:00:01.000Z",
+    "size_bytes": 1400000000,
+    "percent_done": 37
+  }
+}
+```
+
 ### `sync.completed`
 
 A sync run (a pass over Put.io for new files to download) ended, on the schedule or
@@ -451,6 +485,37 @@ pass cleanly send no event, so nothing changes for people who set no pipeline st
     "key": "transfer:991",
     "name": "Some.Show.S01E01.1080p",
     "warnings": ["tidy"]
+  }
+}
+```
+
+### `doctor.problem`
+
+A doctor check is a problem now and was not in the previous run (feature 030). Scheduled runs and
+runs from the Doctor page both count. A check that stays a problem sends nothing more; one that is
+fixed and comes back sends it again. Warnings send nothing.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `check` | string | the check id, such as `disk_space` |
+| `title` | string | the check's title |
+| `summary` | string | what it found |
+| `area` | string | `Put.io`, `Sync`, `Local` or `Connectivity` |
+| `item_count` | integer | items it found; 0 for checks that do not count |
+
+```json
+{
+  "schema_version": 1,
+  "id": "1a2b3c4d-5e6f-4a7b-9c8d-0e1f2a3b4c5d",
+  "type": "doctor.problem",
+  "occurred_at": "2026-11-11T06:00:12.540Z",
+  "source": { "app": "putio-sync", "version": "0.2.2", "host": "nas01" },
+  "data": {
+    "check": "disk_space",
+    "title": "Disk space",
+    "summary": "2.1 GB free on /data, below the 5 GB minimum",
+    "area": "Local",
+    "item_count": 0
   }
 }
 ```

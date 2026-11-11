@@ -3,12 +3,14 @@
 //! This crate provides download orchestration, streaming downloads,
 //! worker pools, and progress tracking for Put.io file synchronization.
 
+pub mod arrived;
 pub mod blocklist;
 pub mod dry_run;
 pub mod error;
 pub mod files;
 pub mod finished;
 pub mod manager;
+pub mod organise;
 pub mod pipeline;
 pub mod progress;
 pub mod rate_limiter;
@@ -20,6 +22,7 @@ pub mod verify;
 pub mod worker;
 
 // Re-export commonly used types
+pub use arrived::{ArrivedFile, ArrivedStep, Mp4Step, StepResult, STEPS_PER_PASS};
 pub use blocklist::{blocked_extension, default_blocked_extensions, is_blocked};
 pub use dry_run::{dry_run, DryRunItem, DryRunReport, Tally, DRY_RUN_LIMIT, DRY_RUN_SAMPLES};
 pub use error::{DownloadError, DownloadResult};
@@ -33,6 +36,7 @@ pub use manager::{
     RemoteDeleteGate, RemoteDeletes, RulePreview, SyncStats, TransfersSnapshot, TreeDecision,
     TreeFile, TreeReport, VerifySettings, WorkerStats, PREVIEW_DOWNLOADS, PREVIEW_ITEMS,
 };
+pub use organise::{MoveOutcome, OrganiseStep, Organiser};
 pub use progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};
 pub use rate_limiter::RateLimiter;
 pub use stream::{stream_download, StopSignal, StreamDownloadResult, DEFAULT_BUFFER_SIZE};

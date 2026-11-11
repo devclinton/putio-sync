@@ -41,7 +41,7 @@ export function mediaServerExtra(data, { rebase } = {}) {
 
   // Put.io folder picker over the existing Put.io browse route
   const chosen = h("span", { class: "muted" });
-  const showChosen = () => (chosen.textContent = folder == null ? "No folder chosen" : `Put.io folder ${folder}`);
+  const showChosen = () => (chosen.textContent = folder == null ? "No folder chosen: the synced folder, all your files" : `Put.io folder ${folder}`);
   const picker = h("div", { class: "spaced", hidden: true });
   const open = h("button", { type: "button", class: "btn btn-small", onclick: () => browse(0, "Your files") }, "Choose folder");
   async function browse(id, name) {

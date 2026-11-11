@@ -26,6 +26,7 @@ fn non_default_settings() -> DownloadSettings {
         on_existing: Some(putio_sync_core::config::ExistingFile::KeepBoth),
         resume_enabled: false,
         delete_after_download: true,
+        stream_mp4: false,
         bandwidth_limit_bytes_per_sec: Some(1_048_576),
         bandwidth_schedule: vec![schedule_entry()],
         slow_limit_bytes_per_sec: 300_000,
@@ -59,6 +60,7 @@ fn every_manager_field_comes_from_settings() {
             retry_initial_delay_secs: 11,
             workers: 7,
             delete_after_download: true,
+            stream_mp4: false,
             rules: RuleSet::from_config(&settings),
             verify: putio_sync_download::manager::VerifySettings::default(),
         }

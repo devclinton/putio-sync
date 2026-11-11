@@ -1,6 +1,7 @@
-# Lua plugins
+# Plugins
 
-A plugin is a small Lua script that putio-sync runs on its events: a download finished or
+A plugin is a small Lua script, or a WebAssembly module built from Rust, Go or another
+language (see [WebAssembly plugins](#webassembly-plugins)), that putio-sync runs on its events: a download finished or
 failed, a Put.io transfer was added, finished or failed, a sync run ended, or Put.io storage
 runs low. The events are the same as for [event hooks](EVENTS.md), but a plugin runs inside
 putio-sync. It needs no other program, it is limited in what it may do, and it is set up
@@ -59,12 +60,16 @@ without a restart.
 | `pushover` | Application token (secret), User key (secret), Priority, API server (default `https://api.pushover.net`) | The API server's host |
 
 Each one also has **Events** (default: download finished and failed, transfer failed, a
-failed sync run, low storage) and **Group repeats for (minutes)** (default 5). The first
+transfer stuck, a failed sync run, low storage, a doctor problem) and **Group repeats for (minutes)** (default 5). The first
 event of a kind is sent at once. Later events of the same kind within that time are counted
 and sent as one summary, for example "9 more downloads finished: File 1, …, File 5 and 4
 more". Set it to 0 to send every event.
 
-There is no email plugin. A plugin can only make HTTP requests.
+Settings › **Notifications** shows the four on one page: turn each on or off, pick its
+events and send a test. Their accounts and tokens stay on their tab in Settings › Plugins.
+
+There is no email plugin, as a plugin can only make HTTP requests. Email is built in:
+`[notifications.smtp]` in `config.toml`, or Settings › Notifications.
 
 ## Media servers: Plex, Jellyfin and Emby
 
@@ -263,6 +268,7 @@ plugin subscribes to.
 | `putio.path.parent(path)` / `within(path, folder)` | The folder above / whether `path` is `folder` or below it | — |
 | `putio.metrics.count(name, n?)` | Adds `n` (default 1) to `putio_sync_plugin_counter_total{plugin, name}`; up to 16 names, `[a-z0-9_]` | — |
 | `putio.download_dir` | The daemon's download folder, or `""` | — |
+| `putio.fs.read(path)` / `write(path, text)` / `list(folder)` / `exists(path)` | text / `true` / `{name, dir, size}` list / bool, or `nil, error` | `files` |
 
 - **HTTP** goes only to http(s) hosts the manifest names and the user approved. Any other
   host returns `nil, "host not approved: example.com"`. Up to 3 redirects to the same host
@@ -271,21 +277,193 @@ plugin subscribes to.
 - **Store** is a JSON object per plugin, kept in `plugin-data/<name>.json` next to the config
   and kept across reloads and restarts. Keys can be up to 128 bytes, values up to 64 KiB,
   and the whole store up to 1 MiB.
+- **Files** (feature 029) are reached only inside the folders the manifest asks for and the
+  user approved; see [File access](#file-access). Reads and writes are up to 1 MiB, and a
+  list gives at most 1 000 entries.
 - **Logs** go to putio-sync's log with the plugin's name. `print` logs at info. A test run
   also shows up to 20 of its lines in Settings.
+
+### File access
+
+A plugin that reads or writes files names its folders in the manifest:
+
+```toml
+[permissions.files]
+read = ["{download_dir}"]            # absolute folders, or {download_dir} and below
+write = ["{download_dir}/.cache"]    # a write folder can be read too
+read_from_config = ["library"]       # string settings that hold a folder
+write_from_config = []
+```
+
+Settings › Plugins lists these folders on the plugin ("May read /downloads; read and
+write /media/notes"), and turning the plugin on and saving approves them, as with hosts.
+They are kept in `approved_paths` on the plugin's `[[plugins]]` entry. When a setting that
+names a folder changes, the plugin waits in **Needs approval** until the next save. Paths
+are checked after `..` and links are resolved, so a plugin cannot step or link out of its
+folders.
+
+## WebAssembly plugins
+
+A plugin can be a WebAssembly module instead of Lua. It uses the same `plugin.toml`, with
+two more lines, and gets the same events, sync rules, settings, actions, store, limits and
+run history:
+
+```toml
+runtime = "wasm"            # "lua" by default
+entry = "plugin.wasm"       # the default for wasm
+```
+
+The module talks to putio-sync in JSON through its memory, with three imports from a
+`putio` module: `call` makes one API call (`{"fn": "http.request", "args": [...]}`, the same
+calls as the Lua table above) and returns the reply's length, `reply` copies the reply out,
+and `fail` ends the call with a message. Each plugin function (`init`, `on_event`,
+`filter`, `rename`, `folder`, `on_tick`, `on_action`, `health`) takes a JSON array of the
+Lua function's arguments and returns JSON. The full ABI is in
+[specs/029-wasm-plugins/contracts/wasm-abi.md](specs/029-wasm-plugins/contracts/wasm-abi.md).
+
+- **Examples.** [`rust-clean-names`](examples/plugins/rust-clean-names/) (Rust, rename) and
+  [`go-min-size-filter`](examples/plugins/go-min-size-filter/) (Go, filter) each have a
+  small `putio` binding you can copy, and build steps in their README. Tests build or load
+  both, so they keep working.
+- **WASI.** Modules built for `wasm32-wasip1` load: clocks and random numbers are real,
+  stdout and stderr become log lines, and every other WASI call (files, sockets,
+  environment) answers "not supported". The only way out of the sandbox is the `putio` API.
+- **Limits.** Modules are up to 16 MiB. The plugin's `memory_mb` covers its whole memory,
+  and `timeout_secs` (or the sync-rule limit) each call. Over either, or a trap or
+  `proc_exit`, the call fails and the next one starts a fresh instance. A module that
+  imports something the host does not offer, or exports `_start`, is **Broken** with a
+  message that says why.
+- **One file.** A module can carry its `plugin.toml` in a custom section named
+  `putio-plugin`, so it installs as a single `.wasm` (the Rust example does this).
+- **JavaScript** and other languages work through a WebAssembly build of their runtime
+  (such as Javy for JavaScript); no example ships for them.
+
+### Installing a plugin
+
+Settings › Plugins › Plugin workbench › **Install or replace a plugin** takes a URL, or files: one `.wasm` that carries
+its manifest, or a `plugin.toml` with its entry file. A URL can point at a `.wasm` or at a
+`plugin.toml`, whose entry is fetched from the same folder. The plugin is written to its
+own folder in the plugins folder and starts off, with its hosts and folders listed for you
+to check before turning it on. Installing over a plugin of the same name needs **Replace a plugin of the same name**,
+which keeps its settings and store. `POST /plugins/install` does the same from scripts; see
+the [README](README.md#http-api).
+
+## Sync rules
+
+A plugin can also take part in a sync with up to three **sync rules**. They are called
+while the sync runs, so each call has a short time limit, and a plugin that fails or is
+slow is passed over: the built-in rules apply.
+
+| Rule | Asked | Returns |
+|---|---|---|
+| `filter` | for each file of a sync pass, after the folder rules and type filter | `"download"`, `"stream"` or `"skip"` (`true` and `false` mean download and skip), or `nil` to keep the built-in decision |
+| `rename` | before a download starts | a file name (no `/` or `\`, up to 255 bytes), or `nil` |
+| `folder` | before a download starts | a folder inside the download folder, such as `"TV/Show/Season 01"` (`""` for the folder itself, no `..`), or `nil` |
+
+Declare them in `plugin.toml` and return a function of the same name. `events` may then be
+left out, and `on_event` is needed only for the events listed:
+
+```toml
+name = "min-size-filter"
+version = "1.0.0"
+hooks = ["filter"]            # filter, rename, folder
+```
+
+```lua
+return {
+  filter = function(file)
+    if file.extension == "mkv" and file.size < 50 * 1024 * 1024 then return "skip" end
+    return nil
+  end,
+}
+```
+
+Each function gets one `file` table:
+
+| Field | |
+|---|---|
+| `id` | Put.io file id |
+| `name` | Put.io name |
+| `size` | bytes |
+| `extension` | lowercase, without the dot; `""` when none |
+| `folder` | Put.io folder relative to the synced folder, `""` at the top |
+| `decision` | the built-in decision: `download`, `stream`, `blocked` or `skipped` (`download` for rename and folder) |
+| `reason` | the built-in reason in words, `""` for a download |
+
+How answers are used:
+
+- Plugins are asked in name order, and the first answer that is not `nil` wins.
+- A filter's `"download"` or `"stream"` overrides a block or a skipped folder. `"skip"`
+  shows in the file list as "skipped by plugin <name>". A file a plugin skips is never
+  deleted from Put.io, even where **Delete blocked files** is on.
+- A folder answer replaces the Put.io folder; the processing pipeline may still stage the
+  file. A rename answer replaces the name, except on a retry that already chose a numbered
+  name after a clash. Names and folder parts are made safe as Put.io names are.
+- What happens when a file exists still goes by the file's Put.io folder rules.
+- Files Radarr or Sonarr asked for are never filtered, renamed or moved.
+- The preview and the dry run show the built-in rules only; plugins are not asked.
+- Files stream mode keeps on Put.io are placed too when `[organise]` is on and
+  `use_plugins` is true: the folder answer (read from the Put.io root) and the rename
+  answer become the file's planned move on Put.io, shown on the Organise panel before
+  anything moves unless `apply = "auto"`. `decision` is `stream` for these calls.
+
+Limits:
+
+- **Time.** Each call may take `hook_timeout_ms` (500 ms by default, 50 to 5000; Settings
+  shows it as **Sync rule time limit**). A slower call is stopped and passed over.
+- **Own worker.** A plugin with sync rules gets a second worker for them, sharing its
+  store and settings, so a sync never waits behind the plugin's queued events. `init` runs
+  in both.
+- **Pause.** An error, a timeout or an answer that does not check out is logged as a
+  warning and kept with the plugin's runs. After 3 in a row, the plugin's sync rules rest
+  for 5 minutes. An answer resets the count, and so does a reload or a settings change.
+- **Send test event** calls `on_event`, which a plugin with only sync rules does not have,
+  so its test fails. `putio-sync-plugins/tests/examples.rs` shows how to test sync rules.
+
+Working examples, one for each rule, are in [`examples/plugins/`](examples/plugins/):
+[`min-size-filter`](examples/plugins/min-size-filter/) (filter),
+[`clean-names`](examples/plugins/clean-names/) (rename) and
+[`tv-folders`](examples/plugins/tv-folders/) (folder). Copy a folder into the plugins
+folder and reload.
+
+## The plugin workbench
+
+Settings › Plugins › **Plugin workbench** (feature 055) is a basic editor and debugger in
+the web UI, with no breakpoints or stepping:
+
+- **New plugin** writes a folder from a starter: `webhook-notifier`, `store-counter` or
+  `tick-poller`. The same starters are in `examples/plugins/`.
+- **The editor** shows `plugin.toml` and `main.lua` with line numbers. Save checks the
+  manifest (with the same `file: field: message` errors as a reload) and the Lua syntax,
+  keeps the old files as `.bak`, and reloads only that plugin. Bundled plugins are
+  read-only; **Copy to edit** makes a folder copy that replaces the bundled one. WebAssembly
+  plugins show their manifest only; install a new build over them.
+- **The Run panel** calls `on_event` with a sample of any event type, `on_tick`, `health`,
+  a settings action, or a sync rule (`filter`, `rename`, `folder`) with a sample file, for
+  Lua and WebAssembly plugins. A run is a dry run by default: HTTP requests are recorded
+  and not sent, `putio.fs.write` is recorded and not written, and the store is a scratch
+  copy. **Send for real** uses the approved hosts and the real store. It shows the result
+  or the error with its line, the time, memory, log lines, each request with its secrets
+  masked, and the store before and after. The last 20 runs can be run again.
+
+The editor is off by default: set `plugin_editor = true`, or tick **Edit plugins here**.
+Without it, plugins can be read and run but not changed. The guide,
+[Writing and debugging plugins](site/book/src/plugin-workbench.md), has the details.
 
 ## Limits and safety
 
 - **Sandbox.** Only `string`, `table`, `math` and `utf8` are loaded. `os`, `io`, `debug`,
   `coroutine`, `package`, `require`, `dofile`, `loadfile`, `collectgarbage` and
-  `string.dump` are missing, and `load` takes text only. A plugin cannot read files, run
-  programs or open sockets.
+  `string.dump` are missing, and `load` takes text only. A plugin cannot run programs or
+  open sockets, and reaches files only through `putio.fs` in its approved folders.
+  WebAssembly plugins get only the `putio` API and a WASI layer with no real access.
 - **Time.** Each call (`init`, `on_event`, `on_tick`, `on_action`, `health`) may run for `timeout_secs`, including
   the HTTP requests it makes. A call that runs longer is stopped and recorded as a timeout.
-- **Memory.** The plugin's whole Lua state may use `memory_mb`. Past that, the call fails
+- **Memory.** The plugin's whole Lua state, or a module's memory, may use `memory_mb`. Past that, the call fails
   and the state is built again for the next event.
 - **Never holds up a sync.** Each plugin has its own thread and queue. A slow or failing
-  plugin delays only its own events. Past 1 000 waiting events, the oldest are dropped and
+  plugin delays only its own events. Sync rules have a separate worker and a limit of
+  their own; see [Sync rules](#sync-rules). Past 1 000 waiting events, the oldest are dropped and
   counted.
 - **Secrets** are shown as `********` in the API, Settings and the export. Saving the mask
   keeps the stored value. Secret values are replaced with `********` in a plugin's errors
@@ -295,7 +473,8 @@ plugin subscribes to.
 
 - `GET /plugins` lists each plugin with its state, manifest (actions and fields with
   choices included), approved hosts, waiting events and last 20 runs. `POST /plugins/test`,
-  `POST /plugins/reload` and `POST /plugins/action` do what the Settings buttons do.
+  `POST /plugins/reload`, `POST /plugins/action`, `POST /plugins/install` and the
+  `/plugins/workbench` routes do what the Settings buttons do.
 - Metrics: `putio_sync_plugin_runs_total{plugin, event, result}`,
   `putio_sync_plugin_run_duration_seconds{plugin}` and
   `putio_sync_plugin_events_dropped_total{plugin}`, and each plugin's own counters as
@@ -310,8 +489,5 @@ plugin subscribes to.
 
 ## Later
 
-- Plugins run on events only. Plugins that decide things during a sync, such as file
-  filters, rename rules and folder rules, are a follow-up.
-- WebAssembly plugins (roadmap 029) are meant to use the same `plugin.toml`, with
-  `runtime = "wasm"`, and the same API as JSON imports. `runtime = "wasm"` is refused for
-  now.
+- Sync rules (feature 028) run in the sync pass and the queue worker only. The preview and
+  dry run do not ask plugins.

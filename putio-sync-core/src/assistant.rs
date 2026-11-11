@@ -5,7 +5,7 @@
 //! [`diff`] lists the settings that differ between two configs, and [`export_toml`] and
 //! [`import`] move the settings between installs without the credentials.
 
-use crate::config::{settings_table, Config};
+use crate::config::{settings_table, Config, NotificationBackend};
 use crate::config_lint::{self, ConfigWarning};
 use crate::error::{CoreError, CoreResult};
 use crate::pattern;
@@ -281,12 +281,12 @@ pub fn risks_in(config: &Config, host: &Host) -> Vec<Risk> {
             );
         }
     }
-    if config.notifications.enabled {
+    if config.notifications.enabled && config.notifications.backend != NotificationBackend::None {
         add(
             "notifications_unused",
             Level::Warning,
-            &["notifications.enabled"],
-            "Notifications are on, but [notifications] sends nothing yet; use an event hook to be told about downloads.".to_string(),
+            &["notifications.backend"],
+            "[notifications] backend, webhook_url and email send nothing; set up email in [notifications.smtp] or a notifier plugin in Settings › Notifications.".to_string(),
         );
     }
 
@@ -430,7 +430,7 @@ fn flatten(table: &toml::Table) -> BTreeMap<String, toml::Value> {
 
 const EXPORT_HEADER: &str = "# putio-sync settings export\n\
 # Credentials ([auth], api.auth_token) and the Radarr/Sonarr section ([arr]) are left out.\n\
-# Hook header and env values, plugin secrets, the transcription key and the translation secrets read \"********\"; an import keeps the stored ones.\n\
+# Hook header and env values, plugin secrets, the transcription key, the translation secrets and the SMTP password read \"********\"; an import keeps the stored ones.\n\
 # Import it from Settings › Advanced › Backup and restore.\n\n";
 
 /// `config` with every hook header and env value (feature 027) and plugin secret
@@ -442,12 +442,14 @@ fn masked(config: &Config) -> std::borrow::Cow<'_, Config> {
         && config.subtitles.opensubtitles.is_default()
         && config.translation.chat.api_key.is_empty()
         && config.translation.callback.headers.is_empty()
+        && config.notifications.smtp.password.is_empty()
     {
         return std::borrow::Cow::Borrowed(config);
     }
     let mut config = config.clone();
     config.subtitles = config.subtitles.masked();
     config.translation = config.translation.masked();
+    config.notifications.smtp = config.notifications.smtp.masked();
     config.hooks = crate::hooks::mask(&config.hooks);
     config.plugins = crate::plugins::mask(&config.plugins);
     std::borrow::Cow::Owned(config)
@@ -521,6 +523,11 @@ pub fn import(current: &Config, text: &str) -> CoreResult<Import> {
     // The transcription key reads "********" in an export; an import keeps the stored one
     config.subtitles = config.subtitles.clone().unmasked(&current.subtitles);
     config.translation = config.translation.clone().unmasked(&current.translation);
+    config.notifications.smtp = config
+        .notifications
+        .smtp
+        .clone()
+        .unmasked(&current.notifications.smtp);
     config.expand_paths()?;
     Ok(Import {
         config,
@@ -741,6 +748,7 @@ mod tests {
         config.api.auth_token = Some("api-secret-token".to_string());
         config.subtitles.transcription.api_key = "whisper-secret-key".to_string();
         config.translation.chat.api_key = "translation-secret-key".to_string();
+        config.notifications.smtp.password = "smtp-secret-password".to_string();
         config.translation.callback.headers = [(
             "Authorization".to_string(),
             "translation-secret-header".to_string(),
@@ -786,6 +794,7 @@ mod tests {
             "whisper-secret-key",
             "translation-secret-key",
             "translation-secret-header",
+            "smtp-secret-password",
         ] {
             assert!(!text.contains(secret), "{secret} leaked");
         }
@@ -842,6 +851,7 @@ mod tests {
             ..hook("shared")
         });
         config.notifications.enabled = true;
+        config.notifications.backend = crate::config::NotificationBackend::Webhook;
         let risks = risks_in(&config, &host(temp.path()));
         let ids: Vec<_> = risks.iter().map(|r| r.id).collect();
         let mut expected = vec!["hook_disabled", "hook_plain_http", "notifications_unused"];
@@ -860,6 +870,10 @@ mod tests {
         assert!(text.contains(crate::hooks::MASK));
         let imported = import(&current, &text).unwrap();
         assert_eq!(imported.config.hooks, current.hooks);
+        assert_eq!(
+            imported.config.notifications.smtp.password,
+            "smtp-secret-password"
+        );
 
         // A mask for a hook this config lacks can't be resolved
         let renamed = text.replace("name = \"ha\"", "name = \"other\"");

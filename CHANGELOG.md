@@ -22,6 +22,111 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   winget, Docker, Unraid, CasaOS or Umbrel) and shows that channel's update command, with a
   Copy button, or its update step. For Docker it names the pull for your image's tag. Set
   `PUTIO_SYNC_INSTALL` when it guesses wrong; `GET /status` reports it as `install_channel`.
+- Email notifications: `[notifications.smtp]` sends the events you choose as plain-text
+  email through your mail server, over STARTTLS (the default, never falling back to plain
+  text), TLS or, for a relay on your LAN, no encryption and no login. Repeats of one kind
+  are grouped into a summary like the notifier plugins do. The password is masked like
+  other secrets.
+- Two new events: `transfer.stuck`, once when a Put.io transfer stalls, and
+  `doctor.problem`, once when a doctor check becomes a problem. Event hooks and Lua and
+  WebAssembly plugins get them, and the bundled ntfy, Discord, Telegram and Pushover
+  notifiers send both by default.
+- Settings › Notifications: email settings with a test button, and the bundled notifier
+  plugins on one page, each with its state, settings at a glance, events and a test
+  button. It replaces the notifications card in Settings › General.
+- Plugin workbench in Settings › Plugins: make a Lua plugin from a starter (webhook
+  notifier, store counter, tick poller), edit its `plugin.toml` and `main.lua` with line
+  numbers, check and save them (the old files kept as `.bak`) and reload only that plugin.
+  Bundled plugins can be copied to edit; WebAssembly plugins show their manifest and can be
+  replaced. A Run panel calls `on_event` with a sample of any event, `on_tick`, `health`, a
+  settings action or a sync rule, for Lua and WebAssembly plugins, and shows the result or
+  the error with its line, time, memory, log lines, HTTP requests (secrets masked) and the
+  store before and after. Runs are dry by default: requests are recorded, not sent, and the
+  store is a scratch copy. The last 20 runs can be run again. Editing is off until
+  `plugin_editor = true` or **Edit plugins here**.
+- A "Writing and debugging plugins" guide in the docs, and three starter plugins with a
+  README each in `examples/plugins/`. The Plugins page, the workbench and the hooks card
+  link to the matching docs pages.
+
+## [0.2.2] - 2026-11-10
+
+### Added
+
+- A project website at <https://devclinton.github.io/putio-sync/>: a landing page with
+  install steps for every platform and screenshots, and the docs as a searchable book
+  built from the repository's Markdown. It loads nothing from other sites. The snap,
+  Unraid, Umbrel and CasaOS listings link to it.
+- The docs on the website in 19 more languages, machine-translated and marked as such,
+  with a language picker in the menu bar.
+- Stream mode: `[download] mode = "stream"`, or `mode` on a folder rule, keeps media on
+  Put.io instead of downloading it, and the media server's Put.io root plays it from
+  there. New videos that aren't MP4 get an MP4 version requested from Put.io
+  (`stream_mp4`, on by default). Radarr/Sonarr items still download. Settings ›
+  Downloads has the mode and warns, with a fix button, when the media server or its
+  Put.io root is off; the rule editor and preview show the mode. The
+  `putio_sync_stream_mp4_requests_total` metric counts MP4 requests.
+- Organise TV shows on Put.io: with `[organise] tv = true`, streamed episodes are planned
+  to move into `TV Shows/Show/Season NN/` as `Show - S02E05 - Title.mkv`, read from the
+  release name. The Put.io page's **Organise** panel lists the moves to apply, undo or
+  dismiss, and **Find files** plans moves for files streamed earlier; `apply = "auto"`
+  moves at once. A target outside stream mode, a name already taken or a file gone from
+  Put.io is refused and shown. Plugins' folder and rename rules can place files instead.
+  The name reader was checked against 400 real Sonarr and 400 Radarr imports. `doctor`
+  warns when organising is on but nothing is streamed; `putio_sync_organise_moves_total`
+  counts the moves.
+- Organise movies on Put.io: with `[organise] movies = true`, streamed films are planned
+  to move into `Movies/Movie (Year)/Movie (Year).mkv`, read from the release name or, for
+  an obfuscated file, its release folder. Parts (`CD2`) and subtitle languages are kept.
+  Trailers, featurettes, behind-the-scenes, deleted scenes and interviews go into the
+  film's `Trailers`, `Featurettes`… folder, which Plex and Jellyfin read as extras;
+  samples are left where they are. Movie moves use the same Organise panel, undo, auto
+  mode and plugin rules as TV, with a Kind column. Checked against 400 real Radarr
+  imports: 349 get Radarr's title and year, the rest differ only by metadata, and none
+  is read as an episode.
+
+- Sync rules for plugins: a plugin can declare `hooks = ["filter", "rename", "folder"]`
+  to decide during a sync whether a file is downloaded, streamed or skipped, what it is
+  called locally and which folder it goes in. Each call has `hook_timeout_ms` (500 ms by
+  default, shown in Settings › Plugins as **Sync rule time limit**); a plugin that
+  fails, is slow or answers wrong is passed over and the built-in rule applies, and
+  after 3 failures in a row its sync rules rest for 5 minutes. Files a plugin skips are
+  never deleted from Put.io, and Radarr/Sonarr files are left alone. Three working
+  examples are in `examples/plugins/`: `min-size-filter`, `clean-names` and
+  `tv-folders`. See PLUGINS.md.
+- WebAssembly plugins: a plugin with `runtime = "wasm"` in its `plugin.toml` is a
+  module built from Rust, Go or another language, with the same events, sync rules,
+  settings, actions, store and time and memory limits as Lua. It runs in a sandbox
+  (wasmi, about 1.4 MB on the binary) that offers only the plugin API: WASI calls for
+  files, sockets or the environment answer "not supported". Examples in Rust
+  (`rust-clean-names`) and Go (`go-min-size-filter`) with build steps are in
+  `examples/plugins/`.
+- File access for plugins: `[permissions.files]` names folders a plugin may read or
+  write, fixed or from its settings, and `putio.fs.read/write/list/exists` reach them
+  (Lua and WebAssembly alike). Settings › Plugins lists the folders, and turning the
+  plugin on approves them, as with hosts; `..` and links cannot lead out.
+- Install a plugin from Settings › Plugins or `POST /plugins/install`: from a URL (a
+  `.wasm` or a `plugin.toml` with its entry beside it) or from files. It starts off,
+  and an existing plugin is replaced only when asked.
+
+### Changed
+
+- The media server's Put.io root no longer needs `putio_folder`: without one it shows
+  the folder the sync mirrors.
+
+### Fixed
+
+- The Docker image sets `HOME=/config`, so it no longer logs "Failed to create log
+  directory /.putiosync/logs: Permission denied" at every start when run as a user
+  other than 99 (`--user`). The Docker Compose, Umbrel and CasaOS listings set it
+  too, for 0.2.1. File logs are now kept in `/config/.putiosync/logs`.
+- The README, snap description and website give the daemon's idle memory on a NAS as
+  about 33 MB; they said 11 MB. The docs site's dark themes have readable link and
+  code colors, links in text are underlined, and code blocks can be scrolled from the
+  keyboard.
+- The Windows install steps no longer say `winget install`: putio-sync isn't in winget
+  yet, so they point at the installer and the zip. The winget package ID is now
+  `devclinton.putio-sync` and the Flatpak ID `io.github.devclinton.putio-sync`, so
+  neither suggests Put.io publishes them.
 
 ## [0.2.1] - 2026-11-09
 

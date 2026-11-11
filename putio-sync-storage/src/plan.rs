@@ -227,6 +227,18 @@ mod tests {
     }
 
     #[test]
+    fn files_kept_on_putio_by_stream_mode_are_never_freed() {
+        // Feature 022: a streamed file has no completed download, so it is never a candidate
+        let mut fx = Fixture::new(vec![
+            walked(1, 0, 10, false, Some("2026-01-01T00:00:00")),
+            walked(2, 0, 50, false, Some("2025-01-01T00:00:00")),
+        ]);
+        fx.completed.remove(&2);
+        fx.local.remove("/data/2");
+        assert_eq!(fx.ids(), vec![1]);
+    }
+
+    #[test]
     fn any_matching_record_counts() {
         let mut fx = Fixture::new(vec![walked(1, 0, 10, false, None)]);
         fx.completed

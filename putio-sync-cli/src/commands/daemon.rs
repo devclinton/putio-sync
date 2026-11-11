@@ -9,6 +9,7 @@ use putio_sync_daemon::{DaemonConfig, PutioDaemon};
 use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadConfig;
 use putio_sync_hooks::HooksService;
+use putio_sync_notify::EmailService;
 use putio_sync_plugins::PluginsService;
 use putio_sync_storage::StorageService;
 use std::path::PathBuf;
@@ -241,6 +242,29 @@ pub async fn execute_daemon(
     // save reach the hooks that run (feature 027)
     let hooks = Arc::new(HooksService::new(config.hooks.clone()));
     hooks.start();
+    // Email notifications (feature 030), shared the same way
+    let email = EmailService::new(config.notifications.smtp.clone());
+    email.start();
+
+    // What runs once for each file stream mode keeps on Put.io (feature 022). The MP4
+    // step reads `download.stream_mp4` each pass; the organise step (feature 023) reads
+    // `[organise]` from the organiser the API also configures.
+    let mut organiser = None;
+    if let (Some(manager), Some(client)) = (daemon.get_download_manager(), daemon.get_client()) {
+        let mut steps: Vec<Arc<dyn putio_sync_download::ArrivedStep>> =
+            vec![Arc::new(putio_sync_download::Mp4Step::new(client.clone()))];
+        if let Some(db) = daemon.get_database() {
+            let o = Arc::new(putio_sync_download::Organiser::new(
+                client,
+                db,
+                &manager,
+                config.organise.clone(),
+            ));
+            steps.push(Arc::new(putio_sync_download::OrganiseStep::new(o.clone())));
+            organiser = Some(o);
+        }
+        manager.set_arrived_steps(steps);
+    }
 
     // One processing pipeline for the daemon's tick and the API (feature 038). With no
     // `stage` hooks it only records the steps it passes through.
@@ -270,6 +294,10 @@ pub async fn execute_daemon(
         Some(config_file_path.as_path()),
     ));
     plugins.start();
+    // Their filters, rename rules and folder rules join the sync (feature 028)
+    if let Some(manager) = daemon.get_download_manager() {
+        manager.set_sync_hooks(plugins.clone());
+    }
 
     // One doctor for the scheduled runs and the API, so the Doctor page shows both
     let doctor = match (daemon.get_client(), &cleanup) {
@@ -343,9 +371,14 @@ pub async fn execute_daemon(
             };
             let state = state
                 .with_hooks(hooks.clone())
+                .with_email(email.clone())
                 .with_plugins(plugins.clone())
                 .with_media_server(media_server.clone())
                 .with_updates(updates.clone());
+            let state = match &organiser {
+                Some(organiser) => state.with_organiser(organiser.clone()),
+                None => state,
+            };
             crate::api_listener::start(&config, state).await?;
         }
         _ => warn!("API listener not started: no local download manager (api.enabled is set)"),
@@ -454,6 +487,7 @@ mod tests {
                 retry_initial_delay_secs: 6,
                 workers: 5,
                 delete_after_download: true,
+                stream_mp4: true,
                 rules: putio_sync_core::rules::RuleSet::from_config(&config.download),
                 verify: putio_sync_download::manager::VerifySettings::default(),
             }

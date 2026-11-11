@@ -6,7 +6,8 @@
 local notifier = {}
 
 local DEFAULT_EVENTS = {
-  "download.finished", "download.failed", "transfer.failed", "sync.completed", "storage.low",
+  "download.finished", "download.failed", "transfer.failed", "transfer.stuck", "sync.completed",
+  "storage.low", "doctor.problem",
 }
 local SUMMARY = {
   ["download.finished"] = "downloads finished",
@@ -14,8 +15,10 @@ local SUMMARY = {
   ["transfer.added"] = "transfers added",
   ["transfer.finished"] = "transfers finished",
   ["transfer.failed"] = "transfers failed",
+  ["transfer.stuck"] = "transfers stuck",
   ["sync.completed"] = "sync runs failed",
   ["storage.low"] = "low storage warnings",
+  ["doctor.problem"] = "doctor problems",
 }
 local NAMES_KEPT = 5
 
@@ -55,12 +58,17 @@ function notifier.message(event)
     return "Transfer finished", with_size(d.name, d.size_bytes)
   elseif t == "transfer.failed" then
     return "Transfer failed", with_error(d.name, d.error)
+  elseif t == "transfer.stuck" then
+    return "Transfer stuck", string.format("%s: %s at %d%%", d.name, d.reason or "stalled",
+      d.percent_done or 0)
   elseif t == "sync.completed" then
     if d.result ~= "failure" then return nil end
     return "Sync failed", d.error or "The sync run failed"
   elseif t == "storage.low" then
     return "Put.io storage low", string.format("%.1f%% free (%s of %s)",
       d.free_percent or 0, size(d.free_bytes) or "?", size(d.total_bytes) or "?")
+  elseif t == "doctor.problem" then
+    return "Doctor: " .. (d.title or d.check or "problem"), d.summary
   elseif t == "plugin.test" then
     return "putio-sync test", d.message or "Test event"
   end
@@ -69,7 +77,8 @@ end
 
 -- A name for the summary, if the event has one
 local function name_of(event)
-  return event.data and event.data.name
+  local d = event.data or {}
+  return d.name or d.title
 end
 
 -- POST and raise on a transport error or a non-2xx answer

@@ -1,0 +1,29 @@
+[book]
+title = "putio-sync docs"
+authors = ["Clinton Collins"]
+language = "en"
+description = "Documentation for putio-sync, which keeps a NAS or server in sync with a Put.io account."
+src = "src"
+
+[build]
+build-dir = "../../target/site/docs"
+create-missing = false
+
+# Rewrites links between the repository's Markdown files to docs pages
+# (feature 054); runs after {{#include}} is expanded
+[preprocessor.repolinks]
+command = "python3 ../tools/repolinks.py"
+after = ["links"]
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+additional-css = ["extra.css"]
+additional-js = ["lang-picker.js"]
+git-repository-url = "https://github.com/devclinton/putio-sync"
+edit-url-template = "https://github.com/devclinton/putio-sync/edit/main/{path}"
+site-url = "/putio-sync/docs/"
+no-section-label = true
+
+[output.html.search]
+enable = true

@@ -8,11 +8,13 @@ services:
 
   web:
     # Pin the multi-arch index digest of the release:
-    #   docker buildx imagetools inspect ghcr.io/devclinton/putio-sync:0.2.1
-    image: ghcr.io/devclinton/putio-sync:0.2.1@sha256:REPLACE_WITH_RELEASE_DIGEST
+    #   docker buildx imagetools inspect ghcr.io/devclinton/putio-sync:0.2.2
+    image: ghcr.io/devclinton/putio-sync:0.2.2@sha256:REPLACE_WITH_RELEASE_DIGEST
     user: "1000:1000"
     restart: on-failure
     environment:
+      # 0.2.1 leaves HOME at / for uids other than 99, where logs can't be written.
+      HOME: /config
       # Unlocks the setup wizard and the web UI; Umbrel shows it as the app password.
       PUTIO_SYNC_API_TOKEN: ${APP_PASSWORD}
       # Tells the update checker how this install is updated (feature 055)
