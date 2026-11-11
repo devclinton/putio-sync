@@ -2,12 +2,11 @@
 //! the folder and name each file should have. Pure: the download crate's organiser moves the
 //! files on Put.io.
 //!
-//! Each kind of media has a reader and a layout. TV episodes are the first kind; movies
-//! (024) add a variant to [`OrganiseKind`] and a branch in [`plan_target`].
+//! Each kind of media has a reader and a layout: TV episodes (023) and movies (024).
 
 use crate::error::{CoreError, CoreResult};
 use crate::lang;
-use crate::release::Episode;
+use crate::release::{self, Episode, Movie};
 use crate::rules::sanitize_name;
 use crate::sync_hooks::MAX_NAME_BYTES;
 use serde::{Deserialize, Serialize};
@@ -33,6 +32,10 @@ pub struct OrganiseConfig {
     pub tv: bool,
     /// Put.io folder for shows, from the synced folder; `""` is the synced folder itself
     pub tv_folder: String,
+    /// Move movies into `Movie (Year)` folders (feature 024)
+    pub movies: bool,
+    /// Put.io folder for movies, from the synced folder
+    pub movies_folder: String,
     /// Wait for the operator, or move at once
     pub apply: OrganiseApply,
     /// Let plugins' folder and rename rules (feature 028) set the target
@@ -44,6 +47,8 @@ impl Default for OrganiseConfig {
         Self {
             tv: false,
             tv_folder: "TV Shows".to_string(),
+            movies: false,
+            movies_folder: "Movies".to_string(),
             apply: OrganiseApply::Preview,
             use_plugins: true,
         }
@@ -58,21 +63,26 @@ impl OrganiseConfig {
 
     /// Whether any kind is organised
     pub fn any(&self) -> bool {
-        self.tv
+        self.tv || self.movies
     }
 
-    /// Check `tv_folder` stays inside the synced folder
+    /// Check `tv_folder` and `movies_folder` stay inside the synced folder
     pub fn validate(&self) -> CoreResult<()> {
-        let folder = self.tv_folder.trim();
-        if folder.starts_with(['/', '\\']) {
-            return Err(CoreError::ConfigError(
-                "organise.tv_folder must be relative to the synced Put.io folder".to_string(),
-            ));
-        }
-        if folder.split(['/', '\\']).any(|p| p.trim() == "..") {
-            return Err(CoreError::ConfigError(
-                "organise.tv_folder must not contain ..".to_string(),
-            ));
+        for (key, folder) in [
+            ("tv_folder", &self.tv_folder),
+            ("movies_folder", &self.movies_folder),
+        ] {
+            let folder = folder.trim();
+            if folder.starts_with(['/', '\\']) {
+                return Err(CoreError::ConfigError(format!(
+                    "organise.{key} must be relative to the synced Put.io folder"
+                )));
+            }
+            if folder.split(['/', '\\']).any(|p| p.trim() == "..") {
+                return Err(CoreError::ConfigError(format!(
+                    "organise.{key} must not contain .."
+                )));
+            }
         }
         Ok(())
     }
@@ -83,6 +93,8 @@ impl OrganiseConfig {
 pub enum OrganiseKind {
     /// A TV episode: `Show/Season NN/Show - SNNEEE - Title.ext`
     Tv,
+    /// A movie: `Movie (Year)/Movie (Year).ext`, extras in a subfolder
+    Movie,
 }
 
 impl OrganiseKind {
@@ -90,6 +102,7 @@ impl OrganiseKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             OrganiseKind::Tv => "tv",
+            OrganiseKind::Movie => "movie",
         }
     }
 }
@@ -106,6 +119,7 @@ impl FromStr for OrganiseKind {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "tv" => Ok(OrganiseKind::Tv),
+            "movie" => Ok(OrganiseKind::Movie),
             other => Err(format!("unknown organise kind \"{other}\"")),
         }
     }
@@ -125,13 +139,31 @@ pub struct Target {
 /// Where `name`, in Put.io folder `folder` (from the synced folder), belongs under the
 /// kinds `config` turns on; `None` when no kind reads it or it is already there
 pub fn plan_target(config: &OrganiseConfig, name: &str, folder: &str) -> Option<Target> {
-    let target = if config.tv {
-        tv_target(&config.tv_folder, name, folder)
-    } else {
-        None
-    }?;
+    let tv = config
+        .tv
+        .then(|| tv_target(&config.tv_folder, name, folder))
+        .flatten();
+    // An episode is never a film, nor is anything under the shows' folder
+    let target = match tv {
+        Some(t) => t,
+        None if config.movies && !inside(folder, &config.tv_folder) => {
+            movie_target(&config.movies_folder, name, folder)?
+        }
+        None => return None,
+    };
     (target.folder != normalize_folder(folder) || target.name != name).then_some(target)
 }
+
+/// Whether `folder` is `root` or below it; never for an empty `root`
+fn inside(folder: &str, root: &str) -> bool {
+    let (folder, root) = (normalize_folder(folder), normalize_folder(root));
+    !root.is_empty() && (folder == root || folder.starts_with(&format!("{root}/")))
+}
+
+/// Video extensions a film may have; subtitles ([`SUBTITLES`]) go beside it
+const VIDEOS: [&str; 11] = [
+    "mkv", "mp4", "m4v", "avi", "mov", "wmv", "ts", "m2ts", "webm", "mpg", "mpeg",
+];
 
 /// Subtitle extensions whose language word (`.en.srt`) is kept
 const SUBTITLES: [&str; 6] = ["srt", "ass", "ssa", "sub", "vtt", "idx"];
@@ -177,6 +209,57 @@ pub fn tv_target(root: &str, name: &str, folder: &str) -> Option<Target> {
             &format!("Season {:02}", episode.season),
         ]),
         name: file,
+    })
+}
+
+/// A film's target under `root`: `root/Movie (Year)/Movie (Year)[ - partN][.lang].ext`.
+/// Extras keep their name in the film's extras folder (`Trailers`, `Featurettes`…); samples
+/// and files in a show's folders give `None`.
+pub fn movie_target(root: &str, name: &str, folder: &str) -> Option<Target> {
+    let (stem, ext) = split_extension(name);
+    let bare = ext.trim_start_matches('.').to_ascii_lowercase();
+    if !VIDEOS.contains(&bare.as_str()) && !SUBTITLES.contains(&bare.as_str()) {
+        return None;
+    }
+    let (stem, lang) = split_language(stem, ext);
+    if folder.split('/').any(release::tv_folder_word) {
+        return None;
+    }
+    let sample_folder = folder.split('/').any(|p| {
+        let p = p.trim().to_ascii_lowercase();
+        p == "sample" || p == "samples"
+    });
+    let movie = Movie::parse(stem)?;
+    if movie.sample || sample_folder {
+        return None;
+    }
+    // The file's own name and year; else the nearest release folder's, as for `abc123.mkv`
+    let (title, year) = match movie.year {
+        Some(y) if !movie.title.is_empty() => (movie.title.clone(), y),
+        _ => folder.rsplit('/').find_map(Movie::of_folder)?,
+    };
+    let film = sanitize_name(&format!("{title} ({year})"));
+    let base = join_folder(&[&normalize_folder(root), &film]);
+    // The folder a file sits in names its extras kind before its own words do
+    let extra = folder
+        .rsplit('/')
+        .next()
+        .and_then(release::extras_folder_of)
+        .or(movie.extra);
+    let (folder, name) = match extra {
+        Some(extra) => (join_folder(&[&base, extra]), sanitize_name(name)),
+        None => {
+            let part = movie
+                .part
+                .map(|n| format!(" - part{n}"))
+                .unwrap_or_default();
+            (base, format!("{film}{part}{lang}{ext}"))
+        }
+    };
+    Some(Target {
+        kind: OrganiseKind::Movie,
+        folder,
+        name,
     })
 }
 
@@ -394,6 +477,197 @@ mod tests {
         );
     }
 
+    fn movie(name: &str, folder: &str) -> Option<(String, String)> {
+        let config = OrganiseConfig {
+            movies: true,
+            ..OrganiseConfig::default()
+        };
+        plan_target(&config, name, folder).map(|t| (t.folder, t.name))
+    }
+
+    /// contracts/naming.md of feature 024
+    #[test]
+    fn the_movie_naming_contract() {
+        let cases = [
+            (
+                "",
+                "Movie.Name.2019.1080p.BluRay.x264-GRP.mkv",
+                "Movies/Movie Name (2019)",
+                "Movie Name (2019).mkv",
+            ),
+            (
+                "Movie.Name.2019.1080p.BluRay-GRP",
+                "abc123.mkv",
+                "Movies/Movie Name (2019)",
+                "Movie Name (2019).mkv",
+            ),
+            (
+                "",
+                "Blade.Runner.2049.2017.2160p.mkv",
+                "Movies/Blade Runner 2049 (2017)",
+                "Blade Runner 2049 (2017).mkv",
+            ),
+            (
+                "",
+                "1917.2019.1080p.mkv",
+                "Movies/1917 (2019)",
+                "1917 (2019).mkv",
+            ),
+            (
+                "",
+                "Charlotte's.Web.2006.720p.mkv",
+                "Movies/Charlotte's Web (2006)",
+                "Charlotte's Web (2006).mkv",
+            ),
+            (
+                "",
+                "Movie.2019.CD2.avi",
+                "Movies/Movie (2019)",
+                "Movie (2019) - part2.avi",
+            ),
+            (
+                "",
+                "Movie.2019.1080p.en.srt",
+                "Movies/Movie (2019)",
+                "Movie (2019).en.srt",
+            ),
+            (
+                "Movie.2019.1080p-GRP/Featurettes",
+                "Making Of.mkv",
+                "Movies/Movie (2019)/Featurettes",
+                "Making Of.mkv",
+            ),
+            (
+                "",
+                "Movie.2019.Trailer.1080p.mkv",
+                "Movies/Movie (2019)/Trailers",
+                "Movie.2019.Trailer.1080p.mkv",
+            ),
+            (
+                "Movie.2019.1080p-GRP",
+                "Movie.2019.Deleted.Scenes.mkv",
+                "Movies/Movie (2019)/Deleted Scenes",
+                "Movie.2019.Deleted.Scenes.mkv",
+            ),
+            (
+                "",
+                "The.Interview.2014.1080p.mkv",
+                "Movies/The Interview (2014)",
+                "The Interview (2014).mkv",
+            ),
+            (
+                "The.Interview.2014.1080p.BluRay-GRP",
+                "abc.mkv",
+                "Movies/The Interview (2014)",
+                "The Interview (2014).mkv",
+            ),
+            (
+                "Downloads/Old Name (1999)",
+                "film.mkv",
+                "Movies/Old Name (1999)",
+                "Old Name (1999).mkv",
+            ),
+            (
+                "",
+                "Movie: Part?.2019.mkv",
+                "Movies/Movie_ Part_ (2019)",
+                "Movie_ Part_ (2019).mkv",
+            ),
+        ];
+        for (folder, name, want_folder, want_name) in cases {
+            assert_eq!(movie(name, folder), is(want_folder, want_name), "{name}");
+        }
+        for (folder, name) in [
+            ("Movie.2019.1080p-GRP/Sample", "movie-sample.mkv"),
+            ("", "Movie.2019.SAMPLE.mkv"),
+            ("", "Show.S01E02.mkv"),
+            ("", "Home Video.mp4"),
+            ("Movie.2019.1080p-GRP", "movie.nfo"),
+            ("Best of 2019", "clip.mp4"),
+            ("Movies/Movie (2019)", "Movie (2019).mkv"),
+            (
+                "Movies/Movie (2019)/Trailers",
+                "Movie.2019.Trailer.1080p.mkv",
+            ),
+            ("Show (2005)/Season 01", "featurette.mkv"),
+            (
+                "TV Shows/Doctor Who (2005)",
+                "Doctor Who 2005 Christmas Special.mkv",
+            ),
+        ] {
+            assert_eq!(movie(name, folder), None, "{folder}/{name}");
+        }
+    }
+
+    /// Names Radarr imported on a real library (feature 024 test data). Of 400, 349 give
+    /// Radarr's title and year; the rest differ by metadata (TMDB titles, years one off),
+    /// none is read as an episode, and samples Radarr imported as films are left out.
+    #[test]
+    fn real_movie_names() {
+        let cases = [
+            (
+                "Color.Out.of.Space.2019.BluRay.1080p.DTS.x264-PRoDJi",
+                "Color.Out.of.Space.2019.BluRay.1080p.DTS.x264-PRoDJi.mkv",
+                "Color Out of Space (2019)",
+            ),
+            (
+                "Dumbo.60th.Anniversary.Edition.1941.MULTi.1080p.BluRay.x264.DTS-C4N4B1S",
+                "c4n4b1s-dumbo.1080p.mkv",
+                "Dumbo 60th Anniversary Edition (1941)",
+            ),
+            (
+                "",
+                "Running Man 2025 1080p WEB-DL HEVC x265 5.1 BONE.mkv",
+                "Running Man (2025)",
+            ),
+            (
+                "Ready.Or.Not.2.Here.I.Come(2026)[DUAL ESP-ENG][HDR10 HEVC][Bluray 2160p]-Mang0z4",
+                "Ready.Or.Not.2.Here.I.Come(2026)[DUAL ESP-ENG][HDR10 HEVC][Bluray 2160p]-Mang0z4.mkv",
+                "Ready Or Not 2 Here I Come (2026)",
+            ),
+            (
+                "",
+                "Under.the.Skin.2013.HDRip.XViD.juggs[ETRG].avi",
+                "Under the Skin (2013)",
+            ),
+            (
+                "Live Free or Die Hard (2007) 1080p AVCHD",
+                "Live Free or Die Hard (2007) 1080p AVCHD.m2ts",
+                "Live Free or Die Hard (2007)",
+            ),
+        ];
+        for (folder, name, film) in cases {
+            let ext = name.rsplit('.').next().unwrap();
+            assert_eq!(
+                movie(name, folder),
+                is(&format!("Movies/{film}"), &format!("{film}.{ext}")),
+                "{name}"
+            );
+        }
+        for name in [
+            "The.Prophecy.1995.1080p.BRRip.x264.AAC-m2g.(Sample).mkv",
+            "The.Incredibles.2004.1080p.BluRay.AC3.sample.mkv",
+            "sample.avi",
+            "The Red Turtle [neo1024][1080p][85217D65].mkv",
+            "Transformers 2 Revenge Of The Fallen DVDRip XviD-MAXSPEED www.torentz.3xforum.ro.avi",
+        ] {
+            assert_eq!(movie(name, ""), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn with_both_kinds_an_episode_stays_tv() {
+        let config = OrganiseConfig {
+            tv: true,
+            movies: true,
+            ..OrganiseConfig::default()
+        };
+        let t = plan_target(&config, "Doctor.Who.2005.S03E04.720p.mkv", "").unwrap();
+        assert_eq!(t.kind, OrganiseKind::Tv);
+        let t = plan_target(&config, "Movie.2019.1080p.mkv", "").unwrap();
+        assert_eq!(t.kind, OrganiseKind::Movie);
+    }
+
     #[test]
     fn a_file_already_in_place_and_off_give_nothing() {
         assert_eq!(
@@ -432,5 +706,17 @@ mod tests {
         assert_eq!(parsed.tv_folder, "TV Shows");
         assert!(toml::from_str::<OrganiseConfig>("apply = \"later\"").is_err());
         assert_eq!("tv".parse::<OrganiseKind>(), Ok(OrganiseKind::Tv));
+        assert_eq!("movie".parse::<OrganiseKind>(), Ok(OrganiseKind::Movie));
+        assert_eq!(c.movies_folder, "Movies");
+        let c = OrganiseConfig {
+            movies_folder: "../Films".to_string(),
+            ..OrganiseConfig::default()
+        };
+        assert!(c.validate().is_err());
+        let c = OrganiseConfig {
+            movies: true,
+            ..OrganiseConfig::default()
+        };
+        assert!(c.any());
     }
 }

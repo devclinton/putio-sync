@@ -62,10 +62,10 @@ async fn settings_round_trip_and_reach_the_organiser() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body,
-        json!({"tv": false, "tv_folder": "TV Shows", "apply": "preview", "use_plugins": true})
+        json!({"tv": false, "tv_folder": "TV Shows", "movies": false, "movies_folder": "Movies", "apply": "preview", "use_plugins": true})
     );
 
-    let wanted = json!({"tv": true, "tv_folder": "Series", "apply": "auto", "use_plugins": false});
+    let wanted = json!({"tv": true, "tv_folder": "Series", "movies": true, "movies_folder": "Films", "apply": "auto", "use_plugins": false});
     let (status, preview) = call(
         &app,
         Method::POST,
@@ -90,6 +90,8 @@ async fn settings_round_trip_and_reach_the_organiser() {
     let live = app.state.organiser.as_ref().unwrap().config();
     assert!(live.tv);
     assert_eq!(live.tv_folder, "Series");
+    assert!(live.movies);
+    assert_eq!(live.movies_folder, "Films");
 
     // A folder outside the Put.io root is refused and nothing changes
     let (status, _) = call(
@@ -104,6 +106,14 @@ async fn settings_round_trip_and_reach_the_organiser() {
         app.state.organiser.as_ref().unwrap().config().tv_folder,
         "Series"
     );
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        "/settings/organise",
+        Some(json!({"movies": true, "movies_folder": "/Films"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

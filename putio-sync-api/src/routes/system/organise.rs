@@ -105,7 +105,14 @@ pub(crate) fn organise_view(config: &Config) -> OrganiseConfig {
 /// Every field applies at the next sync pass
 pub(crate) fn live_organise() -> (&'static [&'static str], &'static str) {
     (
-        &["tv", "tv_folder", "apply", "use_plugins"],
+        &[
+            "tv",
+            "tv_folder",
+            "movies",
+            "movies_folder",
+            "apply",
+            "use_plugins",
+        ],
         "Applies at the next sync",
     )
 }

@@ -38,10 +38,13 @@ undone; plugins' folder and rename rules may place files instead. Shows whose
 names need a metadata lookup (TVDB titles, scene or anime absolute numbering)
 keep the release's name. See `specs/023-organise-tv-putio/`.
 
-### 024 Organise movies on Put.io
+### 024 Organise movies on Put.io (done)
 
-The same for movies: `Movie (Year)/Movie (Year).ext`, with extras and samples
-kept apart or removed.
+The same for movies: `Movie (Year)/Movie (Year).ext`, read from the release
+name or its release folder. Extras go into the film's `Trailers`,
+`Featurettes`… folders; samples are left out of the library, not deleted.
+Titles that need a metadata lookup (TMDB names, years one off) keep the
+release's name. See `specs/024-organise-movies-putio/`.
 
 ### 025 Subtitles (partly done)
 

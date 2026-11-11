@@ -121,9 +121,10 @@ label_enum!(
 );
 
 label_enum!(
-    /// What kind of media an organiser move is for (feature 023; 024 adds `movie`).
+    /// What kind of media an organiser move is for (features 023 and 024).
     OrganiseMoveKind {
         Tv => "tv",
+        Movie => "movie",
     }
 );
 

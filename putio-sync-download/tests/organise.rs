@@ -1,5 +1,5 @@
-//! Organising files kept on Put.io (feature 023): preview, apply, undo, auto, scan and
-//! plugin answers, against a mock Put.io.
+//! Organising files kept on Put.io (features 023 and 024): preview, apply, undo, auto, scan and
+//! plugin answers for episodes and films, against a mock Put.io.
 
 use putio_sync_client::{PutioApiClient, RetryPolicy};
 use putio_sync_core::config::{DownloadConfig as DownloadSettings, SyncMode};
@@ -465,4 +465,94 @@ async fn plugin_answers_win_unless_turned_off() {
     let built_in = s.organiser.plan(&release()).await.unwrap().unwrap();
     assert_eq!(built_in.to_folder, "TV Shows/Show Name/Season 02");
     assert!(!built_in.by_plugin);
+}
+
+const FILM: &str = "Movie.Name.2019.1080p.BluRay.x264-GRP.mkv";
+const FILM_TARGET: &str = "Movie Name (2019).mkv";
+
+fn movies() -> OrganiseConfig {
+    OrganiseConfig {
+        movies: true,
+        ..Default::default()
+    }
+}
+
+fn film(file_id: i64, name: &str, folder: &str) -> ArrivedFile {
+    ArrivedFile {
+        file_id,
+        name: name.to_string(),
+        folder: folder.to_string(),
+        size: 100,
+    }
+}
+
+#[tokio::test]
+async fn a_film_is_planned_and_applied_and_a_sample_is_not() {
+    let mut server = mockito::Server::new_async().await;
+    details(&mut server, FILE, FILM, RELEASE_FOLDER).await;
+    list(
+        &mut server,
+        0,
+        &[entry(RELEASE_FOLDER, "Movie-Name-2019", 0)],
+    )
+    .await;
+    make_folder(&mut server, "Movies", 0, 100).await;
+    list(&mut server, 100, &[]).await;
+    make_folder(&mut server, "Movie Name (2019)", 100, 101).await;
+    list(&mut server, 101, &[]).await;
+    let r = rename(&mut server, FILM_TARGET, 1).await;
+    let m = move_to(&mut server, 101, 1).await;
+    let s = setup(&server, SyncMode::Stream, movies()).await;
+    let step = OrganiseStep::new(s.organiser.clone());
+    assert!(step.enabled(&s.manager.get_config().await));
+
+    let release = "Movie.Name.2019.1080p.BluRay-GRP";
+    assert_eq!(step.run(&film(FILE, FILM, release)).await, StepResult::Done);
+    let sample = film(
+        6,
+        "movie.name.2019.sample.mkv",
+        &format!("{release}/Sample"),
+    );
+    assert_eq!(step.run(&sample).await, StepResult::Done);
+    let episode = film(7, RELEASE, "");
+    assert_eq!(step.run(&episode).await, StepResult::Done);
+    let moves = s.organiser.list().await.unwrap();
+    assert_eq!(moves.len(), 1);
+    assert_eq!(moves[0].kind, "movie");
+    assert_eq!(moves[0].to_folder, "Movies/Movie Name (2019)");
+    assert_eq!(moves[0].to_name, FILM_TARGET);
+
+    let out = s.organiser.apply(&[FILE]).await;
+    assert_eq!(out[0].status, "applied", "{:?}", out[0].error);
+    r.assert_async().await;
+    m.assert_async().await;
+}
+
+#[tokio::test]
+async fn a_film_move_is_undone() {
+    let mut server = mockito::Server::new_async().await;
+    details(&mut server, RELEASE_FOLDER, "Movie-Name-2019", 0).await;
+    details(&mut server, FILE, FILM_TARGET, 101).await;
+    list(&mut server, RELEASE_FOLDER, &[]).await;
+    let m = move_to(&mut server, RELEASE_FOLDER, 1).await;
+    let r = rename(&mut server, FILM, 1).await;
+    let s = setup(&server, SyncMode::Stream, movies()).await;
+    let repo = s.db.organise_moves();
+    repo.plan(&NewMove {
+        file_id: FILE,
+        kind: "movie".to_string(),
+        from_folder: "Movie.Name.2019.1080p.BluRay-GRP".to_string(),
+        from_name: FILM.to_string(),
+        to_folder: "Movies/Movie Name (2019)".to_string(),
+        to_name: FILM_TARGET.to_string(),
+        by_plugin: false,
+    })
+    .await
+    .unwrap();
+    repo.applied(FILE, FILM, RELEASE_FOLDER).await.unwrap();
+
+    let out = s.organiser.undo(&[FILE]).await;
+    assert_eq!(out[0].status, "undone", "{:?}", out[0].error);
+    m.assert_async().await;
+    r.assert_async().await;
 }

@@ -2,8 +2,8 @@
 //! `Show.Name.S02E05.1080p.WEB-DL.x264-GRP.mkv` (feature 050).
 //!
 //! It reads the same fields from a video's file name and from an OpenSubtitles result's
-//! `release`, so the two can be compared field by field. [`Episode`] reads the same tokens
-//! with their letter case kept, for the names organising writes on Put.io (feature 023). A dozen token rules, std only; there
+//! `release`, so the two can be compared field by field. [`Episode`] and [`Movie`] read the same
+//! tokens with their letter case kept, for the names organising writes on Put.io (023, 024). A dozen token rules, std only; there
 //! is no model and no regex crate. Anything it does not recognize is left out, never guessed.
 
 /// Video height, normalised
@@ -440,6 +440,124 @@ impl Episode {
         let end = lower[..at].iter().position(|t| t == "season").unwrap_or(at);
         let (show, year) = show_words(&words[..end], &lower[..end]);
         (!show.is_empty()).then_some((show, year, season))
+    }
+}
+
+/// What a movie's release name says, with the letter case kept (feature 024)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Movie {
+    /// The film's name as words; empty when the name has no year
+    pub title: String,
+    /// Release year; `None` when the name has none (`abc123.mkv`)
+    pub year: Option<u16>,
+    /// The part of a film split in files (`CD2`, `Part2`, `Disc2`, `pt2`)
+    pub part: Option<u16>,
+    /// The extras folder a trailer, featurette or similar belongs in
+    pub extra: Option<&'static str>,
+    /// A sample clip
+    pub sample: bool,
+}
+
+impl Movie {
+    /// Read a movie's file name or stem; `None` for a TV episode or a season-pack name.
+    /// The year ends the title, so the words after it decide the part, extra and sample;
+    /// with no year every word does.
+    pub fn parse(name: &str) -> Option<Self> {
+        let words = words(name);
+        let lower: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
+        if lower.iter().any(|t| season_episode(t).is_some()) {
+            return None;
+        }
+        let at = movie_year_at(&lower);
+        let (title, year, tail) = match at {
+            Some(at) => (display(&words[..at]), year(&lower[at]), &lower[at + 1..]),
+            None => (String::new(), None, &lower[..]),
+        };
+        Some(Movie {
+            title,
+            year,
+            part: tail.iter().find_map(|t| part_number(t)),
+            extra: extra_folder(tail),
+            sample: tail.iter().any(|t| t == "sample"),
+        })
+    }
+
+    /// The film's name and year from a release folder's name. The year must be followed by
+    /// a resolution, source or codec word (`Movie.Name.2019.1080p.BluRay-GRP`) or be in
+    /// brackets (`Movie Name (2019)`), so a folder such as `Best of 2019` is not read as a film.
+    pub fn of_folder(folder: &str) -> Option<(String, u16)> {
+        let movie = Movie::parse(folder)?;
+        let y = movie.year?;
+        let lower: Vec<String> = words(folder).iter().map(|w| w.to_lowercase()).collect();
+        let at = movie_year_at(&lower)?;
+        let quality = (at + 1..lower.len()).any(|j| hard_marker(&lower, j));
+        (quality || folder.contains(&format!("({y})"))).then_some((movie.title, y))
+    }
+}
+
+/// Whether a folder belongs to a show: a season word or number (`Season 01`, `S01`, `Specials`)
+pub fn tv_folder_word(folder: &str) -> bool {
+    words(folder).iter().any(|w| {
+        let w = w.to_lowercase();
+        w == "season" || w == "specials" || season_episode(&w).is_some()
+    })
+}
+
+/// The extras folder Plex and Jellyfin both read, for a folder named after one
+/// (`Featurettes`, `Behind the Scenes`). Words before a year are a title, so
+/// `The.Interview.2014.1080p` is a film's folder, not an extras folder.
+pub fn extras_folder_of(folder: &str) -> Option<&'static str> {
+    Movie::parse(folder)?.extra
+}
+
+/// Where the title's year is: the last year before the first resolution, source or codec
+/// word (`Blade Runner 2049 2017 1080p`), or else the first year (`Charlotte's Web 2006`,
+/// where `web` reads as a source). Never the first word, so `1917` alone is no year.
+fn movie_year_at(lower: &[String]) -> Option<usize> {
+    let marker = (0..lower.len())
+        .find(|&j| hard_marker(lower, j))
+        .unwrap_or(lower.len());
+    (1..marker)
+        .rev()
+        .find(|&j| year(&lower[j]).is_some())
+        .or_else(|| (1..lower.len()).find(|&j| year(&lower[j]).is_some()))
+}
+
+/// A resolution, source or codec word
+fn hard_marker(lower: &[String], j: usize) -> bool {
+    let next = lower.get(j + 1).map(String::as_str);
+    resolution(&lower[j]).is_some()
+        || source(&lower[j], next).is_some()
+        || codec(&lower[j], next).is_some()
+}
+
+/// `2` in `cd2`, `disc2`, `disk2`, `part2` or `pt2`
+fn part_number(t: &str) -> Option<u16> {
+    let digits = ["cd", "disc", "disk", "part", "pt"]
+        .iter()
+        .find_map(|p| t.strip_prefix(p))?;
+    ((1..=2).contains(&digits.len()) && digits.chars().all(|c| c.is_ascii_digit()))
+        .then(|| digits.parse().ok())
+        .flatten()
+        .filter(|n| *n > 0)
+}
+
+/// The extras folder for words that name one
+fn extra_folder(lower: &[String]) -> Option<&'static str> {
+    let has = |w: &str| lower.iter().any(|t| t == w);
+    let pair = |a: &str, b: &str| lower.windows(2).any(|p| p[0] == a && p[1] == b);
+    if has("trailer") || has("trailers") || has("teaser") {
+        Some("Trailers")
+    } else if pair("behind", "the") || pair("making", "of") || has("bts") {
+        Some("Behind The Scenes")
+    } else if has("deleted") {
+        Some("Deleted Scenes")
+    } else if has("interview") || has("interviews") {
+        Some("Interviews")
+    } else if has("featurette") || has("featurettes") || has("extras") || has("bonus") {
+        Some("Featurettes")
+    } else {
+        None
     }
 }
 

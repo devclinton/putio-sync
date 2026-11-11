@@ -32,12 +32,21 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - Organise TV shows on Put.io: with `[organise] tv = true`, streamed episodes are planned
   to move into `TV Shows/Show/Season NN/` as `Show - S02E05 - Title.mkv`, read from the
   release name. The Put.io page's **Organise** panel lists the moves to apply, undo or
-  dismiss, and **Find episodes** plans moves for files streamed earlier; `apply = "auto"`
+  dismiss, and **Find files** plans moves for files streamed earlier; `apply = "auto"`
   moves at once. A target outside stream mode, a name already taken or a file gone from
   Put.io is refused and shown. Plugins' folder and rename rules can place files instead.
   The name reader was checked against 400 real Sonarr and 400 Radarr imports. `doctor`
   warns when organising is on but nothing is streamed; `putio_sync_organise_moves_total`
   counts the moves.
+- Organise movies on Put.io: with `[organise] movies = true`, streamed films are planned
+  to move into `Movies/Movie (Year)/Movie (Year).mkv`, read from the release name or, for
+  an obfuscated file, its release folder. Parts (`CD2`) and subtitle languages are kept.
+  Trailers, featurettes, behind-the-scenes, deleted scenes and interviews go into the
+  film's `Trailers`, `Featurettes`… folder, which Plex and Jellyfin read as extras;
+  samples are left where they are. Movie moves use the same Organise panel, undo, auto
+  mode and plugin rules as TV, with a Kind column. Checked against 400 real Radarr
+  imports: 349 get Radarr's title and year, the rest differ only by metadata, and none
+  is read as an episode.
 
 - Sync rules for plugins: a plugin can declare `hooks = ["filter", "rename", "folder"]`
   to decide during a sync whether a file is downloaded, streamed or skipped, what it is

@@ -740,7 +740,7 @@ H = histogram.
 | `putio_sync_files_blocked_total` | counter | — | Files blocked or skipped by a folder rule or the blocked-extension list (once per file id) |
 | `putio_sync_rule_decisions_total` | counter | `decision` | Folder rule decisions: `blocked`, `skipped`, `deleted` (from Put.io), `streamed` (kept on Put.io) |
 | `putio_sync_stream_mp4_requests_total` | counter | `result` | MP4 versions asked of Put.io for streamed files: `requested`, `ready`, `gone`, `failed` |
-| `putio_sync_organise_moves_total` | counter | `kind`, `result` | Moves on Put.io: `kind` is `tv`; `result` is `planned`, `applied`, `undone`, `failed` |
+| `putio_sync_organise_moves_total` | counter | `kind`, `result` | Moves on Put.io: `kind` is `tv` or `movie`; `result` is `planned`, `applied`, `undone`, `failed` |
 | `putio_sync_sync_in_progress` | gauge | — | 1 while a sync run is in progress, else 0 |
 | `putio_sync_queue_items` | gauge | `state` | Queue rows by state, refreshed every 15 s and at startup |
 | `putio_sync_downloads_active` | gauge | — | Downloads in progress |
@@ -1334,14 +1334,22 @@ roots = ["downloads", "cat:radarr"]  # downloads, cat:<folder>, watch:<path>, pu
   from the release name (season packs, `1x05`, `S01E01E02`, years and subtitle languages
   included). Each move is planned first and made when you tick it and press **Apply**,
   or at once with `apply = "auto"`; **Undo** puts the file back in its folder under its
-  old name. **Find episodes** plans moves for files streamed before you turned it on.
+  old name. **Find files** plans moves for files streamed before you turned it on.
   A target folder outside stream mode is refused, so a move never makes the next sync
   download the file. Plugins' folder and rename rules win when `use_plugins` is on.
+- **Organise movies on Put.io**: the same panel moves streamed films into
+  `Movies/Movie (Year)/Movie (Year).mkv`. A file with an obfuscated name takes the film
+  from its release folder; `CD2` becomes `- part2`. Trailers, featurettes,
+  behind-the-scenes, deleted scenes and interviews go into the film's `Trailers`,
+  `Featurettes`, `Behind The Scenes`, `Deleted Scenes` or `Interviews` folder, which Plex
+  and Jellyfin read as extras. Samples are never moved. Names without a year are left alone.
 
   ```toml
   [organise]
   tv = true
   tv_folder = "TV Shows"   # from the Put.io root
+  movies = true
+  movies_folder = "Movies"
   apply = "preview"        # or "auto"
   use_plugins = true
   ```
