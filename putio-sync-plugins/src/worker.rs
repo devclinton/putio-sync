@@ -29,6 +29,7 @@ use crate::manifest::Manifest;
 use crate::sandbox::{self, Deadline, TIME_LIMIT};
 use crate::store::{SharedStore, Store};
 use crate::wasm::{self, Failure};
+use crate::workbench::{Tap, MAX_WORKBENCH_LOG_LINES};
 
 /// Jobs kept per plugin; the oldest event is dropped past this
 pub const MAX_QUEUE: usize = 1000;
@@ -128,6 +129,8 @@ pub struct Env {
     pub counters: CounterNames,
     /// `putio.download_dir`
     pub download_dir: DownloadDir,
+    /// A workbench run's recorder (055); such a worker is not counted or kept in the runs
+    pub tap: Option<Tap>,
 }
 
 impl Env {
@@ -361,6 +364,14 @@ struct Loaded {
 }
 
 impl Loaded {
+    /// Memory the state uses now: Lua's allocations, or the module's linear memory
+    fn memory_bytes(&self) -> u64 {
+        match &self.runtime {
+            Runtime::Lua { lua, .. } => lua.used_memory() as u64,
+            Runtime::Wasm(instance) => instance.memory_bytes(),
+        }
+    }
+
     /// Whether the plugin defines the function `name`
     fn defines(&self, name: &str) -> bool {
         match &self.runtime {
@@ -400,6 +411,9 @@ impl Worker {
     }
 
     fn run(mut self) {
+        if self.env.tap.is_some() {
+            host::LOG_LIMIT.with(|l| l.set(MAX_WORKBENCH_LOG_LINES));
+        }
         while let Some((job, generation, spec)) = self.slot.next() {
             if self.state.as_ref().is_some_and(|(g, _)| *g != generation) {
                 self.state = None;
@@ -435,12 +449,14 @@ impl Worker {
                 error: Some(error),
                 logs: Vec::new(),
             };
-            putio_sync_telemetry::plugins::record_run(
-                &self.slot.name,
-                &run.event_type,
-                run.result.as_str(),
-                Duration::ZERO,
-            );
+            if self.env.tap.is_none() {
+                putio_sync_telemetry::plugins::record_run(
+                    &self.slot.name,
+                    &run.event_type,
+                    run.result.as_str(),
+                    Duration::ZERO,
+                );
+            }
             let _ = reply.send(CallReply {
                 run,
                 value: None,
@@ -469,7 +485,8 @@ impl Worker {
         let secrets: Rc<Vec<String>> = Rc::new(spec.settings.secrets.values().cloned().collect());
         let logs: Logs = Rc::default();
         if m.permissions.store && self.store.is_none() {
-            self.store = Some(self.env.store_for(&m.name));
+            let scratch = self.env.tap.as_ref().and_then(|t| t.store.clone());
+            self.store = Some(scratch.unwrap_or_else(|| self.env.store_for(&m.name)));
         }
         let host = Host {
             name: m.name.clone(),
@@ -480,6 +497,7 @@ impl Worker {
                 allowed: spec.allowed.clone(),
                 client: self.env.client.clone(),
                 handle: self.env.handle.clone(),
+                tap: self.env.tap.clone(),
             }),
             store: if m.permissions.store {
                 self.store.clone()
@@ -487,11 +505,9 @@ impl Worker {
                 None
             },
             files: (!m.permissions.files.is_empty()).then(|| {
-                Rc::new(Files::new(
-                    &spec.paths,
-                    &spec.paths,
-                    &self.env.download_dir_text(),
-                ))
+                let mut files = Files::new(&spec.paths, &spec.paths, &self.env.download_dir_text());
+                files.tap = self.env.tap.clone();
+                Rc::new(files)
             }),
             download_dir: self.env.download_dir_text(),
             counters: self.env.counters_for(&m.name),
@@ -716,6 +732,9 @@ impl Worker {
         let started = Instant::now();
         let (out, value) = call(&self.deadline, loaded, &function, args, timeout, true);
         let took = started.elapsed();
+        if let Some(tap) = &self.env.tap {
+            tap.set_memory(loaded.memory_bytes());
+        }
         let run = PluginRun {
             event_type: kind,
             event_id: String::new(),
@@ -738,6 +757,9 @@ impl Worker {
 
     /// Log, count and keep a run; `quiet` runs are counted only
     fn finished(&self, run: &PluginRun, took: Duration, quiet: bool) {
+        if self.env.tap.is_some() {
+            return;
+        }
         putio_sync_telemetry::plugins::record_run(
             &self.slot.name,
             &run.event_type,
@@ -765,6 +787,9 @@ impl Worker {
     }
 
     fn record(&self, run: &PluginRun, count: bool) {
+        if self.env.tap.is_some() {
+            return;
+        }
         if count {
             putio_sync_telemetry::plugins::record_run(
                 &self.slot.name,

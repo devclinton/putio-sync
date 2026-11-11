@@ -1,5 +1,6 @@
 //! The example plugins in `examples/plugins/` load and give the answers their READMEs
-//! promise (feature 028), the WebAssembly ones too (029).
+//! promise (feature 028), the WebAssembly ones too (029). The workbench starters (055) are
+//! checked in `tests/workbench.rs`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,6 +17,11 @@ fn examples() -> PathBuf {
 fn is_wasm(folder: &Path) -> bool {
     std::fs::read_to_string(folder.join("plugin.toml"))
         .is_ok_and(|t| t.lines().any(|l| l.replace(' ', "") == "runtime=\"wasm\""))
+}
+
+fn has_hooks(folder: &Path) -> bool {
+    std::fs::read_to_string(folder.join("plugin.toml"))
+        .is_ok_and(|t| t.lines().any(|l| l.starts_with("hooks")))
 }
 
 fn file(name: &str, mb: u64, decision: &str) -> HookFile {
@@ -41,6 +47,8 @@ async fn every_example_loads_and_answers() {
         .filter(|e| e.path().join("plugin.toml").is_file())
         // The WebAssembly ports answer the same; they have their own test
         .filter(|e| !is_wasm(&e.path()))
+        // The workbench starters (055) run on events; they have their own test
+        .filter(|e| has_hooks(&e.path()))
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     for wanted in ["min-size-filter", "clean-names", "tv-folders"] {

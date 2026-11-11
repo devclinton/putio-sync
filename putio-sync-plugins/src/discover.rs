@@ -142,6 +142,14 @@ impl Found {
     }
 }
 
+/// A bundled plugin's `plugin.toml` and full entry script, shared Lua included (055)
+pub fn bundled_source(name: &str) -> Option<(&'static str, &'static str)> {
+    BUNDLED
+        .iter()
+        .find(|(folder, _, _)| *folder == name)
+        .map(|(_, toml, script)| (*toml, *script))
+}
+
 fn bundled() -> Vec<Found> {
     BUNDLED
         .iter()

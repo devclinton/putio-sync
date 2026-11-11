@@ -20,6 +20,7 @@ use serde_json::Value;
 use crate::manifest::url_host;
 use crate::sandbox::Deadline;
 use crate::store::SharedStore;
+use crate::workbench::Tap;
 
 /// The host API version; additive changes keep it
 pub const API_VERSION: i64 = 1;
@@ -65,6 +66,11 @@ pub struct LogLine {
 /// Lines logged during the current run
 pub type Logs = Rc<RefCell<Vec<LogLine>>>;
 
+thread_local! {
+    /// Lines kept per run on this thread; a workbench worker keeps more (055)
+    pub(crate) static LOG_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(MAX_LOG_LINES) };
+}
+
 /// The counter names a plugin has used, shared by its workers
 pub type Counters = Arc<Mutex<BTreeSet<String>>>;
 
@@ -76,6 +82,8 @@ pub struct Http {
     pub client: reqwest::Client,
     /// The runtime the requests run on
     pub handle: tokio::runtime::Handle,
+    /// A workbench run's recorder (055): requests are recorded, and in a dry run not sent
+    pub tap: Option<Tap>,
 }
 
 /// File access (029): the approved folders, `{download_dir}` already put in
@@ -85,6 +93,8 @@ pub struct Files {
     pub read: Vec<PathBuf>,
     /// Folders the plugin may read and write
     pub write: Vec<PathBuf>,
+    /// A workbench run's recorder (055): a dry run records writes instead of doing them
+    pub tap: Option<Tap>,
 }
 
 impl Files {
@@ -177,6 +187,10 @@ impl Files {
         let real = self.resolve(path, true)?;
         if real.is_dir() {
             return Err(format!("{}: is a folder", path));
+        }
+        if let Some(tap) = self.tap.as_ref().filter(|t| t.dry) {
+            tap.record_write(path, text.len());
+            return Ok(());
         }
         std::fs::write(&real, text).map_err(|e| format!("{}: {}", path, e.kind()))
     }
@@ -341,7 +355,7 @@ pub fn log(
         _ => tracing::error!(plugin = %name, "{}", text),
     }
     let mut logs = logs.borrow_mut();
-    if logs.len() < MAX_LOG_LINES {
+    if logs.len() < LOG_LIMIT.with(|l| l.get()) {
         logs.push(LogLine {
             level: level.to_string(),
             message: text,
@@ -380,19 +394,19 @@ fn log_table(lua: &Lua, host: &Host) -> mlua::Result<Table> {
 
 #[derive(Deserialize)]
 pub(crate) struct RequestOptions {
-    method: Option<String>,
-    url: String,
+    pub(crate) method: Option<String>,
+    pub(crate) url: String,
     #[serde(default)]
-    headers: BTreeMap<String, String>,
-    body: Option<String>,
+    pub(crate) headers: BTreeMap<String, String>,
+    pub(crate) body: Option<String>,
     timeout: Option<f64>,
 }
 
 pub(crate) struct Response {
-    status: u16,
-    headers: BTreeMap<String, String>,
-    body: Vec<u8>,
-    truncated: bool,
+    pub(crate) status: u16,
+    pub(crate) headers: BTreeMap<String, String>,
+    pub(crate) body: Vec<u8>,
+    pub(crate) truncated: bool,
 }
 
 fn http_error(host: &str, e: &reqwest::Error) -> String {
@@ -509,13 +523,54 @@ pub(crate) fn request(
         return Err(crate::sandbox::TIME_LIMIT.to_string());
     }
     let host = url_host(&opts.url).unwrap_or_default();
+    if let Some(tap) = &http.tap {
+        if tap.dry {
+            if !http.allowed.contains(&host) {
+                let error = match url_host(&opts.url) {
+                    None => "only http and https URLs".to_string(),
+                    Some(_) => format!("host not approved: {}", host),
+                };
+                tap.record_request(&opts, false, Err(&error), Duration::ZERO);
+                return Err(error);
+            }
+            let reply = tap.reply();
+            tap.record_request(&opts, false, Ok(reply.status), Duration::ZERO);
+            return Ok(reply);
+        }
+    }
     let limit = wanted.min(left);
+    let started = Instant::now();
+    let summary = http.tap.as_ref().map(|_| Summary::of(&opts));
     let result = http.handle.block_on(async {
         tokio::time::timeout(limit, fetch(&http.client, &http.allowed, opts)).await
     });
-    match result {
+    let result = match result {
         Err(_) => Err(format!("{}: timed out", host)),
         Ok(r) => r,
+    };
+    if let (Some(tap), Some(summary)) = (&http.tap, summary) {
+        let status = result.as_ref().map(|r| r.status).map_err(|e| e.as_str());
+        tap.record_summary(summary, true, status, started.elapsed());
+    }
+    result
+}
+
+/// What a workbench run keeps of a request that has been handed to [`fetch`]
+pub(crate) struct Summary {
+    pub(crate) method: String,
+    pub(crate) url: String,
+    pub(crate) headers: BTreeMap<String, String>,
+    pub(crate) body: String,
+}
+
+impl Summary {
+    pub(crate) fn of(opts: &RequestOptions) -> Summary {
+        Summary {
+            method: opts.method.as_deref().unwrap_or("GET").to_ascii_uppercase(),
+            url: opts.url.clone(),
+            headers: opts.headers.clone(),
+            body: opts.body.clone().unwrap_or_default(),
+        }
     }
 }
 
@@ -931,6 +986,7 @@ mod tests {
                     .build()
                     .unwrap(),
                 handle,
+                tap: None,
             }),
             store: store.then(|| Arc::new(Mutex::new(crate::store::Store::open(None, "t")))),
             files: files.map(Rc::new),

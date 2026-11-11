@@ -247,6 +247,9 @@ pub struct Config {
     /// Lua plugin settings (feature 028)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plugins: Vec<crate::plugins::PluginSettings>,
+    /// The plugin workbench's editor may write plugin files (feature 055)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub plugin_editor: bool,
 }
 
 /// `[doctor]`: how often the daemon runs the doctor's checks (feature 010). The CLI and
@@ -1884,6 +1887,7 @@ impl ConfigBuilder {
             hooks: Vec::new(),
             plugins_dir: None,
             plugins: Vec::new(),
+            plugin_editor: false,
         }
     }
 }
@@ -3172,6 +3176,7 @@ mod tests {
             hooks: Vec::new(),
             plugins_dir: None,
             plugins: Vec::new(),
+            plugin_editor: false,
         }
     }
 

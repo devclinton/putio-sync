@@ -202,10 +202,12 @@ struct Inner {
     counters: crate::worker::CounterNames,
     download_dir: crate::worker::DownloadDir,
     busy: Mutex<HashSet<String>>,
+    /// The workbench's last runs (055)
+    runs: crate::workbench::Runs,
 }
 
 /// Holds a plugin's place in the busy set until dropped
-struct BusyGuard<'a> {
+pub(crate) struct BusyGuard<'a> {
     inner: &'a Inner,
     name: String,
 }
@@ -322,6 +324,7 @@ impl PluginsService {
                 counters: Default::default(),
                 download_dir: Arc::new(Mutex::new(options.download_dir)),
                 busy: Mutex::new(HashSet::new()),
+                runs: Default::default(),
             }),
         }
     }
@@ -341,7 +344,42 @@ impl PluginsService {
             stores: self.inner.stores.clone(),
             counters: self.inner.counters.clone(),
             download_dir: self.inner.download_dir.clone(),
+            tap: None,
         }
+    }
+
+    /// The workers' shared environment, or a new one before [`PluginsService::start`]
+    pub(crate) fn current_env(&self) -> Env {
+        let state = self.inner.state.lock().unwrap();
+        match &state.env {
+            Some(env) => env.clone(),
+            None => self.env(tokio::runtime::Handle::current()),
+        }
+    }
+
+    /// `name` as found, broken or not, with its saved settings (disabled defaults when none)
+    pub(crate) fn found_with_settings(&self, name: &str) -> Option<(Found, PluginSettings)> {
+        let state = self.inner.state.lock().unwrap();
+        let found = state.found.iter().find(|f| f.name == name)?.clone();
+        let settings = state
+            .settings
+            .iter()
+            .find(|s| s.name == name)
+            .cloned()
+            .unwrap_or_else(|| PluginSettings {
+                name: name.to_string(),
+                ..PluginSettings::default()
+            });
+        Some((found, settings))
+    }
+
+    /// The spec a worker for `found` would get
+    pub(crate) fn spec_for(&self, found: &Found, settings: &PluginSettings) -> Option<Spec> {
+        spec_of(found, Some(settings))
+    }
+
+    pub(crate) fn workbench_runs_lock(&self) -> &crate::workbench::Runs {
+        &self.inner.runs
     }
 
     /// Start the enabled plugins, the event dispatcher and the ticker. Call from inside
@@ -354,7 +392,7 @@ impl PluginsService {
                 return;
             }
             state.env = Some(self.env(handle.clone()));
-            apply(&mut state, false);
+            apply(&mut state, Changed::Nothing);
         }
         let weak = Arc::downgrade(&self.inner);
         let mut events = events::subscribe();
@@ -417,20 +455,28 @@ impl PluginsService {
     pub fn configure(&self, settings: Vec<PluginSettings>) {
         let mut state = self.inner.state.lock().unwrap();
         state.settings = settings;
-        apply(&mut state, true);
+        apply(&mut state, Changed::All);
     }
 
     /// Find the plugins again; returns how many were found and how many are broken
     pub fn reload(&self) -> (usize, usize) {
         let mut state = self.inner.state.lock().unwrap();
         state.found = discover(state.dir.as_deref());
-        apply(&mut state, true);
+        apply(&mut state, Changed::All);
         let broken = state
             .found
             .iter()
             .filter(|f| f.loadable().is_none())
             .count();
         (state.found.len(), broken)
+    }
+
+    /// Find the plugins again, rebuilding only `names`' workers; the others keep their
+    /// state (055: a workbench save)
+    pub fn reload_only(&self, names: &[String]) {
+        let mut state = self.inner.state.lock().unwrap();
+        state.found = discover(state.dir.as_deref());
+        apply(&mut state, Changed::Only(names));
     }
 
     /// Install a plugin into the plugins folder and reload. A new plugin starts disabled.
@@ -654,7 +700,7 @@ impl PluginsService {
         runs.push_back(run);
     }
 
-    fn begin(&self, name: &str) -> Result<BusyGuard<'_>, CallError> {
+    pub(crate) fn begin(&self, name: &str) -> Result<BusyGuard<'_>, CallError> {
         if !self.inner.busy.lock().unwrap().insert(name.to_string()) {
             return Err(CallError::Busy);
         }
@@ -859,9 +905,16 @@ fn dispatch(inner: &Inner, event: Arc<Event>) {
     }
 }
 
+/// Which running workers [`apply`] rebuilds
+enum Changed<'a> {
+    Nothing,
+    All,
+    Only(&'a [String]),
+}
+
 /// Start, update and stop workers to match what is found and the settings. `changed`
-/// makes running workers rebuild.
-fn apply(state: &mut State, changed: bool) {
+/// running workers rebuild.
+fn apply(state: &mut State, changed: Changed) {
     let Some(env) = state.env.clone() else {
         return;
     };
@@ -875,6 +928,11 @@ fn apply(state: &mut State, changed: bool) {
             continue;
         };
         keep.insert(found.name.clone());
+        let changed = match changed {
+            Changed::Nothing => false,
+            Changed::All => true,
+            Changed::Only(names) => names.contains(&found.name),
+        };
         putio_sync_telemetry::plugins::record_configured(&found.name);
         if spec.manifest.hooks.is_empty() {
             if let Some(hook) = state.hook_slots.remove(&found.name) {

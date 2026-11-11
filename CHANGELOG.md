@@ -26,6 +26,19 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - Settings › Notifications: email settings with a test button, and the bundled notifier
   plugins on one page, each with its state, settings at a glance, events and a test
   button. It replaces the notifications card in Settings › General.
+- Plugin workbench in Settings › Plugins: make a Lua plugin from a starter (webhook
+  notifier, store counter, tick poller), edit its `plugin.toml` and `main.lua` with line
+  numbers, check and save them (the old files kept as `.bak`) and reload only that plugin.
+  Bundled plugins can be copied to edit; WebAssembly plugins show their manifest and can be
+  replaced. A Run panel calls `on_event` with a sample of any event, `on_tick`, `health`, a
+  settings action or a sync rule, for Lua and WebAssembly plugins, and shows the result or
+  the error with its line, time, memory, log lines, HTTP requests (secrets masked) and the
+  store before and after. Runs are dry by default: requests are recorded, not sent, and the
+  store is a scratch copy. The last 20 runs can be run again. Editing is off until
+  `plugin_editor = true` or **Edit plugins here**.
+- A "Writing and debugging plugins" guide in the docs, and three starter plugins with a
+  README each in `examples/plugins/`. The Plugins page, the workbench and the hooks card
+  link to the matching docs pages.
 
 ## [0.2.2] - 2026-11-10
 

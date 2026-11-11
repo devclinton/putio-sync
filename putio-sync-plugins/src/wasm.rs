@@ -276,6 +276,12 @@ impl Instance {
         Ok(built)
     }
 
+    /// The size of the module's linear memory (055)
+    pub fn memory_bytes(&self) -> u64 {
+        let memory = self.store.data().memory;
+        memory.map_or(0, |m| m.data(&self.store).len() as u64)
+    }
+
     /// Whether the module exports a function `name`
     pub fn has(&self, name: &str) -> bool {
         self.instance.get_func(&self.store, name).is_some()

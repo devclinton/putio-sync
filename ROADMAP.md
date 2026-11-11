@@ -173,6 +173,19 @@ come from the daemon. A translated Snap Store listing is not possible: the store
 summary and description per snap (see `specs/051-ui-i18n/research.md`); a Flathub listing
 could carry translations through AppStream.
 
+### 055 Plugin workbench (done)
+
+A basic editor and debugger on the Plugins page, with no breakpoints or stepping. New
+plugin from three starters (webhook notifier, store counter, tick poller); an editor with
+line numbers that checks, saves (keeping `.bak` files) and reloads only that plugin, off by
+default behind `plugin_editor`; Copy to edit for bundled plugins and a read-only manifest
+with re-install for WASM ones. A Run panel for events, `on_tick`, `health`, settings
+actions and sync rules, for Lua and WASM, dry by default (requests recorded, scratch store),
+with the last 20 runs kept for Run again. A "Writing and debugging plugins" guide in the
+docs book, the starters in `examples/plugins/`, and docs links from the UI. The whole
+workbench loads with `import()`, outside the always-loaded UI. See
+`specs/055-plugin-workbench/`.
+
 ### Magnet file lists from peers (deferred from 043)
 
 When the .torrent caches never have a magnet's file list, fetch it from
