@@ -46,6 +46,15 @@ impl Store {
         Store { path, data }
     }
 
+    /// A store with no file holding `data`'s keys, for a workbench dry run (055)
+    pub fn scratch(data: &Value) -> Store {
+        let data = data
+            .as_object()
+            .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        Store { path: None, data }
+    }
+
     /// The value under `key`
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.data.get(key)

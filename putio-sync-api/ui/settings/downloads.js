@@ -1,8 +1,11 @@
 // Downloads section (feature 046): the Download settings group shown as three cards, each
 // saving its own fields on top of the rest of the group. The bandwidth schedule is feature 032.
+// Stream mode (feature 022) warns when the media server can't show the streamed files.
 
+import { get, put } from "../api.js";
 import { entryFromRow, move, rowFromEntry } from "../bandwidth.js";
-import { h } from "../app.js";
+import { h, toast } from "../app.js";
+import { fixMediaServer, gapText, mediaServerGap, streamUsed } from "../stream_mode.js";
 import { groupCard } from "./form.js";
 import { cards as subtitleCards } from "./subtitles.js";
 import { cards as translationCards } from "./translation.js";
@@ -51,6 +54,52 @@ const BANDWIDTH = {
     return { nodes: schedule.node, read: () => ({ bandwidth_schedule: schedule.read() }) };
   },
 };
+const STREAM = {
+  id: "stream",
+  key: "download",
+  part: true,
+  title: "Stream mode",
+  fields: [
+    ["mode", "Mode", null, [
+      ["download", "Download", "Save files to the download folder"],
+      ["stream", "Stream from Put.io", "Keep files on Put.io and play them through the media server; Radarr and Sonarr still download. Folder rules can set either mode per folder."],
+    ]],
+    ["stream_mp4", "Ask for MP4 versions", "In stream mode, ask Put.io to convert videos that aren't MP4, so every player can play them", "b"],
+  ],
+  extra: (data) => ({ nodes: mediaServerWarning(data), read: () => ({}) }),
+};
+
+/** Shown when the saved settings stream but the media server can't show the files */
+function mediaServerWarning(download) {
+  const box = h("div", { class: "spaced", role: "status" });
+  const check = async () => {
+    if (!streamUsed(download)) return box.replaceChildren();
+    let dlna;
+    try {
+      dlna = await get("/settings/media-server");
+    } catch {
+      return box.replaceChildren();
+    }
+    const gap = mediaServerGap(dlna);
+    if (!gap) return box.replaceChildren();
+    const fix = h("button", { type: "button", class: "btn btn-small" }, "Turn on the media server for Put.io");
+    fix.addEventListener("click", async () => {
+      fix.disabled = true;
+      try {
+        const r = await put("/settings/media-server", fixMediaServer(dlna));
+        toast(r.message);
+        await check();
+      } catch (e) {
+        if (e.status !== 401 && e.status !== 429) toast("Couldn't change the media server", "error", e.error || String(e));
+        fix.disabled = false;
+      }
+    });
+    box.replaceChildren(h("p", { class: "warn-text", text: gapText(gap) }), fix);
+  };
+  check();
+  return box;
+}
+
 const VERIFY = {
   id: "verify",
   key: "download",
@@ -65,7 +114,7 @@ const VERIFY = {
   advanced: ["verify_max_redownloads", "verify_read_limit_mb_per_sec", "verify_follow_bandwidth_pause"],
 };
 
-export const cards = (ctx) => [...[DOWNLOAD, BANDWIDTH, VERIFY].map((g) => groupCard(g, ctx)), ...subtitleCards(ctx), ...translationCards(ctx)];
+export const cards = (ctx) => [...[DOWNLOAD, STREAM, BANDWIDTH, VERIFY].map((g) => groupCard(g, ctx)), ...subtitleCards(ctx), ...translationCards(ctx)];
 
 const LIMIT_KINDS = [
   ["rate", "MB/s"],

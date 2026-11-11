@@ -5,6 +5,7 @@
 //! valid but usually a mistake.
 
 use crate::config::Config;
+use crate::rules::RuleSet;
 use serde::Serialize;
 
 /// One finding in a config file
@@ -22,7 +23,7 @@ pub struct ConfigWarning {
 pub fn lint(contents: &str) -> Result<Vec<ConfigWarning>, toml::de::Error> {
     let mut unknown = Vec::new();
     let deserializer = toml::Deserializer::new(contents);
-    let _: Config = serde_ignored::deserialize(deserializer, |path| {
+    let config: Config = serde_ignored::deserialize(deserializer, |path| {
         unknown.push(path.to_string());
     })?;
 
@@ -44,6 +45,29 @@ pub fn lint(contents: &str) -> Result<Vec<ConfigWarning>, toml::de::Error> {
             key: "download.skip_existing".to_string(),
             message: "`skip_existing = false` downloads files again even when they are already \
                       on disk; remove the line unless that is what you want"
+                .to_string(),
+        });
+    }
+    let streams = RuleSet::from_config(&config.download).uses_stream();
+    for (key, on) in [
+        ("tv", config.organise.tv),
+        ("movies", config.organise.movies),
+    ] {
+        if on && !streams {
+            warnings.push(ConfigWarning {
+                key: format!("organise.{key}"),
+                message: format!(
+                    "`organise.{key}` only moves files stream mode keeps on Put.io, and nothing \
+                     is streamed; set `download.mode = \"stream\"` or a stream rule"
+                ),
+            });
+        }
+    }
+    if streams && !config.dlna.shows_putio() {
+        warnings.push(ConfigWarning {
+            key: "download.mode".to_string(),
+            message: "Stream mode keeps files on Put.io, but the media server is off or does not \
+                      share Put.io; turn on `[dlna]` with the `putio` root to watch them"
                 .to_string(),
         });
     }
@@ -109,6 +133,76 @@ mod tests {
     fn skip_existing_true_is_fine() {
         let text = config_text(|t| {
             download(t).insert("skip_existing".into(), true.into());
+        });
+        assert!(keys(&text).is_empty());
+    }
+
+    fn dlna(table: &mut toml::Table) -> &mut toml::Table {
+        table
+            .entry("dlna")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+            .as_table_mut()
+            .expect("[dlna] section")
+    }
+
+    #[test]
+    fn stream_mode_without_the_media_server_is_reported() {
+        let text = config_text(|t| {
+            download(t).insert("mode".into(), "stream".into());
+            dlna(t).insert("enabled".into(), false.into());
+        });
+        assert_eq!(keys(&text), vec!["download.mode"]);
+    }
+
+    #[test]
+    fn a_stream_rule_without_the_putio_root_is_reported() {
+        let text = config_text(|t| {
+            let mut rule = toml::Table::new();
+            rule.insert("path".into(), "Movies".into());
+            rule.insert("mode".into(), "stream".into());
+            download(t).insert("rules".into(), vec![toml::Value::Table(rule)].into());
+            let d = dlna(t);
+            d.insert("enabled".into(), true.into());
+            d.insert("roots".into(), vec![toml::Value::from("local")].into());
+        });
+        assert_eq!(keys(&text), vec!["download.mode"]);
+    }
+
+    #[test]
+    fn stream_mode_with_the_putio_root_is_fine() {
+        let text = config_text(|t| {
+            download(t).insert("mode".into(), "stream".into());
+            let d = dlna(t);
+            d.insert("enabled".into(), true.into());
+            d.insert("roots".into(), vec![toml::Value::from("putio")].into());
+        });
+        assert!(keys(&text).is_empty());
+    }
+
+    fn organise(table: &mut toml::Table) -> &mut toml::Table {
+        table
+            .entry("organise")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+            .as_table_mut()
+            .expect("[organise] section")
+    }
+
+    #[test]
+    fn organising_with_nothing_streamed_is_reported() {
+        let text = config_text(|t| {
+            organise(t).insert("tv".into(), true.into());
+        });
+        assert_eq!(keys(&text), vec!["organise.tv"]);
+        let text = config_text(|t| {
+            organise(t).insert("movies".into(), true.into());
+        });
+        assert_eq!(keys(&text), vec!["organise.movies"]);
+        let text = config_text(|t| {
+            organise(t).insert("tv".into(), true.into());
+            download(t).insert("mode".into(), "stream".into());
+            let d = dlna(t);
+            d.insert("enabled".into(), true.into());
+            d.insert("roots".into(), vec![toml::Value::from("putio")].into());
         });
         assert!(keys(&text).is_empty());
     }

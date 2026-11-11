@@ -48,6 +48,7 @@ use putio_sync_doctor::Doctor;
 use putio_sync_download::{DownloadConfig, DownloadManager};
 use putio_sync_file_manager::TorrentWatcher;
 use putio_sync_hooks::HooksService;
+use putio_sync_notify::EmailService;
 use putio_sync_plugins::PluginsService;
 use putio_sync_storage::StorageService;
 use putio_sync_tailscale::TailscaleService;
@@ -114,6 +115,9 @@ pub struct AppState {
     /// Event hooks (feature 027); unstarted unless the caller's started service is
     /// swapped in with [`AppState::with_hooks`]
     pub hooks: Arc<HooksService>,
+    /// Email notifications (feature 030); unstarted unless the caller's started service
+    /// is swapped in with [`AppState::with_email`]
+    pub email: EmailService,
     /// Lua plugins (feature 028); unstarted unless the caller's started service is
     /// swapped in with [`AppState::with_plugins`]
     pub plugins: Arc<PluginsService>,
@@ -131,6 +135,9 @@ pub struct AppState {
     /// The DLNA media server (feature 022); `None` unless the daemon's is attached with
     /// [`AppState::with_media_server`]
     pub media_server: Option<Arc<putio_sync_dlna::MediaServer>>,
+    /// The Put.io organiser (feature 023); `None` unless the daemon's is attached with
+    /// [`AppState::with_organiser`]
+    pub organiser: Option<Arc<putio_sync_download::Organiser>>,
 }
 
 /// The engine behind the API (FR-018: a save says what applies now)
@@ -189,12 +196,14 @@ impl AppState {
             arr,
             tailscale,
             hooks,
+            email: EmailService::new(config.notifications.smtp.clone()),
             plugins,
             listening: listen::Bound::default(),
             listen_flags: None,
             pipeline: None,
             opensubtitles_url: None,
             media_server: None,
+            organiser: None,
             cleanup,
             storage,
             doctor,
@@ -233,6 +242,12 @@ impl AppState {
         media_server: Arc<putio_sync_dlna::MediaServer>,
     ) -> AppState {
         self.media_server = Some(media_server);
+        self
+    }
+
+    /// Plan and make moves on Put.io with this organiser, the one the daemon runs
+    pub fn with_organiser(mut self, organiser: Arc<putio_sync_download::Organiser>) -> AppState {
+        self.organiser = Some(organiser);
         self
     }
 
@@ -290,6 +305,13 @@ impl AppState {
     /// reach the hooks that run
     pub fn with_hooks(mut self, hooks: Arc<HooksService>) -> AppState {
         self.hooks = hooks;
+        self
+    }
+
+    /// Use the caller's started email service, so a settings save reaches the one that
+    /// sends
+    pub fn with_email(mut self, email: EmailService) -> AppState {
+        self.email = email;
         self
     }
 
@@ -442,6 +464,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/tailscale", routes::system::tailscale::router())
         .nest("/logs", routes::system::logs::router())
         .nest("/media-server", routes::system::media_server::router())
+        .nest("/organise", routes::system::organise::router())
         .route(
             "/listen",
             axum::routing::get(routes::system::network::get_listen),

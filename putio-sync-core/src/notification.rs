@@ -115,6 +115,7 @@ mod tests {
             backend: NotificationBackend::Webhook,
             webhook_url: Some("https://example.com/webhook".to_string()),
             email: None,
+            ..NotificationConfig::default()
         };
 
         let service = NotificationService::new(config);
@@ -146,6 +147,7 @@ mod tests {
             backend: NotificationBackend::Webhook,
             webhook_url: Some("https://example.com/webhook".to_string()),
             email: None,
+            ..NotificationConfig::default()
         };
 
         let service = NotificationService::new(config);
@@ -170,6 +172,7 @@ mod tests {
             backend: NotificationBackend::Webhook,
             webhook_url: None, // No URL configured
             email: None,
+            ..NotificationConfig::default()
         };
 
         let service = NotificationService::new(config);

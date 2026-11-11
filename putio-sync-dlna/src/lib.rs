@@ -114,11 +114,11 @@ pub fn roots(config: &Config, dlna: &DlnaConfig) -> Vec<SharedRoot> {
             });
         }
     }
-    if let (true, Some(folder)) = (dlna.shares_putio(), dlna.putio_folder) {
+    if dlna.shares_putio() {
         out.push(SharedRoot {
             key: "putio".into(),
             title: "Put.io".into(),
-            source: RootSource::Putio(folder),
+            source: RootSource::Putio(dlna.putio_root()),
         });
     }
     out
@@ -444,8 +444,9 @@ impl MediaServer {
             }
         }
         let previous = self.inner.shared.read().unwrap().clone();
-        let putio = match (roots.iter().any(|r| r.key == "putio"), dlna.putio_folder) {
-            (true, Some(folder)) => match &self.inner.client {
+        // No folder chosen is the synced folder, where stream mode keeps files (022)
+        let putio = match (roots.iter().any(|r| r.key == "putio"), dlna.putio_root()) {
+            (true, folder) => match &self.inner.client {
                 Some(client) => match &previous.putio {
                     Some(p) if p.folder() == folder => Some(p.clone()),
                     _ => Some(Arc::new(PutioRoot::with_ttl(

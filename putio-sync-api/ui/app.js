@@ -53,7 +53,7 @@ let setupMode = false;
 // a failed check (an expired token, say) is tried again on the next one
 let newsChecked = false;
 
-// ---- DOM helper -------------------------------------------------------------
+// DOM helper
 
 /**
  * Build an element. `attrs` keys: `class`, `text`, `on<event>` handlers, `dataset`,
@@ -75,6 +75,9 @@ export function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+/** A link to the docs book's `page`, at heading `id` (055) */
+export const docs = (page, id, text = "Docs") => h("a", { href: `https://devclinton.github.io/putio-sync/docs/${page}.html${id ? "#" + id : ""}`, target: "_blank", rel: "noopener" }, text);
+
 // Replace an element's children like `h` adds them: null and false are skipped and
 // arrays are flattened. The DOM's own `replaceChildren` shows null as the text "null".
 export function fill(el, ...children) {
@@ -90,7 +93,7 @@ function append(el, children) {
   }
 }
 
-// ---- Storage ----------------------------------------------------------------
+// Storage
 
 function remember(hash) {
   try {
@@ -108,7 +111,7 @@ function remembered() {
   }
 }
 
-// ---- Router -----------------------------------------------------------------
+// Router
 
 /** "#/stats/x?range=30d" → { name: "stats", path: ["x"], query: URLSearchParams } */
 function parse(hash) {
@@ -222,7 +225,7 @@ export function empty(title, hint = null) {
   return h("div", { class: "empty" }, h("strong", { text: title }), hint ? h("p", { text: hint }) : null);
 }
 
-// ---- Appearance -------------------------------------------------------------
+// Appearance
 
 const MODE_LABELS = { system: "System", light: "Light", dark: "Dark" };
 const modeButton = document.getElementById("mode");
@@ -249,7 +252,7 @@ modeButton.addEventListener("click", () => {
 });
 showMode();
 
-// ---- Polling ----------------------------------------------------------------
+// Polling
 
 function setBanner(shown) {
   banner.hidden = !shown;
@@ -300,7 +303,7 @@ document.addEventListener("visibilitychange", () => {
   for (const p of polls) if (!p.timer) p.tick();
 });
 
-// ---- Toasts and confirmations -----------------------------------------------
+// Toasts and confirmations
 
 /**
  * Show a short message. `kind` is "ok" (gone after 3 s) or "error" (stays until
@@ -379,7 +382,7 @@ export function confirm({ title, text, verb }) {
   });
 }
 
-// ---- Boot -------------------------------------------------------------------
+// Boot
 
 onAuthExpired(async (err) => {
   // A Tailscale identity that was let in may have been taken off the allow-list

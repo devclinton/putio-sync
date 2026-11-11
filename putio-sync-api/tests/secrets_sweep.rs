@@ -105,6 +105,7 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         get("/settings/logging"),
         get("/settings/notifications"),
         (Method::PUT, "/settings/notifications", Some(json!({}))),
+        post("/settings/notifications/test"),
         get("/settings/precheck"),
         (Method::PUT, "/settings/precheck", Some(json!({}))),
         get("/stats/downloads"),
@@ -155,6 +156,7 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         post("/plugins/test"),
         post("/plugins/reload"),
         post("/plugins/action"),
+        post("/plugins/install"),
         get("/settings/plugins"),
         (Method::PUT, "/settings/plugins", Some(json!({}))),
         post("/settings/plugins/preview"),
@@ -781,6 +783,77 @@ async fn no_transcription_key_in_responses_or_logs() {
     let logs = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
     for text in texts.iter().chain([&logs]) {
         assert!(!text.contains(KEY), "{KEY} in {text}");
+    }
+}
+
+/// The SMTP password never comes back from the settings routes, the export, the doctor,
+/// the metrics, the test route or a log line (feature 030)
+#[tokio::test]
+async fn no_smtp_password_in_responses_or_logs() {
+    const PASSWORD: &str = "SMTPPASSWORD0123456";
+    let logs = captured_logs();
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let app = common::test_app_with(|config| {
+        let smtp = &mut config.notifications.smtp;
+        smtp.host = "127.0.0.1".to_string();
+        smtp.port = Some(port);
+        smtp.username = "nas".to_string();
+        smtp.password = PASSWORD.to_string();
+        smtp.from = "nas@example.com".to_string();
+        smtp.to = vec!["me@example.com".to_string()];
+    })
+    .await;
+
+    let mut texts = Vec::new();
+    for path in [
+        "/settings/notifications",
+        "/settings/export",
+        "/settings/assistant",
+        "/doctor",
+        "/metrics",
+    ] {
+        texts.push(body_text(app.get(path).await).await);
+    }
+    let settings: Value = serde_json::from_str(&texts[0]).unwrap();
+    assert_eq!(settings["smtp"]["password"], "********");
+    // The Test button with the mask: nothing listens, so it fails, naming the server only
+    let tested = app
+        .post_json("/settings/notifications/test", settings["smtp"].clone())
+        .await;
+    assert_eq!(tested.status(), StatusCode::OK);
+    let tested = body_text(tested).await;
+    assert!(tested.contains("\"ok\":false"), "{tested}");
+    assert!(tested.contains(&format!("127.0.0.1:{port}")), "{tested}");
+    texts.push(tested);
+    texts.push(
+        body_text(
+            app.post_json("/settings/notifications/preview", settings.clone())
+                .await,
+        )
+        .await,
+    );
+    let response = app
+        .req(
+            Method::PUT,
+            "/settings/notifications",
+            Some(&app.token),
+            Some(settings),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    texts.push(body_text(response).await);
+    assert_eq!(
+        app.state.config.read().await.notifications.smtp.password,
+        PASSWORD
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let logs = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
+    for text in texts.iter().chain([&logs]) {
+        assert!(!text.contains(PASSWORD), "{PASSWORD} in {text}");
     }
 }
 

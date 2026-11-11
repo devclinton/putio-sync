@@ -22,9 +22,26 @@ esac
 rm -rf "$out"
 mkdir -p "$out"
 mdbook build "$root/site/book"
+# One more book per catalog in site/i18n (machine-translated, see
+# site/tools/translate-docs.py), each under docs/<lang>/
+langs='"en"'
+for catalog in "$root"/site/i18n/*.json; do
+    [ -e "$catalog" ] || continue
+    lang="$(basename "$catalog" .json)"
+    MDBOOK_BOOK__LANGUAGE="$lang" \
+    MDBOOK_BUILD__BUILD_DIR="$out/docs/$lang" \
+    MDBOOK_OUTPUT__HTML__SITE_URL="/putio-sync/docs/$lang/" \
+        mdbook build "$root/site/book"
+    langs="$langs,\"$lang\""
+done
+# Read by the language picker (site/book/lang-picker.js)
+echo "[$langs]" > "$out/docs/languages.json"
 # mdBook's sidebar toggle is a <label> with aria-expanded, which axe flags as
-# critical; role="button" makes the attribute valid
-find "$out/docs" -name '*.html' -exec sed -i.bak 's/<label id="mdbook-sidebar-toggle" /<label id="mdbook-sidebar-toggle" role="button" /' {} +
+# critical; role="button" makes the attribute valid. Code blocks scroll
+# sideways, so they need to take keyboard focus.
+find "$out/docs" -name '*.html' -exec sed -i.bak \
+    -e 's/<label id="mdbook-sidebar-toggle" /<label id="mdbook-sidebar-toggle" role="button" /' \
+    -e 's/<pre><code/<pre><code tabindex="0"/g' {} +
 find "$out/docs" -name '*.html.bak' -delete
 for f in index.html style.css install.js; do
     sed "s/{{version}}/$version/g" "$root/site/$f" > "$out/$f"

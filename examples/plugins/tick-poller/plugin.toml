@@ -1,0 +1,17 @@
+name = "tick-poller"
+version = "0.1.0"
+description = "Check a URL on a timer and log when its status changes"
+events = ["sync.completed"]
+tick_seconds = 300
+
+[permissions]
+store = true
+
+[permissions.http]
+host_from_config = ["url"]
+
+[[config]]
+key = "url"
+type = "url"
+label = "URL to check"
+required = true

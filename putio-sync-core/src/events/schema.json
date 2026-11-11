@@ -16,6 +16,7 @@
         "transfer.added",
         "transfer.finished",
         "transfer.failed",
+        "transfer.stuck",
         "sync.completed",
         "storage.low",
         "verify.passed",
@@ -23,6 +24,7 @@
         "verify.redownload",
         "pipeline.step_failed",
         "pipeline.completed",
+        "doctor.problem",
         "hook.test",
         "plugin.test"
       ]
@@ -45,6 +47,7 @@
     { "properties": { "type": { "const": "transfer.added" }, "data": { "$ref": "#/$defs/transfer" } } },
     { "properties": { "type": { "const": "transfer.finished" }, "data": { "$ref": "#/$defs/transfer" } } },
     { "properties": { "type": { "const": "transfer.failed" }, "data": { "$ref": "#/$defs/transfer" } } },
+    { "properties": { "type": { "const": "transfer.stuck" }, "data": { "$ref": "#/$defs/transfer_stuck" } } },
     { "properties": { "type": { "const": "sync.completed" }, "data": { "$ref": "#/$defs/sync_completed" } } },
     { "properties": { "type": { "const": "storage.low" }, "data": { "$ref": "#/$defs/storage_low" } } },
     { "properties": { "type": { "const": "verify.passed" }, "data": { "$ref": "#/$defs/verify_passed" } } },
@@ -52,6 +55,7 @@
     { "properties": { "type": { "const": "verify.redownload" }, "data": { "$ref": "#/$defs/verify_redownload" } } },
     { "properties": { "type": { "const": "pipeline.step_failed" }, "data": { "$ref": "#/$defs/pipeline_step_failed" } } },
     { "properties": { "type": { "const": "pipeline.completed" }, "data": { "$ref": "#/$defs/pipeline_completed" } } },
+    { "properties": { "type": { "const": "doctor.problem" }, "data": { "$ref": "#/$defs/doctor_problem" } } },
     { "properties": { "type": { "const": "hook.test" }, "data": { "$ref": "#/$defs/hook_test" } } },
     { "properties": { "type": { "const": "plugin.test" }, "data": { "$ref": "#/$defs/plugin_test" } } }
   ],
@@ -160,6 +164,29 @@
         "size_bytes": { "type": ["integer", "null"] },
         "file_id": { "type": ["integer", "null"], "description": "The Put.io file or folder the transfer made." },
         "error": { "type": ["string", "null"] }
+      }
+    },
+    "transfer_stuck": {
+      "type": "object",
+      "required": ["transfer_id", "name", "reason", "stalled_since", "size_bytes", "percent_done"],
+      "properties": {
+        "transfer_id": { "type": "integer" },
+        "name": { "type": "string" },
+        "reason": { "type": "string", "description": "availability N%, no peers or no progress." },
+        "stalled_since": { "type": "string", "format": "date-time" },
+        "size_bytes": { "type": ["integer", "null"] },
+        "percent_done": { "type": "integer" }
+      }
+    },
+    "doctor_problem": {
+      "type": "object",
+      "required": ["check", "title", "summary", "area", "item_count"],
+      "properties": {
+        "check": { "type": "string", "description": "The check's id, such as putio_token." },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "area": { "enum": ["Put.io", "Sync", "Local", "Connectivity"] },
+        "item_count": { "type": "integer" }
       }
     },
     "sync_completed": {

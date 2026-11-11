@@ -161,6 +161,40 @@ CREATE TABLE IF NOT EXISTS rule_decisions (
 )
 "#;
 
+/// SQL to create the stream_files table (feature 022): Put.io files kept there by stream
+/// mode. `pending` holds the arrived steps still to run, space-separated, `""` when done.
+pub const CREATE_STREAM_FILES_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS stream_files (
+    file_id INTEGER PRIMARY KEY,
+    filename TEXT NOT NULL,
+    folder_path TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    pending TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"#;
+
+/// SQL to create the organise_moves table (feature 023): moves planned for files kept on
+/// Put.io, and where each file was before, for undo
+pub const CREATE_ORGANISE_MOVES_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS organise_moves (
+    file_id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    from_folder TEXT NOT NULL,
+    from_name TEXT NOT NULL,
+    to_folder TEXT NOT NULL,
+    to_name TEXT NOT NULL,
+    by_plugin INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'planned',
+    from_parent_id INTEGER,
+    error TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"#;
+
 /// SQL to create the pipeline_holds table (feature 039): transfers paused while still on
 /// Put.io. Their files are queued as `paused` when the sync finds them.
 pub const CREATE_PIPELINE_HOLDS_TABLE: &str = r#"
@@ -518,6 +552,8 @@ mod tests {
         assert!(CREATE_DOWNLOAD_SOURCES_TABLE.contains("CREATE TABLE"));
         assert!(CREATE_TRANSFER_ORIGINS_TABLE.contains("CREATE TABLE"));
         assert!(CREATE_RULE_DECISIONS_TABLE.contains("CREATE TABLE"));
+        assert!(CREATE_STREAM_FILES_TABLE.contains("CREATE TABLE"));
+        assert!(CREATE_ORGANISE_MOVES_TABLE.contains("CREATE TABLE"));
     }
 
     #[test]

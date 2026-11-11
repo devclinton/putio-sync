@@ -20,7 +20,7 @@ pub struct UploadResponse {
 /// A file's MP4 version on Put.io (feature 022)
 #[derive(Debug, Clone, Deserialize)]
 pub struct Mp4Status {
-    /// `NOT_AVAILABLE`, `CONVERTING`, `COMPLETED` or `ERROR`
+    /// `NOT_AVAILABLE`, `IN_QUEUE`, `PREPARING`, `CONVERTING`, `COMPLETED` or `ERROR`
     pub status: String,
     /// Size of the MP4 version in bytes, once it exists
     #[serde(default)]
@@ -31,6 +31,14 @@ impl Mp4Status {
     /// Whether the MP4 version can be played now
     pub fn is_ready(&self) -> bool {
         self.status == "COMPLETED"
+    }
+
+    /// Whether Put.io is already making the MP4 version
+    pub fn in_progress(&self) -> bool {
+        matches!(
+            self.status.as_str(),
+            "IN_QUEUE" | "PREPARING" | "CONVERTING"
+        )
     }
 }
 
@@ -47,6 +55,20 @@ struct CreateFolderRequest<'a> {
     parent_id: i64,
 }
 
+/// `POST /files/rename` body
+#[derive(Debug, serde::Serialize)]
+struct RenameRequest<'a> {
+    file_id: i64,
+    name: &'a str,
+}
+
+/// `POST /files/move` body
+#[derive(Debug, serde::Serialize)]
+struct MoveRequest {
+    file_ids: String,
+    parent_id: i64,
+}
+
 /// `POST /files/create-folder` reply
 #[derive(Debug, Deserialize)]
 struct CreateFolderResponse {
@@ -60,6 +82,30 @@ impl PutioApiClient {
         let response: ApiResponse<CreateFolderResponse> =
             self.post("/files/create-folder", &body).await?;
         Ok(response.data.file)
+    }
+
+    /// Rename file `file_id` to `name`, in the same folder (feature 023)
+    pub async fn rename_file(&self, file_id: i64, name: &str) -> ClientResult<()> {
+        let body = RenameRequest { file_id, name };
+        let _: serde_json::Value = self.post("/files/rename", &body).await?;
+        Ok(())
+    }
+
+    /// Move files into folder `parent_id`; they keep their ids (feature 023)
+    pub async fn move_files(&self, file_ids: &[i64], parent_id: i64) -> ClientResult<()> {
+        if file_ids.is_empty() {
+            return Ok(());
+        }
+        let body = MoveRequest {
+            file_ids: file_ids
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+            parent_id,
+        };
+        let _: serde_json::Value = self.post("/files/move", &body).await?;
+        Ok(())
     }
 
     /// List files in a folder
@@ -110,6 +156,14 @@ impl PutioApiClient {
     pub async fn mp4_status(&self, id: i64) -> ClientResult<Mp4Status> {
         let response: ApiResponse<Mp4Response> = self.get(&format!("/files/{}/mp4", id)).await?;
         Ok(response.data.mp4)
+    }
+
+    /// Ask Put.io to make the MP4 version of a file (`POST /files/{id}/mp4`, feature 022)
+    pub async fn request_mp4(&self, id: i64) -> ClientResult<()> {
+        let _response: serde_json::Value = self
+            .post(&format!("/files/{}/mp4", id), &serde_json::json!({}))
+            .await?;
+        Ok(())
     }
 
     /// The endpoint that streams a file's MP4 version. Like [`Self::get_download_url`] it
@@ -299,6 +353,35 @@ mod tests {
     use mockito::Server;
 
     #[tokio::test]
+    async fn rename_and_move_send_the_put_io_bodies() {
+        let mut server = Server::new_async().await;
+        let rename = server
+            .mock("POST", "/files/rename")
+            .match_body(mockito::Matcher::Json(
+                serde_json::json!({"file_id": 7, "name": "Show - S01E02.mkv"}),
+            ))
+            .with_status(200)
+            .with_body(r#"{"status":"OK"}"#)
+            .create_async()
+            .await;
+        let moved = server
+            .mock("POST", "/files/move")
+            .match_body(mockito::Matcher::Json(
+                serde_json::json!({"file_ids": "7,8", "parent_id": 40}),
+            ))
+            .with_status(200)
+            .with_body(r#"{"status":"OK"}"#)
+            .create_async()
+            .await;
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        client.rename_file(7, "Show - S01E02.mkv").await.unwrap();
+        client.move_files(&[7, 8], 40).await.unwrap();
+        client.move_files(&[], 40).await.unwrap();
+        rename.assert_async().await;
+        moved.assert_async().await;
+    }
+
+    #[tokio::test]
     async fn mp4_status_reads_the_state_and_size() {
         let mut server = Server::new_async().await;
         let mock = server
@@ -334,6 +417,30 @@ mod tests {
             client.mp4_download_url(8),
             format!("{}/files/8/mp4/download", server.url())
         );
+    }
+
+    #[tokio::test]
+    async fn request_mp4_posts_to_the_file() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/files/9/mp4")
+            .match_header("authorization", "Bearer test_token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status":"OK"}"#)
+            .create_async()
+            .await;
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        client.request_mp4(9).await.unwrap();
+        mock.assert_async().await;
+        let status = |s: &str| super::Mp4Status {
+            status: s.to_string(),
+            size: None,
+        };
+        assert!(status("CONVERTING").in_progress());
+        assert!(status("IN_QUEUE").in_progress());
+        assert!(!status("NOT_AVAILABLE").in_progress());
+        assert!(!status("COMPLETED").in_progress());
     }
 
     #[tokio::test]

@@ -1,13 +1,9 @@
-// Plugins section (features 028, 031, 048). Each plugin that is on has a tab with its
-// state, the hosts it contacts, its settings by type (secrets shown only as set), time limit,
-// action buttons (031: Sign in with Plex, Load buttons for fields with choices), Send test
-// event with the lines it logged, and Disable. The others are one short list with Enable,
-// which names the hosts the plugin will contact and turns it on in a save of its own; the
-// save approves those hosts. Reload reads the plugins folder again.
+// Plugins section (features 028, 031, 048, 029, 055): tabs for plugins that are on, a list
+// of the rest with Enable, Reload, and the workbench (workbench.js, loaded when opened).
 
 import { get, post, put } from "../api.js";
 import * as plugins from "../plugins.js";
-import { confirm, fill, h, toast, toastError } from "../app.js";
+import { confirm, docs, fill, h, toast, toastError } from "../app.js";
 import { relative } from "../format.js";
 import { groupCard, quiet, reason } from "./form.js";
 
@@ -15,7 +11,7 @@ const PLUGINS = {
   id: "plugins",
   key: "plugins",
   title: "Plugins",
-  fields: [["plugins_dir", "Plugins folder", "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua", "s?"]],
+  fields: [["plugins_dir", "Plugins folder", "Empty for plugins next to the config file; each plugin is a folder with plugin.toml and main.lua or plugin.wasm", "s?"]],
   advanced: ["plugins_dir"],
   extra: pluginsExtra,
 };
@@ -201,7 +197,8 @@ function pluginsExtra(data, form) {
     const hosts = h("span");
     const showHosts = () => {
       const needed = row ? plugins.hostsFor(status, row.values) : status.hosts_needed;
-      hosts.textContent = needed.length ? `Contacts: ${needed.join(", ")}` : "No network access";
+      const folders = plugins.foldersText(status);
+      hosts.textContent = (needed.length ? `Contacts: ${needed.join(", ")}` : "No network access") + (folders ? ` · May ${folders}` : "");
     };
     showHosts();
     const head = [status.version ? `v${status.version}` : null, status.source, plugins.stateLabel(status.state)].filter(Boolean).join(" · ");
@@ -212,6 +209,9 @@ function pluginsExtra(data, form) {
             { class: "fields" },
             ...row.fields.map((f) => field((f.label || f.key) + (f.required ? " *" : ""), f.secret ? secret(row, f) : f.choices ? pick(row, f, showHosts) : input(row, f, showHosts), f.help)),
             field("Time limit (s)", h("input", { class: "input", type: "number", min: 1, max: 60, value: row.timeout_secs, oninput: (ev) => (row.timeout_secs = ev.currentTarget.value) }), "Longest one event may take, 1 to 60"),
+            row.hooks.length
+              ? field("Sync rule time limit (ms)", h("input", { class: "input", type: "number", min: 50, max: 5000, value: row.hook_timeout_ms, oninput: (ev) => (row.hook_timeout_ms = ev.currentTarget.value) }), "Longest one sync rule call may take, 50 to 5000; a slower answer is ignored")
+              : null,
           ),
           actionsBox(row, status),
           testBox(row, status),
@@ -223,6 +223,7 @@ function pluginsExtra(data, form) {
       h("p", { class: status.state === "broken" ? "error-text" : "muted", text: status.error ? `${head}: ${status.error}` : head }),
       status.description ? h("p", { text: status.description }) : null,
       status.events && status.events.length ? h("p", { class: "muted", text: `Events: ${status.events.join(", ")}` }) : null,
+      status.hooks && status.hooks.length ? h("p", { class: "muted", text: `Sync rules: ${status.hooks.join(", ")}` }) : null,
       h("p", { class: "muted" }, hosts),
       ...body,
       h("div", { class: "toolbar spaced" }, h("button", { type: "button", class: "btn btn-small", onclick: (ev) => turn(status, false, ev.currentTarget) }, "Disable")),
@@ -261,8 +262,7 @@ function pluginsExtra(data, form) {
     );
   };
 
-  // Enable or Disable: save that plugin's `enabled` alone on top of the saved settings, then
-  // draw again from what was saved. Other unsaved edits stay, and so does the unsaved mark.
+  // Enable or Disable, then draw again from what was saved; other unsaved edits stay
   const turn = async (status, on, button) => {
     const row = rows.find((r) => r.name === status.name) || plugins.fromStatus(status, null);
     const saved = plugins.fromStatus(status, stored.find((s) => s.name === status.name));
@@ -334,11 +334,22 @@ function pluginsExtra(data, form) {
     button.disabled = false;
   };
   return {
-    nodes: [h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn-small", onclick: reload }, "Reload plugins")), list],
+    nodes: [h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn-small", onclick: reload }, "Reload plugins"), docs("plugins", "", "Plugin reference")), workbench(load), list],
     read: () => {
       if (!found) return { plugins: stored };
       const edited = rows.map(plugins.toSettings);
       return { plugins: [...edited, ...stored.filter((s) => !edited.some((e) => e.name === s.name))] };
     },
   };
+}
+
+/** The workbench (055), Install (029) in it: loads when first opened, not with the page */
+function workbench(load) {
+  const open = (ev) => {
+    const box = ev.currentTarget;
+    if (!box.open || box.dataset.ready) return;
+    box.dataset.ready = "1";
+    import("./workbench.js").then((m) => box.append(...m.panel(load))).catch(toastError);
+  };
+  return h("details", { class: "spaced", ontoggle: open }, h("summary", { text: "Plugin workbench: make, edit, run and install plugins" }));
 }

@@ -21,11 +21,12 @@ members = [
     "putio-sync-subtitles",
     "putio-sync-dlna",
     "putio-sync-translation",
+    "putio-sync-notify",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 authors = ["Clinton Collins"]
 license = "MIT"

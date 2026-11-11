@@ -23,7 +23,7 @@ use axum::{
     routing::{get, post, put},
     Json, Router,
 };
-use putio_sync_core::config::{Config, ExistingFile};
+use putio_sync_core::config::{Config, ExistingFile, SyncMode};
 use putio_sync_core::rules::{
     self, normalize_extension, normalize_path, Decision, Effective, FolderRule, Preset,
     BUILTIN_PRESETS,
@@ -70,6 +70,8 @@ pub struct RuleBody {
     pub skip_existing: Option<bool>,
     /// Keep out of the empty-folder cleanup (feature 021)
     pub keep: Option<bool>,
+    /// Download or stream (feature 022): `None` inherits
+    pub mode: Option<SyncMode>,
 }
 
 impl RuleBody {
@@ -86,6 +88,7 @@ impl RuleBody {
             on_existing: rule.existing(),
             skip_existing: None,
             keep: rule.keep,
+            mode: rule.mode,
         }
     }
 
@@ -110,6 +113,7 @@ impl RuleBody {
             on_existing: self.on_existing.or(self.skip_existing.map(Into::into)),
             skip_existing: None,
             keep: self.keep,
+            mode: self.mode,
         })
     }
 }
@@ -156,6 +160,7 @@ pub struct EffectiveView {
     pub delete_after_download: SourcedView<bool>,
     pub on_existing: SourcedView<ExistingFile>,
     pub keep: SourcedView<bool>,
+    pub mode: SourcedView<SyncMode>,
 }
 
 impl From<Effective> for EffectiveView {
@@ -186,6 +191,7 @@ impl From<Effective> for EffectiveView {
             delete_after_download: part(e.delete_after_download),
             on_existing: part(e.on_existing),
             keep: part(e.keep),
+            mode: part(e.mode),
         }
     }
 }
@@ -213,6 +219,8 @@ pub struct GlobalView {
     pub exclude: String,
     pub delete_after_download: bool,
     pub on_existing: ExistingFile,
+    /// `[download] mode` (feature 022)
+    pub mode: SyncMode,
 }
 
 /// Body of `GET /rules`
@@ -293,6 +301,7 @@ fn rules_view(config: &Config) -> RulesResponse {
                 .unwrap_or_default(),
             delete_after_download: config.download.delete_after_download,
             on_existing: config.download.on_existing(),
+            mode: config.download.mode,
         },
     }
 }
@@ -573,7 +582,7 @@ pub struct PreviewDownloadView {
     pub path: String,
 }
 
-/// One blocked or skipped file in a preview
+/// One blocked, skipped or streamed file in a preview
 #[derive(Debug, Serialize)]
 pub struct PreviewItemView {
     pub file_id: i64,
@@ -589,6 +598,7 @@ impl From<PreviewItem> for PreviewItemView {
     fn from(item: PreviewItem) -> Self {
         let decision = match item.decision {
             Decision::Skipped { .. } => "skipped",
+            Decision::Stream { .. } => "stream",
             _ => "blocked",
         };
         Self {
@@ -611,6 +621,8 @@ pub struct PreviewResponse {
     pub download: usize,
     pub blocked: usize,
     pub skipped: usize,
+    /// Files kept on Put.io by stream mode (feature 022)
+    pub stream: usize,
     pub would_delete: usize,
     pub items: Vec<PreviewItemView>,
     pub truncated: bool,
@@ -664,6 +676,7 @@ async fn preview(
         download: preview.download,
         blocked: preview.blocked,
         skipped: preview.skipped,
+        stream: preview.stream,
         would_delete: preview.would_delete,
         items: preview.items.into_iter().map(Into::into).collect(),
         truncated: preview.truncated,

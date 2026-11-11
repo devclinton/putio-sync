@@ -123,7 +123,6 @@ async fn bad_values_are_400_naming_the_field() {
         ("port", json!(0), "dlna.port"),
         ("port", json!(1900), "dlna.port"),
         ("roots", json!(["bogus"]), "dlna.roots"),
-        ("roots", json!(["putio"]), "putio_folder"),
         ("roots", json!(["downloads", "downloads"]), "dlna.roots"),
         ("roots", json!(["watch:/not/watched"]), "[watch] paths"),
         ("bind", json!(["not an address"]), "dlna.bind"),

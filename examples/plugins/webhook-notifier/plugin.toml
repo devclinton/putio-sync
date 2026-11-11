@@ -1,0 +1,15 @@
+name = "webhook-notifier"
+version = "0.1.0"
+description = "Post finished and failed downloads to a webhook as JSON"
+events = ["download.finished", "download.failed"]
+
+[permissions.http]
+host_from_config = ["url"]
+
+[[config]]
+key = "url"
+type = "url"
+label = "Webhook URL"
+help = "Where each event is posted"
+required = true
+secret = true

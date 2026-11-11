@@ -8,7 +8,7 @@ import { SECTIONS, fieldId, linkParts, sectionOf, sectionOfKey, settingsHref } f
 test("every card is in exactly one section", () => {
   const ids = SECTIONS.flatMap((s) => s.cards.map(([id]) => id));
   assert.equal(new Set(ids).size, ids.length);
-  assert.deepEqual(SECTIONS.map((s) => s.id), ["general", "putio", "downloads", "rules", "integrations", "plugins", "media-server", "network", "advanced"]);
+  assert.deepEqual(SECTIONS.map((s) => s.id), ["general", "notifications", "putio", "downloads", "rules", "integrations", "plugins", "media-server", "network", "advanced"]);
   assert.ok(SECTIONS.every((s) => s.help.length > 20));
 });
 
@@ -43,7 +43,8 @@ test("config keys map to sections", () => {
   assert.equal(sectionOfKey("pipeline.concurrency"), "integrations");
   assert.equal(sectionOfKey("plugins"), "plugins");
   assert.equal(sectionOfKey("logging.level"), "advanced");
-  assert.equal(sectionOfKey("notifications.enabled"), "general");
+  assert.equal(sectionOfKey("notifications.enabled"), "notifications");
+  assert.equal(sectionOfKey("notifications.smtp"), "notifications");
   assert.equal(sectionOfKey("tailscale.socket"), "network");
   assert.equal(sectionOfKey("dlna.port"), "media-server");
   assert.equal(sectionOfKey("precheck.enabled"), "rules");
@@ -52,6 +53,12 @@ test("config keys map to sections", () => {
   assert.equal(sectionOfKey("translation.kind"), "downloads");
   assert.equal(fieldId("translation.kind"), "set-translation-kind");
   assert.equal(sectionOfKey("mystery.key"), "general");
+});
+
+test("Notifications has its own section (feature 030)", () => {
+  assert.deepEqual(sectionOf("notifications").cards.map(([id]) => id), ["notifications", "notifiers"]);
+  assert.ok(!sectionOf("general").cards.some(([id]) => id === "notifications"));
+  assert.deepEqual(linkParts("set it up in Settings › Notifications."), ["set it up in ", { text: "Settings › Notifications", href: "#/settings/notifications" }, "."]);
 });
 
 test("Settings names in text become links", () => {

@@ -378,7 +378,12 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
             ),
             ("backend", "How notifications are sent"),
             ("webhook_url", "Where webhook notifications are posted"),
-            ("email", "Where email notifications are sent"),
+            ("email", "Not used; email is sent from smtp"),
+            (
+                "smtp",
+                "Emails the chosen events through your mail server, grouping repeats",
+            ),
+            ("smtp_status", "What the email channel has sent; read-only"),
         ],
     ),
     (
@@ -559,6 +564,7 @@ async fn import_settings(
         state.cleanup.configure(&candidate);
         state.storage.configure(&candidate);
         state.hooks.configure(candidate.hooks.clone());
+        state.email.configure(candidate.notifications.smtp.clone());
         if let Some(pipeline) = &state.pipeline {
             pipeline.configure(&candidate);
         }

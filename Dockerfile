@@ -38,6 +38,7 @@ COPY putio-sync-precheck/Cargo.toml ./putio-sync-precheck/
 COPY putio-sync-storage/Cargo.toml ./putio-sync-storage/
 COPY putio-sync-tailscale/Cargo.toml ./putio-sync-tailscale/
 COPY putio-sync-hooks/Cargo.toml ./putio-sync-hooks/
+COPY putio-sync-notify/Cargo.toml ./putio-sync-notify/
 COPY putio-sync-plugins/Cargo.toml ./putio-sync-plugins/
 COPY putio-sync-archive/Cargo.toml ./putio-sync-archive/
 COPY putio-sync-pipeline/Cargo.toml ./putio-sync-pipeline/
@@ -61,6 +62,7 @@ RUN mkdir -p putio-sync-client/src \
              putio-sync-storage/src \
              putio-sync-tailscale/src \
              putio-sync-hooks/src \
+             putio-sync-notify/src \
              putio-sync-plugins/src \
              putio-sync-archive/src \
              putio-sync-pipeline/src \
@@ -83,6 +85,7 @@ RUN mkdir -p putio-sync-client/src \
     echo 'pub fn placeholder() {}' > putio-sync-storage/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-tailscale/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-hooks/src/lib.rs && \
+    echo 'pub fn placeholder() {}' > putio-sync-notify/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-plugins/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-archive/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-pipeline/src/lib.rs && \
@@ -114,6 +117,7 @@ COPY putio-sync-precheck ./putio-sync-precheck
 COPY putio-sync-storage ./putio-sync-storage
 COPY putio-sync-tailscale ./putio-sync-tailscale
 COPY putio-sync-hooks ./putio-sync-hooks
+COPY putio-sync-notify ./putio-sync-notify
 COPY putio-sync-plugins ./putio-sync-plugins
 COPY putio-sync-archive ./putio-sync-archive
 COPY putio-sync-pipeline ./putio-sync-pipeline
@@ -168,8 +172,9 @@ VOLUME ["/config", "/downloads", "/watches"]
 # Set working directory
 WORKDIR /config
 
-# default to info logging
-ENV RUST_LOG=info
+# HOME is the config volume so ~/.putiosync/logs is writable under any --user
+# (the putio user's /home/putio isn't), as in Dockerfile.dhi. Default to info logging.
+ENV HOME=/config RUST_LOG=info
 
 # Prometheus metrics ([metrics] bind) and the API + web UI ([api] bind). The UI is
 # embedded in the binary; publish the ports with -p or the Unraid template.

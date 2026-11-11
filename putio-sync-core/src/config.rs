@@ -63,6 +63,28 @@ impl ExistingFile {
     }
 }
 
+/// Whether accepted files are downloaded or kept on Put.io for streaming (`[download]
+/// mode` and `[[download.rules]] mode`, feature 022)
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncMode {
+    /// Download to `target_directory`
+    #[default]
+    Download,
+    /// Keep on Put.io; the media server's Put.io root shows it
+    Stream,
+}
+
+impl SyncMode {
+    /// The config value
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SyncMode::Download => "download",
+            SyncMode::Stream => "stream",
+        }
+    }
+}
+
 impl From<bool> for ExistingFile {
     /// The old `skip_existing`: `true` is resume, `false` overwrite
     fn from(skip_existing: bool) -> Self {
@@ -210,6 +232,12 @@ pub struct Config {
     /// DLNA media server: show downloads and a Put.io folder to players (feature 022)
     #[serde(default)]
     pub dlna: DlnaConfig,
+    /// Organising files stream mode keeps on Put.io (feature 023)
+    #[serde(
+        default,
+        skip_serializing_if = "crate::organise::OrganiseConfig::is_default"
+    )]
+    pub organise: crate::organise::OrganiseConfig,
     /// Event hooks: commands and webhooks run for events (feature 027)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<crate::hooks::HookConfig>,
@@ -219,6 +247,9 @@ pub struct Config {
     /// Lua plugin settings (feature 028)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plugins: Vec<crate::plugins::PluginSettings>,
+    /// The plugin workbench's editor may write plugin files (feature 055)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub plugin_editor: bool,
 }
 
 /// `[doctor]`: how often the daemon runs the doctor's checks (feature 010). The CLI and
@@ -890,6 +921,13 @@ pub struct DownloadConfig {
     pub skip_existing: Option<bool>,
     /// Delete files from Put.io after successful download
     pub delete_after_download: bool,
+    /// Download accepted files, or keep them on Put.io for streaming (feature 022); folder
+    /// rules can override it
+    #[serde(default)]
+    pub mode: SyncMode,
+    /// Ask Put.io for an MP4 version of videos kept on Put.io that aren't MP4
+    #[serde(default = "default_true")]
+    pub stream_mp4: bool,
     /// Progress bar display style
     #[serde(default)]
     pub progress_style: ProgressStyle,
@@ -983,8 +1021,10 @@ pub enum NotificationBackend {
     Email,
 }
 
-/// Notification configuration
+/// Notification configuration. Every field is optional, so `[notifications.smtp]` alone is
+/// enough.
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct NotificationConfig {
     /// Enable notifications
     pub enabled: bool,
@@ -996,6 +1036,9 @@ pub struct NotificationConfig {
     /// Email address (used when backend is Email, future)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    /// The email channel (feature 030), separate from the legacy fields above
+    #[serde(default, skip_serializing_if = "crate::email::SmtpConfig::is_default")]
+    pub smtp: crate::email::SmtpConfig,
 }
 
 /// API/Daemon mode configuration
@@ -1118,6 +1161,8 @@ impl Default for DownloadConfig {
             on_existing: None,
             skip_existing: None,
             delete_after_download: false,
+            mode: SyncMode::Download,
+            stream_mp4: true,
             progress_style: ProgressStyle::PerFile,
             sort_order: SortOrder::ByDate,
             reverse_sort: false,
@@ -1252,6 +1297,7 @@ impl Default for NotificationConfig {
             backend: NotificationBackend::None,
             webhook_url: None,
             email: None,
+            smtp: crate::email::SmtpConfig::default(),
         }
     }
 }
@@ -1575,11 +1621,13 @@ impl Config {
         self.pipeline.validate()?;
         self.subtitles.validate()?;
         self.translation.validate()?;
+        self.notifications.smtp.validate()?;
         self.precheck.validate(&self.watch.paths)?;
         self.storage.validate()?;
         self.tailscale.validate()?;
         self.dlna.validate()?;
         self.validate_dlna_with(&self.dlna)?;
+        self.organise.validate()?;
         self.putio.validate()?;
         crate::hooks::validate(&self.hooks)?;
         crate::plugins::validate(&self.plugins)?;
@@ -1835,9 +1883,11 @@ impl ConfigBuilder {
             storage: StorageConfig::default(),
             tailscale: TailscaleConfig::default(),
             dlna: DlnaConfig::default(),
+            organise: Default::default(),
             hooks: Vec::new(),
             plugins_dir: None,
             plugins: Vec::new(),
+            plugin_editor: false,
         }
     }
 }
@@ -2086,7 +2136,8 @@ fn empty_bind() -> BindList {
 ///   `watch:<path>` (one of `[watch] paths`) or `putio`
 /// - `bind`: the addresses to serve on, in the `[api] bind` syntax; only the host part
 ///   of an entry is used, the port is `port`. Empty is every LAN IPv4 address.
-/// - `putio_folder`: the Put.io folder shown as "Put.io" (needed when `roots` has `putio`)
+/// - `putio_folder`: the Put.io folder shown as "Put.io"; unset, the synced folder (the
+///   account root), which is where stream mode keeps files (feature 022)
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(default)]
 pub struct DlnaConfig {
@@ -2104,7 +2155,7 @@ pub struct DlnaConfig {
     /// What players see
     #[serde(default = "default_dlna_roots")]
     pub roots: Vec<String>,
-    /// The Put.io folder id shown as the "Put.io" root
+    /// The Put.io folder id shown as the "Put.io" root; unset, the synced folder
     #[serde(skip_serializing_if = "Option::is_none")]
     pub putio_folder: Option<i64>,
 }
@@ -2137,6 +2188,17 @@ impl DlnaConfig {
     /// Whether `roots` has the Put.io root
     pub fn shares_putio(&self) -> bool {
         self.roots.iter().any(|r| r == "putio")
+    }
+
+    /// The Put.io folder shown as "Put.io": `putio_folder`, else the synced folder (`0`,
+    /// the account root the sync mirrors)
+    pub fn putio_root(&self) -> i64 {
+        self.putio_folder.unwrap_or(0)
+    }
+
+    /// Whether players can see files kept on Put.io: on, and sharing the Put.io root
+    pub fn shows_putio(&self) -> bool {
+        self.enabled && self.shares_putio()
     }
 
     /// The `bind` entries, parsed; empty when `bind` is empty (every LAN address)
@@ -2182,12 +2244,6 @@ impl DlnaConfig {
         }
         if self.enabled && self.roots.is_empty() {
             return bad("invalid dlna.roots: share at least one folder".to_string());
-        }
-        if self.shares_putio() && self.putio_folder.is_none() {
-            return bad(
-                "dlna.putio_folder is required when dlna.roots has putio (the Put.io folder id)"
-                    .to_string(),
-            );
         }
         if self.putio_folder.is_some_and(|id| id < 0) {
             return bad("invalid dlna.putio_folder: expected a folder id (0 or more)".to_string());
@@ -3070,6 +3126,8 @@ mod tests {
                 on_existing: None,
                 skip_existing: Some(false),
                 delete_after_download: false,
+                mode: SyncMode::Download,
+                stream_mp4: true,
                 progress_style: ProgressStyle::PerFile,
                 sort_order: SortOrder::ByDate,
                 reverse_sort: false,
@@ -3114,9 +3172,11 @@ mod tests {
             storage: StorageConfig::default(),
             tailscale: TailscaleConfig::default(),
             dlna: DlnaConfig::default(),
+            organise: Default::default(),
             hooks: Vec::new(),
             plugins_dir: None,
             plugins: Vec::new(),
+            plugin_editor: false,
         }
     }
 
@@ -4857,6 +4917,7 @@ impl Config {
             add(server.api_key.as_ref());
         }
         add(self.notifications.webhook_url.as_ref());
+        add(Some(&self.notifications.smtp.password));
         for hook in &self.hooks {
             add(hook.url.as_ref());
             hook.headers.values().for_each(|v| add(Some(v)));
@@ -4914,6 +4975,8 @@ mod secret_values_tests {
             api_key = "s-translation-key"
             [translation.callback.headers]
             Authorization = "s-translation-header"
+            [notifications.smtp]
+            password = "s-smtp-password"
             "#,
         )
         .unwrap();
@@ -4934,6 +4997,7 @@ mod secret_values_tests {
             "s-hook-header",
             "s-hook-env",
             "s-plugin-secret",
+            "s-smtp-password",
         ] {
             assert!(values.iter().any(|v| v == expected), "{expected} missing");
         }
@@ -5067,12 +5131,14 @@ mod dlna_tests {
     }
 
     #[test]
-    fn putio_root_needs_a_folder() {
-        let msg = error("[dlna]\nroots = [\"putio\"]\n");
-        assert!(msg.contains("dlna.putio_folder"), "{msg}");
-        assert!(parse("[dlna]\nroots = [\"putio\"]\nputio_folder = 0\n")
-            .validate()
-            .is_ok());
+    fn putio_root_defaults_to_the_synced_folder() {
+        // Feature 022 (stream mode): no folder chosen is the account root
+        let d = parse("[dlna]\nroots = [\"putio\"]\n");
+        assert!(d.validate().is_ok());
+        assert_eq!(d.dlna.putio_root(), 0);
+        let d = parse("[dlna]\nroots = [\"putio\"]\nputio_folder = 7\n");
+        assert!(d.validate().is_ok());
+        assert_eq!(d.dlna.putio_root(), 7);
         assert!(error("[dlna]\nputio_folder = -3\n").contains("dlna.putio_folder"));
     }
 
