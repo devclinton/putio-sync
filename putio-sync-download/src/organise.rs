@@ -6,7 +6,8 @@
 //! the Put.io page; with `"auto"` the step makes it at once. Every applied move records
 //! where the file was, so it can be undone.
 //!
-//! Movies (024) are a second [`OrganiseKind`]; nothing here is TV-specific.
+//! TV episodes (023) and movies (024) are the two [`OrganiseKind`]s; nothing here depends on
+//! which.
 
 use crate::arrived::{ArrivedFile, ArrivedStep, StepResult};
 use crate::error::DownloadResult;
@@ -150,7 +151,12 @@ impl Organiser {
         if folder == normalize_folder(&file.folder) && name == file.name {
             return Ok(None);
         }
-        let kind = built_in.map(|t| t.kind).unwrap_or(OrganiseKind::Tv);
+        // A move only a plugin placed counts as TV unless only movies are on
+        let kind = built_in.map(|t| t.kind).unwrap_or(if config.tv {
+            OrganiseKind::Tv
+        } else {
+            OrganiseKind::Movie
+        });
         let repo = self.db.organise_moves();
         let recorded = repo
             .plan(&NewMove {
@@ -524,6 +530,7 @@ fn kind_of(m: &OrganiseMove) -> OrganiseKind {
 fn count(kind: OrganiseKind, result: OrganiseResult) {
     let kind = match kind {
         OrganiseKind::Tv => OrganiseMoveKind::Tv,
+        OrganiseKind::Movie => OrganiseMoveKind::Movie,
     };
     telemetry::sync::organise_move(kind, result);
 }

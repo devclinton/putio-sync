@@ -1,4 +1,4 @@
-// Organise on Put.io (feature 023): the settings and the planned, applied and failed moves
+// Organise on Put.io (features 023 and 024): the settings and the planned, applied and failed moves
 // of files stream mode keeps on Put.io. Loaded on demand from the Put.io page's Organise
 // button, so it does not count towards the page's first load.
 
@@ -8,6 +8,7 @@ import { ACTIONS, idsFor, outcomeText, pathOf, sortMoves } from "./organise_text
 
 const LABELS = { planned: "Planned", applied: "Moved", undone: "Undone", failed: "Failed" };
 const KINDS = { planned: "", applied: "ok", undone: "", failed: "bad" };
+const MEDIA = { tv: "TV", movie: "Movie" };
 
 let card = null;
 
@@ -38,7 +39,7 @@ async function load(el) {
   if (el !== card) return;
   el.replaceChildren(
     h("h2", { text: "Organise on Put.io" }),
-    h("p", { class: "muted", text: "Files stream mode keeps on Put.io can be moved into Show/Season NN folders and named Show - S01E02 - Title. Nothing moves until you apply it, unless you choose to move at once." }),
+    h("p", { class: "muted", text: "Files stream mode keeps on Put.io can be moved into Show/Season NN folders named Show - S01E02 - Title, and Movie (Year) folders named Movie (Year), with extras in their own folder and samples left out. Nothing moves until you apply it, unless you choose to move at once." }),
     form(settings, el),
     movesList(moves, el),
   );
@@ -47,12 +48,14 @@ async function load(el) {
 function form(s, el) {
   const tv = h("input", { type: "checkbox", id: "org-tv", checked: s.tv });
   const folder = h("input", { type: "text", id: "org-folder", value: s.tv_folder, spellcheck: false });
+  const movies = h("input", { type: "checkbox", id: "org-movies", checked: s.movies });
+  const moviesFolder = h("input", { type: "text", id: "org-movies-folder", value: s.movies_folder, spellcheck: false });
   const auto = h("input", { type: "checkbox", id: "org-auto", checked: s.apply === "auto" });
   const plugins = h("input", { type: "checkbox", id: "org-plugins", checked: s.use_plugins });
   async function save(ev) {
     ev.preventDefault();
     try {
-      const res = await put("/settings/organise", { tv: tv.checked, tv_folder: folder.value.trim(), apply: auto.checked ? "auto" : "preview", use_plugins: plugins.checked });
+      const res = await put("/settings/organise", { tv: tv.checked, tv_folder: folder.value.trim(), movies: movies.checked, movies_folder: moviesFolder.value.trim(), apply: auto.checked ? "auto" : "preview", use_plugins: plugins.checked });
       toast(res.message);
       load(el);
     } catch (e) {
@@ -64,6 +67,8 @@ function form(s, el) {
     { class: "fields", onsubmit: save },
     h("label", { class: "field check", for: "org-tv" }, tv, h("span", {}, "Organise TV shows")),
     h("label", { class: "field", for: "org-folder" }, h("span", { text: "TV folder on Put.io" }), folder),
+    h("label", { class: "field check", for: "org-movies" }, movies, h("span", {}, "Organise movies")),
+    h("label", { class: "field", for: "org-movies-folder" }, h("span", { text: "Movies folder on Put.io" }), moviesFolder),
     h("label", { class: "field check", for: "org-auto" }, auto, h("span", {}, "Move at once", h("small", { text: "Without a preview; every move can still be undone" }))),
     h("label", { class: "field check", for: "org-plugins" }, plugins, h("span", {}, "Let plugins choose folders and names", h("small", { text: "Their folder and rename answers win over the built-in names" }))),
     h("div", {}, h("button", { type: "submit", class: "btn btn-small" }, "Save")),
@@ -93,7 +98,7 @@ function movesList(body, el) {
   async function scan() {
     try {
       const res = await post("/organise/scan");
-      toast(res.planned ? `${res.planned} moves planned` : "No new episodes found");
+      toast(res.planned ? `${res.planned} moves planned` : "No new files found");
     } catch (e) {
       toastError(e);
     }
@@ -106,11 +111,11 @@ function movesList(body, el) {
       h("button", { type: "button", class: "btn btn-small", onclick: run("apply", "applied") }, "Apply"),
       h("button", { type: "button", class: "btn btn-small", onclick: run("undo", "undone") }, "Undo"),
       h("button", { type: "button", class: "btn btn-small", onclick: run("dismiss", "dismissed") }, "Dismiss"),
-      h("button", { type: "button", class: "btn btn-small", title: "Plan moves for files streamed before organising was on", onclick: scan }, "Find episodes"),
+      h("button", { type: "button", class: "btn btn-small", title: "Plan moves for files streamed before organising was on", onclick: scan }, "Find files"),
     ),
   );
   if (!moves.length) {
-    box.append(h("p", { class: "muted", text: "No moves yet. New episodes appear here after the next sync." }));
+    box.append(h("p", { class: "muted", text: "No moves yet. New episodes and movies appear here after the next sync." }));
     return box;
   }
   const rows = moves.map((m) => {
@@ -122,6 +127,7 @@ function movesList(body, el) {
       {},
       h("td", {}, tick),
       h("td", {}, h("span", { class: `badge ${KINDS[m.status] || ""}`, text: LABELS[m.status] || m.status }), m.by_plugin ? h("small", { class: "muted", text: " plugin" }) : null),
+      h("td", {}, MEDIA[m.kind] || m.kind),
       h("td", { class: "name" }, pathOf(m.from_folder, m.from_name)),
       h("td", { class: "name" }, pathOf(m.to_folder, m.to_name), m.error ? h("small", { class: "error-text", text: m.error }) : null),
     );
@@ -130,7 +136,7 @@ function movesList(body, el) {
     h(
       "div",
       { class: "table-wrap" },
-      h("table", { class: "table" }, h("thead", {}, h("tr", {}, h("th", {}), h("th", { text: "State" }), h("th", { text: "Now" }), h("th", { text: "Moves to" }))), h("tbody", {}, rows)),
+      h("table", { class: "table" }, h("thead", {}, h("tr", {}, h("th", {}), h("th", { text: "State" }), h("th", { text: "Kind" }), h("th", { text: "Now" }), h("th", { text: "Moves to" }))), h("tbody", {}, rows)),
     ),
   );
   return box;

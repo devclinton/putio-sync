@@ -49,13 +49,19 @@ pub fn lint(contents: &str) -> Result<Vec<ConfigWarning>, toml::de::Error> {
         });
     }
     let streams = RuleSet::from_config(&config.download).uses_stream();
-    if config.organise.tv && !streams {
-        warnings.push(ConfigWarning {
-            key: "organise.tv".to_string(),
-            message: "`organise.tv` only moves files stream mode keeps on Put.io, and nothing \
-                      is streamed; set `download.mode = \"stream\"` or a stream rule"
-                .to_string(),
-        });
+    for (key, on) in [
+        ("tv", config.organise.tv),
+        ("movies", config.organise.movies),
+    ] {
+        if on && !streams {
+            warnings.push(ConfigWarning {
+                key: format!("organise.{key}"),
+                message: format!(
+                    "`organise.{key}` only moves files stream mode keeps on Put.io, and nothing \
+                     is streamed; set `download.mode = \"stream\"` or a stream rule"
+                ),
+            });
+        }
     }
     if streams && !config.dlna.shows_putio() {
         warnings.push(ConfigWarning {
@@ -187,6 +193,10 @@ mod tests {
             organise(t).insert("tv".into(), true.into());
         });
         assert_eq!(keys(&text), vec!["organise.tv"]);
+        let text = config_text(|t| {
+            organise(t).insert("movies".into(), true.into());
+        });
+        assert_eq!(keys(&text), vec!["organise.movies"]);
         let text = config_text(|t| {
             organise(t).insert("tv".into(), true.into());
             download(t).insert("mode".into(), "stream".into());

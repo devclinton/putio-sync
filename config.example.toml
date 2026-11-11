@@ -598,6 +598,17 @@ tv = false
 # Default: "TV Shows"
 tv_folder = "TV Shows"
 
+# Move movies into "<movies_folder>/Movie (Year)/Movie (Year).ext", read from
+# the release name (or its release folder). Trailers, featurettes and other
+# extras go into the film's "Trailers", "Featurettes"... folder; samples are
+# left where they are.
+# Default: false
+movies = false
+
+# The Put.io folder for movies, from the Put.io root (no leading "/", no "..").
+# Default: "Movies"
+movies_folder = "Movies"
+
 # "preview" waits for Apply on the Organise panel; "auto" moves at once.
 # Default: "preview"
 apply = "preview"
