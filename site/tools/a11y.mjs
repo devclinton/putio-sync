@@ -10,7 +10,9 @@ import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright";
 
 const site = join(dirname(fileURLToPath(import.meta.url)), "../../target/site");
-const pages = ["/", "/docs/", "/docs/installation.html", "/docs/configuration.html"];
+// A left-to-right and a right-to-left translation of the docs too
+const pages = ["/", "/docs/", "/docs/installation.html", "/docs/configuration.html",
+  "/docs/fr/installation.html", "/docs/ar/configuration.html"];
 const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".png": "image/png", ".webp": "image/webp", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".json": "application/json" };
 
 const server = createServer((req, res) => {
@@ -36,7 +38,8 @@ for (const colorScheme of ["light", "dark"]) {
     const context = await browser.newContext({ colorScheme, viewport });
     const page = await context.newPage();
     for (const path of pages) {
-      await page.goto(base + path);
+      // networkidle: the docs language picker is added after a fetch
+      await page.goto(base + path, { waitUntil: "networkidle" });
       const { violations } = await new AxeBuilder({ page }).analyze();
       for (const v of violations) {
         if (v.impact === "critical") critical++;

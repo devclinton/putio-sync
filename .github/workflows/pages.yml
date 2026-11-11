@@ -62,7 +62,7 @@ jobs:
           args: >-
             --offline --include-fragments --no-progress
             --root-dir ${{ github.workspace }}/target/site
-            --exclude-path target/site/docs/404.html
+            --exclude-path 'docs/([a-zA-Z-]+/)?404\.html'
             'target/site/**/*.html'
           fail: true
 

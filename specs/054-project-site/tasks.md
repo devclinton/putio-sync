@@ -35,7 +35,7 @@
 
 ## Phase 6: US4 Translations (P3)
 
-- [ ] T015 [US4] Landing page strings in es, zh, hi, fr, ar (RTL), machine-translated and marked
+- [X] T015 [US4] Docs in the 19 atranslate languages (ar RTL), machine-translated and marked, with a language picker (revised from five landing-page languages)
 
 ## Phase 7: Polish
 
