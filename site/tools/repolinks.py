@@ -9,7 +9,11 @@ so their links are written for GitHub. This rewrites them for the book:
 - `site/...` (screenshots) points at the site root
 - any other relative path points at the file on GitHub
 
-It also ends every chapter with the not-affiliated line (FR-005).
+It also ends every chapter with the not-affiliated line (FR-005). When the
+book's language isn't English, chapter text comes from the site/i18n catalog
+(see docs_i18n.py) and each page starts with a machine-translation notice.
+With PUTIO_SYNC_DOCS_STRINGS=<file>, an English build writes every string a
+translation needs to that file (site/tools/translate-docs.py uses it).
 
 Unresolved README anchors are reported on stderr and left as they are.
 """
@@ -18,8 +22,10 @@ import os
 import re
 import sys
 
+import docs_i18n
+
 REPO = "https://github.com/devclinton/putio-sync"
-NOTICE = "\n\n---\n\n*putio-sync is an independent project and is not affiliated with Put.io.*\n"
+AFFILIATION = "putio-sync is an independent project and is not affiliated with Put.io."
 BOOK = os.path.dirname(os.path.abspath(__file__)) + "/../book"
 ROOT = os.path.normpath(BOOK + "/../..")
 INCLUDE = re.compile(r"\{\{#include \.\./\.\./\.\./([^:}]+)(?::([^}]+))?\}\}")
@@ -62,6 +68,9 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "supports":
         sys.exit(0)
     context, book = json.load(sys.stdin)
+    lang = context["config"]["book"].get("language") or "en"
+    catalog = docs_i18n.load(lang) if lang != "en" else {}
+    up = "../" if lang == "en" else "../../"   # from a page to the site root
     items = book.get("items", book.get("sections", []))
     chs = [c for c in chapters(items) if c.get("path")]
 
@@ -103,19 +112,36 @@ def main():
         if path in whole:
             return whole[path] + hash_frag
         if path.startswith("site/"):
-            return "../" + path[len("site/"):]
+            return up + path[len("site/"):]
         kind = "tree" if os.path.isdir(os.path.join(ROOT, path)) else "blob"
         return f"{REPO}/{kind}/main/{path}{hash_frag}"
 
+    wanted = set()
     for c in chs:
+        english = c["path"] in docs_i18n.ENGLISH_ONLY
+        content = c["content"].rstrip() + f"\n\n---\n\n*{AFFILIATION}*\n"
+        if not english:
+            wanted.update(docs_i18n.strings(content))
+            wanted.add(docs_i18n.protect(c["name"])[0])
+        if catalog and not english:
+            content = docs_i18n.translate_content(content, catalog, slug)
+            c["name"] = docs_i18n.translate(c["name"], catalog)
         out = []
-        for line, fenced in outside_fences(c["content"]):
+        for line, fenced in outside_fences(content):
             if fenced or line.startswith("[![") or "](" not in line:
                 out.append("" if line.startswith("[![") and not fenced else line)
                 continue
             out.append(LINK.sub(lambda m: m.group(1) + rewrite(m.group(2), c) + m.group(3), line))
-        c["content"] = "\n".join(out).rstrip() + NOTICE
+        c["content"] = "\n".join(out)
+        if catalog and not english:
+            english_page = "../" + c["path"][:-3] + ".html"
+            note = docs_i18n.translate(docs_i18n.NOTICE.replace("{0}", f"({english_page})"), catalog)
+            c["content"] = f"> {note}\n\n" + c["content"]
         del c["_src"]
+    if lang == "en" and os.environ.get("PUTIO_SYNC_DOCS_STRINGS"):
+        wanted.add(docs_i18n.NOTICE)
+        with open(os.environ["PUTIO_SYNC_DOCS_STRINGS"], "w") as f:
+            json.dump({docs_i18n.key(s): s for s in sorted(wanted)}, f, ensure_ascii=False, indent=1)
     json.dump(book, sys.stdout)
 
 

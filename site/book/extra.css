@@ -24,3 +24,17 @@
   min-height: 24px;
   margin-inline: 2px;
 }
+
+/* Language picker (lang-picker.js) */
+.lang-picker {
+  min-height: 24px;
+  margin-inline: 4px;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 1.4rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--searchbar-border-color);
+  border-radius: 4px;
+  max-width: 9em;
+}

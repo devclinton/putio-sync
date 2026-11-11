@@ -18,6 +18,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   install steps for every platform and screenshots, and the docs as a searchable book
   built from the repository's Markdown. It loads nothing from other sites. The snap,
   Unraid, Umbrel and CasaOS listings link to it.
+- The docs on the website in 19 more languages, machine-translated and marked as such,
+  with a language picker in the menu bar.
 
 ### Fixed
 

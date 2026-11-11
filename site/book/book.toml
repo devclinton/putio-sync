@@ -19,6 +19,7 @@ after = ["links"]
 default-theme = "light"
 preferred-dark-theme = "navy"
 additional-css = ["extra.css"]
+additional-js = ["lang-picker.js"]
 git-repository-url = "https://github.com/devclinton/putio-sync"
 edit-url-template = "https://github.com/devclinton/putio-sync/edit/main/{path}"
 site-url = "/putio-sync/docs/"
