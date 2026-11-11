@@ -2732,7 +2732,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-update"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "chrono",
  "mockito",
