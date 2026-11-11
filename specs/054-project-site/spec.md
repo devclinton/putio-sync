@@ -82,16 +82,21 @@ phone width, and writes them under `site/screenshots/`.
 1. **Given** the command, **When** it runs, **Then** no real Put.io account or token is used
    and no real file names, IPs or hostnames appear in the images.
 
-### User Story 4 - The landing page in the main languages (Priority: P3)
+### User Story 4 - The docs in other languages (Priority: P3)
 
-A reader whose browser prefers Spanish, Chinese, Hindi, French or Arabic gets the landing
-page in that language (Arabic right to left); the docs stay English.
+A reader can read the docs in any language the atranslate service has a model for (19 at
+the time of writing, Arabic right to left), machine-translated and marked as such, with a
+link back to the English page. The landing page stays English.
 
-**Why this priority**: the web UI speaks 27 languages and the snap description has these
-five; the landing page is short enough to translate, the manual is not.
+**Why this priority**: the web UI speaks 27 languages; the docs are where a non-English
+reader gets stuck.
 
-**Independent Test**: `/es/` shows the Spanish landing page, with a language switch on every
-landing page.
+**Independent Test**: `/docs/fr/installation.html` shows the French page with the
+machine-translation notice, and the language picker in the menu bar opens the same page
+and heading in another language.
+
+*Revised 2026-11-10*: the first draft translated the landing page into five languages and
+kept the docs English; the owner asked for the docs in every language atranslate supports.
 
 ### Edge Cases
 
@@ -123,8 +128,11 @@ landing page.
   as optimized images; the README and `packaging/STORES.md` MUST use the same files.
 - **FR-009**: The README MUST link to the site near the top, and the snap, Umbrel, CasaOS
   and Unraid listings MUST use the site as their website URL once it is live.
-- **FR-010** (P3): The landing page MAY be translated into Spanish, Chinese, Hindi, French
-  and Arabic, machine translation marked as such, following the 051 approach.
+- **FR-010** (P3): The docs MAY be translated into every language atranslate supports,
+  machine translation marked as such, following the 051 approach: catalogs in `site/i18n`
+  keyed by a hash of the English text, refreshed by `site/tools/translate-docs.py`, so
+  changed text shows in English until the next refresh. Code, URLs and product names are
+  never sent for translation. The changelog and license stay English.
 
 ### Key Entities
 
