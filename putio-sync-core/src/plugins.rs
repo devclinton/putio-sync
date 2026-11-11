@@ -27,6 +27,13 @@ fn default_memory() -> u64 {
     32
 }
 
+/// Limits for one sync rule call, in milliseconds (feature 028, sync extension points)
+pub const HOOK_TIMEOUT_MS: std::ops::RangeInclusive<u64> = 50..=5000;
+
+fn default_hook_timeout() -> u64 {
+    500
+}
+
 /// One `[[plugins]]` entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginSettings {
@@ -44,6 +51,9 @@ pub struct PluginSettings {
     /// Memory for the whole Lua state, in MiB (4-256)
     #[serde(default = "default_memory")]
     pub memory_mb: u64,
+    /// Longest sync rule call (filter, rename, folder), in milliseconds (50-5000)
+    #[serde(default = "default_hook_timeout")]
+    pub hook_timeout_ms: u64,
     /// Values for the manifest's config fields that are not secret
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub config: BTreeMap<String, serde_json::Value>,
@@ -60,6 +70,7 @@ impl Default for PluginSettings {
             approved_hosts: Vec::new(),
             timeout_secs: default_timeout(),
             memory_mb: default_memory(),
+            hook_timeout_ms: default_hook_timeout(),
             config: BTreeMap::new(),
             secrets: BTreeMap::new(),
         }
@@ -109,6 +120,11 @@ impl PluginSettings {
         std::time::Duration::from_secs(self.timeout_secs)
     }
 
+    /// The sync rule call limit
+    pub fn hook_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.hook_timeout_ms)
+    }
+
     /// Check one entry; `index` is its place in the list, for a nameless entry's message
     pub fn validate(&self, index: usize) -> CoreResult<()> {
         let bad = |msg: String| Err(CoreError::ConfigError(msg));
@@ -134,6 +150,14 @@ impl PluginSettings {
                 plugin,
                 MEMORY_MB.start(),
                 MEMORY_MB.end()
+            ));
+        }
+        if !HOOK_TIMEOUT_MS.contains(&self.hook_timeout_ms) {
+            return bad(format!(
+                "{}.hook_timeout_ms: must be between {} and {}",
+                plugin,
+                HOOK_TIMEOUT_MS.start(),
+                HOOK_TIMEOUT_MS.end()
             ));
         }
         for host in &self.approved_hosts {
@@ -305,6 +329,11 @@ mod tests {
         p.memory_mb = 257;
         assert!(err(p.clone()).contains("between 4 and 256"));
         p.memory_mb = 4;
+        p.hook_timeout_ms = 49;
+        assert!(err(p.clone()).contains("hook_timeout_ms: must be between 50 and 5000"));
+        p.hook_timeout_ms = 5001;
+        assert!(err(p.clone()).contains("between 50 and 5000"));
+        p.hook_timeout_ms = 50;
         validate(&[p]).unwrap();
     }
 

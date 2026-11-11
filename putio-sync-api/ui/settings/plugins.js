@@ -212,6 +212,9 @@ function pluginsExtra(data, form) {
             { class: "fields" },
             ...row.fields.map((f) => field((f.label || f.key) + (f.required ? " *" : ""), f.secret ? secret(row, f) : f.choices ? pick(row, f, showHosts) : input(row, f, showHosts), f.help)),
             field("Time limit (s)", h("input", { class: "input", type: "number", min: 1, max: 60, value: row.timeout_secs, oninput: (ev) => (row.timeout_secs = ev.currentTarget.value) }), "Longest one event may take, 1 to 60"),
+            row.hooks.length
+              ? field("Sync rule time limit (ms)", h("input", { class: "input", type: "number", min: 50, max: 5000, value: row.hook_timeout_ms, oninput: (ev) => (row.hook_timeout_ms = ev.currentTarget.value) }), "Longest one sync rule call may take, 50 to 5000; a slower answer is ignored")
+              : null,
           ),
           actionsBox(row, status),
           testBox(row, status),
@@ -223,6 +226,7 @@ function pluginsExtra(data, form) {
       h("p", { class: status.state === "broken" ? "error-text" : "muted", text: status.error ? `${head}: ${status.error}` : head }),
       status.description ? h("p", { text: status.description }) : null,
       status.events && status.events.length ? h("p", { class: "muted", text: `Events: ${status.events.join(", ")}` }) : null,
+      status.hooks && status.hooks.length ? h("p", { class: "muted", text: `Sync rules: ${status.hooks.join(", ")}` }) : null,
       h("p", { class: "muted" }, hosts),
       ...body,
       h("div", { class: "toolbar spaced" }, h("button", { type: "button", class: "btn btn-small", onclick: (ev) => turn(status, false, ev.currentTarget) }, "Disable")),

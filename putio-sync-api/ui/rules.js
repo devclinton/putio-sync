@@ -4,6 +4,7 @@
 // a parent folder, or the global Download settings). Feature 020 adds the Only download
 // and Never download patterns, in the filter language of query.js. Feature 021 adds Keep:
 // the empty-folder cleanup and the doctor leave the folder and its sub-folders alone.
+// Feature 022 adds the mode: download the files, or keep them on Put.io for streaming.
 
 import { del, get, post, put } from "./api.js";
 import { confirm, h, toast } from "./app.js";
@@ -23,6 +24,12 @@ const EXISTING = [
   ["keep_both", "Keep both"],
 ];
 const existingLabel = (v) => (EXISTING.find(([k]) => k === v) || [v, v])[1];
+// feature 022: download, or keep on Put.io and stream through the media server
+const MODES = [
+  ["download", "Download"],
+  ["stream", "Stream from Put.io"],
+];
+const modeLabel = (v) => (MODES.find(([k]) => k === v) || [v, v])[1];
 const SHOWN_EXTS = 8;
 
 const quiet = (e) => e.status === 401 || e.status === 429;
@@ -127,6 +134,7 @@ export function ruleCard(id, onChange) {
         row("Never download", eff.exclude.value || "nothing", eff.exclude.from),
         FLAGS.map(([k, label]) => row(label, yesNo(eff[k].value), eff[k].from)),
         row("When a file exists", existingLabel(eff.on_existing.value), eff.on_existing.from),
+        row("Mode", modeLabel(eff.mode.value), eff.mode.from),
       ),
       tools,
     );
@@ -209,6 +217,12 @@ export function ruleCard(id, onChange) {
       h("option", { value: "", text: `Inherit (${existingLabel(eff.on_existing.value)})`, selected: rule.on_existing == null }),
       EXISTING.map(([v, text]) => h("option", { value: v, text, selected: rule.on_existing === v })),
     );
+    const modeSel = h(
+      "select",
+      { class: "input", id: fid("mode") },
+      h("option", { value: "", text: `Inherit (${modeLabel(eff.mode.value)})`, selected: rule.mode == null }),
+      MODES.map(([v, text]) => h("option", { value: v, text, selected: rule.mode === v })),
+    );
     const field = (input, label, hint) => h("label", { class: "field", for: input.id }, h("span", { text: label }), input, h("small", { text: hint }));
     const out = h("div", { class: "rule-preview", "aria-live": "polite" });
     const error = h("p", { class: "error-text", role: "alert", hidden: true });
@@ -217,6 +231,7 @@ export function ruleCard(id, onChange) {
       const b = { preset: presetSel.value || null, allow: parseExts(allow.value), block: parseExts(block.value), include: include.value(), exclude: exclude.value() };
       for (const [k, sel] of flags) b[k] = sel.value === "" ? null : sel.value === "true";
       b.on_existing = existingSel.value || null;
+      b.mode = modeSel.value || null;
       return b;
     };
     const fail = (e) => {
@@ -280,6 +295,7 @@ export function ruleCard(id, onChange) {
         patternField(exclude, "Never download"),
         flags.map((f) => f[2]),
         field(existingSel, "When a file exists", "Resume, overwrite, or keep both under a new name"),
+        field(modeSel, "Mode", "Stream keeps files on Put.io and plays them through the media server; Radarr and Sonarr still download"),
       ),
       error,
       h(
@@ -308,7 +324,7 @@ const fullName = (i) => (i.path ? `${i.path}/${i.name}` : i.name);
 
 /** A rules preview: the counts, the files refused and a sample of those downloaded */
 export function previewView(p) {
-  const head = `${plural(p.files, "file", "files")}: ${p.download} download, ${p.blocked} blocked, ${p.skipped} skipped, ${p.would_delete} would be deleted`;
+  const head = `${plural(p.files, "file", "files")}: ${p.download} download, ${p.blocked} blocked, ${p.skipped} skipped, ${p.stream || 0} streamed, ${p.would_delete} would be deleted`;
   const items = p.items.slice(0, SHOWN_ITEMS);
   const more = p.items.length - items.length + (p.truncated ? 1 : 0);
   const downloads = (p.downloads || []).slice(0, SHOWN_ITEMS);
@@ -395,7 +411,7 @@ function ruleSummary(r, presets) {
 
 function rulesList(all, reload) {
   const g = all.global;
-  const global = h("p", { class: "muted", text: `Root (global): ${g.blocked_extensions.length ? `blocks ${exts(g.blocked_extensions)}` : "blocks nothing"} · delete after download: ${yesNo(g.delete_after_download)} · when a file exists: ${existingLabel(g.on_existing).toLowerCase()}${g.include ? ` · only ${g.include}` : ""}${g.exclude ? ` · never ${g.exclude}` : ""}` });
+  const global = h("p", { class: "muted", text: `Root (global): ${g.blocked_extensions.length ? `blocks ${exts(g.blocked_extensions)}` : "blocks nothing"} · delete after download: ${yesNo(g.delete_after_download)} · when a file exists: ${existingLabel(g.on_existing).toLowerCase()} · mode: ${modeLabel(g.mode).toLowerCase()}${g.include ? ` · only ${g.include}` : ""}${g.exclude ? ` · never ${g.exclude}` : ""}` });
   if (!all.rules.length) return [global, h("p", { class: "muted", text: "No folder rules. Set one from a folder on the Put.io page." })];
   const remove = async (button, path) => {
     const ok = await confirm({ title: "Remove folder rule", text: `Remove the rule for ${path}? Its folders go back to the inherited settings.`, verb: "Remove" });

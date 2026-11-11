@@ -738,7 +738,9 @@ H = histogram.
 | `putio_sync_last_success_timestamp_seconds` | gauge | — | Unix time the last successful run finished; absent until the first one |
 | `putio_sync_last_sync_files` | gauge | `kind` | Counts from the latest run |
 | `putio_sync_files_blocked_total` | counter | — | Files blocked or skipped by a folder rule or the blocked-extension list (once per file id) |
-| `putio_sync_rule_decisions_total` | counter | `decision` | Folder rule decisions: `blocked`, `skipped`, `deleted` (from Put.io) |
+| `putio_sync_rule_decisions_total` | counter | `decision` | Folder rule decisions: `blocked`, `skipped`, `deleted` (from Put.io), `streamed` (kept on Put.io) |
+| `putio_sync_stream_mp4_requests_total` | counter | `result` | MP4 versions asked of Put.io for streamed files: `requested`, `ready`, `gone`, `failed` |
+| `putio_sync_organise_moves_total` | counter | `kind`, `result` | Moves on Put.io: `kind` is `tv`; `result` is `planned`, `applied`, `undone`, `failed` |
 | `putio_sync_sync_in_progress` | gauge | — | 1 while a sync run is in progress, else 0 |
 | `putio_sync_queue_items` | gauge | `state` | Queue rows by state, refreshed every 15 s and at startup |
 | `putio_sync_downloads_active` | gauge | — | Downloads in progress |
@@ -1302,7 +1304,7 @@ name = "putio-sync"                  # what players show, up to 64 characters
 port = 8200                          # not 1900, and not the API's or metrics' port
 bind = []                            # empty is every LAN IPv4 address
 roots = ["downloads", "cat:radarr"]  # downloads, cat:<folder>, watch:<path>, putio
-# putio_folder = 123456              # the Put.io folder shown as "Put.io" (for roots with putio)
+# putio_folder = 123456              # the Put.io folder shown as "Put.io"; unset is the synced folder
 ```
 
 - **Shared folders** are `downloads` (the download folder), `cat:<name>` (one subfolder, so
@@ -1311,7 +1313,38 @@ roots = ["downloads", "cat:radarr"]  # downloads, cat:<folder>, watch:<path>, pu
   symlinks that leave the shared folder are never shown or served.
 - **Put.io** shows one Put.io folder and plays its files without downloading them first. A
   video Put.io has converted to MP4 plays as the MP4; otherwise the original plays. If Put.io
-  can't be reached, the local folders keep working and Settings shows the error.
+  can't be reached, the local folders keep working and Settings shows the error. With no
+  `putio_folder`, it shows the folder the sync mirrors (your whole Put.io account).
+- **Stream mode** keeps media on Put.io instead of downloading it, and the `putio` root
+  serves it. Set it for the whole account or per folder:
+
+  ```toml
+  [download]
+  mode = "stream"      # or "download" (the default); a folder rule's `mode` overrides it
+  stream_mp4 = true    # ask Put.io for an MP4 version of each new non-MP4 video (default)
+  ```
+
+  Files in stream mode are never queued and never deleted after download. The type filter,
+  patterns and `delete_blocked` still apply, so junk can still be removed from Put.io.
+  Radarr/Sonarr items and a "Download" click on the Put.io page download anyway. Settings ›
+  Downloads warns when stream mode is used but the media server or its Put.io root is off,
+  with a button that turns them on; `doctor` reports the same.
+- **Organise TV shows on Put.io**: the Put.io page's **Organise** panel can move streamed
+  episodes into `TV Shows/Show/Season NN/` and name them `Show - S02E05 - Title.mkv`, read
+  from the release name (season packs, `1x05`, `S01E01E02`, years and subtitle languages
+  included). Each move is planned first and made when you tick it and press **Apply**,
+  or at once with `apply = "auto"`; **Undo** puts the file back in its folder under its
+  old name. **Find episodes** plans moves for files streamed before you turned it on.
+  A target folder outside stream mode is refused, so a move never makes the next sync
+  download the file. Plugins' folder and rename rules win when `use_plugins` is on.
+
+  ```toml
+  [organise]
+  tv = true
+  tv_folder = "TV Shows"   # from the Put.io root
+  apply = "preview"        # or "auto"
+  use_plugins = true
+  ```
 - **Who can see it**: anyone on your home network can browse and play what you share. There
   is no password in UPnP, so share only what the whole household may see.
 - **Docker**: discovery uses multicast, which bridge networking hides. Run the container
@@ -1841,6 +1874,7 @@ no rule sets comes from `[download]`.
 | `include` | Only download files matching this pattern ("Only download"); `""` clears an inherited one |
 | `exclude` | Never download files matching this pattern ("Never download"); `""` clears an inherited one |
 | `skip` | Download nothing in this folder |
+| `mode` | `download` or `stream`: stream keeps the files on Put.io for the [media server](#media-server) |
 | `delete_blocked` | Delete the files this rule blocks from Put.io, with one call per sync (with `include`, every file that doesn't match it) |
 | `delete_after_download`, `on_existing` | Override the `[download]` values for this folder (an old rule's `skip_existing` is still read) |
 

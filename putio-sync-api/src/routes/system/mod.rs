@@ -12,6 +12,7 @@ pub mod hooks;
 pub mod logs;
 pub mod media_server;
 pub mod network;
+pub mod organise;
 pub mod plugins;
 pub mod rules;
 pub mod settings;

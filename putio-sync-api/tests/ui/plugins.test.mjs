@@ -54,6 +54,15 @@ test("a plugin with no settings starts off with its defaults", () => {
   assert.deepEqual(toSettings(row), { name: "ntfy", enabled: false, timeout_secs: 10, memory_mb: 32 });
 });
 
+test("a plugin with sync rules saves their time limit", () => {
+  const filter = { name: "min-size-filter", hooks: ["filter"], config_fields: [] };
+  const row = fromStatus(filter, null);
+  assert.equal(row.hook_timeout_ms, 500);
+  row.hook_timeout_ms = "250";
+  assert.deepEqual(toSettings(row), { name: "min-size-filter", enabled: false, timeout_secs: 10, memory_mb: 32, hook_timeout_ms: 250 });
+  assert.equal(fromStatus(filter, { name: "min-size-filter", hook_timeout_ms: 1200 }).hook_timeout_ms, 1200);
+});
+
 test("settings round trip and a kept secret sends the mask", () => {
   const settings = {
     name: "ntfy", enabled: true, timeout_secs: 10, memory_mb: 32,

@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use putio_sync_core::events::EventType;
 use putio_sync_core::hooks::ALL_EVENTS;
 use putio_sync_core::plugins::{valid_host, valid_name, PluginSettings};
+use putio_sync_core::sync_hooks::Hook;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -44,9 +45,12 @@ pub struct Manifest {
     /// The script, a plain file name in the plugin's folder
     #[serde(default = "default_entry")]
     pub entry: String,
-    /// Event types, or `*` for all
+    /// Event types, or `*` for all; may be empty when `hooks` is not
     #[serde(default)]
     pub events: Vec<String>,
+    /// Sync extension points it answers: `filter`, `rename`, `folder` (028)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<String>,
     /// What the plugin may do
     #[serde(default)]
     pub permissions: Permissions,
@@ -263,7 +267,14 @@ impl Manifest {
         if !plain {
             return Err("entry: a file name in the plugin's folder".to_string());
         }
-        if self.events.is_empty() {
+        let mut hooks = HashSet::new();
+        for hook in &self.hooks {
+            let parsed: Hook = hook.parse().map_err(|e| format!("hooks: {}", e))?;
+            if !hooks.insert(parsed) {
+                return Err(format!("hooks: \"{}\" listed twice", hook));
+            }
+        }
+        if self.events.is_empty() && self.hooks.is_empty() {
             return Err("events: list at least one event, or \"*\" for all".to_string());
         }
         for event in &self.events {
@@ -369,6 +380,11 @@ impl Manifest {
     /// Seconds between `on_tick` calls
     pub fn tick_every(&self) -> u64 {
         self.tick_seconds.unwrap_or(DEFAULT_TICK_SECONDS)
+    }
+
+    /// Whether the plugin answers the sync extension point `hook`
+    pub fn has_hook(&self, hook: Hook) -> bool {
+        self.hooks.iter().any(|h| h == hook.as_str())
     }
 
     /// Whether `id` is one of the actions
@@ -791,5 +807,20 @@ default = 5
         assert_eq!(values["group_minutes"], 5);
         assert_eq!(values["token"], "tk_secret");
         assert_eq!(values["topic"], "nas");
+    }
+
+    #[test]
+    fn sync_hooks() {
+        let m = parse(&with("hooks = [\"filter\", \"folder\"]")).unwrap();
+        assert!(m.events.is_empty());
+        assert!(m.has_hook(Hook::Filter) && m.has_hook(Hook::Folder));
+        assert!(!m.has_hook(Hook::Rename));
+        let m = parse(&with("events = [\"*\"]\nhooks = [\"rename\"]")).unwrap();
+        assert!(m.has_hook(Hook::Rename) && m.wants(EventType::StorageLow));
+        assert!(err(&with("hooks = [\"sort\"]"))
+            .contains("hooks: unknown sync hook \"sort\" (filter, rename or folder)"));
+        assert!(err(&with("hooks = [\"filter\", \"filter\"]"))
+            .contains("hooks: \"filter\" listed twice"));
+        assert!(err(&with("hooks = []")).contains("events: list at least one event"));
     }
 }

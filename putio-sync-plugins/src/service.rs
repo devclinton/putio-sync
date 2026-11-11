@@ -17,9 +17,10 @@ use tokio::sync::oneshot;
 
 use crate::action::{self, ActionResult, HealthItem};
 use crate::discover::{discover, Found};
+use crate::hooks::HookSlot;
 use crate::host::{system_clock, Clock};
 use crate::manifest::{Action, ConfigField, Permissions};
-use crate::worker::{CallReply, Env, History, Job, PluginRun, RunResult, Slot, Spec};
+use crate::worker::{CallReply, Env, History, Job, PluginRun, RunResult, Slot, Spec, MAX_RUNS};
 
 /// How often `on_tick` runs when the manifest sets no `tick_seconds`
 pub const TICK: Duration = Duration::from_secs(60);
@@ -63,6 +64,9 @@ pub struct PluginStatus {
     pub error: Option<String>,
     /// The events it handles
     pub events: Vec<String>,
+    /// The sync rules it provides: `filter`, `rename`, `folder` (feature 028)
+    #[serde(default)]
+    pub hooks: Vec<String>,
     /// What it may do
     pub permissions: Permissions,
     /// Its settings form
@@ -175,6 +179,8 @@ struct State {
     found: Vec<Found>,
     settings: Vec<PluginSettings>,
     slots: HashMap<String, Arc<Slot>>,
+    /// The second worker of each running plugin with sync hooks
+    hook_slots: HashMap<String, Arc<HookSlot>>,
     env: Option<Env>,
 }
 
@@ -206,6 +212,9 @@ impl Drop for Inner {
         if let Ok(state) = self.state.get_mut() {
             for slot in state.slots.values() {
                 slot.stop();
+            }
+            for hook in state.hook_slots.values() {
+                hook.slot.stop();
             }
         }
     }
@@ -281,6 +290,7 @@ impl PluginsService {
                     found,
                     settings: options.settings,
                     slots: HashMap::new(),
+                    hook_slots: HashMap::new(),
                     env: None,
                 }),
                 data_dir: options.data_dir,
@@ -423,7 +433,11 @@ impl PluginsService {
                 let settings = state.settings.iter().find(|s| s.name == found.name);
                 let slot = state.slots.get(&found.name);
                 let (mut plugin_state, mut error) = state_of(found, settings);
-                if let Some(e) = slot.and_then(|s| s.load_error()) {
+                let hook_error = state
+                    .hook_slots
+                    .get(&found.name)
+                    .and_then(|h| h.slot.load_error());
+                if let Some(e) = slot.and_then(|s| s.load_error()).or(hook_error) {
                     plugin_state = PluginState::Broken;
                     error = Some(e);
                 }
@@ -437,6 +451,7 @@ impl PluginsService {
                     state: plugin_state,
                     error,
                     events: manifest.map(|m| m.events.clone()).unwrap_or_default(),
+                    hooks: manifest.map(|m| m.hooks.clone()).unwrap_or_default(),
                     permissions: manifest.map(|m| m.permissions.clone()).unwrap_or_default(),
                     config_fields: manifest.map(|m| m.config.clone()).unwrap_or_default(),
                     actions: manifest.map(|m| m.actions.clone()).unwrap_or_default(),
@@ -573,6 +588,28 @@ impl PluginsService {
         })
     }
 
+    /// The running plugins' hook workers
+    pub(crate) fn hook_workers(&self) -> Vec<Arc<HookSlot>> {
+        let state = self.inner.state.lock().unwrap();
+        state.hook_slots.values().cloned().collect()
+    }
+
+    /// Keep a run with the plugin's last runs, and count it
+    pub(crate) fn keep_run(&self, name: &str, run: PluginRun) {
+        putio_sync_telemetry::plugins::record_run(
+            name,
+            &run.event_type,
+            run.result.as_str(),
+            Duration::ZERO,
+        );
+        let mut history = self.inner.history.lock().unwrap();
+        let runs = history.entry(name.to_string()).or_default();
+        if runs.len() >= MAX_RUNS {
+            runs.pop_front();
+        }
+        runs.push_back(run);
+    }
+
     fn begin(&self, name: &str) -> Result<BusyGuard<'_>, CallError> {
         if !self.inner.busy.lock().unwrap().insert(name.to_string()) {
             return Err(CallError::Busy);
@@ -604,6 +641,7 @@ impl PluginsService {
             function: function.to_string(),
             kind: kind.to_string(),
             args,
+            limit: None,
             reply,
         });
         slot.finish();
@@ -792,6 +830,36 @@ fn apply(state: &mut State, changed: bool) {
         };
         keep.insert(found.name.clone());
         putio_sync_telemetry::plugins::record_configured(&found.name);
+        if spec.manifest.hooks.is_empty() {
+            if let Some(hook) = state.hook_slots.remove(&found.name) {
+                hook.slot.stop();
+            }
+        } else {
+            match state.hook_slots.get(&found.name) {
+                Some(hook) => {
+                    if changed {
+                        hook.slot.update(spec.clone());
+                        let fresh = Arc::new(HookSlot::new(hook.slot.clone()));
+                        state.hook_slots.insert(found.name.clone(), fresh);
+                    }
+                }
+                None => {
+                    let slot = Slot::new(spec.clone());
+                    match slot.spawn(env.clone()) {
+                        Ok(()) => {
+                            state
+                                .hook_slots
+                                .insert(found.name.clone(), Arc::new(HookSlot::new(slot)));
+                        }
+                        Err(e) => tracing::error!(
+                            plugin = %found.name,
+                            error = %e,
+                            "Plugin sync hook thread not started"
+                        ),
+                    }
+                }
+            }
+        }
         match state.slots.get(&found.name) {
             Some(slot) => {
                 if changed {
@@ -812,6 +880,13 @@ fn apply(state: &mut State, changed: bool) {
             }
         }
     }
+    state.hook_slots.retain(|name, hook| {
+        let kept = keep.contains(name);
+        if !kept {
+            hook.slot.stop();
+        }
+        kept
+    });
     state.slots.retain(|name, slot| {
         let kept = keep.contains(name);
         if !kept {

@@ -17,6 +17,7 @@ use chrono::{SecondsFormat, Utc};
 use mlua::{Function, Lua, Table, Value as LuaValue};
 use putio_sync_core::events::Event;
 use putio_sync_core::plugins::PluginSettings;
+use putio_sync_core::sync_hooks::Hook;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
@@ -177,6 +178,8 @@ pub enum Job {
         kind: String,
         /// Its arguments, as JSON
         args: Vec<serde_json::Value>,
+        /// The time limit when not the plugin's `timeout_secs` (028: sync hooks)
+        limit: Option<Duration>,
         /// Where the answer goes
         reply: oneshot::Sender<CallReply>,
     },
@@ -478,14 +481,22 @@ impl Worker {
             Ok(_) => return Err(format!("{}: must return a table", m.entry)),
             Err(e) => return Err(host::scrub(&describe(&e, started, timeout), &secrets)),
         };
-        if !matches!(
-            module.get::<LuaValue>("on_event"),
-            Ok(LuaValue::Function(_))
-        ) {
+        let defines =
+            |name: &str| matches!(module.get::<LuaValue>(name), Ok(LuaValue::Function(_)));
+        if !m.events.is_empty() && !defines("on_event") {
             return Err(format!(
                 "{}: the returned table has no on_event function",
                 m.entry
             ));
+        }
+        // A plugin that only answers sync hooks needs no on_event (028)
+        for hook in &m.hooks {
+            if !defines(hook) {
+                return Err(format!(
+                    "{}: the returned table has no {} function",
+                    m.entry, hook
+                ));
+            }
         }
         let has_tick = matches!(module.get::<LuaValue>("on_tick"), Ok(LuaValue::Function(_)));
         self.slot.has_tick.store(has_tick, Ordering::Relaxed);
@@ -579,9 +590,10 @@ impl Worker {
                 function,
                 kind,
                 args,
+                limit,
                 reply,
             } => {
-                self.execute_call(function, kind, args, reply, timeout);
+                self.execute_call(function, kind, args, reply, limit.unwrap_or(timeout));
                 return;
             }
             Job::Tick => {
@@ -690,6 +702,7 @@ impl Worker {
                             function,
                             kind,
                             args,
+                            limit: None,
                             reply,
                         },
                         error,
@@ -726,7 +739,9 @@ impl Worker {
             error: out.error,
             logs: loaded.logs.borrow().clone(),
         };
-        self.finished(&run, took, true);
+        // A failed sync hook is kept with the runs, so Settings shows why it fell back
+        let quiet = run.result == RunResult::Success || kind_is_settings(&run.event_type);
+        self.finished(&run, took, quiet);
         if out.rebuild {
             self.state = None;
         }
@@ -783,6 +798,11 @@ impl Worker {
     }
 }
 
+/// Whether a call's kind is a settings action or health check, not a sync hook
+fn kind_is_settings(kind: &str) -> bool {
+    kind.parse::<Hook>().is_err()
+}
+
 fn prepare(loaded: &Loaded, event: &Event) -> Result<(Function, LuaValue), String> {
     let f: Function = loaded
         .module
@@ -806,7 +826,7 @@ fn limit_text(timeout: Duration) -> String {
     format!("{} ({} s)", TIME_LIMIT, timeout.as_secs())
 }
 
-fn now_text() -> String {
+pub(crate) fn now_text() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 

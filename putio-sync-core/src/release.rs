@@ -2,7 +2,8 @@
 //! `Show.Name.S02E05.1080p.WEB-DL.x264-GRP.mkv` (feature 050).
 //!
 //! It reads the same fields from a video's file name and from an OpenSubtitles result's
-//! `release`, so the two can be compared field by field. A dozen token rules, std only; there
+//! `release`, so the two can be compared field by field. [`Episode`] reads the same tokens
+//! with their letter case kept, for the names organising writes on Put.io (feature 023). A dozen token rules, std only; there
 //! is no model and no regex crate. Anything it does not recognize is left out, never guessed.
 
 /// Video height, normalised
@@ -278,6 +279,244 @@ fn codec(t: &str, next: Option<&str>) -> Option<(Codec, usize)> {
     })
 }
 
+/// What an episode's release name says, with the letter case kept (feature 023)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Episode {
+    /// The show's name as words (`Show Name`); empty when the name starts with the number
+    pub show: String,
+    /// The year after the show's name (`Doctor.Who.2005.S03E04`)
+    pub year: Option<u16>,
+    /// Season number
+    pub season: u16,
+    /// First episode number
+    pub episode: u16,
+    /// Last episode of a multi-episode file (`S01E01E02` gives 2); `episode` otherwise
+    pub last_episode: u16,
+    /// Episode title words before the first quality or release tag; empty when none
+    pub title: String,
+}
+
+/// Release words that end an episode title and are not a resolution, source or codec
+const TAGS: &[&str] = &[
+    "proper",
+    "repack",
+    "rerip",
+    "real",
+    "internal",
+    "extended",
+    "uncut",
+    "unrated",
+    "multi",
+    "dual",
+    "subbed",
+    "dubbed",
+    "hdr",
+    "hdr10",
+    "dv",
+    "dovi",
+    "sdr",
+    "10bit",
+    "8bit",
+    "imax",
+    "amzn",
+    "nf",
+    "dsnp",
+    "hmax",
+    "atvp",
+    "hulu",
+    "pcok",
+    "itunes",
+    "ddp",
+    "ddp5",
+    "ddp2",
+    "dd5",
+    "dd",
+    "aac",
+    "aac2",
+    "ac3",
+    "eac3",
+    "dts",
+    "truehd",
+    "atmos",
+    "flac",
+    "opus",
+    "mp3",
+    "web",
+    "complete",
+    "hybrid",
+    "danish",
+    "swedish",
+    "norwegian",
+    "finnish",
+    "nordic",
+    "german",
+    "french",
+    "truefrench",
+    "spanish",
+    "italian",
+    "dutch",
+    "polish",
+    "russian",
+    "japanese",
+    "korean",
+    "vostfr",
+    "subs",
+];
+
+impl Episode {
+    /// Read an episode's file name; `None` when it has no season and episode number
+    pub fn parse(name: &str) -> Option<Self> {
+        let words = words(name);
+        let lower: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
+        // `S01E02`, or `S01 E02` with the season and episode apart
+        let (at, season, episode, mut next) = match lower
+            .iter()
+            .position(|t| matches!(season_episode(t), Some((_, Some(_)))))
+        {
+            Some(at) => {
+                let (season, episode) = season_episode(&lower[at])?;
+                (at, season, episode?, at + 1)
+            }
+            None => (0..lower.len().saturating_sub(1)).find_map(|at| {
+                let (season, None) = season_episode(&lower[at])? else {
+                    return None;
+                };
+                Some((at, season, extra_episode(&lower[at + 1])?, at + 2))
+            })?,
+        };
+        // `s01e01e02` names more than one; so do `e02` words right after it
+        let mut last = lower[at]
+            .split('e')
+            .skip(1)
+            .filter_map(|n| n.parse::<u16>().ok())
+            .last()
+            .unwrap_or(episode);
+        while let Some(n) = lower
+            .get(next)
+            .and_then(|t| extra_episode(t).or_else(|| range_end(t, episode)))
+        {
+            last = last.max(n);
+            next += 1;
+        }
+        let (show, year) = show_words(&words[..at], &lower[..at]);
+        let end = (next..lower.len())
+            .find(|&j| is_marker(&lower[j], lower.get(j + 1).map(String::as_str)))
+            .unwrap_or(lower.len());
+        Some(Episode {
+            show,
+            year,
+            season,
+            episode,
+            last_episode: last.max(episode),
+            title: display(&words[next..end]),
+        })
+    }
+
+    /// The show's name and year from a release folder's name (`Show.Name.S01.1080p.BluRay`),
+    /// for files named only by number. `None` unless the name has a season or quality word
+    /// after the show, so a plain `Season 1` or `Breaking Bad` folder is not read as a release.
+    pub fn show_of(folder: &str) -> Option<(String, Option<u16>)> {
+        let words = words(folder);
+        let lower: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
+        let end = (0..lower.len()).find(|&j| {
+            season_episode(&lower[j]).is_some()
+                || is_marker(&lower[j], lower.get(j + 1).map(String::as_str))
+        })?;
+        let (show, year) = show_words(&words[..end], &lower[..end]);
+        (!show.is_empty()).then_some((show, year))
+    }
+}
+
+impl Episode {
+    /// The show, year and season of a season-pack folder (`Show.Name.S01.1080p.BluRay-GRP`).
+    /// Its show is the better name when a file inside is obfuscated or misnamed, so the
+    /// organiser takes it for files of the same season.
+    pub fn season_pack(folder: &str) -> Option<(String, Option<u16>, u16)> {
+        let words = words(folder);
+        let lower: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
+        let at = lower.iter().position(|t| season_episode(t).is_some())?;
+        let (season, _) = season_episode(&lower[at])?;
+        // `Show (2022) Season 1 S01`: the show ends before `Season 1`
+        let end = lower[..at].iter().position(|t| t == "season").unwrap_or(at);
+        let (show, year) = show_words(&words[..end], &lower[..end]);
+        (!show.is_empty()).then_some((show, year, season))
+    }
+}
+
+/// `22` in `S02E21-22`: a bare number a little after the first episode
+fn range_end(t: &str, episode: u16) -> Option<u16> {
+    let n: u16 = ((1..=3).contains(&t.len()) && t.chars().all(|c| c.is_ascii_digit()))
+        .then(|| t.parse().ok())
+        .flatten()?;
+    (n > episode && n <= episode + 9).then_some(n)
+}
+
+/// Separators between release words
+const SEPARATORS: [char; 8] = ['.', '_', ' ', '-', '[', ']', '(', ')'];
+
+/// A name's words with their case kept, without the extension and release groups. A
+/// spaced ` - Title` at the end is a title, not a group.
+fn words(name: &str) -> Vec<String> {
+    let name = strip_extension(name.trim());
+    let (name, _) = take_leading_group(name);
+    let spaced = name
+        .rsplit_once('-')
+        .is_some_and(|(head, _)| head.ends_with(' '));
+    let name = if spaced {
+        name
+    } else {
+        take_trailing_group(&name).0
+    };
+    name.split(SEPARATORS)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// `e02` after an episode word
+fn extra_episode(t: &str) -> Option<u16> {
+    let digits = t.strip_prefix('e')?;
+    ((1..=3).contains(&digits.len()) && digits.chars().all(|c| c.is_ascii_digit()))
+        .then(|| digits.parse().ok())
+        .flatten()
+}
+
+/// A word that ends a title: resolution, source, codec or release tag
+fn is_marker(t: &str, next: Option<&str>) -> bool {
+    resolution(t).is_some()
+        || source(t, next).is_some()
+        || codec(t, next).is_some()
+        || TAGS.contains(&t)
+}
+
+/// The show's words and the year at their end, when there is more than the year
+fn show_words(words: &[String], lower: &[String]) -> (String, Option<u16>) {
+    match lower.last().and_then(|t| year(t)) {
+        Some(y) if words.len() > 1 => (display(&words[..words.len() - 1]), Some(y)),
+        _ => (display(words), None),
+    }
+}
+
+/// Words joined by spaces. A name written all in lowercase gets capitals on every word;
+/// otherwise each word keeps its case (`Bly Manor of`, `TNG`).
+fn display(words: &[String]) -> String {
+    let lowercase = !words.iter().any(|w| w.chars().any(char::is_uppercase));
+    words
+        .iter()
+        .map(|w| {
+            if !lowercase {
+                return w.clone();
+            }
+            let mut chars = w.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,5 +658,70 @@ mod tests {
         let c = p("show_name_s02e05_1080p_web-dl_x264-grp.srt");
         assert_eq!(a, b);
         assert_eq!(a, c);
+    }
+
+    fn ep(name: &str) -> Episode {
+        Episode::parse(name).unwrap_or_else(|| panic!("{name} is an episode"))
+    }
+
+    #[test]
+    fn an_episode_keeps_its_case_and_title() {
+        let e = ep("Show.Name.S02E05.Title.Here.1080p.WEB-DL.x264-GRP.mkv");
+        assert_eq!(e.show, "Show Name");
+        assert_eq!((e.season, e.episode, e.last_episode), (2, 5, 5));
+        assert_eq!(e.title, "Title Here");
+        assert_eq!(e.year, None);
+        let e = ep("the.office.us.s01e02.720p.hdtv.mkv");
+        assert_eq!((e.show.as_str(), e.title.as_str()), ("The Office Us", ""));
+        let e = ep("Show.S01E02.PROPER.AMZN.WEB-DL.DDP5.1.H.264-GRP.mkv");
+        assert_eq!(e.title, "");
+    }
+
+    #[test]
+    fn episode_forms_years_and_groups() {
+        let e = ep("Doctor.Who.2005.S03E04.720p.HDTV.x264-GRP.mkv");
+        assert_eq!((e.show.as_str(), e.year), ("Doctor Who", Some(2005)));
+        let e = ep("Show.S01E01E02.Pilot.1080p.mkv");
+        assert_eq!(
+            (e.episode, e.last_episode, e.title.as_str()),
+            (1, 2, "Pilot")
+        );
+        let e = ep("Show.S01E01-E03.HDTV");
+        assert_eq!(e.last_episode, 3);
+        let e = ep("Show.1x05.mkv");
+        assert_eq!((e.season, e.episode), (1, 5));
+        let e = ep("[SubsPlease] Show S02E01 (1080p).mkv");
+        assert_eq!(
+            (e.show.as_str(), e.season, e.title.as_str()),
+            ("Show", 2, "")
+        );
+        let e = ep("S01E03.mkv");
+        assert_eq!((e.show.as_str(), e.episode), ("", 3));
+        // an organised name reads back the same
+        let e = ep("Show Name - S01E02 - The Title.mkv");
+        assert_eq!(
+            (e.show.as_str(), e.title.as_str()),
+            ("Show Name", "The Title")
+        );
+        // a show named by a year alone keeps it
+        assert_eq!(ep("1923.S01E01.mkv").show, "1923");
+    }
+
+    #[test]
+    fn non_episodes_and_release_folders() {
+        assert_eq!(Episode::parse("Movie.2019.1080p.mkv"), None);
+        assert_eq!(Episode::parse("Show.Name.S03.1080p"), None);
+        assert_eq!(Episode::parse(""), None);
+        assert_eq!(
+            Episode::show_of("Show.Name.S01.1080p.BluRay.x264-GRP"),
+            Some(("Show Name".to_string(), None))
+        );
+        assert_eq!(
+            Episode::show_of("Doctor.Who.2005.S01.720p"),
+            Some(("Doctor Who".to_string(), Some(2005)))
+        );
+        assert_eq!(Episode::show_of("Season 1"), None);
+        assert_eq!(Episode::show_of("Breaking Bad"), None);
+        assert_eq!(Episode::show_of("S01.1080p"), None);
     }
 }

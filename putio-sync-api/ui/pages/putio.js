@@ -50,6 +50,7 @@ export function mount(el, { path = [], query } = {}) {
   els = {
     crumbs: h("nav", { class: "crumbs", "aria-label": "Folder" }),
     clean: h("button", { type: "button", class: "btn", title: "Find and delete empty folders in the whole Put.io account", onclick: (ev) => onCleanEmpty(ev.currentTarget) }, "Remove empty folders"),
+    org: h("button", { type: "button", class: "btn", onclick: (e) => import("../organise.js").then((m) => m.toggle(e.target)) }, "Organise"),
     details: h("section", { class: "card", hidden: true }),
     list: h("section", { class: "card wide" }, h("p", { class: "muted", text: "Loading…" })),
   };
@@ -63,7 +64,7 @@ export function mount(el, { path = [], query } = {}) {
   renderCrumbs();
   if (crumbs[1] && crumbs[1].id == null) walkUp(folder);
   el.append(
-    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Put.io" }), els.crumbs), h("div", { class: "toolbar" }, ctl.filter, ctl.menu, els.clean)),
+    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Put.io" }), els.crumbs), h("div", { class: "toolbar" }, ctl.filter, ctl.menu, els.org, els.clean)),
     h("div", { class: "stack" }, folder === 0 ? storageCard(load).el : null, rule.el, els.details, els.list),
   );
   load();

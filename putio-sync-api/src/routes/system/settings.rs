@@ -250,6 +250,13 @@ pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
             ))),
             super::translation::live_translation(),
         ),
+        group(
+            "organise",
+            json(serde_json::to_value(super::organise::organise_view(
+                &defaults,
+            ))),
+            super::organise::live_organise(),
+        ),
     ]
 }
 
@@ -664,6 +671,7 @@ pub fn router() -> Router<AppState> {
         .merge(super::network::settings_router())
         .merge(super::subtitles::settings_router())
         .merge(super::media_server::settings_router())
+        .merge(super::organise::settings_router())
         .merge(super::translation::settings_router())
         .merge(assistant::router())
 }
