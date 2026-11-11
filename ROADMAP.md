@@ -182,9 +182,3 @@ BitTorrent peers (DHT and the metadata extension), with no piece data. Deferred
 in 043: it reveals the NAS's IP to the swarm and costs about 93 crates. The
 Stats page's "Held magnets" tile shows how often holds run out, which is what
 this would fix. Research is in `specs/043-magnet-cache-retry/research.md`.
-
-## Queued: packaging
-
-- **054 Project website** on GitHub Pages: a landing page with screenshots and an
-  install picker, and the docs generated from the repository Markdown
-  (`specs/054-project-site`).
