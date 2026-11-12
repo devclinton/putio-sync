@@ -14,6 +14,14 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- The website's landing page in the same 19 languages as the docs, machine-translated and
+  marked as such, with a language menu in the header. Its Docs links open the docs in the
+  same language.
+
+## [0.3.0] - 2026-11-11
+
+### Added
+
 - putio-sync checks GitHub for a newer release about a minute after it starts and then
   once a day, and the What's new page shows it with its release notes, a link to the
   release, and Check now and Dismiss buttons. The check sends nothing about your install;
@@ -24,6 +32,14 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   https (or http to a local address). The bundled plugins set them.
 - `putio-sync plugins check FOLDER` checks a plugin folder the way Reload plugins does and
   prints each problem (`--json` for scripts); it needs no config or token.
+- The update notice says how putio-sync was installed (snap, Flatpak, Homebrew, .deb,
+  winget, Docker, Unraid, CasaOS or Umbrel) and shows that channel's update command, with a
+  Copy button, or its update step. For Docker it names the pull for your image's tag. Set
+  `PUTIO_SYNC_INSTALL` when it guesses wrong; `GET /status` reports it as `install_channel`.
+- History keeps each finished item's pipeline steps: a downloaded file whose item is still
+  kept has a Steps button that opens its timeline, with the state, duration and attempts
+  of every step. `[pipeline] history_days` (default 30, set in Settings › Integrations)
+  sets how long; the output of the steps is cleared after a day, as before.
 - Sign-in options: besides the API token, sign in with a username and password (on the
   sign-in page, or as HTTP basic auth), or with Google, GitHub or Discord. Each provider
   has an allow-list of account names or verified emails. Set them up in the new

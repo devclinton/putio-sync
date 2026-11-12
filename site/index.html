@@ -10,9 +10,9 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <a class="skip" href="#install">Skip to install</a>
+  <a class="skip" href="#install">Go to the install instructions</a>
   <header class="top">
-    <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">putio-sync</a>
+    <a class="brand" href="./" translate="no"><img src="icon.png" alt="" width="28" height="28">putio-sync</a>
     <nav aria-label="Site">
       <a href="#install">Install</a>
       <a href="docs/">Docs</a>
@@ -36,12 +36,12 @@
       </div>
 
       <figure class="ledger" aria-label="Example: transfers arriving in /downloads">
-        <figcaption><span class="path">/downloads</span><span class="when">synced just now</span></figcaption>
+        <figcaption><span class="path" translate="no">/downloads</span><span class="when">synced just now</span></figcaption>
         <ol>
-          <li class="done"><span class="name">Sintel.2010.1080p</span><span class="dest">Movies</span><span class="state">4.1 GB</span></li>
-          <li class="done"><span class="name">Example.Show.S01E01.mkv</span><span class="dest">TV</span><span class="state">1.2 GB</span></li>
-          <li class="live"><span class="name">Big.Buck.Bunny.2008.1080p</span><span class="dest">Movies</span><span class="state"><span class="bar"><span></span></span></span></li>
-          <li><span class="name">Photos/2026</span><span class="dest">Photos</span><span class="state">queued</span></li>
+          <li class="done"><span class="name" translate="no">Sintel.2010.1080p</span><span class="dest">Movies</span><span class="state" translate="no">4.1 GB</span></li>
+          <li class="done"><span class="name" translate="no">Example.Show.S01E01.mkv</span><span class="dest">TV</span><span class="state" translate="no">1.2 GB</span></li>
+          <li class="live"><span class="name" translate="no">Big.Buck.Bunny.2008.1080p</span><span class="dest">Movies</span><span class="state"><span class="bar"><span></span></span></span></li>
+          <li><span class="name" translate="no">Photos/2026</span><span class="dest">Photos</span><span class="state">queued</span></li>
         </ol>
       </figure>
     </section>
@@ -98,7 +98,7 @@
         <button type="button" aria-pressed="false" data-show="windows">Windows</button>
       </div>
 
-      <div class="ways">
+      <div class="ways" data-copy="Copy text" data-copied="Copied" data-copy-failed="Select and copy">
         <article data-for="server linux">
           <h3>Docker Compose</h3>
           <p>Runs anywhere Docker does. Edit the download path in the file first.</p>

@@ -699,16 +699,40 @@ impl Store {
         .rows_affected())
     }
 
-    /// Drop finished items older than `hours`, with their steps and attempts
-    pub async fn prune(&self, hours: u64) -> Result<u64> {
+    /// Remember the Put.io files an item downloaded, so History can find the item (FR-024)
+    pub async fn link_files(&self, key: &str, file_ids: &[i64]) -> Result<()> {
+        for id in file_ids {
+            sqlx::query(
+                "INSERT OR IGNORE INTO pipeline_item_files (item_key, file_id) VALUES (?, ?)",
+            )
+            .bind(key)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Drop finished items older than `history_days`, with their steps and attempts, and
+    /// clear the output of attempts whose item finished more than `output_hours` ago
+    pub async fn prune(&self, history_days: u32, output_hours: u64) -> Result<u64> {
         let n = sqlx::query(
             "DELETE FROM pipeline_items WHERE finished_at IS NOT NULL \
-             AND finished_at < datetime('now', '-' || ? || ' hours')",
+             AND finished_at < datetime('now', '-' || ? || ' days')",
         )
-        .bind(hours as i64)
+        .bind(history_days as i64)
         .execute(&self.pool)
         .await?
         .rows_affected();
+        sqlx::query(
+            "UPDATE pipeline_attempts SET output = '' WHERE output != '' AND step_id IN \
+             (SELECT s.id FROM pipeline_steps s JOIN pipeline_items i ON i.key = s.item_key \
+              WHERE i.finished_at IS NOT NULL \
+              AND i.finished_at < datetime('now', '-' || ? || ' hours'))",
+        )
+        .bind(output_hours as i64)
+        .execute(&self.pool)
+        .await?;
         sqlx::query("DELETE FROM subtitle_provenance WHERE created_at < strftime('%s','now') - ?")
             .bind(PROVENANCE_DAYS * 86_400)
             .execute(&self.pool)
@@ -911,13 +935,54 @@ mod tests {
             .execute(&store.pool)
             .await
             .unwrap();
-        assert_eq!(store.prune(24).await.unwrap(), 1);
+        assert_eq!(store.prune(30, 24).await.unwrap(), 0, "kept for History");
+        assert_eq!(store.prune(2, 24).await.unwrap(), 1);
         assert!(store.item("transfer:1").await.unwrap().is_none());
         assert!(store.steps("transfer:1").await.unwrap().is_empty());
         assert!(
             store.item("transfer:2").await.unwrap().is_some(),
             "still running"
         );
+    }
+
+    /// FR-024: a finished item keeps its timeline for History, but its output only a day
+    #[tokio::test]
+    async fn prune_clears_old_output_and_keeps_the_timeline() {
+        let (store, _dir) = store().await;
+        for key in ["transfer:1", "transfer:2"] {
+            store.insert_item(&new_item(key), &steps()).await.unwrap();
+            let step = store.steps(key).await.unwrap()[0].id;
+            let (attempt, _) = store.start_attempt(step).await.unwrap();
+            sqlx::query("UPDATE pipeline_attempts SET output = 'log' WHERE id = ?")
+                .bind(attempt)
+                .execute(&store.pool)
+                .await
+                .unwrap();
+            store
+                .set_item(key, Stage::Notifications, ItemState::Done)
+                .await
+                .unwrap();
+        }
+        store.link_files("transfer:1", &[7, 8, 7]).await.unwrap();
+        sqlx::query("UPDATE pipeline_items SET finished_at = datetime('now', '-2 days') WHERE key = 'transfer:1'")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(store.prune(30, 24).await.unwrap(), 0);
+        let output = |key: &'static str| {
+            let store = &store;
+            async move {
+                let step = store.steps(key).await.unwrap()[0].id;
+                store.attempts(step).await.unwrap()[0].output.clone()
+            }
+        };
+        assert_eq!(output("transfer:1").await, "", "older than a day");
+        assert_eq!(output("transfer:2").await, "log", "finished just now");
+        let linked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pipeline_item_files")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(linked, 2, "each file once");
     }
 
     #[tokio::test]

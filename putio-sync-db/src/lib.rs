@@ -326,6 +326,32 @@ impl Database {
         pipeline::pipeline_files(&self.pool, transfer_ids, retention_hours).await
     }
 
+    /// The pipeline item each of `file_ids` belongs to, when one is still kept (feature 038,
+    /// FR-024); the newest item when a file has several
+    pub async fn pipeline_item_keys(
+        &self,
+        file_ids: &[i64],
+    ) -> DbResult<std::collections::HashMap<i64, String>> {
+        let mut out = std::collections::HashMap::new();
+        if file_ids.is_empty() {
+            return Ok(out);
+        }
+        let marks = vec!["?"; file_ids.len()].join(",");
+        let sql = format!(
+            "SELECT f.file_id, f.item_key FROM pipeline_item_files f \
+             JOIN pipeline_items i ON i.key = f.item_key \
+             WHERE f.file_id IN ({marks}) ORDER BY i.created_at, i.rowid"
+        );
+        let mut query = sqlx::query_as::<_, (i64, String)>(&sql);
+        for id in file_ids {
+            query = query.bind(id);
+        }
+        for (id, key) in query.fetch_all(&self.pool).await? {
+            out.insert(id, key);
+        }
+        Ok(out)
+    }
+
     /// How putio-sync got each of `transfer_ids`, when it knows (feature 039):
     /// `arr:<category>` for Radarr/Sonarr releases, else `watch` or `manual`
     pub async fn transfer_origins(
@@ -476,6 +502,10 @@ impl Database {
             (
                 schema::CREATE_PIPELINE_ATTEMPTS_TABLE,
                 "Failed to create pipeline_attempts table",
+            ),
+            (
+                schema::CREATE_PIPELINE_ITEM_FILES_TABLE,
+                "Failed to create pipeline_item_files table",
             ),
             // Subtitles wait for the delete (feature 025)
             (
@@ -925,11 +955,15 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
+        sqlx::query("INSERT INTO pipeline_item_files (item_key, file_id) VALUES ('transfer:1', 7)")
+            .execute(pool)
+            .await
+            .unwrap();
         sqlx::query("DELETE FROM pipeline_items WHERE key = 'transfer:1'")
             .execute(pool)
             .await
             .unwrap();
-        for table in ["pipeline_steps", "pipeline_attempts"] {
+        for table in ["pipeline_steps", "pipeline_attempts", "pipeline_item_files"] {
             let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
                 .fetch_one(pool)
                 .await

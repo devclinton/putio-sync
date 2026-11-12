@@ -114,7 +114,7 @@ async fn prune_drops_rows_older_than_ninety_days() {
         .execute(env.db.pool())
         .await
         .unwrap();
-    env.store.prune(24).await.unwrap();
+    env.store.prune(30, 24).await.unwrap();
     assert!(env
         .store
         .provenance("/m/old.srt", None)

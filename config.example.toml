@@ -418,6 +418,10 @@ run_at = "02:30"
 # Keep a watch-folder download out of sight (in .putio-sync-staging beside it)
 # until its steps are done: "auto" (on while a stage hook exists), "on" or "off"
 # staging = "auto"
+# Days History keeps each finished item's step timeline, 1 to 3650. The
+# output of its steps is cleared after [transfers] finished_retention_hours.
+# Default: 30
+# history_days = 30
 
 # ============================================================================
 # Subtitles (feature 025)

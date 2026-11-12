@@ -10,8 +10,8 @@ import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright";
 
 const site = join(dirname(fileURLToPath(import.meta.url)), "../../target/site");
-// A left-to-right and a right-to-left translation of the docs too
-const pages = ["/", "/docs/", "/docs/installation.html", "/docs/configuration.html",
+// A left-to-right and a right-to-left translation of the landing page and docs too
+const pages = ["/", "/fr/", "/ar/", "/docs/", "/docs/installation.html", "/docs/configuration.html",
   "/docs/fr/installation.html", "/docs/ar/configuration.html"];
 const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".png": "image/png", ".webp": "image/webp", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".json": "application/json" };
 

@@ -372,7 +372,10 @@ impl Pipeline {
             }
         }
 
-        if let Err(e) = store.prune(settings.retention_hours).await {
+        if let Err(e) = store
+            .prune(settings.pipeline.history_days, settings.retention_hours)
+            .await
+        {
             warn!(error = %e, "Could not prune pipeline items");
         }
         self.refresh_gate().await;
@@ -487,8 +490,17 @@ impl Pipeline {
             stage: Stage::PreProcessing,
             state: ItemState::Running,
         };
-        if let Err(e) = self.inner.store.insert_item(&new, &steps).await {
-            warn!(key = %row.key, error = %e, "Could not register a finished item");
+        match self.inner.store.insert_item(&new, &steps).await {
+            Ok(_) => self.link_files(&row.key, &paths).await,
+            Err(e) => warn!(key = %row.key, error = %e, "Could not register a finished item"),
+        }
+    }
+
+    /// Remember which Put.io files an item downloaded, for its History rows (FR-024)
+    async fn link_files(&self, key: &str, paths: &[(i64, PathBuf)]) {
+        let ids: Vec<i64> = paths.iter().map(|(id, _)| *id).collect();
+        if let Err(e) = self.inner.store.link_files(key, &ids).await {
+            warn!(key = %key, error = %e, "Could not link an item to its files");
         }
     }
 
@@ -569,6 +581,7 @@ impl Pipeline {
         let settings = self.settings();
         let store = &self.inner.store;
         let paths = locate::local_paths(&self.inner.db, &row.key, settings.retention_hours).await;
+        self.link_files(&row.key, &paths).await;
         let loc = locate::derive(
             &row.name,
             &paths.iter().map(|(_, p)| p.clone()).collect::<Vec<_>>(),

@@ -148,3 +148,31 @@ async fn entries_carry_verify_and_redownloads() {
     assert_eq!(entry["verify"], Value::Null);
     assert_eq!(entry["redownloads"], Value::Null);
 }
+
+/// Feature 038, FR-024: a row whose file a kept pipeline item downloaded names that item,
+/// and loses it when the item is pruned
+#[tokio::test]
+async fn entries_link_to_their_pipeline_item() {
+    let app = seeded().await;
+    let pool = app.db().pool();
+    sqlx::query("INSERT INTO pipeline_items (key, name, source, stage, state) VALUES ('transfer:9', 'Ubuntu', 'sync', 'notifications', 'done')")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO pipeline_item_files (item_key, file_id) VALUES ('transfer:9', 1)")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    let body = history(&app, "?name=ubuntu-24").await;
+    assert_eq!(body["entries"][0]["pipeline_key"], "transfer:9");
+    let body = history(&app, "?name=debian").await;
+    assert_eq!(body["entries"][0]["pipeline_key"], Value::Null);
+
+    sqlx::query("DELETE FROM pipeline_items")
+        .execute(pool)
+        .await
+        .unwrap();
+    let body = history(&app, "?name=ubuntu-24").await;
+    assert_eq!(body["entries"][0]["pipeline_key"], Value::Null);
+}

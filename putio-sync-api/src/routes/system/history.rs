@@ -47,6 +47,9 @@ pub struct HistoryEntry {
     pub verify: Option<String>,
     /// Re-downloads a mismatch took (feature 034)
     pub redownloads: Option<i64>,
+    /// The processing pipeline item that downloaded the file, while its step timeline is
+    /// kept (`[pipeline] history_days`); `GET /active/{key}/timeline` reads it (feature 038)
+    pub pipeline_key: Option<String>,
 }
 
 /// History response
@@ -118,10 +121,18 @@ async fn get_history(
         ApiError::InternalError(format!("Failed to count history: {}", e))
     })? as usize;
 
+    // The pipeline items behind these files; History works without them
+    let ids: Vec<i64> = entries_db.iter().map(|e| e.file_id).collect();
+    let keys = db.pipeline_item_keys(&ids).await.unwrap_or_else(|e| {
+        error!("Failed to read pipeline items for history: {}", e);
+        Default::default()
+    });
+
     // Convert to response format
     let entries: Vec<HistoryEntry> = entries_db
         .into_iter()
         .map(|entry| HistoryEntry {
+            pipeline_key: keys.get(&entry.file_id).cloned(),
             id: entry.id,
             file_id: entry.file_id,
             filename: entry.filename,

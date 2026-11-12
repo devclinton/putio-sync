@@ -237,6 +237,10 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
                 "staging",
                 "Whether a watch-folder download is kept out of sight until its steps are done: auto, on or off",
             ),
+            (
+                "history_days",
+                "Days History keeps each finished item's step timeline; step output is cleared after a day",
+            ),
         ],
     ),
     (

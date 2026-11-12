@@ -685,6 +685,11 @@ paths = []
   (or `source=Config`) shows which one is in effect.
 - `PUTIO_SYNC_API_TOKEN`, `PUTIO_SYNC_API_LISTEN`, `PUTIO_SYNC_API_BIND`: web UI and API
   listener, see [Web UI](#web-ui).
+- `PUTIO_SYNC_INSTALL`: how this copy was installed, when the update notice names the wrong
+  update command. One of `snap`, `flatpak`, `unraid`, `casaos`, `umbrel`, `container`,
+  `homebrew`, `deb`, `winget`, `pkg`, `setup`, `archive`, `unknown`. `GET /status` shows the
+  detected one as `install_channel`. The images set `PUTIO_SYNC_IMAGE` and
+  `PUTIO_SYNC_IMAGE_VARIANT` so the notice can name the right `docker pull`.
 
 <!-- ANCHOR_END: configuration -->
 <!-- ANCHOR: metrics -->
@@ -1760,6 +1765,7 @@ timeout_secs = 120
 concurrency = 2                  # items running steps at once, 1 to 16
 optional_retries = [60, 300, 600]   # seconds before each retry of an optional step
 staging = "auto"                 # auto, on or off
+history_days = 30                # days History keeps a finished item's steps
 ```
 
 - **Radarr and Sonarr import only finished items.** While an item still has a step to
@@ -1770,6 +1776,9 @@ staging = "auto"                 # auto, on or off
   item of the same name becomes `<name> (2)`.
 - **A hold pauses it.** Holding a transfer pauses its steps between steps; releasing goes on.
 - **No steps, no change.** With no `stage` hooks nothing is held back, staged or renamed.
+- **History keeps the steps.** A downloaded file's row on History has a Steps button while
+  its item is kept, `history_days` after it finished. The output of each step is kept for
+  `[transfers] finished_retention_hours` (a day by default), then cleared.
 
 The hook's input, results and the `pipeline.step_failed` and `pipeline.completed` events
 are in [EVENTS.md](EVENTS.md#pipeline-step-hooks). Settings › Integrations edits the steps

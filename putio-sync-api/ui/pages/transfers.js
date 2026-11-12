@@ -8,7 +8,7 @@
 // name (globs with AND, OR and NOT) and sort by a heading; Select all takes what is shown.
 
 import { del, get, post } from "../api.js";
-import { confirm, empty, h, poll, toast } from "../app.js";
+import { confirm, copyText, empty, h, poll, toast } from "../app.js";
 import { bytes, duration, percent, speed, utc } from "../format.js";
 import { listControls } from "../listctl.js";
 import { selection } from "../select.js";
@@ -170,26 +170,6 @@ function onRetry(button, t) {
     await post(`/putio/transfers/${t.id}/retry`);
     return { message: `Retrying ${t.name}` };
   });
-}
-
-/** Copy `text`; falls back to a hidden textarea where the Clipboard API is missing
- * (it needs HTTPS, and the NAS serves plain HTTP) or refused. */
-async function copyText(text) {
-  if (navigator.clipboard && window.isSecureContext) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Permission refused: try the hidden textarea
-    }
-  }
-  const area = h("textarea", { readonly: true, style: "position:fixed;top:0;left:0;opacity:0" });
-  area.value = text;
-  document.body.append(area);
-  area.select();
-  const ok = document.execCommand("copy");
-  area.remove();
-  if (!ok) throw new Error("copy refused");
 }
 
 async function onCopyMagnet(t) {
