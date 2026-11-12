@@ -683,7 +683,7 @@ mod tests {
     #[tokio::test]
     async fn an_off_registry_fetches_nothing_and_a_failed_fetch_keeps_the_list() {
         let root = tempfile::tempdir().unwrap();
-        let (server, mut config) = served(good()).await;
+        let (mut server, mut config) = served(good()).await;
         let plugins = service(root.path());
         config.enabled = false;
         let off = plugins.registry(&config, true).await;
@@ -691,7 +691,13 @@ mod tests {
 
         config.enabled = true;
         plugins.registry(&config, false).await;
-        drop(server);
+        // Not drop(server): mockito pools servers, so another test may answer on its port
+        server.reset();
+        server
+            .mock("GET", "/index.json")
+            .with_status(500)
+            .create_async()
+            .await;
         let kept = plugins.registry(&config, true).await;
         assert!(kept.error.is_some());
         assert_eq!(kept.plugins.len(), 1);
