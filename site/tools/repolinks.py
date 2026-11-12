@@ -111,6 +111,9 @@ def main():
             return dest + hash_frag
         if path in whole:
             return whole[path] + hash_frag
+        if path.startswith("site/book/src/"):
+            # Another chapter of this book; mdBook turns the .md into .html
+            return path[len("site/book/src/"):] + hash_frag
         if path.startswith("site/"):
             return up + path[len("site/"):]
         kind = "tree" if os.path.isdir(os.path.join(ROOT, path)) else "blob"

@@ -37,7 +37,7 @@ pub async fn execute_history(
     info!("Starting history command");
 
     // Load configuration
-    let config = load_config(config_path)?;
+    let config = load_config(config_path.clone())?;
 
     // Parse action filter
     let action_filter = if let Some(ref action_str) = action {
@@ -51,7 +51,7 @@ pub async fn execute_history(
     let until_date = validate_and_format_date(until.as_deref())?;
 
     // Initialize database
-    let db_path = config.download.target_directory.join(".putiosync.db");
+    let db_path = putio_sync_core::database::prepare(&config, config_path.as_deref()).await;
 
     debug!("Opening database at: {:?}", db_path);
     let db = Database::new(&db_path)

@@ -111,7 +111,7 @@ pub async fn run(
         ArchiveJob::Db { common, keep_days } => {
             let opts = DbOptions {
                 dir: archive_dir(&common, &config_path),
-                db_path: database_path(&config_path)?,
+                db_path: database_path(&config_path).await?,
                 keep_days,
                 require_manifest: common.require_manifest,
                 now,
@@ -127,7 +127,7 @@ pub async fn run(
         } => {
             let opts = SummaryOptions {
                 dir: archive_dir(&common, &config_path),
-                db_path: database_path(&config_path)?,
+                db_path: database_path(&config_path).await?,
                 prometheus,
                 instance,
                 from,
@@ -150,8 +150,8 @@ fn archive_dir(common: &ArchiveCommon, config_path: &std::path::Path) -> PathBuf
     })
 }
 
-/// The database the daemon uses: in the download folder of the config
-fn database_path(config_path: &std::path::Path) -> ArchiveResult<PathBuf> {
+/// The database the daemon uses (moved out of the download folder first if needed)
+async fn database_path(config_path: &std::path::Path) -> ArchiveResult<PathBuf> {
     let config = Config::load(config_path).map_err(|e| {
         ArchiveError::Args(format!(
             "cannot load the config {}: {e}",
@@ -159,7 +159,7 @@ fn database_path(config_path: &std::path::Path) -> ArchiveResult<PathBuf> {
         ))
     })?;
     log_redact::set_secrets(config.secret_values());
-    Ok(config.download.target_directory.join(".putiosync.db"))
+    Ok(putio_sync_core::database::prepare(&config, Some(config_path)).await)
 }
 
 #[cfg(test)]

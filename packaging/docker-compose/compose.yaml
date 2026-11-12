@@ -22,7 +22,7 @@ services:
       - "15432:15432" # web UI and API
       # - "9742:9742" # Prometheus metrics
     volumes:
-      - ./config:/config
+      - ./config:/config # config.toml and the state database; keep it on local storage
       - ./downloads:/downloads
       - ./watch:/watches # optional: .torrent and .magnet files dropped here go to Put.io
     healthcheck:

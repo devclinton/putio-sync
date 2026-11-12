@@ -19,10 +19,10 @@ pub async fn execute_free_space(
     yes: bool,
     config_path: Option<PathBuf>,
 ) -> Result<()> {
-    let config = load_config(config_path)?;
+    let config = load_config(config_path.clone())?;
     let client = Arc::new(build_client(&config)?);
     // The download records decide what is safe to delete; never create the database here
-    let db_path = config.download.target_directory.join(".putiosync.db");
+    let db_path = putio_sync_core::database::prepare(&config, config_path.as_deref()).await;
     anyhow::ensure!(
         db_path.is_file(),
         "No download database at {}; freeing space needs the download records",
