@@ -7,7 +7,7 @@ use putio_sync_telemetry::DbOp;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
-/// The daemon flag for the Pause NAS downloads switch (R11)
+/// The daemon flag for the Pause local downloads switch (R11)
 pub const NAS_DOWNLOADS_PAUSED: &str = "nas_downloads_paused";
 
 /// The daemon flag holding a timed bandwidth pause or slow-down as JSON (feature 032)

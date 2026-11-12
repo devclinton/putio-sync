@@ -324,27 +324,27 @@ export function toast(text, kind = "ok", detail = null) {
 }
 
 /**
- * Turn the Pause NAS downloads switch on or off (feature 039) and say so. Resolves true
+ * Turn the Pause local downloads switch on or off (feature 039) and say so. Resolves true
  * when the switch changed; an error is toasted and resolves false.
  */
 export async function setNasPaused(on) {
   try {
     await post(`/local/queue/${on ? "pause" : "resume"}`);
-    toast(on ? "NAS downloads paused" : "NAS downloads resumed");
+    toast(on ? "Local downloads paused" : "Local downloads resumed");
     return true;
   } catch (e) {
-    if (e.status !== 401 && e.status !== 429) toast(`Couldn't ${on ? "pause" : "resume"} NAS downloads`, "error", e.details ? `${e.error}: ${e.details}` : e.error);
+    if (e.status !== 401 && e.status !== 429) toast(`Couldn't ${on ? "pause" : "resume"} local downloads`, "error", e.details ? `${e.error}: ${e.details}` : e.error);
     return false;
   }
 }
 
 /**
- * The banner shown while the Pause NAS downloads switch is on, with a Resume button.
+ * The banner shown while the Pause local downloads switch is on, with a Resume button.
  * `update(paused)` shows or hides it; `onChange` runs after the switch is turned off here.
  */
 export function nasBanner(onChange = () => {}) {
   const button = h("button", { type: "button", class: "btn btn-small", onclick: resume }, "Resume");
-  const el = h("div", { class: "notice nas-paused", role: "status", hidden: true }, h("strong", { text: "NAS downloads paused" }), h("span", { text: " Nothing new starts on the NAS; Put.io keeps downloading." }), button);
+  const el = h("div", { class: "notice nas-paused", role: "status", hidden: true }, h("strong", { text: "Local downloads paused" }), h("span", { text: " Nothing new starts downloading here; Put.io keeps downloading." }), button);
   async function resume() {
     button.disabled = true;
     const done = await setNasPaused(false);

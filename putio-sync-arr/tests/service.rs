@@ -453,7 +453,7 @@ async fn paused_files_hold_and_the_switch_read_as_stopped() {
     h.db.queue().resume_files(&[1]).await.unwrap();
     assert_eq!(first_torrent(&service).await["status"], 4);
 
-    // The Pause NAS downloads switch pauses every item
+    // The Pause local downloads switch pauses every item
     h.db.flags()
         .set_bool(putio_sync_db::pipeline::NAS_DOWNLOADS_PAUSED, true)
         .await

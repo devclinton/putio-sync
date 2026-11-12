@@ -2,7 +2,7 @@
 // to the last file written, once each. Counts by state for each stage filter the list
 // (client-side, with a name filter). Polled every 5 s; Put.io figures are at most 10 s
 // old, and marked out of date while Put.io isn't answering. Rows can be paused and
-// resumed one at a time or in bulk, and the Pause NAS downloads switch is here too. The
+// resumed one at a time or in bulk, and the Pause local downloads switch is here too. The
 // page adds no retry, cancel or remove of its own: each row links to the page that has them.
 // Feature 038: past the NAS an item is "processing"; a row shows the step it is at, and
 // opens a timeline of its stages and steps, with Retry and Skip on a failed step.
@@ -37,7 +37,7 @@ const STATES = {
     ["waiting_for_operator", "Needs you"],
   ],
 };
-export const STAGES = { putio: "Put.io", nas: "NAS", processing: "Processing" };
+export const STAGES = { putio: "Put.io", nas: "Local", processing: "Processing" };
 export const LABEL = Object.fromEntries(Object.values(STATES).flat());
 export const BADGE = { downloading: "active", finishing: "active", stalled: "warn", waiting_for_sync: "warn", paused: "warn", error: "bad", failed: "bad", running: "active", held: "warn", waiting_for_operator: "bad" };
 const ON_HOLD = "on_hold";
@@ -76,7 +76,7 @@ export function mount(el) {
   });
   banner = nasBanner(() => timer && timer.now());
   els = {
-    switch: h("button", { type: "button", class: "btn", onclick: onSwitch }, "Pause NAS downloads"),
+    switch: h("button", { type: "button", class: "btn", onclick: onSwitch }, "Pause local downloads"),
     stale: h("p", { class: "warn-text", hidden: true }),
     counts: h("div", { class: "stack" }),
     title: h("h2", { text: "Transfers" }),
@@ -166,7 +166,7 @@ function draw(force) {
   shown = text;
 
   els.stale.hidden = !data.putio_stale;
-  els.stale.textContent = data.putio_stale ? `Put.io isn't answering. Its figures are from ${relative(data.putio_as_of)}; NAS figures are current.` : "";
+  els.stale.textContent = data.putio_stale ? `Put.io isn't answering. Its figures are from ${relative(data.putio_as_of)}; local figures are current.` : "";
   const counts = JSON.stringify([data.counts, (data.items || []).length, filter]);
   if (shownCounts !== counts) {
     shownCounts = counts;
@@ -174,7 +174,7 @@ function draw(force) {
   }
 
   banner.update(Boolean(data.nas_paused));
-  els.switch.textContent = data.nas_paused ? "Resume NAS downloads" : "Pause NAS downloads";
+  els.switch.textContent = data.nas_paused ? "Resume local downloads" : "Pause local downloads";
   drawFinished(data.recently_finished || []);
 
   const items = data.items || [];
@@ -182,7 +182,7 @@ function draw(force) {
     els.title.textContent = "Transfers";
     sel.reset([]);
     els.body.replaceChildren(
-      empty("Nothing is downloading right now", "Transfers you add on Put.io show up here until their files are on the NAS."),
+      empty("Nothing is downloading right now", "Transfers you add on Put.io show up here until their files are downloaded."),
       h("p", { class: "spaced" }, h("a", { href: "#/transfers" }, "Go to Transfers")),
     );
     return;
@@ -276,11 +276,11 @@ function took(seconds) {
 
 function drawFinished(list) {
   els.finished.hidden = false;
-  const head = ["Name", "Outcome", "Finished", "Total", "On Put.io", "Waiting", "On the NAS"];
+  const head = ["Name", "Outcome", "Finished", "Total", "On Put.io", "Waiting", "Local"];
   els.finished.replaceChildren(
     h("h2", { text: list.length ? `Recently finished (${list.length})` : "Recently finished" }),
     list.length === 0
-      ? empty("Nothing has finished recently", "Transfers that reach the NAS, or fail, stay here for a day.")
+      ? empty("Nothing has finished recently", "Transfers that finish downloading, or fail, stay here for a day.")
       : h(
           "table",
           { class: "table" },
@@ -305,7 +305,7 @@ function drawFinished(list) {
                 h("td", { class: "num right", "data-label": "Total", text: took(f.total_seconds) }),
                 h("td", { class: "num right", "data-label": "On Put.io", text: took(f.putio_seconds) }),
                 h("td", { class: "num right", "data-label": "Waiting", text: took(f.waiting_seconds) }),
-                h("td", { class: "num right", "data-label": "On the NAS", text: took(f.nas_seconds) }),
+                h("td", { class: "num right", "data-label": "Local", text: took(f.nas_seconds) }),
               );
               return [tr, f.warnings && open.has(f.key) ? timelineRow(f.key, 7) : null];
             }),
@@ -376,7 +376,7 @@ function row(i) {
     i.seeding ? h("small", { class: "muted block", text: "Still seeding on Put.io" }) : null,
     i.reason ? h("small", { class: "error-text block", text: i.reason }) : null,
     i.note ? h("small", { class: "muted block", text: i.note }) : null,
-    i.held ? h("small", { class: "muted block", text: "Put.io keeps downloading; NAS download held" }) : null,
+    i.held ? h("small", { class: "muted block", text: "Put.io keeps downloading; local download held" }) : null,
     i.step ? h("small", { class: i.state === "waiting_for_operator" || i.step.state === "failed" ? "error-text block" : "muted block", text: stepLine(i.step, i.state) }) : null,
   ];
   return h(
@@ -395,7 +395,7 @@ function row(i) {
         i.phase === "checking" || i.phase === "verifying"
           ? h("span", { class: "badge active", text: i.phase === "checking" ? "Checking" : "Verifying" })
           : h("span", { class: `badge ${BADGE[i.state] || ""}`, text: LABEL[i.state] || i.state }),
-        i.held ? h("span", { class: "badge warn", title: "Put.io keeps downloading; NAS download held", text: "On hold" }) : null,
+        i.held ? h("span", { class: "badge warn", title: "Put.io keeps downloading; local download held", text: "On hold" }) : null,
       ),
     ),
     h("td", { class: "num", "data-label": "Progress" }, h("div", {}, percent(pct), files ? ` · ${files}` : null, h("div", { class: "bar" }, h("span", { style: `width:${pct}%` })))),

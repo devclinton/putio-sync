@@ -52,7 +52,7 @@ pub struct QueueItemResponse {
 pub struct QueueResponse {
     pub items: Vec<QueueItemResponse>,
     pub total: usize,
-    /// The Pause NAS downloads switch is on
+    /// The Pause local downloads switch is on
     pub nas_paused: bool,
 }
 
@@ -536,13 +536,13 @@ async fn clear_completed(State(state): State<AppState>) -> Result<Json<SuccessRe
     }))
 }
 
-/// Response of the Pause NAS downloads switch
+/// Response of the Pause local downloads switch
 #[derive(Debug, Serialize)]
 pub struct SwitchResponse {
     pub nas_paused: bool,
 }
 
-/// Turn the Pause NAS downloads switch on: running downloads stop and keep their partial
+/// Turn the Pause local downloads switch on: running downloads stop and keep their partial
 /// files, nothing new starts, and no row changes (feature 039, FR-020)
 ///
 /// POST /local/queue/pause
@@ -563,7 +563,7 @@ async fn set_switch(state: &AppState, on: bool) -> Result<Json<SwitchResponse>, 
         .set_nas_paused(on)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to change the switch: {}", e)))?;
-    info!(nas_paused = on, "Pause NAS downloads switch changed");
+    info!(nas_paused = on, "Pause local downloads switch changed");
     Ok(Json(SwitchResponse { nas_paused: on }))
 }
 

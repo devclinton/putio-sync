@@ -2,7 +2,7 @@
 // and "sync now". Reordering, skip, pause and resume are reversible, so only clearing
 // completed rows and cancelling a download ask first. Queue rows can be flagged as fake
 // (feature 042); flags reload when the rows or a flag change, not on every poll. One
-// switch pauses or resumes all NAS downloads (feature 039); a file can also be paused,
+// switch pauses or resumes all local downloads (feature 039); a file can also be paused,
 // resumed or retried on its own, and `?transfer=`, `?folder=` or `?file=` show only the
 // files an Active row stands for.
 
@@ -54,7 +54,7 @@ export function mount(el, { query } = {}) {
     summary: h("p", { class: "muted" }, "Loading…"),
     sync: h("p", { class: "sync-line", hidden: true }),
     showing: h("p", { class: "muted", hidden: true }),
-    switch: h("button", { type: "button", class: "btn", onclick: onSwitch }, "Pause NAS downloads"),
+    switch: h("button", { type: "button", class: "btn", onclick: onSwitch }, "Pause local downloads"),
     clear: h("button", { type: "button", class: "btn", onclick: onClear }, "Clear completed"),
     syncBtn: h("button", { type: "button", class: "btn btn-primary", onclick: onSync }, "Sync now"),
     downloads: h("section", { class: "card wide" }),
@@ -168,7 +168,7 @@ function reason(e) {
 /** Show the switch's state: the button, and the banner */
 function setSwitch(on) {
   nasPaused = on;
-  els.switch.textContent = on ? "Resume NAS downloads" : "Pause NAS downloads";
+  els.switch.textContent = on ? "Resume local downloads" : "Pause local downloads";
   banner.update(on);
 }
 

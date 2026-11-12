@@ -181,9 +181,9 @@ function activeCard(a, reason) {
   const section = (...body) => h("section", { class: "card wide" }, h("h2", { text: "Active transfers" }), ...body);
   if (!a) return section(h("p", { class: "muted", text: `Unavailable: ${reason || "no data"}` }));
   if (a.total === 0) {
-    return section(empty("Nothing is downloading right now", "Transfers you add on Put.io show up here until their files are on the NAS."));
+    return section(empty("Nothing is downloading right now", "Transfers you add on Put.io show up here until their files are downloaded."));
   }
-  const parts = [`${a.putio} on Put.io`, `${a.nas} on the NAS`];
+  const parts = [`${a.putio} on Put.io`, `${a.nas} downloading locally`];
   const sentence = h(
     "p",
     {},

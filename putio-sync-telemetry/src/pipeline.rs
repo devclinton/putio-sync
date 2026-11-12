@@ -17,7 +17,7 @@ impl Telemetry {
             .inc();
     }
 
-    /// Set whether the Pause NAS downloads switch is on.
+    /// Set whether the Pause local downloads switch is on.
     pub fn set_nas_downloads_paused(&self, paused: bool) {
         self.nas_downloads_paused.set(i64::from(paused));
     }

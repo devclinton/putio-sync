@@ -170,12 +170,12 @@ pub async fn execute_pause(file_ids: Vec<i64>, config_path: Option<PathBuf>) -> 
     let queue_repo = db.queue();
 
     let count = if file_ids.is_empty() {
-        // No files named: turn the Pause NAS downloads switch on. Rows keep their status.
+        // No files named: turn the Pause local downloads switch on. Rows keep their status.
         db.flags()
             .set_bool(NAS_DOWNLOADS_PAUSED, true)
             .await
-            .context("Failed to turn the Pause NAS downloads switch on")?;
-        println!("Pause NAS downloads is on; `queue resume` turns it off");
+            .context("Failed to turn the Pause local downloads switch on")?;
+        println!("Pause local downloads is on; `queue resume` turns it off");
         return Ok(());
     } else {
         // Pause specific files
@@ -204,12 +204,12 @@ pub async fn execute_resume(file_ids: Vec<i64>, config_path: Option<PathBuf>) ->
     let queue_repo = db.queue();
 
     let count = if file_ids.is_empty() {
-        // No files named: turn the Pause NAS downloads switch off
+        // No files named: turn the Pause local downloads switch off
         db.flags()
             .set_bool(NAS_DOWNLOADS_PAUSED, false)
             .await
-            .context("Failed to turn the Pause NAS downloads switch off")?;
-        println!("Pause NAS downloads is off");
+            .context("Failed to turn the Pause local downloads switch off")?;
+        println!("Pause local downloads is off");
         return Ok(());
     } else {
         // Resume specific files
