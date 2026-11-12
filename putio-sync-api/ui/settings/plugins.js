@@ -23,7 +23,7 @@ export const cards = (ctx) => [groupCard(PLUGINS, ctx)];
 const linksRow = (status) => {
   const by = plugins.byline(status);
   const links = plugins.links(status);
-  const from = status.registry ? `From the plugin registry, ${status.registry.version}` : "";
+  const from = plugins.registryText(status);
   if (!by && !links.length && !from) return null;
   return h(
     "p",
@@ -32,6 +32,21 @@ const linksRow = (status) => {
     from ? h("span", { text: from }) : null,
     ...links.map((l) => h("a", { href: l.href, target: "_blank", rel: "noopener noreferrer" }, l.label)),
   );
+};
+
+// Update and Remove for a plugin from the registry (059); `load` draws the list again
+const registryButtons = (status, load) => {
+  const r = status.registry;
+  if (!r) return [];
+  const run = (what) => async (ev) => {
+    const button = ev.currentTarget;
+    const m = await import("./registry.js").catch((e) => (toastError(e), null));
+    if (m && (await m[what](status.name, button))) await load();
+  };
+  return [
+    r.update && !r.withdrawn ? h("button", { type: "button", class: "btn btn-small", onclick: run("update") }, `Update to ${r.update}`) : null,
+    h("button", { type: "button", class: "btn btn-small", onclick: run("remove") }, "Remove"),
+  ];
 };
 
 // The tab shown, kept while the card is drawn again after a save
@@ -250,7 +265,7 @@ function pluginsExtra(data, form) {
       status.hooks && status.hooks.length ? h("p", { class: "muted", text: `Sync rules: ${status.hooks.join(", ")}` }) : null,
       h("p", { class: "muted" }, hosts),
       ...body,
-      h("div", { class: "toolbar spaced" }, h("button", { type: "button", class: "btn btn-small", onclick: (ev) => turn(status, false, ev.currentTarget) }, "Disable")),
+      h("div", { class: "toolbar spaced" }, h("button", { type: "button", class: "btn btn-small", onclick: (ev) => turn(status, false, ev.currentTarget) }, "Disable"), ...registryButtons(status, load)),
     );
     panels.set(status.name, { el, status });
     return el;
@@ -283,7 +298,7 @@ function pluginsExtra(data, form) {
         h("span", { class: broken ? "error-text one-line" : "muted one-line", title: (broken ? status.error : status.description) || null, text: broken ? status.error : plugins.summary(status.description) }),
         linksRow(status),
       ),
-      broken ? null : h("button", { type: "button", class: "btn btn-small", onclick: (ev) => turn(status, true, ev.currentTarget) }, "Enable"),
+      h("div", { class: "toolbar" }, broken ? null : h("button", { type: "button", class: "btn btn-small", onclick: (ev) => turn(status, true, ev.currentTarget) }, "Enable"), ...registryButtons(status, load)),
     );
   };
 

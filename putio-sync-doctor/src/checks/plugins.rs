@@ -2,6 +2,8 @@
 //! settings name only plugins that exist, and no plugin's last run failed in the last day.
 //! Feature 031: each enabled plugin with a `health()` says how it stands (server reachable,
 //! token accepted, folders mapped); a failed item is a problem, a warning a warning.
+//! Feature 059: a plugin from the registry that was withdrawn or is no longer listed is a
+//! warning, from the list last fetched (the check fetches nothing).
 
 use super::{count, Ctx};
 use crate::report::{Finding, Item, Status};
@@ -52,6 +54,17 @@ async fn health(service: &PluginsService, plugins: &[PluginStatus]) -> (Vec<Item
         }
     }
     (problems, warnings)
+}
+
+/// Why a plugin from the registry needs a look: withdrawn, or gone from the list
+fn registry_warning(p: &PluginStatus) -> Option<Item> {
+    let info = p.registry.as_ref()?;
+    let detail = match (&info.withdrawn, info.listed) {
+        (Some(reason), _) => format!("withdrawn from the plugin registry: {reason}"),
+        (None, Some(false)) => "no longer in the plugin registry".to_string(),
+        _ => return None,
+    };
+    Some(Item::new(&p.name, p.name.clone()).detail(detail))
 }
 
 /// The last run, when it failed in the last day
@@ -136,6 +149,7 @@ pub(crate) async fn plugins(ctx: &Ctx) -> Finding {
             .filter(|p| enabled(&p.name))
             .filter_map(|p| recent_failure(p, since)),
     );
+    warnings.extend(plugins.iter().filter_map(registry_warning));
     warnings.extend(unsure);
     if !warnings.is_empty() {
         return Finding::new(
@@ -146,7 +160,7 @@ pub(crate) async fn plugins(ctx: &Ctx) -> Finding {
                 if warnings.len() == 1 { "needs" } else { "need" }
             ),
         )
-        .suggest("Open Settings › Plugins: save to approve hosts, fill in required settings, or use Send test event.")
+        .suggest("Open Settings › Plugins: save to approve hosts, fill in required settings, use Send test event, or remove a plugin the registry no longer lists.")
         .items(warnings);
     }
 

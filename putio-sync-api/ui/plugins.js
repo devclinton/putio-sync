@@ -339,3 +339,41 @@ export function entryReach(entry) {
   if (!hosts.length && !fromConfig.length) parts.push("Contacts no hosts");
   return parts;
 }
+
+// A host from a setting, as a diff names it: `setting:url`
+const hostText = (h) => (h.startsWith("setting:") ? `the address in ${h.slice(8)}` : h);
+
+/** What an update changes, for its confirm (059): the release notes, what it may do now
+ * that it could not before and the reverse, and files edited by hand it replaces */
+export function updateText(preview) {
+  const d = preview.diff || {};
+  const list = (c, key) => ((c && c[key]) || []).map(hostText).join(", ");
+  const lines = [];
+  const add = (label, text) => text && lines.push(`${label}: ${text}`);
+  add("Release notes", preview.notes);
+  add("New hosts", list(d.hosts, "added"));
+  add("No longer contacts", list(d.hosts, "removed"));
+  add("New settings", list(d.settings, "added"));
+  add("Settings dropped", list(d.settings, "removed"));
+  add("Now runs on", list(d.events, "added"));
+  add("No longer runs on", list(d.events, "removed"));
+  add("New sync rules", list(d.hooks, "added"));
+  add("Sync rules dropped", list(d.hooks, "removed"));
+  const asks = lines.length > (preview.notes ? 1 : 0);
+  if (!asks) lines.push("It asks for nothing new.");
+  if (((d.hosts && d.hosts.added) || []).length) lines.push("New hosts need your approval before it runs again.");
+  if ((preview.changed || []).length) lines.push(`Your edits to ${preview.changed.join(", ")} will be replaced.`);
+  lines.push("Its settings are kept; if the new version does not load, the old one stays.");
+  return lines.join("\n");
+}
+
+/** The registry line on a plugin's tab: where it came from, and an update or withdrawal */
+export function registryText(status) {
+  const r = status && status.registry;
+  if (!r) return "";
+  const parts = [`From the plugin registry, ${r.version}`];
+  if (r.withdrawn) parts.push(`withdrawn: ${r.withdrawn}`);
+  else if (r.listed === false) parts.push("no longer listed");
+  else if (r.update) parts.push(`${r.update} available`);
+  return parts.join(" · ");
+}
