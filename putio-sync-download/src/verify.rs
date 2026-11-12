@@ -564,6 +564,8 @@ impl Run<'_> {
         }
     }
 
+    // The Err is always a small `Problem`, made once per file
+    #[allow(clippy::result_large_err)]
     async fn details(&self, file_id: i64) -> Result<Remote, Outcome> {
         match self.manager.client.get_file_details(file_id).await {
             Ok(details) => Ok(Remote {
