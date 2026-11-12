@@ -100,6 +100,17 @@ else
 fi
 echo ""
 
+# The CLI-only build (putio-sync-lite) must still build without the daemon and API
+print_step "Checking the lite CLI build..."
+if cargo clippy -p putio-sync-cli -p putio-sync-doctor --no-default-features --all-targets -- -D warnings \
+    && cargo test -p putio-sync-cli -p putio-sync-doctor --no-default-features; then
+    print_success "Lite CLI build passed"
+else
+    print_error "Lite CLI build failed"
+    exit 1
+fi
+echo ""
+
 # Build release
 print_step "Building release binary..."
 if cargo build --release --verbose; then

@@ -4,6 +4,8 @@ name: Build Release Binaries
 #   Linux x86_64/aarch64  static musl tarballs (Dockerfile.dhi, target binary)
 #   macOS arm64           tarball and an unsigned .pkg with a launchd agent
 #   Windows x64/arm64     zips (winget installs these) and Inno Setup installers
+# and on each, putio-sync-lite: the CLI-only build (no daemon, API or web UI),
+# as a tarball or zip alone,
 # plus SHA256SUMS over all of them. release.yml calls it with upload: true; run
 # it by hand for a dry run that keeps everything as workflow artifacts:
 #   gh workflow run release-binaries.yml -f version=v0.1.2
@@ -75,12 +77,25 @@ jobs:
           file out/putio-sync | grep -qE 'static(ally|-pie) linked'
           out/putio-sync --version
 
+      - name: Build the static lite binary
+        run: |
+          docker buildx build -f Dockerfile.dhi --target binary \
+            --platform ${{ matrix.platform }} \
+            --build-arg PUTIO_SYNC_GIT_SHA=${{ github.sha }} \
+            --build-arg PUTIO_SYNC_EDITION=lite \
+            --output type=local,dest=out-lite .
+          file out-lite/putio-sync | grep -qE 'static(ally|-pie) linked'
+          out-lite/putio-sync --version
+
       - name: Package
         run: |
-          name="putio-sync-${VERSION#v}-linux-${{ matrix.arch }}"
-          mkdir -p "$name" dist
-          cp out/putio-sync LICENSE README.md CHANGELOG.md "$name/"
-          tar -czf "dist/$name.tar.gz" "$name"
+          mkdir -p dist
+          for edition in "" -lite; do
+            name="putio-sync$edition-${VERSION#v}-linux-${{ matrix.arch }}"
+            mkdir -p "$name"
+            cp "out$edition/putio-sync" LICENSE README.md CHANGELOG.md "$name/"
+            tar -czf "dist/$name.tar.gz" "$name"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -100,6 +115,14 @@ jobs:
         env:
           PUTIO_SYNC_GIT_SHA: ${{ github.sha }}
         run: cargo build --release --locked --target aarch64-apple-darwin --package putio-sync-cli
+
+      - name: Build lite
+        env:
+          PUTIO_SYNC_GIT_SHA: ${{ github.sha }}
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin --package putio-sync-cli \
+            --no-default-features --target-dir target/lite
+          target/lite/aarch64-apple-darwin/release/putio-sync --version
 
       - name: Check it runs and links only system libraries
         run: |
@@ -130,6 +153,10 @@ jobs:
           mkdir -p "$name" dist
           cp "$bin" LICENSE README.md CHANGELOG.md "$name/"
           tar -czf "dist/$name.tar.gz" "$name"
+          lite="putio-sync-lite-${VERSION#v}-macos-arm64"
+          mkdir -p "$lite"
+          cp target/lite/aarch64-apple-darwin/release/putio-sync LICENSE README.md CHANGELOG.md "$lite/"
+          tar -czf "dist/$lite.tar.gz" "$lite"
           bash packaging/macos/build-pkg.sh "$VERSION" "$bin" dist
           pkgutil --payload-files dist/*.pkg
           pkgutil --check-signature dist/*.pkg || echo "Unsigned package"
@@ -163,19 +190,25 @@ jobs:
         run: |
           rustup target add ${{ matrix.target }}
           cargo build --release --locked --target ${{ matrix.target }} --package putio-sync-cli
+          cargo build --release --locked --target ${{ matrix.target }} --package putio-sync-cli `
+            --no-default-features --target-dir target/lite
 
       - name: Check it runs
         if: matrix.arch == 'x64'
-        run: target/${{ matrix.target }}/release/putio-sync.exe --version
+        run: |
+          target/${{ matrix.target }}/release/putio-sync.exe --version
+          target/lite/${{ matrix.target }}/release/putio-sync.exe --version
 
       - name: Check it needs no Visual C++ runtime
         shell: pwsh
         run: |
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
-          $deps = & $dumpbin.FullName /dependents "target/${{ matrix.target }}/release/putio-sync.exe" | Out-String
-          $deps
-          if ($deps -match '(?i)vcruntime|msvcp|api-ms-win-crt') { throw "putio-sync.exe still links the Visual C++ runtime" }
+          foreach ($exe in "target/${{ matrix.target }}/release/putio-sync.exe", "target/lite/${{ matrix.target }}/release/putio-sync.exe") {
+            $deps = & $dumpbin.FullName /dependents $exe | Out-String
+            $deps
+            if ($deps -match '(?i)vcruntime|msvcp|api-ms-win-crt') { throw "$exe still links the Visual C++ runtime" }
+          }
 
       - name: Zip
         shell: pwsh
@@ -184,6 +217,9 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/putio-sync.exe", README.md, LICENSE -Destination archive/
           # winget installs this zip; keep the name and the leading v
           Compress-Archive -Path archive/* -DestinationPath "dist/putio-sync-$env:VERSION-${{ matrix.target }}.zip"
+          New-Item -ItemType Directory -Force -Path archive-lite | Out-Null
+          Copy-Item "target/lite/${{ matrix.target }}/release/putio-sync.exe", README.md, LICENSE -Destination archive-lite/
+          Compress-Archive -Path archive-lite/* -DestinationPath "dist/putio-sync-lite-$env:VERSION-${{ matrix.target }}.zip"
 
       - name: Installer
         shell: pwsh

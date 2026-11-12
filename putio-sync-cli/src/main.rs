@@ -9,7 +9,9 @@ mod logging;
 use putio_sync_cli::commands;
 
 use chrono::Utc;
-use cli::{ArchiveCommands, Cli, Commands, QueueCommands, TransfersCommands};
+#[cfg(feature = "server")]
+use cli::ArchiveCommands;
+use cli::{Cli, Commands, QueueCommands, TransfersCommands};
 use putio_sync_core::config::{Config, ExistingFile};
 use tracing::{debug, error, info};
 
@@ -114,10 +116,14 @@ async fn main() {
     putio_sync_core::log_redact::set_secrets(config.secret_values());
 
     // Initialize logging system. The doctor's stdout is its report, so its logs go to stderr.
-    if matches!(
+    #[cfg(feature = "server")]
+    let report_on_stdout = matches!(
         args.command,
         Commands::Doctor { .. } | Commands::Setup { .. } | Commands::Archive(_)
-    ) {
+    );
+    #[cfg(not(feature = "server"))]
+    let report_on_stdout = matches!(args.command, Commands::Doctor { .. });
+    if report_on_stdout {
         logging::init_stderr(&config.logging.level);
     } else if let Err(e) = putio_sync_core::logging::init_logging(&config.logging) {
         eprintln!("⚠️  Failed to initialize logging: {}", e);
@@ -380,6 +386,7 @@ async fn main() {
                 commands::transfers::execute_retry(transfer_id, args.config).await
             }
         },
+        #[cfg(feature = "server")]
         Commands::Daemon {
             download_interval,
             watch_interval,
@@ -417,6 +424,7 @@ async fn main() {
             )
             .await
         }
+        #[cfg(feature = "server")]
         Commands::Server {
             watch,
             download,
@@ -428,6 +436,7 @@ async fn main() {
         }
         Commands::Health {} => commands::execute_health(args.config).await,
         Commands::Debug {} => commands::execute_debug(args.config).await,
+        #[cfg(feature = "server")]
         Commands::Setup {
             download_dir,
             preset,
@@ -449,6 +458,7 @@ async fn main() {
             let _ = std::io::stdout().flush();
             std::process::exit(code);
         }
+        #[cfg(feature = "server")]
         Commands::Archive(job) => {
             let job = match job {
                 ArchiveCommands::Metrics {

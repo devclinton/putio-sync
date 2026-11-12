@@ -1,8 +1,10 @@
 //! The checks: shared data for one run, and dispatch by [`CheckId`]
 
+#[cfg(feature = "services")]
 pub(crate) mod hooks;
 pub(crate) mod local;
 pub(crate) mod net;
+#[cfg(feature = "services")]
 pub(crate) mod plugins;
 pub(crate) mod putio;
 pub(crate) mod sign_in;
@@ -43,10 +45,13 @@ pub(crate) struct Ctx {
     pub cleanup: Arc<EmptyFolderCleanup>,
     pub stalls: Option<Arc<StallTracker>>,
     /// The shared Tailscale service; the check builds one from the config without it
+    #[cfg(feature = "services")]
     pub tailscale: Option<Arc<putio_sync_tailscale::TailscaleService>>,
     /// The running hooks, for their last runs; the check reads the config alone without it
+    #[cfg(feature = "services")]
     pub hooks: Option<Arc<putio_sync_hooks::HooksService>>,
     /// The running plugins, for their state and last runs
+    #[cfg(feature = "services")]
     pub plugins: Option<Arc<putio_sync_plugins::PluginsService>>,
     pub started: Instant,
     probe: OnceCell<(AccountProbe, DateTime<Utc>)>,
@@ -70,8 +75,11 @@ impl Ctx {
             db,
             cleanup,
             stalls,
+            #[cfg(feature = "services")]
             tailscale: None,
+            #[cfg(feature = "services")]
             hooks: None,
+            #[cfg(feature = "services")]
             plugins: None,
             started: Instant::now(),
             probe: OnceCell::new(),
@@ -156,10 +164,17 @@ async fn detect(ctx: &Ctx, id: CheckId) -> Finding {
         Reachability => net::reachability(ctx).await,
         RateLimit => net::rate_limit(ctx).await,
         ClockSkew => net::clock_skew(ctx).await,
+        #[cfg(feature = "services")]
         Tailscale => net::tailscale(ctx).await,
         Listen => net::listen(ctx).await,
+        #[cfg(feature = "services")]
         Hooks => hooks::hooks(ctx).await,
+        #[cfg(feature = "services")]
         Plugins => plugins::plugins(ctx).await,
+        #[cfg(not(feature = "services"))]
+        Tailscale | Hooks | Plugins => {
+            Finding::skipped("Skipped: this putio-sync build has no daemon or web UI.")
+        }
         SignIn => sign_in::sign_in(ctx).await,
     }
 }
