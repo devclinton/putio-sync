@@ -1,6 +1,7 @@
 // More plugins (059), loaded from the Plugins settings card when opened: the plugin
 // registry's reviewed plugins, a search, and Install or Update for each. A new plugin is
-// listed disabled; nothing runs until it is enabled.
+// listed disabled; nothing runs until it is enabled. Update shows what the new version
+// changes first; a plugin's tab uses the same Update and Remove.
 
 import { get, post } from "../api.js";
 import * as plugins from "../plugins.js";
@@ -16,11 +17,14 @@ export function panel(load) {
   const list = h("div", { class: "stack" }, h("p", { class: "muted", text: "Loading the plugin registry…" }));
 
   const install = async (entry, button) => {
-    const updating = entry.state === "update";
+    if (entry.state === "update") {
+      if (await update(entry.name, button)) await Promise.all([fetch(false), load()]);
+      return;
+    }
     const ok = await confirm({
-      title: updating ? `Update ${entry.name} to ${entry.version}?` : `Install ${entry.name} ${entry.version}?`,
-      text: [`${plugins.byline({ links: entry })}.`, ...plugins.entryReach(entry), updating ? "Its settings are kept." : "It is added turned off; enable it to run it."].join("\n"),
-      verb: updating ? "Update" : "Install",
+      title: `Install ${entry.name} ${entry.version}?`,
+      text: [`${plugins.byline({ links: entry })}.`, ...plugins.entryReach(entry), "It is added turned off; enable it to run it."].join("\n"),
+      verb: "Install",
     });
     if (!ok) return;
     button.disabled = true;
@@ -86,4 +90,37 @@ export function panel(load) {
     status,
     list,
   ];
+}
+
+/** Update `name` from the registry after showing what changes; true when it was updated */
+export async function update(name, button) {
+  button.disabled = true;
+  try {
+    const preview = await post("/plugins/registry/preview", { name });
+    const ok = await confirm({ title: `Update ${name} from ${preview.from} to ${preview.version}?`, text: plugins.updateText(preview), verb: "Update" });
+    if (!ok) return false;
+    const sent = { name, sha256: preview.sha256, replace_changed: preview.changed.length > 0 };
+    toast((await post("/plugins/registry/update", sent)).message);
+    return true;
+  } catch (e) {
+    if (!quiet(e)) toast(reason(e));
+    return false;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/** Remove `name`, installed from the registry; true when it was removed */
+export async function remove(name, button) {
+  const ok = await confirm({ title: `Remove ${name}?`, text: "Its folder is deleted. Its settings are kept, so installing it again picks them up.", verb: "Remove" });
+  if (!ok) return false;
+  button.disabled = true;
+  try {
+    toast((await post("/plugins/registry/remove", { name })).message);
+    return true;
+  } catch (e) {
+    if (!quiet(e)) toast(reason(e));
+    button.disabled = false;
+    return false;
+  }
 }

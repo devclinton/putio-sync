@@ -96,24 +96,34 @@ outward-facing: ask the maintainer before each step.
 
 ### Tests
 
-- [ ] T043 [P] [US3] Update tests in putio-sync-plugins/src/registry/install.rs: update replaces files and the record; `[[plugins]]` settings, secrets, approved hosts and `plugin-data/<name>.json` unchanged (SC-006); a new version that loads **Broken** is swapped back and the error returned; leftover `.previous-<name>` with `<name>` missing is restored on start, and removed when `<name>` exists; `changed` is true after editing, adding or deleting a file (dot-files ignored); update with `changed` and without `replace_changed` refused; update with a SHA-256 other than the offered one refused
-- [ ] T044 [P] [US3] Diff tests in putio-sync-plugins/src/registry/install.rs: `diff(old_manifest, new_manifest)` gives hosts, settings and events added and removed; for a plugin not installed everything is added
-- [ ] T045 [P] [US3] Remove tests: a folder with a record is deleted and its settings kept; a folder without a record gives "not installed from the registry"
-- [ ] T046 [P] [US3] Doctor test in putio-sync-doctor/src/checks/plugins.rs: an installed plugin whose cached entry is withdrawn warns with the reason; one missing from the cached index warns "No longer listed"; the check makes no registry request
-- [ ] T047 [P] [US3] API tests in putio-sync-api/tests/plugins_registry.rs for `POST /plugins/registry/update` and `/remove` (401 without token, 409 and 422 cases from contracts/api.md)
-- [ ] T048 [P] [US3] Node tests in putio-sync-api/tests/ui/plugins.test.mjs for `diffText(diff)` (one line per non-empty group, "No changes to hosts, settings or events" when all empty)
+- [x] T043 [P] [US3] Update tests in putio-sync-plugins/src/registry/install.rs: update replaces files and the record; `[[plugins]]` settings, secrets, approved hosts and `plugin-data/<name>.json` unchanged (SC-006); a new version that loads **Broken** is swapped back and the error returned; leftover `.previous-<name>` with `<name>` missing is restored on start, and removed when `<name>` exists; `changed` is true after editing, adding or deleting a file (dot-files ignored); update with `changed` and without `replace_changed` refused; update with a SHA-256 other than the offered one refused
+- [x] T044 [P] [US3] Diff tests in putio-sync-plugins/src/registry/install.rs: `diff(old_manifest, new_manifest)` gives hosts, settings and events added and removed; for a plugin not installed everything is added
+- [x] T045 [P] [US3] Remove tests: a folder with a record is deleted and its settings kept; a folder without a record gives "not installed from the registry"
+- [x] T046 [P] [US3] Doctor test in putio-sync-doctor/src/checks/plugins.rs: an installed plugin whose cached entry is withdrawn warns with the reason; one missing from the cached index warns "No longer listed"; the check makes no registry request
+- [x] T047 [P] [US3] API tests in putio-sync-api/tests/plugins_registry.rs for `POST /plugins/registry/update` and `/remove` (401 without token, 409 and 422 cases from contracts/api.md)
+- [x] T048 [P] [US3] Node tests in putio-sync-api/tests/ui/plugins.test.mjs for `diffText(diff)` (one line per non-empty group, "No changes to hosts, settings or events" when all empty)
 
 ### Implementation
 
-- [ ] T049 [US3] Implement `diff` and `changed(folder, record)` in putio-sync-plugins/src/registry/install.rs
-- [ ] T050 [US3] Implement `update(dir, name, unpacked, expected_sha256, replace_changed)` in putio-sync-plugins/src/registry/install.rs: rename `plugins/<name>` to `plugins/.previous-<name>`, install the new one, reload that plugin (`PluginsService::reload_one`, new in putio-sync-plugins/src/service.rs), swap back if it is Broken, else delete `.previous-<name>` (research.md R6)
-- [ ] T051 [US3] Implement `remove(dir, name)` in putio-sync-plugins/src/registry/install.rs and the `.previous-*` clean-up and restore on start in putio-sync-plugins/src/discover.rs
-- [ ] T052 [US3] Fill `InstallState.update`, `withdrawn` and `state: unlisted` from the cached index in putio-sync-plugins/src/service.rs
-- [ ] T053 [US3] Add `POST /registry/update` and `POST /registry/remove` to putio-sync-api/src/routes/system/plugins.rs per contracts/api.md
-- [ ] T054 [US3] Warn on withdrawn and unlisted registry installs in putio-sync-doctor/src/checks/plugins.rs, from the service's cached index
-- [ ] T055 [US3] Add `diffText` to putio-sync-api/ui/plugins.js
-- [ ] T056 [US3] In putio-sync-api/ui/settings/plugins.js: **Update available** on the tab and line; **Update** calls preview, shows `diffText` and the release notes link, warns when `changed`, then calls update with the preview's `sha256`; **Remove** asks first then calls remove; the withdrawn reason and "No longer listed" on the tab
-- [ ] T057 [P] [US3] Add the new UI strings to putio-sync-api/ui/i18n/en.json
+- [x] T049 [US3] Implement `diff` and `changed(folder, record)` in putio-sync-plugins/src/registry/install.rs
+- [x] T050 [US3] Implement `update(dir, name, unpacked, expected_sha256, replace_changed)` in putio-sync-plugins/src/registry/install.rs: rename `plugins/<name>` to `plugins/.previous-<name>`, install the new one, reload that plugin (`PluginsService::reload_one`, new in putio-sync-plugins/src/service.rs), swap back if it is Broken, else delete `.previous-<name>` (research.md R6)
+- [x] T051 [US3] Implement `remove(dir, name)` in putio-sync-plugins/src/registry/install.rs and the `.previous-*` clean-up and restore on start in putio-sync-plugins/src/discover.rs
+- [x] T052 [US3] Fill `InstallState.update`, `withdrawn` and `state: unlisted` from the cached index in putio-sync-plugins/src/service.rs
+- [x] T053 [US3] Add `POST /registry/update` and `POST /registry/remove` to putio-sync-api/src/routes/system/plugins.rs per contracts/api.md
+- [x] T054 [US3] Warn on withdrawn and unlisted registry installs in putio-sync-doctor/src/checks/plugins.rs, from the service's cached index
+- [x] T055 [US3] Add `diffText` to putio-sync-api/ui/plugins.js
+- [x] T056 [US3] In putio-sync-api/ui/settings/plugins.js: **Update available** on the tab and line; **Update** calls preview, shows `diffText` and the release notes link, warns when `changed`, then calls update with the preview's `sha256`; **Remove** asks first then calls remove; the withdrawn reason and "No longer listed" on the tab
+- [x] T057 [P] [US3] Add the new UI strings to putio-sync-api/ui/i18n/en.json
+
+Built differently (US3): the work lives in `registry/mod.rs` (`InstallRecord.files`,
+`changed`, `Diff`, `Preview`, `RegistryInfo`) and `service.rs` (`preview_update`,
+`update_from_registry`, `remove_from_registry`) rather than a `registry/install.rs`. The
+moved-aside copy is `.<name>-previous-<pid>`, cleaned up by `install::clean_leftovers`.
+Before reloading, the new copy is compiled with `source::check_folder` (Lua loads lazily,
+so a reload alone does not show a syntax error). The status carries `update`, `withdrawn`
+and `listed` instead of `state: unlisted`. API tests are in `tests/plugins.rs`; the diff
+text is `updateText`. Install no longer updates: it answers 409 and the UI calls preview
+then update.
 
 **Checkpoint**: quickstart.md checks 9–11 pass.
 
