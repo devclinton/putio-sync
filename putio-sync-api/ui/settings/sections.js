@@ -30,7 +30,7 @@ export const SECTIONS = [
   {
     id: "rules",
     title: "Rules and filters",
-    help: "Which files are downloaded at all: name patterns for every folder, rules for one folder, and the release check that rejects fakes before they reach the NAS.",
+    help: "Which files are downloaded at all: name patterns for every folder, rules for one folder, and the release check that rejects fakes before they are downloaded.",
     cards: [["filters", "File filters"], ["folder-rules", "Folder rules"], ["presets", "Presets"], ["blocked", "Recently blocked"], ["precheck", "Release check"]],
   },
   {

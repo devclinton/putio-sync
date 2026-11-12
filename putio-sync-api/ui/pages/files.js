@@ -141,7 +141,7 @@ async function onDelete(button, e) {
     }
   }
   const linkNote = e.kind === "link" ? " Only the link goes; what it points to stays." : "";
-  const ok = await confirm({ title: `Delete ${what}`, text: `Delete ${e.path}${detail} from the NAS? This cannot be undone.${linkNote}`, verb: "Delete" });
+  const ok = await confirm({ title: `Delete ${what}`, text: `Delete ${e.path}${detail} from disk? This cannot be undone.${linkNote}`, verb: "Delete" });
   if (!ok) return;
   button.disabled = true;
   try {
@@ -247,7 +247,7 @@ async function onDeleteSelected() {
   const picked = entries.filter((e) => sel.has(e.path));
   const n = picked.length;
   const folders = picked.some(isDir) ? " Folders go with everything in them." : "";
-  const ok = await confirm({ title: "Delete from the NAS", text: `Delete ${plural(n, "item", "items")} (${some(picked.map((e) => e.name))}) from the NAS?${folders} This cannot be undone.`, verb: "Delete" });
+  const ok = await confirm({ title: "Delete from disk", text: `Delete ${plural(n, "item", "items")} (${some(picked.map((e) => e.name))}) from disk?${folders} This cannot be undone.`, verb: "Delete" });
   if (!ok || !sel) return;
   const page = sel;
   page.busy(true);

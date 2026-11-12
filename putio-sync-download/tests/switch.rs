@@ -1,4 +1,4 @@
-//! The Pause NAS downloads switch (feature 039, R11, FR-020): on, running files stop and
+//! The Pause local downloads switch (feature 039, R11, FR-020): on, running files stop and
 //! go back to `pending` and nothing new starts; off, workers claim again and no row is
 //! touched. It survives a restart.
 //!

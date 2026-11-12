@@ -376,7 +376,7 @@ impl<'a> QueueRepository<'a> {
         .await
     }
 
-    /// Put the `downloading` rows among `file_ids` back to `pending`: the Pause NAS
+    /// Put the `downloading` rows among `file_ids` back to `pending`: the Pause local
     /// downloads switch stops them without pausing them. Returns the ids it changed.
     pub async fn unclaim_files(&self, file_ids: &[i64]) -> DbResult<Vec<i64>> {
         self.set_status_where(

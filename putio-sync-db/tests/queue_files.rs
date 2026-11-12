@@ -100,7 +100,7 @@ async fn retry_files_puts_failed_rows_back_in_queue_order() {
     assert_eq!(status(&db, 3).await, "paused");
 }
 
-/// The Pause NAS downloads switch puts running rows back to `pending`, not `paused`
+/// The Pause local downloads switch puts running rows back to `pending`, not `paused`
 #[tokio::test]
 async fn unclaim_files_puts_only_downloading_rows_back_to_pending() {
     let (_dir, db) = db().await;

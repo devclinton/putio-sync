@@ -27,7 +27,7 @@ const PRECHECK = {
     ["min_size_mb", "Minimum size (MB)", "The largest wanted file must be at least this big; 0 to 100000", "n", 0, 100000],
     ["lookup_timeout_secs", "Lookup timeout (s)", "Total time for all caches; 1 to 30", "n", 1, 30],
     ["caches", "Magnet caches", "One URL per line, with {HASH} or {hash}. Only the info hash is sent.", "l"],
-    ["enabled", "Enabled", "Check releases before they reach Put.io or the NAS", "b"],
+    ["enabled", "Enabled", "Check releases before they reach Put.io or are downloaded", "b"],
     ["dry_run", "Check only (don't reject or delete)", "Log and count what would be rejected", "b"],
     ["allow_archives", "Allow archives", "Count .rar, .7z and split parts as wanted", "b"],
     ["magnet_lookup", "Look up magnets", "Find a magnet's .torrent in the caches before adding it", "b"],

@@ -22,8 +22,9 @@ pub(crate) async fn reachability(ctx: &Ctx) -> Finding {
             Finding::skipped("No Put.io token is configured, so nothing was sent.")
         }
         (Err(e), None) => {
-            Finding::new(Status::Problem, format!("Put.io could not be reached: {e}"))
-                .suggest("Check the NAS's internet connection and DNS, then run the doctor again.")
+            Finding::new(Status::Problem, format!("Put.io could not be reached: {e}")).suggest(
+                "Check this machine's internet connection and DNS, then run the doctor again.",
+            )
         }
         (_, Some(status)) if status.is_server_error() => Finding::new(
             Status::Warning,
@@ -78,7 +79,7 @@ pub(crate) async fn clock_skew(ctx: &Ctx) -> Finding {
         _ => return Finding::ok("This machine's clock matches Put.io's."),
     };
     Finding::new(status, summary)
-        .suggest("Turn on time sync (NTP) on the NAS; ages and schedules depend on the clock.")
+        .suggest("Turn on time sync (NTP) on this machine; ages and schedules depend on the clock.")
 }
 
 /// Tailscale (feature 036): only graded when sign-in or tailnet-only is on

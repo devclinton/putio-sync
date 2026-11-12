@@ -487,7 +487,7 @@ function rejectedCard() {
     { class: "card" },
     h("h2", { text: title }),
     h("p", { class: "big", text: count(r.count) }),
-    h("p", { class: "muted", text: `${bytes(r.bytes)} kept off the NAS` }),
+    h("p", { class: "muted", text: `${bytes(r.bytes)} kept off disk` }),
     countList("Where it was checked", stages, r.count),
     countList("Reason", reasons, r.count),
     rangeNote(),
