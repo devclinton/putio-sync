@@ -16,20 +16,22 @@
   }
 
   if (!navigator.clipboard) return;
+  // Button text comes from the page, so translated pages get it in their language
+  const text = document.querySelector(".ways")?.dataset ?? {};
+  const copy = text.copy ?? "Copy text";
   for (const pre of document.querySelectorAll(".ways pre")) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "copy";
-    button.textContent = "Copy";
-    button.setAttribute("aria-label", "Copy command");
+    button.textContent = copy;
     button.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(pre.querySelector("code").textContent);
-        button.textContent = "Copied";
+        button.textContent = text.copied ?? "Copied";
       } catch {
-        button.textContent = "Select and copy";
+        button.textContent = text.copyFailed ?? "Select and copy";
       }
-      setTimeout(() => (button.textContent = "Copy"), 2000);
+      setTimeout(() => (button.textContent = copy), 2000);
     });
     pre.after(button);
   }
