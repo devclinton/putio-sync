@@ -22,6 +22,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   winget, Docker, Unraid, CasaOS or Umbrel) and shows that channel's update command, with a
   Copy button, or its update step. For Docker it names the pull for your image's tag. Set
   `PUTIO_SYNC_INSTALL` when it guesses wrong; `GET /status` reports it as `install_channel`.
+- Releases also publish each binary as a bare `.xz`, small bsdiff patches from the three
+  previous releases, and `SHA256SUMS.minisig`, a minisign signature of `SHA256SUMS` that also
+  lists each uncompressed binary's hash. These are for the self-update to come; the existing
+  archives and installers keep their names. `make release-patches` builds them locally.
 - History keeps each finished item's pipeline steps: a downloaded file whose item is still
   kept has a Steps button that opens its timeline, with the state, duration and attempts
   of every step. `[pipeline] history_days` (default 30, set in Settings › Integrations)

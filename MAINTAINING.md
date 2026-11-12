@@ -251,6 +251,30 @@ snapcraft export-login --snaps=putio-sync --channels=stable,candidate,beta,edge 
 # Add contents to GitHub secret
 ```
 
+### MINISIGN_SECRET_KEY and MINISIGN_PASSWORD
+
+**Purpose**: Sign `SHA256SUMS` in `release-binaries.yml` (feature 055). The updater checks
+the signature with the public key built into the binary before it trusts any hash, so a
+release without these secrets fails at the "Sign SHA256SUMS" step.
+
+**Setup** (once, by the maintainer):
+```bash
+brew install minisign            # or apt-get install minisign
+minisign -G -p minisign.pub -s minisign.key   # asks for the key's password
+```
+1. Add the whole of `minisign.key` as `MINISIGN_SECRET_KEY` and its password as
+   `MINISIGN_PASSWORD` in the repository secrets.
+2. Put the second line of `minisign.pub` (the `RW...` key) in the public key constant in
+   `putio-sync-update/src/verify.rs`, replacing the placeholder; release builds fail a test
+   while it is still the placeholder.
+3. Keep `minisign.key` and its password backed up offline. There is no key rotation: installs
+   only trust the key they were built with, so a new key means everyone updates by hand once.
+
+**Local checks**: `make release-patches OLD=<dir> NEW=<dir>` builds the patches and
+`SHA256SUMS` from two releases' assets (`gh release download v0.2.2 -D <dir>`) without
+signing. `scripts/fake-release.sh` signs with the test key in `putio-sync-update/tests/data/`
+(password `putio-sync-test`), which must never sign a release.
+
 ### GITHUB_TOKEN
 
 **Purpose**: Upload release assets

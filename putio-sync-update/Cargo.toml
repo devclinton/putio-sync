@@ -26,6 +26,10 @@ chrono = { version = "0.4", features = ["serde"] }
 # Logging
 tracing = { workspace = true }
 
+# Patches: bsdiff to make and apply them, lzma-rs to unpack the xz assets
+bsdiff = "0.2"
+lzma-rs = "0.3"
+
 [target.'cfg(windows)'.dependencies]
 # The Windows installer's uninstall key (channel detection)
 windows-sys = { version = "0.59", features = ["Win32_System_Registry"] }
@@ -34,3 +38,5 @@ windows-sys = { version = "0.59", features = ["Win32_System_Registry"] }
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.8"
 mockito = "1.2"
+# Signs SHA256SUMS with the test key (examples/sign.rs, scripts/fake-release.sh)
+minisign = "0.7"
