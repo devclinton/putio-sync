@@ -40,14 +40,14 @@ pub async fn execute_stat(
     info!("Starting stat command");
 
     // Load configuration
-    let config = load_config(config_path)?;
+    let config = load_config(config_path.clone())?;
 
     // Validate date formats
     let since_date = validate_and_format_date(since.as_deref())?;
     let until_date = validate_and_format_date(until.as_deref())?;
 
-    // Initialize database (stored in target directory)
-    let db_path = config.download.target_directory.join(".putiosync.db");
+    // Initialize database
+    let db_path = putio_sync_core::database::prepare(&config, config_path.as_deref()).await;
 
     debug!("Opening database at: {:?}", db_path);
     let db = Database::new(&db_path)

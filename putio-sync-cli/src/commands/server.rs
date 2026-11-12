@@ -135,7 +135,8 @@ pub async fn execute_server(
     }
 
     // Create application with config (with database path and config path)
-    let database_path = Some(std::path::PathBuf::from(".putiosync.db"));
+    let db_path = putio_sync_core::database::prepare(&config, Some(&config_file_path)).await;
+    let database_path = Some(db_path.clone());
     let bound = Bound::default();
     let state = putio_sync_api::create_app_state(
         config.clone(),
@@ -203,7 +204,7 @@ pub async fn execute_server(
     // Start download mode thread if enabled
     let _download_handle = if download {
         info!("Starting download mode daemon...");
-        Some(spawn_download_daemon(config.clone(), queue_db))
+        Some(spawn_download_daemon(config.clone(), db_path, queue_db))
     } else {
         None
     };
@@ -382,6 +383,7 @@ fn spawn_watch_daemon(config: Config) -> std::thread::JoinHandle<()> {
 /// download directory.
 fn spawn_download_daemon(
     config: Config,
+    database_path: std::path::PathBuf,
     queue_db: Arc<OnceLock<Arc<Database>>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
@@ -436,7 +438,6 @@ fn spawn_download_daemon(
             };
 
             // Initialize database for download tracking
-            let database_path = std::path::PathBuf::from(".putiosync.db");
             let database = match Database::new(&database_path).await {
                 Ok(db) => {
                     info!("Download daemon: Database initialized");

@@ -124,6 +124,16 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - The media server's Put.io root no longer needs `putio_folder`: without one it shows
   the folder the sync mirrors.
 
+### Changed
+
+- The state database (queue, history, stats) moves out of the download folder to
+  `.putiosync.db` next to the config file: `/config` in Docker, Unraid, TrueNAS, Umbrel
+  and CasaOS, `~/.putiosync` otherwise. The first start after the update moves an
+  existing `<download folder>/.putiosync.db` there and logs where it went, so changing
+  the download folder no longer starts an empty database and SQLite stays off NFS and SMB
+  shares. `[database] path` picks another place. `putio-sync doctor` shows the path and
+  warns when an old database is left in the download folder.
+
 ### Fixed
 
 - The Docker image sets `HOME=/config`, so it no longer logs "Failed to create log
