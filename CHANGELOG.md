@@ -21,6 +21,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   `docs`, `homepage`, `repository` and `issues`. Settings › Plugins shows them on the
   plugin's tab and in the list, and **Needs settings** links to the docs. Links must be
   https (or http to a local address). The bundled plugins set them.
+- More plugins: Settings › Plugins lists the plugins in the putio-sync plugin registry, with
+  a search, and installs or updates one in a click. Each release's SHA-256 and manifest are
+  checked against the registry before anything is written, and a new plugin starts off.
+  Turn it off or use your own registry under Plugin registry settings
+  (`[plugin_registry]`).
 - `putio-sync plugins check FOLDER` checks a plugin folder the way Reload plugins does and
   prints each problem (`--json` for scripts); it needs no config or token.
 

@@ -302,3 +302,40 @@ export function byline(status) {
   const set = (status && status.links) || {};
   return [set.author ? `By ${set.author}` : "", set.license || ""].filter(Boolean).join(" · ");
 }
+
+/** Registry entries whose name, description or author holds every word of `text` (059) */
+export function filterEntries(entries, text) {
+  const words = (text || "").toLowerCase().split(/\s+/).filter(Boolean);
+  return (entries || []).filter((e) => {
+    const hay = `${e.name} ${e.description} ${e.author}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  });
+}
+
+/** What a registry entry's button says and whether it can be pressed, by its state */
+export function entryAction(entry) {
+  switch (entry.state) {
+    case "available":
+      return { label: "Install", enabled: true };
+    case "update":
+      return { label: `Update to ${entry.version}`, enabled: true };
+    case "installed":
+      return { label: "Installed", enabled: false };
+    case "needs_newer":
+      return { label: `Needs putio-sync ${entry.needs}`, enabled: false };
+    default:
+      return { label: "Name in use", enabled: false };
+  }
+}
+
+/** What a registry plugin may do, for the Install confirm: events, sync rules, hosts */
+export function entryReach(entry) {
+  const hosts = (entry.hosts && entry.hosts.fixed) || [];
+  const fromConfig = (entry.hosts && entry.hosts.from_config) || [];
+  const parts = [`Runs on: ${(entry.events || []).join(", ") || "no events"}`];
+  if ((entry.hooks || []).length) parts.push(`Sync rules: ${entry.hooks.join(", ")}`);
+  if (hosts.length) parts.push(`Contacts: ${hosts.join(", ")}`);
+  if (fromConfig.length) parts.push(`Contacts the address in: ${fromConfig.join(", ")}`);
+  if (!hosts.length && !fromConfig.length) parts.push("Contacts no hosts");
+  return parts;
+}

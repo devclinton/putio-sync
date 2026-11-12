@@ -1,5 +1,6 @@
-// Plugins section (features 028, 031, 048, 029, 055): tabs for plugins that are on, a list
-// of the rest with Enable, Reload, and the workbench (workbench.js, loaded when opened).
+// Plugins section (features 028, 031, 048, 029, 055, 059): tabs for plugins that are on, a
+// list of the rest with Enable, Reload, More plugins from the registry (registry.js) and the
+// workbench (workbench.js), each loaded when opened.
 
 import { get, post, put } from "../api.js";
 import * as plugins from "../plugins.js";
@@ -22,11 +23,13 @@ export const cards = (ctx) => [groupCard(PLUGINS, ctx)];
 const linksRow = (status) => {
   const by = plugins.byline(status);
   const links = plugins.links(status);
-  if (!by && !links.length) return null;
+  const from = status.registry ? `From the plugin registry, ${status.registry.version}` : "";
+  if (!by && !links.length && !from) return null;
   return h(
     "p",
     { class: "plugin-links muted" },
     by ? h("span", { text: by }) : null,
+    from ? h("span", { text: from }) : null,
     ...links.map((l) => h("a", { href: l.href, target: "_blank", rel: "noopener noreferrer" }, l.label)),
   );
 };
@@ -355,14 +358,41 @@ function pluginsExtra(data, form) {
     }
     button.disabled = false;
   };
+  // [plugin_registry] (059): on by default; the address is for a registry of your own
+  const registry = data.plugin_registry || { enabled: true, url: "" };
+  const registryOn = h("input", { type: "checkbox", checked: registry.enabled, onchange: changed });
+  const registryUrl = h("input", { class: "input", type: "url", value: registry.url, spellcheck: "false", "aria-label": "Plugin registry address", oninput: changed });
+  const registryFields = h(
+    "details",
+    { class: "spaced" },
+    h("summary", { text: "Plugin registry settings" }),
+    h(
+      "div",
+      { class: "fields" },
+      h("label", { class: "field check" }, registryOn, h("span", { text: "Show plugins from the plugin registry" })),
+      field("Registry address", registryUrl, "The index.json of the registry; https only"),
+    ),
+  );
   return {
-    nodes: [h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn-small", onclick: reload }, "Reload plugins"), docs("plugins", "", "Plugin reference")), workbench(load), list],
+    nodes: [h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn-small", onclick: reload }, "Reload plugins"), docs("plugins", "", "Plugin reference")), morePlugins(load), registryFields, workbench(load), list],
     read: () => {
-      if (!found) return { plugins: stored };
+      const plugin_registry = { enabled: registryOn.checked, url: registryUrl.value.trim() };
+      if (!found) return { plugins: stored, plugin_registry };
       const edited = rows.map(plugins.toSettings);
-      return { plugins: [...edited, ...stored.filter((s) => !edited.some((e) => e.name === s.name))] };
+      return { plugins: [...edited, ...stored.filter((s) => !edited.some((e) => e.name === s.name))], plugin_registry };
     },
   };
+}
+
+/** More plugins (059): the registry's list, fetched when first opened */
+function morePlugins(load) {
+  const open = (ev) => {
+    const box = ev.currentTarget;
+    if (!box.open || box.dataset.ready) return;
+    box.dataset.ready = "1";
+    import("./registry.js").then((m) => box.append(...m.panel(load))).catch(toastError);
+  };
+  return h("details", { class: "spaced", ontoggle: open }, h("summary", { text: "More plugins" }));
 }
 
 /** The workbench (055), Install (029) in it: loads when first opened, not with the page */

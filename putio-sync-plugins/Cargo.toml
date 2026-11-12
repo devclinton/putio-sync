@@ -34,6 +34,11 @@ toml = { workspace = true }
 # Logging
 tracing = { workspace = true }
 
+# Registry releases (059): pinned SHA-256, .tar.gz archives
+sha2 = "0.10"
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
+
 # Run timestamps, putio.time.iso
 chrono = { version = "0.4", features = ["serde"] }
 
