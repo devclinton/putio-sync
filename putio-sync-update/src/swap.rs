@@ -213,6 +213,7 @@ fn imp_restart(exe: &Path, args: Vec<OsString>) -> std::io::Error {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     fn names(dir: &Path) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(dir)
             .unwrap()
