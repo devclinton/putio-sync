@@ -550,6 +550,43 @@ allowed_users = []
 # socket = "/var/run/tailscale/tailscaled.sock"
 
 # ============================================================================
+# Sign-in options (feature 019)
+# ============================================================================
+# Ways into the web UI and API besides the API token: a username and password
+# (also HTTP basic auth), and Google, GitHub or Discord with an allow-list. The
+# token keeps working for scripts, Radarr and Sonarr, and the Radarr/Sonarr and
+# Transmission APIs don't change. Easiest to set up in Settings › Sign-in,
+# which also shows each provider's redirect URL. Applies at once.
+[sign_in]
+# The address people open, used for the OAuth redirect URLs and to mark the
+# cookie Secure. Set it behind a reverse proxy. Empty uses each request's
+# X-Forwarded-Proto/Host, else its Host.
+# Default: none
+# public_url = "https://sync.example.com"
+
+# How long a sign-in lasts, 1 to 8760.
+# Default: 168
+session_hours = 168
+
+# [sign_in.password]
+# username = "admin"
+# An argon2id hash, never the password: set the password in Settings › Sign-in
+# or with PUT /settings/sign-in {"password": {"username", "new_password"}}.
+# A new password ends the password sessions signed in before it.
+# password_hash = "$argon2id$v=19$..."
+
+# One table per provider: [sign_in.google], [sign_in.github], [sign_in.discord].
+# Register an OAuth app with the provider and give it the redirect URL
+# <public_url>/auth/oauth/<provider>/callback.
+# [sign_in.github]
+# enabled = true
+# client_id = "Iv1.0123456789abcdef"
+# client_secret = "..."                 # masked in the UI, API and logs
+# Who may sign in: account names (GitHub login, Discord username) or verified
+# emails. Empty lets nobody in, and the doctor reports it.
+# allowed_users = ["octocat", "me@example.com"]
+
+# ============================================================================
 # DLNA media server (feature 022)
 # ============================================================================
 # Shows downloaded files, and optionally one Put.io folder, to TVs and players

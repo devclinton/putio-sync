@@ -14,6 +14,15 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Sign-in options: besides the API token, sign in with a username and password (on the
+  sign-in page, or as HTTP basic auth), or with Google, GitHub or Discord. Each provider
+  has an allow-list of account names or verified emails. Set them up in the new
+  Settings › Sign-in, which shows the redirect URL to register and has Sign out
+  everywhere. Browsers stay signed in with an HttpOnly, SameSite=Strict cookie for
+  `session_hours` (default a week); writes also need a CSRF header. Passwords are stored
+  as argon2id hashes, client secrets are masked, failed sign-ins count toward the lockout,
+  and the doctor reports a provider that is on but incomplete. The token, Tailscale
+  sign-in and the Radarr/Sonarr and Transmission APIs work as before.
 - Email notifications: `[notifications.smtp]` sends the events you choose as plain-text
   email through your mail server, over STARTTLS (the default, never falling back to plain
   text), TLS or, for a relay on your LAN, no encryption and no login. Repeats of one kind

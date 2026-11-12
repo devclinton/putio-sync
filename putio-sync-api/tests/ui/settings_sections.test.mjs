@@ -8,7 +8,7 @@ import { SECTIONS, fieldId, linkParts, sectionOf, sectionOfKey, settingsHref } f
 test("every card is in exactly one section", () => {
   const ids = SECTIONS.flatMap((s) => s.cards.map(([id]) => id));
   assert.equal(new Set(ids).size, ids.length);
-  assert.deepEqual(SECTIONS.map((s) => s.id), ["general", "notifications", "putio", "downloads", "rules", "integrations", "plugins", "media-server", "network", "advanced"]);
+  assert.deepEqual(SECTIONS.map((s) => s.id), ["general", "notifications", "putio", "downloads", "rules", "integrations", "plugins", "media-server", "network", "sign-in", "advanced"]);
   assert.ok(SECTIONS.every((s) => s.help.length > 20));
 });
 

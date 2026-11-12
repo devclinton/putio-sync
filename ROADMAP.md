@@ -22,12 +22,13 @@ in `docs/` and are linked from the UI.
 
 ## Queued: features
 
-### 019 Sign-in options
+### 019 Sign-in options (done)
 
-The web UI and API are protected by one API token today. Add HTTP basic auth
-with a username and password, and sign-in through OAuth providers: Google,
-GitHub, and Discord if its OAuth stays free. Limit who may sign in by account
-or email, and keep the API token for scripts and Radarr/Sonarr.
+Besides the API token: a username and password (a sign-in form, and HTTP basic
+auth), and sign-in with Google, GitHub or Discord, each with an allow-list of
+accounts or verified emails. Browsers get a signed session cookie; the token
+stays for scripts and Radarr/Sonarr. Set up in Settings › Sign-in. See
+`specs/019-sign-in-options/`.
 
 ### 023 Organise TV shows on Put.io (done)
 
