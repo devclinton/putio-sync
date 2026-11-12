@@ -8,6 +8,7 @@ use common::{body_json, test_app, TestApp};
 use mockito::Matcher;
 use putio_sync_api::router;
 use putio_sync_core::config::UpdatesConfig;
+use putio_sync_update::channel::Channel;
 use putio_sync_update::UpdateService;
 use serde_json::{json, Value};
 
@@ -195,4 +196,68 @@ async fn without_a_checker_the_routes_say_so() {
     let app = test_app().await;
     let res = app.get("/update").await;
     assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// The test app with an update checker on `channel` that has found 0.4.0
+async fn checked_on(server: &mockito::ServerGuard, channel: Channel) -> TestApp {
+    let mut app = test_app().await;
+    let updates = UpdateService::for_tests(
+        UpdatesConfig::default(),
+        app.db.clone(),
+        "0.3.0".parse().unwrap(),
+        server.url(),
+    )
+    .with_channel(channel);
+    app.state = app.state.clone().with_updates(updates);
+    app.router = router(app.state.clone());
+    let res = app.post_json("/update/check", json!({})).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    app
+}
+
+#[tokio::test]
+async fn snap_gets_its_command() {
+    let server = releases_server(RELEASES).await;
+    let app = checked_on(&server, Channel::Snap).await;
+    let body = get_update(&app).await;
+    assert_eq!(body["channel"]["kind"], "snap");
+    assert_eq!(body["channel"]["label"], "Snap");
+    assert_eq!(body["channel"]["mode"], "instructions");
+    assert!(body["channel"].get("image").is_none());
+    assert_eq!(
+        body["available"]["instruction"]["commands"],
+        json!(["sudo snap refresh putio-sync"])
+    );
+    let status = body_json(app.get("/status").await).await;
+    assert_eq!(status["install_channel"], "snap");
+}
+
+#[tokio::test]
+async fn container_gets_the_pull_for_its_tag() {
+    let server = releases_server(RELEASES).await;
+    let channel = Channel::Container {
+        image: "ghcr.io/devclinton/putio-sync".into(),
+        variant: Some("dhi".into()),
+    };
+    let app = checked_on(&server, channel).await;
+    let body = get_update(&app).await;
+    assert_eq!(body["channel"]["kind"], "container");
+    assert_eq!(body["channel"]["label"], "Docker (dhi image)");
+    assert_eq!(body["channel"]["image"], "ghcr.io/devclinton/putio-sync");
+    assert_eq!(body["channel"]["variant"], "dhi");
+    let instruction = &body["available"]["instruction"];
+    assert_eq!(
+        instruction["commands"],
+        json!(["docker pull ghcr.io/devclinton/putio-sync:dhi"])
+    );
+    assert_eq!(
+        instruction["alternatives"],
+        json!(["docker pull ghcr.io/devclinton/putio-sync:dhi-0.4.0"])
+    );
+    assert_eq!(
+        instruction["steps"],
+        "Recreate the container after the pull."
+    );
+    let status = body_json(app.get("/status").await).await;
+    assert_eq!(status["install_channel"], "container");
 }
