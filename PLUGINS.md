@@ -441,7 +441,9 @@ Limits:
   shows it as **Sync rule time limit**). A slower call is stopped and passed over.
 - **Own worker.** A plugin with sync rules gets a second worker for them, sharing its
   store and settings, so a sync never waits behind the plugin's queued events. `init` runs
-  in both.
+  in both. That worker loads the plugin as soon as it starts, and the plugin is asked only
+  once it has loaded: until then, and while it loads again after a timeout, the built-in
+  rules apply.
 - **Pause.** An error, a timeout or an answer that does not check out is logged as a
   warning and kept with the plugin's runs. After 3 in a row, the plugin's sync rules rest
   for 5 minutes. An answer resets the count, and so does a reload or a settings change.
