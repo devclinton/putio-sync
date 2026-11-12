@@ -17,6 +17,17 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - The website's landing page in the same 19 languages as the docs, machine-translated and
   marked as such, with a language menu in the header. Its Docs links open the docs in the
   same language.
+- Plugin links: `plugin.toml` can name the plugin's `author` and `license` and link its
+  `docs`, `homepage`, `repository` and `issues`. Settings › Plugins shows them on the
+  plugin's tab and in the list, and **Needs settings** links to the docs. Links must be
+  https (or http to a local address). The bundled plugins set them.
+- More plugins: Settings › Plugins lists the plugins in the putio-sync plugin registry, with
+  a search, and installs or updates one in a click. Each release's SHA-256 and manifest are
+  checked against the registry before anything is written, and a new plugin starts off.
+  Turn it off or use your own registry under Plugin registry settings
+  (`[plugin_registry]`).
+- `putio-sync plugins check FOLDER` checks a plugin folder the way Reload plugins does and
+  prints each problem (`--json` for scripts); it needs no config or token.
 
 ### Fixed
 
@@ -33,17 +44,6 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   once a day, and the What's new page shows it with its release notes, a link to the
   release, and Check now and Dismiss buttons. The check sends nothing about your install;
   turn it off in Settings › General › Updates (`[updates] check = false`).
-- Plugin links: `plugin.toml` can name the plugin's `author` and `license` and link its
-  `docs`, `homepage`, `repository` and `issues`. Settings › Plugins shows them on the
-  plugin's tab and in the list, and **Needs settings** links to the docs. Links must be
-  https (or http to a local address). The bundled plugins set them.
-- More plugins: Settings › Plugins lists the plugins in the putio-sync plugin registry, with
-  a search, and installs or updates one in a click. Each release's SHA-256 and manifest are
-  checked against the registry before anything is written, and a new plugin starts off.
-  Turn it off or use your own registry under Plugin registry settings
-  (`[plugin_registry]`).
-- `putio-sync plugins check FOLDER` checks a plugin folder the way Reload plugins does and
-  prints each problem (`--json` for scripts); it needs no config or token.
 - The update notice says how putio-sync was installed (snap, Flatpak, Homebrew, .deb,
   winget, Docker, Unraid, CasaOS or Umbrel) and shows that channel's update command, with a
   Copy button, or its update step. For Docker it names the pull for your image's tag. Set
