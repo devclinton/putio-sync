@@ -40,6 +40,7 @@ pub mod tailscale;
 pub mod transfers;
 /// Subtitle translation metrics (feature 026)
 pub mod translation;
+pub mod update;
 pub mod verify;
 pub mod watch;
 
@@ -151,6 +152,11 @@ pub struct Telemetry {
     pub(crate) verify_run_active: IntGauge,
     // Feature 036
     pub(crate) tailscale_identity: IntCounterVec,
+    // Feature 055
+    pub(crate) update_checks: IntCounterVec,
+    pub(crate) update_available: IntGauge,
+    pub(crate) update_attempts: IntCounterVec,
+    pub(crate) update_verify_failures: IntCounterVec,
     // Feature 022
     pub(crate) dlna_up: IntGauge,
     pub(crate) dlna_streams_active: IntGaugeVec,
@@ -695,6 +701,35 @@ impl Telemetry {
                 &["via", "result"],
             )
             .unwrap(),
+            update_checks: IntCounterVec::new(
+                opts(
+                    "update_checks_total",
+                    "GitHub Releases checks for a newer version, by result.",
+                ),
+                &["result"],
+            )
+            .unwrap(),
+            update_available: IntGauge::with_opts(opts(
+                "update_available",
+                "1 while a newer release than the running one is known.",
+            ))
+            .unwrap(),
+            update_attempts: IntCounterVec::new(
+                opts(
+                    "update_attempts_total",
+                    "Update attempts, by what was downloaded and how it ended.",
+                ),
+                &["kind", "result"],
+            )
+            .unwrap(),
+            update_verify_failures: IntCounterVec::new(
+                opts(
+                    "update_verify_failures_total",
+                    "Updates refused by a signature or hash check, by stage.",
+                ),
+                &["stage"],
+            )
+            .unwrap(),
             dlna_up: IntGauge::with_opts(opts(
                 "dlna_up",
                 "1 while the DLNA media server is running.",
@@ -983,6 +1018,10 @@ impl Telemetry {
             Box::new(self.verify_read_bytes.clone()),
             Box::new(self.verify_run_active.clone()),
             Box::new(self.tailscale_identity.clone()),
+            Box::new(self.update_checks.clone()),
+            Box::new(self.update_available.clone()),
+            Box::new(self.update_attempts.clone()),
+            Box::new(self.update_verify_failures.clone()),
             Box::new(self.dlna_up.clone()),
             Box::new(self.dlna_streams_active.clone()),
             Box::new(self.dlna_bytes_sent.clone()),
@@ -1070,6 +1109,17 @@ impl Telemetry {
             for result in tailscale::RESULTS {
                 self.tailscale_identity.with_label_values(&[via, result]);
             }
+        }
+        for result in update::CHECK_RESULTS {
+            self.update_checks.with_label_values(&[result]);
+        }
+        for kind in update::ATTEMPT_KINDS {
+            for result in update::ATTEMPT_RESULTS {
+                self.update_attempts.with_label_values(&[kind, result]);
+            }
+        }
+        for stage in update::VERIFY_STAGES {
+            self.update_verify_failures.with_label_values(&[stage]);
         }
         for root_kind in dlna::ROOT_KINDS {
             self.dlna_streams_active.with_label_values(&[root_kind]);

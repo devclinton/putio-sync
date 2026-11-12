@@ -233,6 +233,27 @@ come from the daemon. A translated Snap Store listing is not possible: the store
 summary and description per snap (see `specs/051-ui-i18n/research.md`); a Flathub listing
 could carry translations through AppStream.
 
+### 055 Update checker and self-update
+
+Check GitHub Releases for a newer version on start and once a day (can be
+turned off), and show it in the web UI with that release's notes, next to
+What's new. What happens next depends on how putio-sync was installed:
+
+- A binary downloaded from GitHub (Windows, macOS, Linux) updates itself. An
+  "Update now" button, plus an opt-in setting to update automatically, which
+  waits until no transfer is running. It downloads a small LZMA patch from the
+  running version when the release has one, and falls back to the full
+  archive. It checks the SHA-256, swaps the binary, restarts, and rolls back if
+  the new version fails to start.
+- Managed installs (snap, apt, Homebrew, winget, Flatpak, Docker, and
+  Unraid/CasaOS/Umbrel) never touch their own files. They detect the channel
+  and show the exact update command or step. Docker tries to detect the image
+  and tag so it can name the right `docker pull`, and otherwise shows a plain
+  warning.
+
+Depends on 053's release binaries. The release workflow also builds the
+patches.
+
 ### 055 Plugin workbench (done)
 
 A basic editor and debugger on the Plugins page, with no breakpoints or stepping. New

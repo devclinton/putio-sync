@@ -45,6 +45,7 @@ COPY putio-sync-pipeline/Cargo.toml ./putio-sync-pipeline/
 COPY putio-sync-subtitles/Cargo.toml ./putio-sync-subtitles/
 COPY putio-sync-dlna/Cargo.toml ./putio-sync-dlna/
 COPY putio-sync-translation/Cargo.toml ./putio-sync-translation/
+COPY putio-sync-update/Cargo.toml ./putio-sync-update/
 
 # Create minimal source files for dependency analysis
 RUN mkdir -p putio-sync-client/src \
@@ -68,7 +69,8 @@ RUN mkdir -p putio-sync-client/src \
              putio-sync-pipeline/src \
              putio-sync-subtitles/src \
              putio-sync-dlna/src \
-             putio-sync-translation/src && \
+             putio-sync-translation/src \
+             putio-sync-update/src && \
     echo 'fn main() {}' > putio-sync-cli/src/main.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-client/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-db/src/lib.rs && \
@@ -91,7 +93,8 @@ RUN mkdir -p putio-sync-client/src \
     echo 'pub fn placeholder() {}' > putio-sync-pipeline/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-subtitles/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-dlna/src/lib.rs && \
-    echo 'pub fn placeholder() {}' > putio-sync-translation/src/lib.rs
+    echo 'pub fn placeholder() {}' > putio-sync-translation/src/lib.rs && \
+    echo 'pub fn placeholder() {}' > putio-sync-update/src/lib.rs
 
 # Generate dependency recipe
 RUN cargo chef prepare --recipe-path recipe.json
@@ -126,6 +129,7 @@ COPY putio-sync-pipeline ./putio-sync-pipeline
 COPY putio-sync-subtitles ./putio-sync-subtitles
 COPY putio-sync-dlna ./putio-sync-dlna
 COPY putio-sync-translation ./putio-sync-translation
+COPY putio-sync-update ./putio-sync-update
 # Built into the binary for the web UI's What's new (feature 017)
 COPY CHANGELOG.md ./
 

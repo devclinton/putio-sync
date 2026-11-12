@@ -1,10 +1,11 @@
 // What's new (feature 017): the changelog built into the daemon. checkNews() shows the
 // entries an upgrade added in a panel once per page load, and closing it marks them seen;
 // the page lists every release. Entry text is markdown with `code`, [links](url) and
-// **bold** only, rendered as elements; everything else stays text.
+// **bold** only, rendered as elements; everything else stays text. Above the notes, the
+// update checker (feature 055) shows a newer release with its notes, from update.js.
 
 import { get, post } from "../api.js";
-import { empty, h } from "../app.js";
+import { empty, h, toast } from "../app.js";
 import { linkParts } from "../settings/sections.js";
 
 const linked = (text) => linkParts(text).map((p) => (typeof p === "string" ? p : h("a", { href: p.href, text: p.text })));
@@ -33,7 +34,7 @@ function inline(text) {
 }
 
 /** Releases as headings, kinds and lists; `keep` picks entries, `limit` caps them */
-function notes(releases, keep = () => true, limit = Infinity) {
+export function notes(releases, keep = () => true, limit = Infinity) {
   let left = limit;
   const out = [];
   for (const r of releases) {
@@ -97,10 +98,37 @@ export async function checkNews() {
   return true;
 }
 
+/** An undismissed newer release from the update checker, or null */
+export const pending = (u) => (u && u.available && !u.available.dismissed ? u.available : null);
+
+/**
+ * Once per page load after sign-in: say so when the update checker knows a newer release
+ * that hasn't been dismissed.
+ */
+export async function checkUpdate() {
+  try {
+    const a = pending(await get("/update"));
+    if (a) toast(`putio-sync ${a.version} is available`, "ok", "See What's new, from the version on the Status page.");
+  } catch {
+    // no checker (setup mode) or offline: nothing to say
+  }
+}
+
 export async function mount(el) {
   const summary = h("p", { class: "muted", text: "Loading…" });
+  const update = h("div");
   const body = h("div", { class: "stack" });
-  el.append(h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "What's new" }), summary)), body);
+  el.append(h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "What's new" }), summary)), update, body);
+  const loadUpdate = async () => {
+    try {
+      const u = await get("/update");
+      const { updateCard } = await import("./update.js");
+      if (update.isConnected) update.replaceChildren(updateCard(u, loadUpdate));
+    } catch {
+      update.replaceChildren(); // no checker (setup mode)
+    }
+  };
+  loadUpdate();
   try {
     const data = await get("/whats-new");
     const commit = data.commit ? ` (${data.commit.slice(0, 12)})` : "";

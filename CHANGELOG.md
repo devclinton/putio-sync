@@ -14,6 +14,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- putio-sync checks GitHub for a newer release about a minute after it starts and then
+  once a day, and the What's new page shows it with its release notes, a link to the
+  release, and Check now and Dismiss buttons. The check sends nothing about your install;
+  turn it off in Settings › General › Updates (`[updates] check = false`).
 - Sign-in options: besides the API token, sign in with a username and password (on the
   sign-in page, or as HTTP basic auth), or with Google, GitHub or Discord. Each provider
   has an allow-list of account names or verified emails. Set them up in the new

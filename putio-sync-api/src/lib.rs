@@ -139,6 +139,9 @@ pub struct AppState {
     /// The DLNA media server (feature 022); `None` unless the daemon's is attached with
     /// [`AppState::with_media_server`]
     pub media_server: Option<Arc<putio_sync_dlna::MediaServer>>,
+    /// The update checker (feature 055); `None` unless the daemon's is attached with
+    /// [`AppState::with_updates`]
+    pub updates: Option<putio_sync_update::UpdateService>,
     /// The Put.io organiser (feature 023); `None` unless the daemon's is attached with
     /// [`AppState::with_organiser`]
     pub organiser: Option<Arc<putio_sync_download::Organiser>>,
@@ -213,6 +216,7 @@ impl AppState {
                     .map(|dir| dir.to_path_buf()),
             )),
             media_server: None,
+            updates: None,
             organiser: None,
             cleanup,
             storage,
@@ -252,6 +256,12 @@ impl AppState {
         media_server: Arc<putio_sync_dlna::MediaServer>,
     ) -> AppState {
         self.media_server = Some(media_server);
+        self
+    }
+
+    /// Report the daemon's update checker on `/update` (feature 055)
+    pub fn with_updates(mut self, updates: putio_sync_update::UpdateService) -> AppState {
+        self.updates = Some(updates);
         self
     }
 
@@ -482,6 +492,7 @@ pub fn router(state: AppState) -> Router {
         )
         .nest("/releases", routes::releases::router())
         .nest("/whats-new", routes::system::whats_new::router())
+        .nest("/update", routes::system::update::router())
         .nest("/tailscale", routes::system::tailscale::router())
         .nest("/logs", routes::system::logs::router())
         .nest("/media-server", routes::system::media_server::router())

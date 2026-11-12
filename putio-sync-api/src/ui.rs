@@ -103,6 +103,11 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ),
     ("pages/setup.js", JS, include_bytes!("../ui/pages/setup.js")),
     ("pages/news.js", JS, include_bytes!("../ui/pages/news.js")),
+    (
+        "pages/update.js",
+        JS,
+        include_bytes!("../ui/pages/update.js"),
+    ),
     ("pages/logs.js", JS, include_bytes!("../ui/pages/logs.js")),
     (
         "pages/status.js",
