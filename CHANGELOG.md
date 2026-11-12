@@ -49,6 +49,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   README each in `examples/plugins/`. The Plugins page, the workbench and the hooks card
   link to the matching docs pages.
 
+### Fixed
+
+- The Docker image reported version 0.0.1 in the status page, `--version` and the logs.
+  It now reports the real version.
+
 ## [0.2.2] - 2026-11-10
 
 ### Added
