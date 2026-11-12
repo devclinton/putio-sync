@@ -4,6 +4,12 @@ description = "Asks Emby to rescan just the folder of each finished download, so
 events = ["download.finished", "sync.completed"]
 tick_seconds = 5
 
+author = "devclinton"
+license = "MIT"
+docs = "https://devclinton.github.io/putio-sync/docs/plugins.html#media-servers-plex-jellyfin-and-emby"
+repository = "https://github.com/devclinton/putio-sync"
+issues = "https://github.com/devclinton/putio-sync/issues"
+
 [permissions]
 store = true
 

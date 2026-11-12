@@ -18,6 +18,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   once a day, and the What's new page shows it with its release notes, a link to the
   release, and Check now and Dismiss buttons. The check sends nothing about your install;
   turn it off in Settings › General › Updates (`[updates] check = false`).
+- Plugin links: `plugin.toml` can name the plugin's `author` and `license` and link its
+  `docs`, `homepage`, `repository` and `issues`. Settings › Plugins shows them on the
+  plugin's tab and in the list, and **Needs settings** links to the docs. Links must be
+  https (or http to a local address). The bundled plugins set them.
+- `putio-sync plugins check FOLDER` checks a plugin folder the way Reload plugins does and
+  prints each problem (`--json` for scripts); it needs no config or token.
 - Sign-in options: besides the API token, sign in with a username and password (on the
   sign-in page, or as HTTP basic auth), or with Google, GitHub or Discord. Each provider
   has an allow-list of account names or verified emails. Set them up in the new

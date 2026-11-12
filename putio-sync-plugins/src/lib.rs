@@ -32,7 +32,7 @@ pub mod workbench;
 pub mod worker;
 
 pub use service::{
-    ActionAnswer, CallError, PluginState, PluginStatus, PluginsOptions, PluginsService, TestError,
-    TEST_MESSAGE,
+    ActionAnswer, CallError, Links, PluginState, PluginStatus, PluginsOptions, PluginsService,
+    TestError, TEST_MESSAGE,
 };
 pub use worker::{PluginRun, RunResult};

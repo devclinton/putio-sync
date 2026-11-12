@@ -353,6 +353,21 @@ place to receive it, to be decided in the spec: a small Cloudflare Worker
 privacy-first service such as Aptabase or PostHog. Until then, release
 download and image pull counts are the usage signal.
 
+### 059 Plugin links and a plugin registry
+
+Plugins declare who made them and where to read more: `author`, `license`,
+`homepage`, `docs`, `repository` and `issues` in `plugin.toml`, shown as
+links on the plugin's tab. A public repository,
+`devclinton/putio-sync-plugin-registry`, lists reviewed plugins: one entry
+per plugin pointing to a pinned release archive and its SHA-256, with
+CONTRIBUTING.md, a review checklist, an entry template, example plugins and
+checks on every pull request. The Plugins page lists registry plugins under
+**More plugins**, installs one through the 029 installer after checking the
+archive (off, hosts approved as today), shows when an update is available
+and what it changes, and can remove it. A `putio-sync plugins check` command
+runs the workbench's checks on a plugin folder for authors and the
+registry. Spec: `specs/059-plugin-registry/`.
+
 ### Magnet file lists from peers (deferred from 043)
 
 When the .torrent caches never have a magnet's file list, fetch it from

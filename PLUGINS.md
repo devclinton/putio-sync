@@ -163,6 +163,22 @@ Up to 32 config fields. Mistakes name the file and the field, for example
 `plugins/ha/plugin.toml: events: unknown event type "download.done"`. The plugin shows as
 **Broken** with that message until it is fixed and reloaded.
 
+Say who made the plugin and where to read more. Each is optional; Settings › Plugins shows
+the author and license as text and the rest as links on the plugin's tab and in the list:
+
+```toml
+author = "your-github-login"     # up to 100 characters
+license = "MIT"                  # an SPDX identifier
+docs = "https://github.com/you/putio-sync-home-assistant#readme"
+homepage = "https://example.com/home-assistant"
+repository = "https://github.com/you/putio-sync-home-assistant"
+issues = "https://github.com/you/putio-sync-home-assistant/issues"
+```
+
+Links must be `https`, or `http` to a local address (`localhost`, a private IP, a `.local`
+name); up to 300 characters. When the plugin needs settings, its **Needs settings** line
+links to `docs`.
+
 Plugins that need setting up with the server (feature 031) can also declare:
 
 ```toml
@@ -337,6 +353,18 @@ Lua function's arguments and returns JSON. The full ABI is in
   `putio-plugin`, so it installs as a single `.wasm` (the Rust example does this).
 - **JavaScript** and other languages work through a WebAssembly build of their runtime
   (such as Javy for JavaScript); no example ships for them.
+
+### Checking a plugin
+
+```bash
+putio-sync plugins check ./home-assistant
+```
+
+checks a plugin folder the way **Reload plugins** does (the manifest, the entry file, and
+the Lua script's syntax, compiled but not run) and prints each problem, then
+`home-assistant 1.0.0: ok` or the number of problems. It needs no config or Put.io token.
+`--json` prints `{"name", "version", "problems"}`. Exit code: 0 no problems, 1 problems,
+2 not a folder.
 
 ### Installing a plugin
 

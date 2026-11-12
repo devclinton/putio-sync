@@ -3,6 +3,12 @@ version = "1.0.0"
 description = "Messages from a Telegram bot. Repeats of one kind are grouped into a summary."
 events = ["*"]
 
+author = "devclinton"
+license = "MIT"
+docs = "https://devclinton.github.io/putio-sync/docs/plugins.html#the-bundled-notifiers"
+repository = "https://github.com/devclinton/putio-sync"
+issues = "https://github.com/devclinton/putio-sync/issues"
+
 [permissions.http]
 host_from_config = ["api_url"]
 
