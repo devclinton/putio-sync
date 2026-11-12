@@ -1,14 +1,22 @@
-// General section (feature 046): appearance in this browser (feature 012) and which
-// credentials are set.
+// General section (feature 046): appearance in this browser (feature 012), which credentials
+// are set, and the update check (feature 055).
 
 import { get } from "../api.js";
 import { h, toast } from "../app.js";
 import { LANGUAGES, choice, nativeName, setLanguage } from "../i18n.js";
+import { groupCard } from "./form.js";
 
+// Installing automatically comes with self-update; until then a save keeps auto_install as is
+const UPDATES = {
+  id: "updates",
+  key: "updates",
+  title: "Updates",
+  fields: [["check", "Check for updates", "Asks GitHub once a day for a newer release; nothing about this install is sent", "b"]],
+};
 const PUTIO_AUTH = { token: "OAuth token set", app_password: "app password set", none: "not set" };
 const MODE_NAMES = { system: "System", light: "Light", dark: "Dark" };
 
-export const cards = (ctx) => [appearance(ctx), language(), credentials(ctx)];
+export const cards = (ctx) => [appearance(ctx), language(), credentials(ctx), groupCard(UPDATES, ctx)];
 
 /** Mode and accent radios; a change applies at once and is saved in this browser. */
 function appearance(ctx) {

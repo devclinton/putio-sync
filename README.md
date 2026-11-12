@@ -812,6 +812,10 @@ H = histogram.
 | `putio_sync_plugin_run_duration_seconds` | H | `plugin` | Duration of each plugin call |
 | `putio_sync_plugin_events_dropped_total` | counter | `plugin` | Events dropped because the plugin's queue was full |
 | `putio_sync_plugin_counter_total` | counter | `plugin`, `name` | A plugin's own counts, such as the media plugins' `refreshes`, `folders_grouped`, `skipped` and `refresh_failures` |
+| `putio_sync_update_checks_total` | counter | `result` (ok, not_modified, error, rate_limited) | Update checks against GitHub Releases (feature 055) |
+| `putio_sync_update_available` | gauge | — | 1 while a newer release is known, else 0 |
+| `putio_sync_update_attempts_total` | counter | `kind` (patch, full, installer), `result` (done, failed, rolled_back) | Self-update attempts |
+| `putio_sync_update_verify_failures_total` | counter | `stage` (signature, download, binary) | Updates stopped by a failed signature or hash check |
 | `putio_sync_log_lines_dropped_total` | counter | `reason` | Log lines the Logs page never showed: `evicted` (pushed out of memory), `lagged` (a live view fell behind) |
 | `putio_sync_start_time_seconds` | gauge | — | Process start, Unix seconds |
 | `putio_sync_build_info` | gauge (=1) | `version`, `commit` | Build identity |

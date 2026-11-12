@@ -113,6 +113,27 @@ pub fn parse(text: &str) -> Vec<Release> {
     releases
 }
 
+/// Read one release's notes (feature 055): a GitHub release body is its CHANGELOG
+/// section without the heading, as `scripts/changelog-section.sh` writes it, so it is
+/// parsed under a `## [<version>] - <date>` heading of its own. An empty body is a
+/// release with no kinds.
+pub fn parse_release(version: &str, date: Option<&str>, body: &str) -> Release {
+    let heading = match date {
+        Some(date) => format!("## [{version}] - {date}"),
+        None => format!("## [{version}]"),
+    };
+    // The heading line is the only `## [` line, so a stray one in the body can't split it
+    let body: String = body
+        .lines()
+        .filter(|l| !l.starts_with("## ["))
+        .collect::<Vec<_>>()
+        .join("\n");
+    parse(&format!("{heading}\n\n{body}\n"))
+        .into_iter()
+        .next()
+        .expect("the heading makes one release")
+}
+
 /// Add a finished entry to the last kind
 fn finish(releases: &mut [Release], entry: Option<String>) {
     let Some(text) = entry.filter(|t| !t.is_empty()) else {
@@ -129,6 +150,33 @@ fn finish(releases: &mut [Release], entry: Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_a_release_body() {
+        // as scripts/changelog-section.sh prints it: no heading, CRLF from the API too
+        let body = "### Added\r\n\r\n- An update checker that\r\n  spans lines.\r\n\r\n### Fixed\r\n\r\n- A fix.";
+        let release = parse_release("0.4.0", Some("2026-11-20"), body);
+        assert_eq!(release.name, "0.4.0");
+        assert_eq!(release.date.as_deref(), Some("2026-11-20"));
+        let kinds: Vec<&str> = release.kinds.iter().map(|k| k.name.as_str()).collect();
+        assert_eq!(kinds, ["Added", "Fixed"]);
+        assert_eq!(
+            release.kinds[0].entries[0].text,
+            "An update checker that spans lines."
+        );
+        assert_eq!(
+            release.kinds[0].entries[0].id,
+            entry_id("An update checker that spans lines.")
+        );
+    }
+
+    #[test]
+    fn an_empty_body_is_a_release_with_no_kinds() {
+        let release = parse_release("0.4.0", None, "");
+        assert_eq!(release.name, "0.4.0");
+        assert_eq!(release.date, None);
+        assert!(release.kinds.is_empty());
+    }
 
     const SAMPLE: &str = "\
 # Changelog

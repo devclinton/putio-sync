@@ -13,6 +13,8 @@
 //! - PUT  /settings/precheck - Update the release check settings
 //! - GET  /settings/tailscale - Get the Tailscale settings (feature 036)
 //! - PUT  /settings/tailscale - Update the Tailscale settings
+//! - GET  /settings/updates - Get the update check settings (feature 055)
+//! - PUT  /settings/updates - Update them; they apply at the next check
 //! - GET  /settings/hooks - Get the event hooks, header and env values masked (feature 027)
 //! - PUT  /settings/hooks - Replace the event hooks; a masked value keeps the stored one
 //! - GET  /settings/pipeline - Get the processing pipeline settings (feature 038)
@@ -47,7 +49,7 @@ use crate::Engine;
 use putio_sync_core::assistant::Change;
 use putio_sync_core::config::{
     CleanupConfig, Config, NotificationBackend, PipelineConfig, PrecheckConfig, PrecheckOverride,
-    ProgressStyle, SortOrder, StorageConfig, TailscaleConfig,
+    ProgressStyle, SortOrder, StorageConfig, TailscaleConfig, UpdatesConfig,
 };
 use putio_sync_core::error::CoreError;
 use putio_sync_core::logging::ConsoleFormat;
@@ -530,6 +532,20 @@ impl Default for TailscaleSettings {
     }
 }
 
+/// The update check (`[updates]`, feature 055)
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdatesSettings {
+    pub check: bool,
+    pub auto_install: bool,
+}
+
+impl Default for UpdatesSettings {
+    fn default() -> Self {
+        updates_view(&Config::default())
+    }
+}
+
 /// The release check settings (`[precheck]`, feature 042). A PUT body leaves out
 /// `effective`; a missing field means its default.
 #[derive(Debug, Serialize, Deserialize)]
@@ -665,6 +681,8 @@ pub fn router() -> Router<AppState> {
         .route("/precheck", put(update_precheck_settings))
         .route("/tailscale", get(get_tailscale_settings))
         .route("/tailscale", put(update_tailscale_settings))
+        .route("/updates", get(get_updates_settings))
+        .route("/updates", put(update_updates_settings))
         .route("/hooks", get(get_hooks_settings))
         .route("/hooks", put(update_hooks_settings))
         .route("/pipeline", get(get_pipeline_settings))
@@ -681,6 +699,7 @@ pub fn router() -> Router<AppState> {
         .route("/storage/preview", post(preview_storage))
         .route("/precheck/preview", post(preview_precheck))
         .route("/tailscale/preview", post(preview_tailscale))
+        .route("/updates/preview", post(preview_updates))
         .route("/hooks/preview", post(preview_hooks))
         .route("/pipeline/preview", post(preview_pipeline))
         .route("/plugins/preview", post(preview_plugins))
@@ -791,6 +810,18 @@ async fn preview_tailscale(
     let live = live_tailscale(&state);
     Ok(preview(&state, tailscale_view, live, |c| {
         apply_tailscale(settings, c)
+    })
+    .await)
+}
+
+/// POST /settings/updates/preview
+async fn preview_updates(
+    State(state): State<AppState>,
+    settings: Result<Json<UpdatesSettings>, JsonRejection>,
+) -> Result<Json<Preview>, ApiError> {
+    let settings = body(settings)?;
+    Ok(preview(&state, updates_view, live_updates(), |c| {
+        apply_updates(settings, c)
     })
     .await)
 }
@@ -935,6 +966,13 @@ fn tailscale_view(config: &Config) -> TailscaleSettings {
         identity_sign_in: config.tailscale.identity_sign_in,
         allowed_users: config.tailscale.allowed_users.clone(),
         socket: config.tailscale.socket.clone(),
+    }
+}
+
+fn updates_view(config: &Config) -> UpdatesSettings {
+    UpdatesSettings {
+        check: config.updates.check,
+        auto_install: config.updates.auto_install,
     }
 }
 
@@ -1763,6 +1801,53 @@ async fn update_tailscale_settings(
     Ok(Json(SuccessResponse {
         message: saved_message("Tailscale", &changed, live, when, &notes),
     }))
+}
+
+/// Get the update check settings
+///
+/// GET /settings/updates
+async fn get_updates_settings(
+    State(state): State<AppState>,
+) -> Result<Json<UpdatesSettings>, ApiError> {
+    Ok(Json(updates_view(&*state.config.read().await)))
+}
+
+/// Update the update check settings
+///
+/// PUT /settings/updates
+async fn update_updates_settings(
+    State(state): State<AppState>,
+    settings: Result<Json<UpdatesSettings>, JsonRejection>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let settings = body(settings)?;
+    let changed = update(&state, updates_view, |config| {
+        apply_updates(settings, config)
+    })
+    .await?;
+
+    // The checker reads its settings at every tick
+    if let Some(ref updates) = state.updates {
+        updates.configure(state.config.read().await.updates.clone());
+    }
+    let (live, when) = live_updates();
+
+    Ok(Json(SuccessResponse {
+        message: saved_message("Updates", &changed, live, when, &[]),
+    }))
+}
+
+/// Apply an updates body to `config` (shared by PUT and preview)
+fn apply_updates(settings: UpdatesSettings, config: &mut Config) -> Result<(), ApiError> {
+    config.updates = UpdatesConfig {
+        check: settings.check,
+        auto_install: settings.auto_install,
+    };
+    Ok(())
+}
+
+/// Update fields applied without a restart, and when
+fn live_updates() -> (&'static [&'static str], &'static str) {
+    (&["check", "auto_install"], "Applies at the next check")
 }
 
 /// Apply a Tailscale body to `config` (shared by PUT and preview)
