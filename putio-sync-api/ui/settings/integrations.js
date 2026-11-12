@@ -20,6 +20,7 @@ const PIPELINE = {
     ["concurrency", "Items at once", "How many items run their steps at the same time; 1 to 16", "n", 1, 16],
     ["optional_retries", "Optional step retries (seconds)", "One per line: the wait before each retry of a failing optional step. Up to 10 lines; the step is given up after the last", "ln"],
     ["staging", "Watch-folder staging", "Keep a watch-folder download out of sight until its steps are done", [["auto", "Auto", "On while a step could change files"], ["on", "On", "Always stage watch-folder downloads"], ["off", "Off", "Never stage"]]],
+    ["history_days", "Keep step history (days)", "How long History shows each finished item's steps; their output is cleared after a day. 1 to 3650", "n", 1, 3650],
   ],
 };
 

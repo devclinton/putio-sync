@@ -326,6 +326,16 @@ CREATE TABLE IF NOT EXISTS pipeline_attempts (
 )
 "#;
 
+/// SQL to create the pipeline_item_files table (feature 038, FR-024): the Put.io files each
+/// item downloaded, so a History row finds its item after the downloads are pruned
+pub const CREATE_PIPELINE_ITEM_FILES_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS pipeline_item_files (
+    item_key TEXT NOT NULL REFERENCES pipeline_items(key) ON DELETE CASCADE,
+    file_id INTEGER NOT NULL,
+    PRIMARY KEY (item_key, file_id)
+)
+"#;
+
 /// SQL to create the release_checks table (feature 042): one row per release pre-check
 pub const CREATE_RELEASE_CHECKS_TABLE: &str = r#"
 CREATE TABLE IF NOT EXISTS release_checks (
@@ -513,6 +523,8 @@ pub const CREATE_INDEXES: &str = r#"
 CREATE INDEX IF NOT EXISTS idx_pipeline_steps_item ON pipeline_steps(item_key);
 CREATE INDEX IF NOT EXISTS idx_pipeline_steps_due ON pipeline_steps(state, next_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_pipeline_attempts_step ON pipeline_attempts(step_id);
+CREATE INDEX IF NOT EXISTS idx_pipeline_item_files_file ON pipeline_item_files(file_id);
+CREATE INDEX IF NOT EXISTS idx_pipeline_items_finished ON pipeline_items(finished_at);
 CREATE INDEX IF NOT EXISTS idx_translation_callbacks_due ON translation_callbacks(state, expires_at);
 CREATE INDEX IF NOT EXISTS idx_translation_callbacks_step ON translation_callbacks(step_id);
 CREATE INDEX IF NOT EXISTS idx_subtitle_provenance_created ON subtitle_provenance(created_at);

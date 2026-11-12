@@ -715,6 +715,9 @@ pub struct PipelineConfig {
     pub optional_retries: Vec<u64>,
     /// Watch-folder staging: `auto` (on while a file-changing step is configured), `on`, `off`
     pub staging: StagingMode,
+    /// Days a finished item's step timeline stays for History (1–3650); its step output
+    /// is cleared after `[transfers] finished_retention_hours`
+    pub history_days: u32,
 }
 
 /// `[pipeline] staging`
@@ -736,17 +739,20 @@ impl Default for PipelineConfig {
             concurrency: 2,
             optional_retries: vec![60, 300, 600],
             staging: StagingMode::Auto,
+            history_days: 30,
         }
     }
 }
 
+/// Longest `[pipeline] history_days` (ten years)
+pub const MAX_PIPELINE_HISTORY_DAYS: u32 = 3650;
 /// Most entries in `[pipeline] optional_retries`
 pub const MAX_OPTIONAL_RETRIES: usize = 10;
 /// Most items whose steps run at once
 pub const MAX_PIPELINE_CONCURRENCY: usize = 16;
 
 impl PipelineConfig {
-    /// Check `concurrency` and `optional_retries`
+    /// Check `concurrency`, `optional_retries` and `history_days`
     pub fn validate(&self) -> CoreResult<()> {
         if !(1..=MAX_PIPELINE_CONCURRENCY).contains(&self.concurrency) {
             return Err(CoreError::ConfigError(format!(
@@ -759,6 +765,12 @@ impl PipelineConfig {
                 "pipeline optional_retries has at most {} entries, got {}",
                 MAX_OPTIONAL_RETRIES,
                 self.optional_retries.len()
+            )));
+        }
+        if !(1..=MAX_PIPELINE_HISTORY_DAYS).contains(&self.history_days) {
+            return Err(CoreError::ConfigError(format!(
+                "pipeline history_days must be from 1 to {}, got {}",
+                MAX_PIPELINE_HISTORY_DAYS, self.history_days
             )));
         }
         Ok(())
@@ -3144,7 +3156,15 @@ mod tests {
         assert_eq!(config.pipeline.concurrency, 2);
         assert_eq!(config.pipeline.optional_retries, vec![60, 300, 600]);
         assert_eq!(config.pipeline.staging, super::StagingMode::Auto);
+        assert_eq!(config.pipeline.history_days, 30);
         assert!(config.validate().is_ok());
+        for (days, ok) in [(1, true), (3650, true), (0, false), (3651, false)] {
+            let pipeline = super::PipelineConfig {
+                history_days: days,
+                ..Default::default()
+            };
+            assert_eq!(pipeline.validate().is_ok(), ok, "history_days {days}");
+        }
 
         let config: super::Config = toml::from_str(
             "[pipeline]\nconcurrency = 4\noptional_retries = []\nstaging = \"off\"\n",

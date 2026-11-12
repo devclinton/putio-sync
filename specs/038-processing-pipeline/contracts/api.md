@@ -28,6 +28,13 @@ pipeline row. A new filter value `processing` is added.
 
 Returns `404` for an unknown key. Works for items in Recently finished while they are kept.
 
+## `GET /history`, extended (FR-024)
+
+Each entry gains `pipeline_key`: the key of the pipeline item that downloaded the file,
+while that item is kept (`[pipeline] history_days`, default 30), else `null`. The History
+page opens `GET /active/{key}/timeline` for it, read-only. `GET|PUT /settings/pipeline`
+gains `history_days` (1 to 3650).
+
 ## `POST /active/{key}/steps/{id}/retry`
 
 Returns `202`. It is refused with `409` unless the step is `failed` or `interrupted`.

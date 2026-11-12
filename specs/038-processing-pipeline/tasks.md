@@ -247,3 +247,10 @@ Where the build differs from the spec, plan or contracts, and why.
   that finishes downloading is held back from the first moment it has a step due.
 - `mock_ui` (an example) gained `MOCK_PIPELINE`, `MOCK_HOOK_SECS`, `MOCK_HOOK_EXIT`,
   `MOCK_HOOK_REQUIRED` and `MOCK_DIR` to run quickstart 2, 3 and 5 offline.
+- FR-024 was first built as "a finished item stays for `finished_retention_hours`" (24 h),
+  while History rows are never pruned. Now `[pipeline] history_days` (default 30, 1 to
+  3650) keeps finished items with their steps and attempts, and attempt output is cleared
+  after `finished_retention_hours`. `pipeline_item_files` records the Put.io files each item
+  downloaded (when its download finishes), so `GET /history` rows carry `pipeline_key` and
+  the History page opens `GET /active/{key}/timeline` read-only. A History row older than
+  `history_days` has no timeline, so FR-024 holds for the window, not for every row.
