@@ -8,8 +8,8 @@ services:
 
   web:
     # Pin the multi-arch index digest of the release:
-    #   docker buildx imagetools inspect ghcr.io/devclinton/putio-sync:0.3.0
-    image: ghcr.io/devclinton/putio-sync:0.3.0@sha256:REPLACE_WITH_RELEASE_DIGEST
+    #   docker buildx imagetools inspect ghcr.io/devclinton/putio-sync:0.4.0
+    image: ghcr.io/devclinton/putio-sync:0.4.0@sha256:REPLACE_WITH_RELEASE_DIGEST
     user: "1000:1000"
     restart: on-failure
     environment:
