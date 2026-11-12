@@ -23,6 +23,8 @@ struct Counts {
     uploads: f64,
     cleanups: f64,
     invalid: f64,
+    // Only the unix-only permissions test reads it
+    #[cfg_attr(not(unix), allow(dead_code))]
     failures: f64,
 }
 
