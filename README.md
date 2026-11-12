@@ -1935,6 +1935,10 @@ declare and you approve, and they can keep a small key-value store. A slow or fa
 Secret settings are masked everywhere and never logged. See [PLUGINS.md](PLUGINS.md) for
 the manifest, the `putio` API and the limits.
 
+**More plugins** in Settings › Plugins installs reviewed plugins by other people from the
+[plugin registry](https://github.com/devclinton/putio-sync-plugin-registry). To list your
+own, see its [CONTRIBUTING.md](https://github.com/devclinton/putio-sync-plugin-registry/blob/main/CONTRIBUTING.md).
+
 <!-- ANCHOR_END: plugins -->
 <!-- ANCHOR: advanced-features -->
 ## Advanced Features

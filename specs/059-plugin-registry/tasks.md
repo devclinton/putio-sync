@@ -131,22 +131,27 @@ then update.
 
 **Independent test**: following CONTRIBUTING.md with the example plugin gives a passing `registry.py check`; a wrong checksum, name or manifest fails with a clear message.
 
-- [ ] T058 [P] [US4] Bring ~/dev/putio-sync-plugin-registry/scripts/registry.py in line with contracts/registry-index.md: release `url` must end `.tar.gz`, `.tgz` or `.zip` in `check_entry`; `withdrawn` ≤ 300 characters (done); run `check --offline examples/entries/*.toml`
+- [x] T058 [P] [US4] Bring ~/dev/putio-sync-plugin-registry/scripts/registry.py in line with contracts/registry-index.md: release `url` must end `.tar.gz`, `.tgz` or `.zip` in `check_entry`; `withdrawn` ≤ 300 characters (done); run `check --offline examples/entries/*.toml`
 - [ ] T059 [P] [US4] Add ~/dev/putio-sync-plugin-registry/tests/test_registry.py (stdlib `unittest`, archives built in the test, `download` replaced): good archive passes; wrong SHA-256, link, `..`, two top folders, manifest name/version/events/hosts mismatch each fail; run it in .github/workflows/check.yml
-- [ ] T060 [US4] Run `putio-sync plugins check` (from T013) on ~/dev/putio-sync-plugin-registry/examples/webhook-notifier and examples/download-counter and fix any problem; then load both in a local daemon and use **Send test event** (quickstart.md check 2)
-- [ ] T061 [US4] Ask the maintainer, then create the public repository `devclinton/putio-sync-plugin-registry`, commit (no Claude attribution) and push ~/dev/putio-sync-plugin-registry
+- [x] T060 [US4] Run `putio-sync plugins check` (from T013) on ~/dev/putio-sync-plugin-registry/examples/webhook-notifier and examples/download-counter and fix any problem; then load both in a local daemon and use **Send test event** (quickstart.md check 2)
+- [x] T061 [US4] Ask the maintainer, then create the public repository `devclinton/putio-sync-plugin-registry`, commit (no Claude attribution) and push ~/dev/putio-sync-plugin-registry
 - [ ] T062 [US4] Ask the maintainer, then create the `examples-v1.0.0` release with the archives whose SHA-256 values are in ~/dev/putio-sync-plugin-registry/examples/entries/*.toml (rebuild them and update the entries if those files are gone), and check them with `registry.py check examples/entries/*.toml` without `--offline`
 - [ ] T063 [US4] After the first putio-sync release with `plugins check`, set the `PUTIO_SYNC_VERSION` repository variable so CI runs it (~/dev/putio-sync-plugin-registry/.github/workflows/check.yml)
-- [ ] T064 [P] [US4] Link the registry's CONTRIBUTING.md from PLUGINS.md and README.md in the putio-sync repository
+- [x] T064 [P] [US4] Link the registry's CONTRIBUTING.md from PLUGINS.md and README.md in the putio-sync repository
 
 ## Phase 7: Polish
 
-- [ ] T065 [P] Document the registry in PLUGINS.md: More plugins, what "reviewed" means, install checks, updates, remove, the setting, and that every plugin needs host approval (FR-040)
-- [ ] T066 [P] Translate the new strings with scripts/i18n-translate.mjs into every putio-sync-api/ui/i18n/*.json; putio-sync-api/tests/ui_i18n.rs passes
-- [ ] T067 [P] CHANGELOG.md entry under Unreleased for links, `plugins check`, the registry, install and updates
-- [ ] T068 [P] Mark 059 done in ROADMAP.md (move the brief to the shipped list in the file's usual way)
-- [ ] T069 Run quickstart.md checks 1–11 against a local daemon and a local registry
-- [ ] T070 Run `make ci` and fix anything it reports
+- [x] T065 [P] Document the registry in PLUGINS.md: More plugins, what "reviewed" means, install checks, updates, remove, the setting, and that every plugin needs host approval (FR-040)
+- [x] T066 [P] Translate the new strings with scripts/i18n-translate.mjs into every putio-sync-api/ui/i18n/*.json; putio-sync-api/tests/ui_i18n.rs passes
+- [x] T067 [P] CHANGELOG.md entry under Unreleased for links, `plugins check`, the registry, install and updates
+- [x] T068 [P] Mark 059 done in ROADMAP.md (move the brief to the shipped list in the file's usual way)
+- [x] T069 Run quickstart.md checks 1–11 against a local daemon and a local registry
+- [x] T070 Run `make ci` and fix anything it reports
+
+Polish notes: T066 left da, fi, he, ms, nb, pt-PT and sv in English for the new strings (the
+translation service has no model for them). T069 was run in the in-app browser against a
+local registry; checks 3, 4, 9, 10 and 11 and Remove passed, and it found that **Refresh**
+did not redraw the installed plugins (fixed: it now reloads them too).
 
 ## Dependencies
 

@@ -81,7 +81,8 @@ export function panel(load) {
   const refresh = async (ev) => {
     const button = ev.currentTarget;
     button.disabled = true;
-    await fetch(true);
+    // The installed plugins' update and withdrawn notes come from the list just fetched
+    await fetch(true).then(load);
     button.disabled = false;
   };
   return [
