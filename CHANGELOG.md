@@ -56,6 +56,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 - The Docker image reported version 0.0.1 in the status page, `--version` and the logs.
   It now reports the real version.
+- The Windows downloads and installers include the Visual C++ runtime, so putio-sync
+  starts on a Windows that doesn't have the Visual C++ Redistributable installed.
 
 ## [0.2.2] - 2026-11-10
 
