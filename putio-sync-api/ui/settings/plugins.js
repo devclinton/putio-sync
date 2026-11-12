@@ -18,6 +18,19 @@ const PLUGINS = {
 
 export const cards = (ctx) => [groupCard(PLUGINS, ctx)];
 
+// Who made a plugin and where to read more (059); nothing when its manifest sets none
+const linksRow = (status) => {
+  const by = plugins.byline(status);
+  const links = plugins.links(status);
+  if (!by && !links.length) return null;
+  return h(
+    "p",
+    { class: "plugin-links muted" },
+    by ? h("span", { text: by }) : null,
+    ...links.map((l) => h("a", { href: l.href, target: "_blank", rel: "noopener noreferrer" }, l.label)),
+  );
+};
+
 // The tab shown, kept while the card is drawn again after a save
 let selected = null;
 const NOT_OK = ["broken", "needs_approval", "missing_config"];
@@ -220,8 +233,16 @@ function pluginsExtra(data, form) {
     const el = h(
       "div",
       { class: "plugin-panel", role: "tabpanel", id: `plugin-panel-${status.name}`, "aria-labelledby": `plugin-tab-${status.name}`, hidden: status.name !== selected },
-      h("p", { class: status.state === "broken" ? "error-text" : "muted", text: status.error ? `${head}: ${status.error}` : head }),
+      h(
+        "p",
+        { class: status.state === "broken" ? "error-text" : "muted" },
+        status.error ? `${head}: ${status.error}` : head,
+        status.state === "missing_config" && plugins.linkOk(status.links && status.links.docs)
+          ? [" ", h("a", { href: status.links.docs, target: "_blank", rel: "noopener noreferrer" }, "How to set it up")]
+          : null,
+      ),
       status.description ? h("p", { text: status.description }) : null,
+      linksRow(status),
       status.events && status.events.length ? h("p", { class: "muted", text: `Events: ${status.events.join(", ")}` }) : null,
       status.hooks && status.hooks.length ? h("p", { class: "muted", text: `Sync rules: ${status.hooks.join(", ")}` }) : null,
       h("p", { class: "muted" }, hosts),
@@ -257,6 +278,7 @@ function pluginsExtra(data, form) {
         h("strong", { text: status.name }),
         status.version ? h("span", { class: "muted", text: ` v${status.version}` }) : null,
         h("span", { class: broken ? "error-text one-line" : "muted one-line", title: (broken ? status.error : status.description) || null, text: broken ? status.error : plugins.summary(status.description) }),
+        linksRow(status),
       ),
       broken ? null : h("button", { type: "button", class: "btn btn-small", onclick: (ev) => turn(status, true, ev.currentTarget) }, "Enable"),
     );

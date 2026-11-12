@@ -378,6 +378,17 @@ It needs no running daemon and never creates a database. Logs go to stderr, so `
 output is clean. Exit codes: 0 ok, 1 warning, 2 problem, 3 the doctor could not run. A
 fix that deletes asks first, and with `--json` it needs `--yes` or `--dry-run`.
 
+### `plugins check`
+
+Check a plugin folder the way **Reload plugins** does. See
+[Checking a plugin](PLUGINS.md#checking-a-plugin).
+
+```bash
+putio-sync plugins check FOLDER [--json]
+```
+
+It needs no config or token. Exit codes: 0 no problems, 1 problems, 2 not a folder.
+
 ### `create`
 
 Add torrents to Put.io from files or magnet links.

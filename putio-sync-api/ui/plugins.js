@@ -269,3 +269,36 @@ export function linkLabel(url) {
     return url;
   }
 }
+
+const LOCAL = /^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|\[::1\]|.+\.local)$/;
+
+/** Whether a manifest link may be shown (as putio-sync-core's valid_link): https, or http to
+ *  a loopback or private host, up to 300 characters */
+export function linkOk(url) {
+  if (typeof url !== "string" || url.length > 300 || /[\s\p{Cc}]/u.test(url)) return false;
+  const m = /^(https?):\/\/([^/?#]*)/.exec(url);
+  if (!m) return false;
+  const authority = m[2].slice(m[2].lastIndexOf("@") + 1);
+  const host = (authority.startsWith("[") ? authority.slice(0, authority.indexOf("]") + 1) : authority.split(":")[0]).toLowerCase();
+  if (!host || host === "[]") return false;
+  return m[1] === "https" || LOCAL.test(host);
+}
+
+const LINKS = [
+  ["docs", "Docs"],
+  ["homepage", "Website"],
+  ["repository", "Source"],
+  ["issues", "Report a problem"],
+];
+
+/** A plugin's links in the order shown, skipping unset and refused ones */
+export function links(status) {
+  const set = (status && status.links) || {};
+  return LINKS.filter(([key]) => linkOk(set[key])).map(([key, label]) => ({ label, href: set[key] }));
+}
+
+/** "By Ada · MIT", "By Ada", "MIT", or "" */
+export function byline(status) {
+  const set = (status && status.links) || {};
+  return [set.author ? `By ${set.author}` : "", set.license || ""].filter(Boolean).join(" · ");
+}

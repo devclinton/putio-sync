@@ -11,6 +11,7 @@ pub mod free_space;
 pub mod history;
 pub mod list;
 pub mod login;
+pub mod plugins;
 pub mod queue;
 pub mod server;
 pub mod setup;

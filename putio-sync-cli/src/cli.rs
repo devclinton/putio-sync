@@ -720,6 +720,10 @@ pub enum Commands {
     )]
     Archive(ArchiveCommands),
 
+    /// Plugin tools for authors (feature 059)
+    #[command(subcommand, about = "Check a plugin folder")]
+    Plugins(PluginsCommands),
+
     /// First-run setup in the terminal (feature 013)
     #[command(
         about = "Set up putio-sync: Put.io, download folder, what to download",
@@ -825,6 +829,28 @@ pub struct ArchivePrometheus {
         help = "Prometheus instance label [default: the only putio-sync instance]"
     )]
     pub instance: Option<String>,
+}
+
+/// Plugin subcommands (feature 059)
+#[derive(Subcommand, Debug)]
+pub enum PluginsCommands {
+    /// Check a plugin folder the way Reload plugins does
+    #[command(
+        about = "Check a plugin folder's plugin.toml and entry file",
+        long_about = "Check a plugin folder the way Reload plugins does: the manifest's fields, \
+                      the entry file, and the Lua script's syntax (the script is compiled, not \
+                      run). Needs no config or Put.io token.\n\nExit code: 0 no problems, \
+                      1 problems, 2 not a folder."
+    )]
+    Check {
+        /// The plugin's folder
+        #[arg(value_name = "FOLDER")]
+        folder: std::path::PathBuf,
+
+        /// Print `{"name", "version", "problems"}` as JSON
+        #[arg(long = "json")]
+        json: bool,
+    },
 }
 
 /// Archive subcommands (feature 041)

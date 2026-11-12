@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use putio_sync_core::events::EventType;
 use putio_sync_core::hooks::ALL_EVENTS;
-use putio_sync_core::plugins::{valid_host, valid_name, PluginSettings};
+use putio_sync_core::plugins::{valid_host, valid_link, valid_name, PluginSettings};
 use putio_sync_core::sync_hooks::Hook;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -72,6 +72,24 @@ pub struct Manifest {
     /// Seconds between `on_tick` calls, 5 to 3600 (031); 60 when not set
     #[serde(default)]
     pub tick_seconds: Option<u64>,
+    /// Who made the plugin, up to 100 characters (059)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub author: String,
+    /// An SPDX license identifier, such as `MIT`
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub license: String,
+    /// The plugin's website
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub homepage: String,
+    /// Where to read how to set it up
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub docs: String,
+    /// Its source code
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub repository: String,
+    /// Where to report a problem
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub issues: String,
 }
 
 /// One `[[actions]]` entry (031)
@@ -305,6 +323,24 @@ impl Manifest {
         }
         if self.description.chars().count() > 300 {
             return Err("description: at most 300 characters".to_string());
+        }
+        if self.author.chars().count() > 100 || !printable(&self.author) {
+            return Err("author: at most 100 printable characters".to_string());
+        }
+        let spdx = |c: char| c.is_ascii_alphanumeric() || " .+()-".contains(c);
+        if !self.license.is_empty() && (self.license.len() > 60 || !self.license.chars().all(spdx))
+        {
+            return Err("license: an SPDX identifier, such as MIT or Apache-2.0".to_string());
+        }
+        for (field, url) in [
+            ("homepage", &self.homepage),
+            ("docs", &self.docs),
+            ("repository", &self.repository),
+            ("issues", &self.issues),
+        ] {
+            if !url.is_empty() {
+                valid_link(url).map_err(|e| format!("{}: {}", field, e))?;
+            }
         }
         match self.runtime.as_str() {
             "lua" | "wasm" => {}
@@ -919,6 +955,35 @@ default = 5
         assert!(err(&with("hooks = [\"filter\", \"filter\"]"))
             .contains("hooks: \"filter\" listed twice"));
         assert!(err(&with("hooks = []")).contains("events: list at least one event"));
+    }
+
+    #[test]
+    fn links_and_author() {
+        let m = parse(NTFY).unwrap();
+        assert!(m.author.is_empty() && m.docs.is_empty());
+        let m = parse(&with(
+            "events = [\"*\"]\nauthor = \"Ada\"\nlicense = \"MIT OR Apache-2.0\"\nhomepage = \"https://example.com\"\ndocs = \"http://nas.local/docs\"\nrepository = \"https://github.com/ada/p\"\nissues = \"https://github.com/ada/p/issues\"",
+        ))
+        .unwrap();
+        assert_eq!(m.author, "Ada");
+        assert_eq!(m.docs, "http://nas.local/docs");
+        for field in ["homepage", "docs", "repository", "issues"] {
+            let text = with(&format!(
+                "events = [\"*\"]\n{} = \"javascript:alert(1)\"",
+                field
+            ));
+            assert_eq!(
+                err(&text),
+                format!("plugins/x/plugin.toml: {}: must be an https address", field)
+            );
+        }
+        let long = format!("events = [\"*\"]\nauthor = \"{}\"", "a".repeat(101));
+        assert!(err(&with(&long)).contains("author: at most 100"));
+        assert!(
+            err(&with("events = [\"*\"]\nauthor = \"a\\u0007\"")).contains("author: at most 100")
+        );
+        assert!(err(&with("events = [\"*\"]\nlicense = \"MIT;rm\""))
+            .contains("license: an SPDX identifier"));
     }
 
     #[test]
