@@ -7,11 +7,14 @@ license.workspace = true
 repository.workspace = true
 description = "Health checks and safe fixes for putio-sync (feature 010)"
 
-# `services` (on by default) adds the Tailscale, hooks and plugins checks. Without it
-# the doctor skips them and leaves out the Lua and WebAssembly engines, for the lite CLI.
+# Each feature (all on by default) adds that check; without it the doctor skips it. The
+# lite CLI builds leave out `tailscale`, and `plugins` (the Lua and WebAssembly engines)
+# unless they ship plugins.
 [features]
-default = ["services"]
-services = ["dep:putio-sync-tailscale", "dep:putio-sync-hooks", "dep:putio-sync-plugins"]
+default = ["tailscale", "hooks", "plugins"]
+tailscale = ["dep:putio-sync-tailscale"]
+hooks = ["dep:putio-sync-hooks"]
+plugins = ["dep:putio-sync-plugins"]
 
 [dependencies]
 putio-sync-core = { path = "../putio-sync-core" }
@@ -41,8 +44,8 @@ toml = { workspace = true }
 
 [[test]]
 name = "hooks"
-required-features = ["services"]
+required-features = ["hooks"]
 
 [[test]]
 name = "plugins"
-required-features = ["services"]
+required-features = ["plugins"]

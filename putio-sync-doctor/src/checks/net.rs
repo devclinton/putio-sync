@@ -83,7 +83,7 @@ pub(crate) async fn clock_skew(ctx: &Ctx) -> Finding {
 }
 
 /// Tailscale (feature 036): only graded when sign-in or tailnet-only is on
-#[cfg(feature = "services")]
+#[cfg(feature = "tailscale")]
 pub(crate) async fn tailscale(ctx: &Ctx) -> Finding {
     use putio_sync_tailscale::{tailnet_bind, Cli, State, TailscaleService};
     let cfg = &ctx.config.tailscale;
@@ -299,7 +299,7 @@ mod tests {
         assert_eq!(clock_skew(&c).await.status, Status::Skipped);
     }
 
-    #[cfg(feature = "services")]
+    #[cfg(feature = "tailscale")]
     /// A temp dir under /tmp: unix socket paths must stay under about 104 bytes, which a
     /// long `TMPDIR` breaks
     fn short_dir() -> tempfile::TempDir {
@@ -309,7 +309,7 @@ mod tests {
             .unwrap()
     }
 
-    #[cfg(feature = "services")]
+    #[cfg(feature = "tailscale")]
     /// A fake tailscaled answering every request with `status`
     fn fake_tailscaled(dir: &std::path::Path, status: &'static str) -> std::path::PathBuf {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -332,7 +332,7 @@ mod tests {
         socket
     }
 
-    #[cfg(feature = "services")]
+    #[cfg(feature = "tailscale")]
     fn with_tailscale(
         socket: std::path::PathBuf,
         edit: impl FnOnce(&mut putio_sync_core::config::TailscaleConfig),
@@ -373,7 +373,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "services")]
+    #[cfg(feature = "tailscale")]
     async fn tailscale_grades() {
         let dir = short_dir();
         let missing = dir.path().join("none.sock");

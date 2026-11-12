@@ -7,6 +7,7 @@ pub mod api_listener;
 pub mod commands;
 pub mod diagnostics;
 pub mod output;
+pub mod services;
 #[cfg(feature = "server")]
 pub mod telemetry;
 pub mod ui;

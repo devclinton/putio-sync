@@ -16,22 +16,26 @@ name = "putio-sync"
 path = "src/main.rs"
 
 # `server` (on by default) builds the daemon, the HTTP API and web UI, the web setup
-# wizard, metrics and the archive commands. Without it (`--no-default-features`) the
-# binary is the lighter CLI-only build: the Put.io file, transfer and queue commands.
+# wizard, metrics and the archive commands, with hooks and plugins. Without it
+# (`--no-default-features`) the binary is the lighter CLI-only build: the Put.io file,
+# transfer and queue commands. `hooks` and `plugins` add event hooks and Lua/WebAssembly
+# plugins to it; the lite releases are `--features hooks` and `--features hooks,plugins`.
 [features]
 default = ["server"]
+hooks = ["dep:putio-sync-hooks", "putio-sync-doctor/hooks"]
+plugins = ["dep:putio-sync-plugins", "putio-sync-doctor/plugins"]
 server = [
+    "hooks",
+    "plugins",
     "dep:putio-sync-api",
     "dep:putio-sync-archive",
     "dep:putio-sync-tailscale",
     "dep:putio-sync-daemon",
     "dep:putio-sync-dlna",
     "dep:putio-sync-update",
-    "dep:putio-sync-hooks",
     "dep:putio-sync-notify",
     "dep:putio-sync-pipeline",
-    "dep:putio-sync-plugins",
-    "putio-sync-doctor/services",
+    "putio-sync-doctor/tailscale",
 ]
 
 [dependencies]

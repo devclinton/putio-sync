@@ -4,7 +4,8 @@
 # --target; each one is published under its own tag prefix:
 #
 #   binary          the static musl binary alone (release assets, not an image);
-#                   --build-arg PUTIO_SYNC_EDITION=lite for the CLI-only build
+#                   --build-arg PUTIO_SYNC_EDITION=lite or lite-plugins for
+#                   the CLI-only builds
 #   runtime         dhi.io/static: no shell, no package manager      :dhi-<ver>
 #   runtime-ffmpeg  runtime plus static ffmpeg/ffprobe for subtitles :dhi-ffmpeg-<ver>
 #   dev             dhi.io/alpine-base -dev: shell and apk           :dev-<ver>
@@ -27,8 +28,9 @@ COPY . .
 ARG PUTIO_SYNC_GIT_SHA=unknown
 ENV PUTIO_SYNC_GIT_SHA=$PUTIO_SYNC_GIT_SHA
 
-# full, or lite: the CLI-only build without the daemon, API and web UI (binary
-# stage only; the images run the daemon)
+# full, or a CLI-only build without the daemon, API and web UI (binary stage
+# only; the images run the daemon): lite has event hooks, lite-plugins hooks
+# and plugins
 ARG PUTIO_SYNC_EDITION=full
 
 # The *-linux-musl host target links statically by default: SQLite, Lua and
@@ -36,11 +38,12 @@ ARG PUTIO_SYNC_EDITION=full
 ARG TARGETARCH
 RUN --mount=type=cache,id=putio-sync-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=putio-sync-target-${TARGETARCH}-${PUTIO_SYNC_EDITION},target=/build/target \
-    if [ "$PUTIO_SYNC_EDITION" = lite ]; then \
-        cargo build --release --locked -p putio-sync-cli --no-default-features; \
-    else \
-        cargo build --release --locked --bin putio-sync; \
-    fi && \
+    case "$PUTIO_SYNC_EDITION" in \
+        lite) cargo build --release --locked -p putio-sync-cli --no-default-features --features hooks ;; \
+        lite-plugins) cargo build --release --locked -p putio-sync-cli --no-default-features --features hooks,plugins ;; \
+        full) cargo build --release --locked --bin putio-sync ;; \
+        *) echo "Unknown PUTIO_SYNC_EDITION: $PUTIO_SYNC_EDITION"; exit 1 ;; \
+    esac && \
     cp target/release/putio-sync /putio-sync && \
     if readelf -d /putio-sync | grep -q NEEDED; then \
         echo "putio-sync is dynamically linked:"; readelf -d /putio-sync | grep NEEDED; exit 1; \

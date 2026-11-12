@@ -285,17 +285,28 @@ cargo run -- --help
 
 ## CLI-only build (lite)
 
-`putio-sync-lite` is the same `putio-sync` command without the daemon, the HTTP API
-and web UI, the setup wizard, metrics or the archive commands. It keeps `login`,
+The CLI-only builds are the same `putio-sync` command without the daemon, the HTTP API
+and web UI, the setup wizard, metrics or the archive commands. They keep `login`,
 `files`, `download`, `stat`, `history`, `queue`, `transfers`, `status`, `health`,
-`debug` and `doctor`, and uses the same config file. In `doctor` it skips the
-Tailscale, hooks and plugins checks. Use it to manage Put.io from a terminal or a
-script without running a server.
+`debug` and `doctor`, and use the same config file. Use one to manage Put.io from a
+terminal or a script without running a server. There are two:
 
-Each release has a lite tarball or zip next to the full one:
-`putio-sync-lite-X.Y.Z-linux-x86_64.tar.gz`, `-linux-aarch64.tar.gz`,
-`-macos-arm64.tar.gz`, and `putio-sync-lite-vX.Y.Z-x86_64-pc-windows-msvc.zip`
-(and `aarch64-`). The binary inside is still named `putio-sync`.
+| Edition | Event hooks | Lua/WASM plugins |
+|---------|-------------|------------------|
+| `putio-sync-lite` | yes | no |
+| `putio-sync-lite-plugins` | yes | yes |
+
+Hooks and plugins run on the events a command emits (a download finishing or failing,
+low Put.io storage), and the command waits up to two minutes for them before it exits.
+With plugins, `download` also applies their filters and rename and folder rules. The
+transfer events come from the daemon, so a lite build never sends them. In `doctor`,
+both skip the Tailscale check, and `putio-sync-lite` also skips the plugins check.
+
+Each release has these tarballs and zips next to the full one, for each edition
+(`lite` or `lite-plugins`): `putio-sync-lite-X.Y.Z-linux-x86_64.tar.gz`,
+`-linux-aarch64.tar.gz`, `-macos-arm64.tar.gz`, and
+`putio-sync-lite-vX.Y.Z-x86_64-pc-windows-msvc.zip` (and `aarch64-`). The binary
+inside is still named `putio-sync`.
 
 ```bash
 curl -LO https://github.com/devclinton/putio-sync/releases/latest/download/putio-sync-lite-X.Y.Z-linux-x86_64.tar.gz
@@ -304,10 +315,10 @@ sudo install putio-sync-lite-X.Y.Z-linux-x86_64/putio-sync /usr/local/bin/
 putio-sync login
 ```
 
-From source:
+From source, pick the features (leave them out for a CLI with neither):
 
 ```bash
-cargo build --release -p putio-sync-cli --no-default-features
+cargo build --release -p putio-sync-cli --no-default-features --features hooks,plugins
 ```
 
 ---
