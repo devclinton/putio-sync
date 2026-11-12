@@ -59,8 +59,11 @@ impl HookSlot {
         &self.slot.name
     }
 
+    /// Whether to ask it about `hook`: until its state is built the built-in rule
+    /// applies, rather than a call that waits for the plugin to load
     fn ready(&self, hook: Hook, now: Instant) -> bool {
         self.hooks.contains(&hook)
+            && self.slot.loaded()
             && self
                 .failures
                 .lock()
