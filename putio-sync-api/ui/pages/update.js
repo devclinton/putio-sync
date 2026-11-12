@@ -1,10 +1,30 @@
-// The update card on What's new (feature 055): a newer release, its notes, and when the last
-// check ran. Loaded on demand from the page, so it does not count towards the first load.
+// The update card on What's new (feature 055): a newer release, how this install gets it, its
+// notes, and when the last check ran. Loaded on demand from the page, so it does not count
+// towards the first load.
 
 import { post } from "../api.js";
-import { h, toast, toastError } from "../app.js";
+import { copyText, h, toast, toastError } from "../app.js";
 import { relative } from "../format.js";
 import { notes, pending } from "./news.js";
+
+/** A command with a Copy button */
+function command(text) {
+  const copy = h("button", { type: "button", class: "btn btn-small" }, "Copy");
+  copy.onclick = () => copyText(text).then(() => toast("Copied"), () => toast("Couldn't copy", "error", text));
+  return h("div", { class: "cmd" }, h("code", { text }), copy);
+}
+
+/** How a managed install gets the new version: a download, commands, a pinned
+ * alternative, then any steps. These channels never get an Update button (FR-010). */
+function howTo(i, releaseUrl) {
+  return [
+    i.link && i.link !== releaseUrl ? h("p", {}, h("a", { href: i.link, target: "_blank", rel: "noopener", text: `Download ${i.link.split("/").pop()}` })) : null,
+    i.commands.map(command),
+    i.alternatives.length ? h("p", { class: "muted", text: "Or pin the new version:" }) : null,
+    i.alternatives.map(command),
+    i.steps ? h("p", { text: i.steps }) : null,
+  ];
+}
 
 /** The update card: a newer release and its notes, or when the last check ran */
 export function updateCard(u, reload) {
@@ -45,6 +65,8 @@ export function updateCard(u, reload) {
     { class: "card", id: "card-update" },
     h("h2", { text: title }),
     h("p", { text: subtitle }),
+    h("p", { class: "muted", text: `Installed with ${u.channel.label}.` }),
+    a && u.channel.mode === "instructions" ? howTo(a.instruction, a.url) : null,
     a ? h("div", { class: "stack" }, notes(a.releases)) : null,
     status,
     h("div", { class: "dialog-actions" }, actions),

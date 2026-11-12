@@ -188,7 +188,7 @@ The web UI wrapped with Capacitor as an iOS and Android app: connect to a
 putio-sync server by address or QR code, push notifications for the events
 from 030, and share links or torrent files from other apps straight to Put.io.
 
-### 038 Processing pipeline and its view
+### 038 Processing pipeline and its view (done)
 
 Every item goes through a pipeline of steps, and the UI shows where it is:
 

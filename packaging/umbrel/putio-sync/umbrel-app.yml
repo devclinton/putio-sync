@@ -4,7 +4,7 @@ storage:
   dataRoot: data
 category: files
 name: putio-sync
-version: "0.2.2"
+version: "0.3.0"
 tagline: Download your Put.io transfers automatically
 description: >-
   putio-sync is an unofficial sync daemon for Put.io; it is not affiliated with Put.io.

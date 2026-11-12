@@ -11,6 +11,9 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
+import tempfile
 
 I18N = os.path.normpath(os.path.dirname(os.path.abspath(__file__)) + "/../i18n")
 
@@ -65,9 +68,15 @@ def protect(text):
 
 def repair(translated, source):
     """A translation fixed up, or None when it lost or garbled a placeholder."""
-    if "⟦" in translated or "⟧" in translated:                  # the service's own markers leaked
+    # The service's own markers leaked ("⟦ 1⟧"), with the placeholder it lost
+    # put back at the end: keep the one in place
+    t = re.sub(r"⟦\s*(\d+)\s*⟧", r"{\1}", translated)
+    if t != translated:
+        while (m := re.search(r"\s*\{(\d+)\}\s*$", t)) and t[:m.start()].count("{" + m.group(1) + "}"):
+            t = t[:m.start()]
+    if "⟦" in t or "⟧" in t or "\ufffd" in t:
         return None
-    t = re.sub(r"\]\s+\{(\d+)\}", r"]{\1}", translated)           # "[text] {0}"
+    t = re.sub(r"\]\s+\{(\d+)\}", r"]{\1}", t)                    # "[text] {0}"
     t = re.sub(r"\{\s*(\d+)\s*\}", r"{\1}", t)                     # "{ 0 }"
     if sorted(TOKEN.findall(t)) != sorted(TOKEN.findall(source)):
         return None
@@ -178,9 +187,66 @@ def translate_content(content, catalog, slug):
     return "\n".join(out)
 
 
-def load(lang):
-    path = os.path.join(I18N, f"{lang}.json")
+def load(lang, directory=I18N):
+    path = os.path.join(directory, f"{lang}.json")
     if not os.path.exists(path):
         return {}
     with open(path) as f:
         return json.load(f)
+
+
+def write(path, catalog):
+    with open(path, "w") as f:
+        json.dump(catalog, f, ensure_ascii=False, indent=0, sort_keys=True)
+        f.write("\n")
+
+
+def fill(english, langs, directory=I18N):
+    """Send the strings each catalog in directory lacks to atranslate-cli, and
+    drop strings that are no longer in english ({key: protected text}). Needs
+    ATRANSLATE_URL (and ATRANSLATE_TOKEN, if the service wants one)."""
+    server = os.environ.get("ATRANSLATE_URL")
+    if not server:
+        sys.exit("Set ATRANSLATE_URL to the atranslate service, e.g. http://<host>:8400")
+    os.makedirs(directory, exist_ok=True)
+
+    def usable(have, k):
+        return isinstance(have.get(k), str) and repair(have[k], english[k]) is not None
+
+    with tempfile.TemporaryDirectory(prefix="putio-sync-i18n-") as tmp:
+        missing, todo = {}, []
+        for lang in langs:
+            have = load(lang, directory)
+            gaps = [k for k in english if not usable(have, k)]
+            if gaps:
+                todo.append(lang)
+                missing.update((k, english[k]) for k in gaps)
+
+        if todo:
+            words = sum(len(s.split()) for s in missing.values())
+            print(f"{len(missing)} strings ({words} words) to {','.join(todo)}")
+            write(os.path.join(tmp, "en.json"), missing)
+            args = ["atranslate-cli", "json", os.path.join(tmp, "en.json"),
+                    "--to", ",".join(SERVICE.get(l, l) for l in todo),
+                    "--out-dir", tmp, "--timeout", os.environ.get("ATRANSLATE_TIMEOUT", "43200"),
+                    "--server", server, "--quiet"]
+            if os.environ.get("ATRANSLATE_TOKEN"):
+                args += ["--token", os.environ["ATRANSLATE_TOKEN"]]
+            if subprocess.run(args).returncode:
+                print("atranslate-cli failed; keeping what it wrote", file=sys.stderr)
+
+        for lang in langs:
+            have = load(lang, directory)
+            fresh_path = os.path.join(tmp, f"{SERVICE.get(lang, lang)}.json")
+            fresh = json.load(open(fresh_path)) if os.path.exists(fresh_path) else {}
+            merged = {}
+            for k, en in english.items():
+                for source in (fresh, have):
+                    t = source.get(k)
+                    if isinstance(t, str) and repair(t, en) is not None:
+                        merged[k] = t
+                        break
+            print(f"{lang}: {len(merged)} of {len(english)} strings")
+            # No catalog means no page for that language (build.sh)
+            if merged:
+                write(os.path.join(directory, f"{lang}.json"), merged)
