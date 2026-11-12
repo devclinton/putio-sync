@@ -20,6 +20,65 @@ Homebrew, binary). Task guides for Radarr/Sonarr, folder rules, watch
 folders, metrics and Grafana, and troubleshooting with the doctor. They live
 in `docs/` and are linked from the UI.
 
+### 056 Usage profile in the setup wizard
+
+Goal: a new user is set up and syncing in under 60 seconds. The wizard asks
+four things and detects or recommends the rest:
+
+1. **Language** (first, before the setup code): the 051 UI languages,
+   starting on the browser's language, switching the wizard at once. Saved
+   as the UI language; every wizard page keeps a switcher.
+2. **Setup code**: the console prints a setup link with the code in it
+   (`http://host:port/setup#code=…`), so opening it skips typing the code.
+3. **Put.io link** (013 device code).
+4. **How will you use putio-sync?** (one screen): what is downloaded
+   (movies, TV, music, ebooks and audiobooks, software, other), and how it
+   arrives (Radarr, Sonarr or Lidarr found by 018 discovery and pre-ticked;
+   added by hand on Put.io; a watch folder). Kinds are pre-ticked from the
+   Put.io account's top-level folder names (`Movies`, `TV`, `Music`…).
+
+Then a review screen with **Start syncing**. Each recommendation has a
+one-line reason and can be changed or turned off; "I'll set it up myself"
+keeps today's step-by-step wizard. The download folder step is shown only
+when the detected folder (`/downloads` in a container) fails the 013 check,
+and the dry run becomes a link on the review screen instead of a step.
+
+What the answers set:
+
+- **Folder rules**: a rule per ticked kind with its type preset (video,
+  audio, ebooks; "everything" for software), on the Put.io folder the kind
+  was found in. The default `blocked_extensions` list blocks `exe`, `msi`,
+  `dmg`, `pkg`, `apk` and `jar`, so a software profile must lift it there,
+  or nothing downloads.
+- **Radarr/Sonarr/Lidarr**: `[arr]` on with a generated password, each app
+  set up through the 018/049 flow (download client, path mapping), with
+  Completed Download Handling and Import Extra Files listed as
+  recommendations to turn on.
+- **Release pre-check** (042): `min_size_mb` defaults to 50, which turns
+  away music, ebook and software releases. Set it per category and watch
+  folder for each kind (for example 5 MB for music, 1 MB for ebooks, off for
+  software).
+- **Delete from Put.io after download**: recommended on when an *arr app
+  imports the files (Put.io is a staging area), off otherwise (Put.io is the
+  library). Shown as a choice that deletes, with the 015 warning, and with
+  empty-folder cleanup (005) turned on with it.
+- **Subtitles** (025): video profiles get the UI language (plus English
+  when it differs), download-only, using Put.io's subtitles, which need no
+  key. Music, ebook and software categories are excluded. OpenSubtitles,
+  transcription and translation stay off; they need keys or a server.
+- **Watch folder**: on with the detected folder (`/watches` in a container)
+  when ticked.
+- **Left at defaults** and not asked: workers, verify, existing files
+  (resume), retries, bandwidth, stall checks, storage free-up (it deletes),
+  scheduled doctor (on), logging, release check. Metrics, DLNA, Tailscale,
+  notifications, hooks and plugins move out of the wizard to Settings. The
+  review screen mentions DLNA for video profiles, and
+  Tailscale identity sign-in when a Tailscale socket is found.
+
+The answers are saved, so Settings can run the profile again later and
+preview the differences as 015 does, without overwriting changes the user
+made by hand.
+
 ## Queued: features
 
 ### 019 Sign-in options (done)
@@ -186,6 +245,48 @@ with the last 20 runs kept for Run again. A "Writing and debugging plugins" guid
 docs book, the starters in `examples/plugins/`, and docs links from the UI. The whole
 workbench loads with `import()`, outside the always-loaded UI. See
 `specs/055-plugin-workbench/`.
+
+### 057 More plugin hooks and events
+
+Plugins can only watch today: the 14 event types in EVENTS.md, plus
+`on_tick`, `on_action` and `health`. This adds events and callbacks, in this
+order. New event types stay in schema version 1 (added types only), go into
+`schema.json` so the 055 event picker shows them, and each gets a sample
+payload.
+
+1. **`pipeline.finished`** for every item that leaves the pipeline, with
+   `result` (`success`, `warnings`, `skipped`), the item's files and
+   `warnings`. `pipeline.completed` is sent only with warnings, so nothing
+   says an item is fully ready (downloaded, subtitled, translated). The
+   bundled media-server plugins move to it and drop their folder grouping
+   where they can.
+2. **Plugins as pipeline steps**: `plugin.on_item(item, stage)` gets the same
+   item JSON as a command step and returns `done`, `skip` (`pre_download`
+   only) or an error. A stage lists the plugin by name like a hook, and the
+   required/optional rules, retries and Retry/Skip on the Active page apply
+   as they are. Runs on the plugin's own thread with `timeout_secs`.
+3. **Health events**, which 030 needs: `transfer.stalled` (the Put.io
+   transfer stall check flagged a transfer), `doctor.problem` (a scheduled doctor run found a new
+   problem), `putio.unreachable` / `putio.recovered`, and `auth.expired` (the
+   Put.io token was refused).
+4. **Pairs and gaps**: `sync.started`, `download.started`, a throttled
+   `download.progress` (at most one per file per 10 s, opt-in by name, not
+   matched by `"*"`), `storage.recovered`, and `local_disk.low` /
+   `local_disk.recovered` for the download folder's disk (`storage.low` is
+   Put.io's).
+5. **Subsystems with no events**: `subtitles.found` / `subtitles.missing`,
+   `translation.finished` / `translation.failed`, `archive.extracted` /
+   `archive.failed`, `arr.unreachable` / `arr.recovered`, and
+   `cleanup.deleted` when delete-after-download removes a file from Put.io.
+6. **Lifecycle**: `daemon.started`, `daemon.stopping` and `config.changed`
+   (which sections changed, no values) as events; `plugin.on_config_changed()`
+   when the plugin's own settings are saved, and `plugin.on_unload()` before a
+   reload or shutdown so it can send what it has grouped, both with a short
+   time limit.
+
+The sync-time decision hooks (filter, rename, folder rules) stay in 028.
+Each new callback gets a starter in `examples/plugins/` and a section in
+PLUGINS.md; each event gets its table in EVENTS.md.
 
 ### Magnet file lists from peers (deferred from 043)
 
