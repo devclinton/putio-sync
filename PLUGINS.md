@@ -376,6 +376,38 @@ to check before turning it on. Installing over a plugin of the same name needs *
 which keeps its settings and store. `POST /plugins/install` does the same from scripts; see
 the [README](README.md#http-api).
 
+### Plugins from the registry
+
+Settings › Plugins › **More plugins** lists the plugins in the
+[putio-sync plugin registry](https://github.com/devclinton/putio-sync-plugin-registry):
+plugins by other people that a maintainer reviewed. Each shows who made it, its license,
+links, the events it runs on, its sync rules and the hosts it contacts. **Install** asks
+first, then downloads the release and checks it before anything is written:
+
+- its SHA-256 must be the one the registry pinned;
+- a `.tar.gz` must hold one folder of plain files (no links, no `..`), at most 200 files
+  and 5 MB; a `.wasm` must carry its manifest;
+- its `plugin.toml` must have the name, version, runtime, events, sync rules and hosts the
+  registry lists.
+
+The plugin is written like any install and starts off; turn it on and approve its hosts as
+usual. Its folder gets a `.registry.json` saying where and which version it came from, and
+its tab says **From the plugin registry**. When the registry lists a newer release, the
+button says **Update to** that version; an update keeps the plugin's settings and store. A
+plugin you put in the folder yourself is never replaced by one from the registry of the
+same name.
+
+The list is fetched when you open More plugins, and kept for 6 hours in
+`plugin-data/registry-index.json`; **Refresh** fetches it again. If a fetch fails the kept
+list is shown with the reason. Releases that need a newer putio-sync say so instead of
+offering Install. Turn the registry off, or point it at a registry of your own, under
+**Plugin registry settings** (`[plugin_registry]` in the config). The registry's
+[CONTRIBUTING.md](https://github.com/devclinton/putio-sync-plugin-registry/blob/main/CONTRIBUTING.md)
+explains how to list a plugin.
+
+`GET /plugins/registry` (`?refresh=true` to fetch now) and
+`POST /plugins/registry/install` `{"name": "..."}` do the same from scripts.
+
 ## Sync rules
 
 A plugin can also take part in a sync with up to three **sync rules**. They are called

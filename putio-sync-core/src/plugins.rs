@@ -82,6 +82,42 @@ impl Default for PluginSettings {
     }
 }
 
+/// The registry's index on GitHub
+pub const DEFAULT_REGISTRY_URL: &str =
+    "https://raw.githubusercontent.com/devclinton/putio-sync-plugin-registry/main/index.json";
+
+/// `[plugin_registry]`: where More plugins lists reviewed plugins from (feature 059)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PluginRegistryConfig {
+    /// Fetch the list at all; off makes no request
+    pub enabled: bool,
+    /// The registry's `index.json`
+    pub url: String,
+}
+
+impl Default for PluginRegistryConfig {
+    fn default() -> Self {
+        PluginRegistryConfig {
+            enabled: true,
+            url: DEFAULT_REGISTRY_URL.to_string(),
+        }
+    }
+}
+
+impl PluginRegistryConfig {
+    /// Whether nothing differs from the default, so the section is left out of a save
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The address follows the link rule
+    pub fn validate(&self) -> CoreResult<()> {
+        valid_link(&self.url)
+            .map_err(|e| CoreError::ConfigError(format!("plugin_registry.url: {}", e)))
+    }
+}
+
 /// Whether `name` is a valid plugin name: `[A-Za-z0-9_-]{1,40}`
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
@@ -334,6 +370,22 @@ mod tests {
 
     fn err(p: PluginSettings) -> String {
         validate(&[p]).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn registry_config() {
+        let c: PluginRegistryConfig = toml::from_str("enabled = false").unwrap();
+        assert!(!c.enabled && c.url == DEFAULT_REGISTRY_URL);
+        assert!(PluginRegistryConfig::default().validate().is_ok());
+        let bad = PluginRegistryConfig {
+            url: "http://example.com/index.json".into(),
+            ..Default::default()
+        };
+        assert!(bad
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("plugin_registry.url"));
     }
 
     #[test]

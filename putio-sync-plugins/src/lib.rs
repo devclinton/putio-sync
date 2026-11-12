@@ -23,6 +23,7 @@ pub mod host;
 pub mod install;
 pub mod manifest;
 pub mod paths;
+pub mod registry;
 pub mod sandbox;
 pub mod service;
 pub mod source;
