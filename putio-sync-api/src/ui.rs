@@ -68,6 +68,11 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("stream_mode.js", JS, include_bytes!("../ui/stream_mode.js")),
     ("hooks.js", JS, include_bytes!("../ui/hooks.js")),
     ("timeline.js", JS, include_bytes!("../ui/timeline.js")),
+    (
+        "timeline_view.js",
+        JS,
+        include_bytes!("../ui/timeline_view.js"),
+    ),
     ("plugins.js", JS, include_bytes!("../ui/plugins.js")),
     ("notify.js", JS, include_bytes!("../ui/notify.js")),
     ("verify.js", JS, include_bytes!("../ui/verify.js")),

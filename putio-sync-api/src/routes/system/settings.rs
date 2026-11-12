@@ -1563,7 +1563,7 @@ async fn preview_pipeline(
 /// Pipeline settings apply without a restart under both engines
 pub(crate) fn live_pipeline() -> (&'static [&'static str], &'static str) {
     (
-        &["concurrency", "optional_retries", "staging"],
+        &["concurrency", "optional_retries", "staging", "history_days"],
         "Applies now",
     )
 }
