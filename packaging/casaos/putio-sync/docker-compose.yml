@@ -1,12 +1,14 @@
 name: putio-sync
 services:
   putio-sync:
-    image: ghcr.io/devclinton/putio-sync:0.2.2
+    image: ghcr.io/devclinton/putio-sync:0.3.0
     container_name: putio-sync
     restart: unless-stopped
     user: "$PUID:$PGID"
     environment:
       TZ: $TZ
+      # Tells the update checker how this install is updated (feature 055)
+      PUTIO_SYNC_INSTALL: casaos
       # 0.2.1 leaves HOME at / for uids other than 99, where logs can't be written.
       HOME: /config
     ports:
@@ -50,7 +52,7 @@ x-casaos:
   port_map: "15432"
   scheme: http
   category: Media
-  version: "0.2.2"
+  version: "0.3.0"
   architectures:
     - amd64
     - arm64

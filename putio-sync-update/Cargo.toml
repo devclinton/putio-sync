@@ -26,6 +26,10 @@ chrono = { version = "0.4", features = ["serde"] }
 # Logging
 tracing = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+# The Windows installer's uninstall key (channel detection)
+windows-sys = { version = "0.59", features = ["Win32_System_Registry"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.8"

@@ -251,6 +251,8 @@ main { max-width: 1160px; margin: 0 auto; padding: 40px 40px 80px; outline: none
 .one-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toolbar:has(> .code) { align-items: center; }
 .code { margin: 0; user-select: all; cursor: text; }
+.cmd { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+.cmd code { flex: 1; overflow-wrap: anywhere; user-select: all; }
 @media (min-width: 900px) {
   .settings-layout { grid-template-columns: 230px minmax(0, 1fr); align-items: start; }
   .settings-nav { position: sticky; top: var(--s-4); flex-direction: column; overflow: visible; }

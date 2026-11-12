@@ -4,13 +4,15 @@
 // or page change only. Rows can be flagged fake, and rejected rows marked not fake, with
 // the flags for the page loaded in one request. The Verification panel (feature 034)
 // starts and steers a verify run and lists open problems; it polls every 2 s while a
-// run is going.
+// run is going. A row whose file a kept pipeline item downloaded opens that item's step
+// timeline (feature 038, FR-024).
 
 import { controlVerify, get, startVerify, verifyStatus } from "../api.js";
 import { empty, fill, h, toastError } from "../app.js";
 import { flagControl, loadFlags } from "../flags.js";
 import { bytes, dateTime, speed, utc } from "../format.js";
 import { settingsHref } from "../settings/sections.js";
+import { timelineView } from "../timeline_view.js";
 import { controls, methodLabel, progressPercent, resultLabel, stateLabel, summaryLine } from "../verify.js";
 
 const PAGE = 50;
@@ -273,8 +275,31 @@ function row(e) {
     h("td", { class: "num right", "data-label": "Size", text: bytes(e.file_size) }),
     h("td", { class: "num right", "data-label": "Speed", text: e.speed_bps ? speed(e.speed_bps) : "—" }),
     h("td", { "data-label": "Verified", text: action === "downloaded" ? methodLabel(e.verify, e.redownloads || 0) : "—" }),
-    actions(flagControl(flags, { target: { history_id: e.id }, name: e.filename, onChange: refresh })),
+    actions(
+      e.pipeline_key
+        ? h("button", { type: "button", class: "btn btn-small", "aria-expanded": "false", "aria-label": `Steps of ${e.filename}`, onclick: (ev) => toggle(ev.currentTarget, e) }, "Steps")
+        : null,
+      flagControl(flags, { target: { history_id: e.id }, name: e.filename, onChange: refresh }),
+    ),
   );
+}
+
+/** Open or close the steps of `e` under its row */
+function toggle(button, e) {
+  const tr = button.closest("tr");
+  const open = tr.nextElementSibling?.classList.contains("timeline-row");
+  open ? tr.nextElementSibling.remove() : tr.after(steps(e));
+  button.setAttribute("aria-expanded", String(!open));
+}
+
+/** The expanded row under `e`: its item's steps */
+function steps(e) {
+  const cell = h("td", { colspan: "7" }, h("p", { class: "muted", text: "Loading…" }));
+  get(`/active/${encodeURIComponent(e.pipeline_key)}/timeline`).then(
+    (t) => cell.isConnected && cell.replaceChildren(timelineView(t)),
+    (err) => cell.isConnected && cell.replaceChildren(h("p", { class: "muted", text: err.status === 404 ? "The steps of this item are no longer kept." : err.error })),
+  );
+  return h("tr", { class: "timeline-row" }, cell);
 }
 
 function renderRejected(rows, total, filtered) {
@@ -316,4 +341,4 @@ function rejectedRow(r) {
   );
 }
 
-const actions = (control) => h("td", { class: "actions-cell", "data-label": "Actions" }, h("div", { class: "row-actions" }, control));
+const actions = (...controls) => h("td", { class: "actions-cell", "data-label": "Actions" }, h("div", { class: "row-actions" }, controls));

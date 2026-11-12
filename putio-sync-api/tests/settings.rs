@@ -879,11 +879,12 @@ async fn pipeline_settings_validate_and_apply_now() {
     assert_eq!(view["concurrency"], 2);
     assert_eq!(view["optional_retries"], json!([60, 300, 600]));
     assert_eq!(view["staging"], "auto");
+    assert_eq!(view["history_days"], 30);
 
     let (status, body) = put(
         &app,
         "/settings/pipeline",
-        json!({"concurrency": 4, "optional_retries": [5, 10], "staging": "off"}),
+        json!({"concurrency": 4, "optional_retries": [5, 10], "staging": "off", "history_days": 90}),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -896,6 +897,7 @@ async fn pipeline_settings_validate_and_apply_now() {
         (stored.concurrency, stored.optional_retries.clone()),
         (4, vec![5, 10])
     );
+    assert_eq!(stored.history_days, 90);
     let _ = pipeline;
 
     for bad in [
@@ -903,6 +905,8 @@ async fn pipeline_settings_validate_and_apply_now() {
         json!({"concurrency": 17}),
         json!({"optional_retries": [1,1,1,1,1,1,1,1,1,1,1]}),
         json!({"staging": "maybe"}),
+        json!({"history_days": 0}),
+        json!({"history_days": 3651}),
     ] {
         let (status, body) = put(&app, "/settings/pipeline", bad.clone()).await;
         assert!(
