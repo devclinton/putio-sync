@@ -33,7 +33,7 @@
 //! of date; `MOCK_ACTIVE_COUNT=200` adds that many generated transfers. Sintel is on hold
 //! (its NAS download is held while Put.io keeps going), the folder `Documentaries/Planet`
 //! has a paused file, and Recently finished holds one done and one failed item.
-//! `MOCK_NAS_PAUSED=1` starts with the Pause NAS downloads switch on.
+//! `MOCK_NAS_PAUSED=1` starts with the Pause local downloads switch on.
 //! Feature 042: the Stats page's "Rejected releases" and "Magnet lookups" tiles count a
 //! week of seeded release checks: fakes rejected before and on Put.io, magnets found in
 //! itorrents.net or sent to Put.io, and one older reject that only 30d and longer show.

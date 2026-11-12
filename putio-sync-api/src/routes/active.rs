@@ -33,7 +33,7 @@ pub struct ActiveResponse {
     /// items that are downloaded but still being processed (feature 038)
     #[serde(flatten)]
     pub pipeline: serde_json::Value,
-    /// The Pause NAS downloads switch is on
+    /// The Pause local downloads switch is on
     pub nas_paused: bool,
     /// Items that left the list within `[transfers] finished_retention_hours`
     pub recently_finished: Vec<FinishedItem>,

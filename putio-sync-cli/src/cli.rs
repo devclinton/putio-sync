@@ -1178,7 +1178,7 @@ pub enum QueueCommands {
         /// File IDs to pause
         #[arg(
             value_name = "FILES",
-            help = "File IDs to pause (omit to turn on Pause NAS downloads)"
+            help = "File IDs to pause (omit to turn on Pause local downloads)"
         )]
         files: Vec<i64>,
     },
@@ -1189,7 +1189,7 @@ pub enum QueueCommands {
         /// File IDs to resume
         #[arg(
             value_name = "FILES",
-            help = "File IDs to resume (omit to turn off Pause NAS downloads)"
+            help = "File IDs to resume (omit to turn off Pause local downloads)"
         )]
         files: Vec<i64>,
     },

@@ -29,7 +29,7 @@ pub struct StatusResponse {
     pub downloads: Option<Vec<ActiveDownloadInfo>>,
     /// The Active transfers card (feature 039), from the last Put.io list fetched
     pub active: Option<Summary>,
-    /// The Pause NAS downloads switch is on (feature 039)
+    /// The Pause local downloads switch is on (feature 039)
     pub nas_paused: bool,
     pub workers: WorkersSection,
     /// The download limit in force (feature 032), the `GET /bandwidth` body

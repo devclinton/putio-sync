@@ -372,7 +372,7 @@ impl Telemetry {
             .unwrap(),
             nas_downloads_paused: IntGauge::with_opts(opts(
                 "nas_downloads_paused",
-                "1 while the Pause NAS downloads switch is on, else 0.",
+                "1 while the Pause local downloads switch is on, else 0.",
             ))
             .unwrap(),
             doctor_check_status: GaugeVec::new(

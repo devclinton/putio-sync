@@ -60,10 +60,18 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   Page, Support (the docs) and More Info links. The README links the Snap Store and has
   macOS and Windows install rows and badges.
 
+### Changed
+
+- The web UI, CLI and doctor no longer assume putio-sync runs on a NAS. The Active
+  page's stages are Put.io, Local and Processing, and the switch is now **Pause local
+  downloads**. The `nas` stage and `nas_paused` names in the API and metrics are unchanged.
+
 ### Fixed
 
 - The Docker image reported version 0.0.1 in the status page, `--version` and the logs.
   It now reports the real version.
+- The Windows downloads and installers include the Visual C++ runtime, so putio-sync
+  starts on a Windows that doesn't have the Visual C++ Redistributable installed.
 
 ## [0.2.2] - 2026-11-10
 

@@ -2621,7 +2621,7 @@ impl DownloadManager {
         if self.bandwidth.is_paused() {
             return Ok(false);
         }
-        // The Pause NAS downloads switch: claim nothing (feature 039, R11)
+        // The Pause local downloads switch: claim nothing (feature 039, R11)
         if self.nas_paused().await {
             return Ok(false);
         }
@@ -3465,7 +3465,7 @@ impl DownloadManager {
         }))
     }
 
-    /// Whether the Pause NAS downloads switch is on (feature 039, R11). It lives in the
+    /// Whether the Pause local downloads switch is on (feature 039, R11). It lives in the
     /// database, so it survives a restart; a missing flag, or no database, means off.
     pub async fn nas_paused(&self) -> bool {
         let Some(db) = self.database.as_ref() else {
@@ -3475,12 +3475,12 @@ impl DownloadManager {
             .get_bool(NAS_DOWNLOADS_PAUSED)
             .await
             .unwrap_or_else(|e| {
-                warn!(error = %e, "Failed to read the Pause NAS downloads switch");
+                warn!(error = %e, "Failed to read the Pause local downloads switch");
                 false
             })
     }
 
-    /// Turn the Pause NAS downloads switch on or off (feature 039, R11)
+    /// Turn the Pause local downloads switch on or off (feature 039, R11)
     ///
     /// On: workers claim nothing, and every running file stops and goes back to
     /// `pending` (not `paused`), keeping its partial. Files paused on their own stay
@@ -3501,7 +3501,7 @@ impl DownloadManager {
             let requeued = db.queue().unclaim_files(&running).await.map_err(internal)?;
             stopped = self.stop_files(&requeued).await.len();
         }
-        info!(paused, stopped, "Pause NAS downloads switched");
+        info!(paused, stopped, "Pause local downloads switched");
         Ok(())
     }
 

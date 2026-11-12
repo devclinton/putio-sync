@@ -157,6 +157,9 @@ jobs:
         shell: pwsh
         env:
           PUTIO_SYNC_GIT_SHA: ${{ github.sha }}
+          # Link the C runtime in, so the exe runs on a Windows without the
+          # Visual C++ Redistributable (winget's clean test machine, say)
+          RUSTFLAGS: -C target-feature=+crt-static
         run: |
           rustup target add ${{ matrix.target }}
           cargo build --release --locked --target ${{ matrix.target }} --package putio-sync-cli
@@ -164,6 +167,15 @@ jobs:
       - name: Check it runs
         if: matrix.arch == 'x64'
         run: target/${{ matrix.target }}/release/putio-sync.exe --version
+
+      - name: Check it needs no Visual C++ runtime
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          $deps = & $dumpbin.FullName /dependents "target/${{ matrix.target }}/release/putio-sync.exe" | Out-String
+          $deps
+          if ($deps -match '(?i)vcruntime|msvcp|api-ms-win-crt') { throw "putio-sync.exe still links the Visual C++ runtime" }
 
       - name: Zip
         shell: pwsh
