@@ -300,7 +300,7 @@ docker-cache-info: ## Show Docker cache information
 # Package Build Targets
 # ============================================================================
 
-PACKAGE_VERSION ?= 0.3.0
+PACKAGE_VERSION ?= 0.4.0
 DEB_ARCH ?= amd64
 
 build-deb: ## Build Debian package (use DEB_ARCH=amd64|arm64|armhf PACKAGE_VERSION=x.y.z)
