@@ -18,6 +18,13 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   marked as such, with a language menu in the header. Its Docs links open the docs in the
   same language.
 
+### Fixed
+
+- A plugin's sync rules no longer time out on the first file after a start or a reload. The
+  plugin now loads as soon as it starts instead of on that first call, which for a Go
+  WebAssembly plugin took longer than the 500 ms limit, so the built-in rule was used and
+  the failure counted toward the pause. Until it has loaded, the built-in rules apply.
+
 ## [0.3.0] - 2026-11-11
 
 ### Added
