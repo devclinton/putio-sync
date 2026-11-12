@@ -19,7 +19,7 @@ use crate::action::{self, ActionResult, HealthItem};
 use crate::discover::{discover, Found};
 use crate::hooks::HookSlot;
 use crate::host::{system_clock, Clock};
-use crate::manifest::{Action, ConfigField, Permissions};
+use crate::manifest::{Action, ConfigField, Manifest, Permissions};
 use crate::worker::{CallReply, Env, History, Job, PluginRun, RunResult, Slot, Spec, MAX_RUNS};
 
 /// How often `on_tick` runs when the manifest sets no `tick_seconds`
@@ -92,6 +92,41 @@ pub struct PluginStatus {
     pub queued: usize,
     /// The last runs, oldest first
     pub runs: Vec<PluginRun>,
+    /// Who made it and where to read more, as its manifest says (059)
+    #[serde(default)]
+    pub links: Links,
+}
+
+/// A plugin's author, license and links; unset ones are left out
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Links {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issues: Option<String>,
+}
+
+impl Links {
+    /// The links `manifest` sets
+    pub fn of(manifest: &Manifest) -> Links {
+        let set = |s: &String| (!s.is_empty()).then(|| s.clone());
+        Links {
+            author: set(&manifest.author),
+            license: set(&manifest.license),
+            homepage: set(&manifest.homepage),
+            docs: set(&manifest.docs),
+            repository: set(&manifest.repository),
+            issues: set(&manifest.issues),
+        }
+    }
 }
 
 /// Why a test could not run
@@ -558,6 +593,7 @@ impl PluginsService {
                         .get(&found.name)
                         .map(|r| r.iter().cloned().collect())
                         .unwrap_or_default(),
+                    links: manifest.map(Links::of).unwrap_or_default(),
                 }
             })
             .collect()
