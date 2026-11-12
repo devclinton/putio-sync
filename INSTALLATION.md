@@ -360,6 +360,10 @@ putio-sync runs as a container, so home-server app stores install the same image
 On first start the container log shows a one-time setup code. Open `http://<host>:15432/`,
 enter it (or the web UI token you set), and choose `/downloads` as the download folder.
 
+The config file and the state database (`.putiosync.db`) live in `/config`; keep that
+volume on local storage. Versions up to 0.2.x kept the database in `/downloads`; the first
+start of a newer image moves it to `/config` by itself.
+
 ---
 
 ## Verification

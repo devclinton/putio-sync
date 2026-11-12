@@ -1085,7 +1085,7 @@ async fn update_download_settings(
     }
     if take(&mut changed, "target_directory") {
         notes.push(
-            "New downloads go to the new target_directory now; the queue database and disk figures stay on the startup folder until a restart."
+            "New downloads go to the new target_directory now; the disk figures stay on the startup folder until a restart."
                 .to_string(),
         );
     }

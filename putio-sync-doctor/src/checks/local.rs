@@ -69,11 +69,42 @@ pub(crate) async fn disk_space(ctx: &Ctx) -> Finding {
 }
 
 pub(crate) async fn database(ctx: &Ctx) -> Finding {
+    let path = match &ctx.db {
+        Some(db) => db.path().to_path_buf(),
+        None => putio_sync_core::database::path_for(&ctx.config, ctx.config_path.as_deref()),
+    };
+    // A 0.2.x database still in the download folder, next to or instead of the new one
+    let legacy = putio_sync_core::database::legacy_path(&ctx.config);
+    let leftover = legacy != path && legacy.is_file();
     let Some(db) = &ctx.db else {
-        return Finding::skipped("No database is open.");
+        if leftover {
+            return Finding::new(
+                Status::Warning,
+                format!(
+                    "The database is still in the download folder at {}.",
+                    legacy.display()
+                ),
+            )
+            .suggest(format!(
+                "Restart the putio-sync daemon; it moves the database to {}.",
+                path.display()
+            ));
+        }
+        return Finding::skipped(format!("No database at {} yet.", path.display()));
     };
     match db.quick_check().await {
-        Ok(lines) if lines == ["ok"] => Finding::ok("The integrity check passed."),
+        Ok(lines) if lines == ["ok"] && leftover => Finding::new(
+            Status::Warning,
+            format!(
+                "Using {}, but an older database is still at {}.",
+                path.display(),
+                legacy.display()
+            ),
+        )
+        .suggest("Delete the older database once you no longer need it."),
+        Ok(lines) if lines == ["ok"] => {
+            Finding::ok(format!("The integrity check of {} passed.", path.display()))
+        }
         Ok(lines) => {
             let items = lines
                 .iter()
@@ -334,6 +365,33 @@ mod tests {
         assert_eq!(database(&c).await.status, Status::Ok);
         let none = ctx("http://127.0.0.1:9", dir.path(), None);
         assert_eq!(database(&none).await.status, Status::Skipped);
+    }
+
+    #[tokio::test]
+    async fn database_check_reports_the_path_and_a_leftover_in_the_download_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = ctx("http://127.0.0.1:9", dir.path(), None);
+        c.config_path = Some(dir.path().join("config.toml"));
+        let path = dir.path().join(".putiosync.db");
+        let f = database(&c).await;
+        assert_eq!(f.status, Status::Skipped);
+        assert!(f.summary.contains(&path.display().to_string()));
+
+        let legacy = dir.path().join("downloads").join(".putiosync.db");
+        std::fs::write(&legacy, b"").unwrap();
+        let f = database(&c).await;
+        assert_eq!(f.status, Status::Warning);
+        assert!(f.summary.contains("download folder"));
+
+        c.db = Some(db(dir.path()).await);
+        let f = database(&c).await;
+        assert_eq!(f.status, Status::Warning);
+        assert!(f.summary.contains(&legacy.display().to_string()));
+
+        std::fs::remove_file(&legacy).unwrap();
+        let f = database(&c).await;
+        assert_eq!(f.status, Status::Ok);
+        assert!(f.summary.contains(&path.display().to_string()));
     }
 
     #[tokio::test]
