@@ -257,3 +257,29 @@ test("links come in a fixed order, unset and refused ones left out", async () =>
   assert.equal(byline({ links: { license: "MIT" } }), "MIT");
   assert.equal(byline({}), "");
 });
+
+test("registry entries are searched and get a button by state (059)", async () => {
+  const { filterEntries, entryAction, entryReach } = await import("../../ui/plugins.js");
+  const entries = [
+    { name: "webhook-notifier", description: "POST a JSON message", author: "ada" },
+    { name: "clean-names", description: "Tidy video names", author: "Grace" },
+  ];
+  assert.deepEqual(filterEntries(entries, "").length, 2);
+  assert.deepEqual(filterEntries(entries, "grace video").map((e) => e.name), ["clean-names"]);
+  assert.deepEqual(filterEntries(entries, "json nobody"), []);
+  assert.deepEqual(filterEntries(undefined, "x"), []);
+
+  assert.deepEqual(entryAction({ state: "available" }), { label: "Install", enabled: true });
+  assert.deepEqual(entryAction({ state: "update", version: "1.1.0" }), { label: "Update to 1.1.0", enabled: true });
+  assert.equal(entryAction({ state: "installed" }).enabled, false);
+  assert.deepEqual(entryAction({ state: "needs_newer", needs: "0.4.0" }), { label: "Needs putio-sync 0.4.0", enabled: false });
+  assert.deepEqual(entryAction({ state: "name_in_use" }), { label: "Name in use", enabled: false });
+
+  assert.deepEqual(entryReach({ events: ["download.finished"], hooks: [], hosts: { fixed: [], from_config: [] } }), ["Runs on: download.finished", "Contacts no hosts"]);
+  assert.deepEqual(entryReach({ events: ["*"], hooks: ["rename"], hosts: { fixed: ["ntfy.sh"], from_config: ["url"] } }), [
+    "Runs on: *",
+    "Sync rules: rename",
+    "Contacts: ntfy.sh",
+    "Contacts the address in: url",
+  ]);
+});

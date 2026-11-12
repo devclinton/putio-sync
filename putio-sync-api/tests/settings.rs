@@ -1089,7 +1089,14 @@ async fn plugins_save_masks_secrets_approves_hosts_and_applies_now() {
     let app = test_app().await;
     assert_eq!(
         get_ok(&app, "/settings/plugins").await,
-        json!({ "plugins_dir": null, "plugins": [] })
+        json!({
+            "plugins_dir": null,
+            "plugins": [],
+            "plugin_registry": {
+                "enabled": true,
+                "url": putio_sync_core::plugins::DEFAULT_REGISTRY_URL,
+            },
+        })
     );
 
     let body = json!({ "plugins_dir": null, "plugins": [ntfy("plugin-secret-1")] });
