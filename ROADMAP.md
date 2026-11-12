@@ -288,6 +288,50 @@ The sync-time decision hooks (filter, rename, folder rules) stay in 028.
 Each new callback gets a starter in `examples/plugins/` and a section in
 PLUGINS.md; each event gets its table in EVENTS.md.
 
+### 058 Crash reports, then anonymous usage stats
+
+Nothing in putio-sync calls home today, and the README says what little
+leaves the machine. Keep it that way by default: nothing is sent without the
+person seeing it or turning it on.
+
+**Part 1, crash reports to GitHub (first).** The daemon cannot open issues
+itself: a token in the binary would let anyone file issues as the project.
+So the person files the report from their own GitHub account:
+
+- A panic hook writes a crash file next to the config: version, build
+  (Docker, snap, Homebrew, binary…), OS and arch, uptime, the thread, the
+  panic message and the backtrace, with secrets removed the same way as for
+  logs, plus the last 50 log lines. Up to 10 crash files are kept.
+- On the next start the web UI shows "putio-sync stopped unexpectedly" with
+  **Report on GitHub**, **Copy report** and **Dismiss**. The report is shown
+  in full first so names and paths can be removed. **Report on GitHub** opens
+  a prefilled new-issue page (a `crash` issue form in `.github/ISSUE_TEMPLATE`)
+  in the person's browser. The title holds a short crash signature from the
+  top frames, and a **Search existing issues** link is shown first so repeats
+  can go on the same issue. A body over the URL limit is cut, and the issue
+  asks for the copied full report to be pasted.
+- `putio-sync crash-report` lists, shows and opens the same reports on the
+  CLI. The doctor warns about a crash in the last 7 days that has not been
+  dismissed.
+- Kills that run no panic hook (out of memory, SIGKILL, a container
+  restart) are noted as "stopped without a report" when the last run did not
+  shut down cleanly.
+- Release builds keep symbol names so backtraces are readable; tests force
+  a panic and check the file, the redaction and the issue URL.
+
+**Part 2, anonymous usage stats (later, opt-in).** A once-a-day ping that is
+off by default and offered on the 056 review screen and in Settings, with the
+exact JSON shown before it is turned on: a random install id (not tied to
+the Put.io account, reset with one button), version, build, OS and arch, and
+which features are on (*arr, watch folders, pipeline stages, plugins by
+bundled name only, DLNA, Tailscale) and size buckets (files per day, library
+size). Never names, paths, hosts or Put.io data, and the receiver keeps no
+IP addresses. Needs a
+place to receive it, to be decided in the spec: a small Cloudflare Worker
+(free tier) with a public summary page on the project site, or a hosted
+privacy-first service such as Aptabase or PostHog. Until then, release
+download and image pull counts are the usage signal.
+
 ### Magnet file lists from peers (deferred from 043)
 
 When the .torrent caches never have a magnet's file list, fetch it from
