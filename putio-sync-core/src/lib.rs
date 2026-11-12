@@ -43,6 +43,9 @@ pub mod email;
 /// Event hook config: validation and secret masking (feature 027)
 pub mod hooks;
 
+/// `[sign_in]`: password and OAuth sign-in settings and the allow-list (feature 019)
+pub mod sign_in;
+
 /// Lua plugin settings: validation and secret masking (feature 028)
 pub mod plugins;
 

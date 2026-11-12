@@ -429,7 +429,7 @@ fn flatten(table: &toml::Table) -> BTreeMap<String, toml::Value> {
 }
 
 const EXPORT_HEADER: &str = "# putio-sync settings export\n\
-# Credentials ([auth], api.auth_token) and the Radarr/Sonarr section ([arr]) are left out.\n\
+# Credentials ([auth], api.auth_token, [sign_in]) and the Radarr/Sonarr section ([arr]) are left out.\n\
 # Hook header and env values, plugin secrets, the transcription key, the translation secrets and the SMTP password read \"********\"; an import keeps the stored ones.\n\
 # Import it from Settings › Advanced › Backup and restore.\n\n";
 
@@ -458,7 +458,10 @@ fn masked(config: &Config) -> std::borrow::Cow<'_, Config> {
 /// The settings as TOML, without `[auth]`, `api.auth_token` and `[arr]`, and with hook
 /// header and env values and plugin secrets masked
 pub fn export_toml(config: &Config) -> CoreResult<String> {
-    let body = toml::to_string_pretty(&settings_table(&masked(config))?)
+    let mut table = settings_table(&masked(config))?;
+    // Sign-in is a credential, like [auth] (feature 019)
+    table.remove("sign_in");
+    let body = toml::to_string_pretty(&table)
         .map_err(|e| CoreError::ConfigError(format!("Failed to serialize config: {e}")))?;
     Ok(format!("{EXPORT_HEADER}{body}"))
 }
@@ -469,7 +472,7 @@ pub struct Import {
     /// The current config with the file's settings applied; credentials and `[arr]` are
     /// the current ones
     pub config: Config,
-    /// Parts of the file that were left out (`auth`, `arr`, `api.auth_token`)
+    /// Parts of the file that were left out (`auth`, `arr`, `sign_in`, `api.auth_token`)
     pub ignored: Vec<String>,
     /// Unknown or risky keys, as the doctor reports them
     pub unknown: Vec<ConfigWarning>,
@@ -488,7 +491,7 @@ pub fn import(current: &Config, text: &str) -> CoreResult<Import> {
     let mut file: toml::Table = text.parse().map_err(not_toml)?;
 
     let mut ignored = Vec::new();
-    for key in ["auth", "arr"] {
+    for key in ["auth", "arr", "sign_in"] {
         if file.remove(key).is_some() {
             ignored.push(key.to_string());
         }

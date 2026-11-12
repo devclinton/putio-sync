@@ -709,6 +709,7 @@ pub fn router() -> Router<AppState> {
         .merge(super::media_server::settings_router())
         .merge(super::organise::settings_router())
         .merge(super::translation::settings_router())
+        .merge(super::signin::settings_router())
         .merge(assistant::router())
 }
 

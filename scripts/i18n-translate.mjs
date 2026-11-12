@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { CATALOG, UI_DIR } from "./i18n-extract.mjs";
 
 // Catalog code → the service's code, where its base-language model is missing
-const SERVICE = { ar: "ar-SA" };
+const SERVICE = { ar: "ar-AE" };
 // Product names, kept as they are when they are the whole string
 const NAMES = new Set(["Put.io", "putio-sync", "Radarr", "Sonarr", "Plex", "Jellyfin", "Emby", "Tailscale", "OpenSubtitles", "Whisper", "Transmission", "DLNA", "NAS"]);
 // Languages not written in Latin script: any English word left in them is untranslated

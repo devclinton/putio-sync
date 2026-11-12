@@ -229,6 +229,12 @@ pub struct Config {
     /// Tailscale: tailnet-only listening and identity sign-in (feature 036)
     #[serde(default)]
     pub tailscale: TailscaleConfig,
+    /// Password and OAuth sign-in (feature 019)
+    #[serde(
+        default,
+        skip_serializing_if = "crate::sign_in::SignInConfig::is_default"
+    )]
+    pub sign_in: crate::sign_in::SignInConfig,
     /// DLNA media server: show downloads and a Put.io folder to players (feature 022)
     #[serde(default)]
     pub dlna: DlnaConfig,
@@ -1655,6 +1661,7 @@ impl Config {
         self.precheck.validate(&self.watch.paths)?;
         self.storage.validate()?;
         self.tailscale.validate()?;
+        self.sign_in.validate()?;
         self.dlna.validate()?;
         self.validate_dlna_with(&self.dlna)?;
         self.organise.validate()?;
@@ -1912,6 +1919,7 @@ impl ConfigBuilder {
             precheck: PrecheckConfig::default(),
             storage: StorageConfig::default(),
             tailscale: TailscaleConfig::default(),
+            sign_in: crate::sign_in::SignInConfig::default(),
             dlna: DlnaConfig::default(),
             updates: UpdatesConfig::default(),
             organise: Default::default(),
@@ -3220,6 +3228,7 @@ mod tests {
             precheck: PrecheckConfig::default(),
             storage: StorageConfig::default(),
             tailscale: TailscaleConfig::default(),
+            sign_in: crate::sign_in::SignInConfig::default(),
             dlna: DlnaConfig::default(),
             updates: UpdatesConfig::default(),
             organise: Default::default(),
@@ -4968,6 +4977,9 @@ impl Config {
         }
         add(self.notifications.webhook_url.as_ref());
         add(Some(&self.notifications.smtp.password));
+        for v in self.sign_in.secret_values() {
+            add(Some(&v));
+        }
         for hook in &self.hooks {
             add(hook.url.as_ref());
             hook.headers.values().for_each(|v| add(Some(v)));

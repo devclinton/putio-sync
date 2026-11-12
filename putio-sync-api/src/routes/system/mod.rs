@@ -16,6 +16,7 @@ pub mod organise;
 pub mod plugins;
 pub mod rules;
 pub mod settings;
+pub mod signin;
 pub mod stats;
 pub mod status;
 pub mod subtitles;

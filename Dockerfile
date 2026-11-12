@@ -104,7 +104,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
     cargo chef cook --release --recipe-path recipe.json
 
-# Copy real source code
+# Copy real source code. Cook rewrites the workspace Cargo.toml with every
+# version masked to 0.0.1, so copy the real one back before building.
+COPY Cargo.toml Cargo.lock ./
 COPY putio-sync-client ./putio-sync-client
 COPY putio-sync-db ./putio-sync-db
 COPY putio-sync-download ./putio-sync-download

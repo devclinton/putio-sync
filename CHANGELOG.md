@@ -22,6 +22,15 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   winget, Docker, Unraid, CasaOS or Umbrel) and shows that channel's update command, with a
   Copy button, or its update step. For Docker it names the pull for your image's tag. Set
   `PUTIO_SYNC_INSTALL` when it guesses wrong; `GET /status` reports it as `install_channel`.
+- Sign-in options: besides the API token, sign in with a username and password (on the
+  sign-in page, or as HTTP basic auth), or with Google, GitHub or Discord. Each provider
+  has an allow-list of account names or verified emails. Set them up in the new
+  Settings › Sign-in, which shows the redirect URL to register and has Sign out
+  everywhere. Browsers stay signed in with an HttpOnly, SameSite=Strict cookie for
+  `session_hours` (default a week); writes also need a CSRF header. Passwords are stored
+  as argon2id hashes, client secrets are masked, failed sign-ins count toward the lockout,
+  and the doctor reports a provider that is on but incomplete. The token, Tailscale
+  sign-in and the Radarr/Sonarr and Transmission APIs work as before.
 - Email notifications: `[notifications.smtp]` sends the events you choose as plain-text
   email through your mail server, over STARTTLS (the default, never falling back to plain
   text), TLS or, for a relay on your LAN, no encryption and no login. Repeats of one kind
@@ -47,6 +56,14 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - A "Writing and debugging plugins" guide in the docs, and three starter plugins with a
   README each in `examples/plugins/`. The Plugins page, the workbench and the hooks card
   link to the matching docs pages.
+- The Unraid container menu has Read Me First (the Docker and Unraid docs page), Project
+  Page, Support (the docs) and More Info links. The README links the Snap Store and has
+  macOS and Windows install rows and badges.
+
+### Fixed
+
+- The Docker image reported version 0.0.1 in the status page, `--version` and the logs.
+  It now reports the real version.
 
 ## [0.2.2] - 2026-11-10
 
