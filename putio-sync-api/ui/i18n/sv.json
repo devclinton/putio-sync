@@ -1065,7 +1065,6 @@
  "Revert": "återgå",
  "Revert all": "Ångra allt",
  "Review": "granskning",
- "Rolled back from {0}: {1}": "Återställd från {0}: {1}",
  "Root (global): {0} · delete after download: {1} · when a file exists: {2} · mode: {3}{4}{5}": "Rot (global): {0} · ta bort efter nedladdning: {1} · när en fil finns: {2} · läge: {3}{4}{5}",
  "Rotating": "Roterande",
  "Rule for {0}": "Regel för {0}",

@@ -1065,7 +1065,6 @@
  "Revert": "恢复",
  "Revert all": "全部恢复",
  "Review": "审查",
- "Rolled back from {0}: {1}": "从{0}回滚：{1}",
  "Root (global): {0} · delete after download: {1} · when a file exists: {2} · mode: {3}{4}{5}": "根（全局）：{0}·下载后删除：{1}·当文件存在时：{2}·模式：{3}{4}{5}",
  "Rotating": "旋转的",
  "Rule for {0}": "{0}的规则",

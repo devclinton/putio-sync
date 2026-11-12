@@ -261,3 +261,128 @@ async fn container_gets_the_pull_for_its_tag() {
     let status = body_json(app.get("/status").await).await;
     assert_eq!(status["install_channel"], "container");
 }
+
+// --- Update now (US3) ---
+
+/// A GitHub-archive install of 0.3.0 in `dir` that has found the releases on `server`
+async fn installed(server: &mockito::ServerGuard, dir: &std::path::Path, busy: usize) -> TestApp {
+    let mut app = test_app().await;
+    let exe = dir.join("putio-sync");
+    std::fs::write(&exe, b"old").unwrap();
+    let updates = UpdateService::for_tests(
+        UpdatesConfig::default(),
+        app.db.clone(),
+        "0.3.0".parse().unwrap(),
+        server.url(),
+    )
+    .with_channel(Channel::GithubArchive)
+    .with_install(exe, dir.to_path_buf())
+    .with_busy_source(move || Box::pin(async move { busy }));
+    app.state = app.state.clone().with_updates(updates);
+    app.router = router(app.state.clone());
+    let res = app.post_json("/update/check", json!({})).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    app
+}
+
+async fn apply(app: &TestApp, interrupt: bool) -> (StatusCode, Value) {
+    let res = app
+        .post_json("/update/apply", json!({ "interrupt": interrupt }))
+        .await;
+    (res.status(), body_json(res).await)
+}
+
+#[tokio::test]
+async fn managed_channels_cannot_update_now() {
+    let server = releases_server(RELEASES).await;
+    let app = checked_on(&server, Channel::Snap).await;
+    let (status, body) = apply(&app, false).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        body,
+        json!({"error": "not_supported", "mode": "instructions"})
+    );
+}
+
+#[tokio::test]
+async fn update_now_needs_a_newer_release() {
+    let server = releases_server(r#"[{"tag_name": "v0.3.0", "html_url": "u", "body": ""}]"#).await;
+    let dir = tempfile::tempdir().unwrap();
+    let app = installed(&server, dir.path(), 0).await;
+    let (status, body) = apply(&app, false).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({"error": "no_update"}));
+}
+
+#[tokio::test]
+async fn update_now_asks_before_interrupting_transfers() {
+    let server = releases_server(RELEASES).await;
+    let dir = tempfile::tempdir().unwrap();
+    let app = installed(&server, dir.path(), 2).await;
+    let body = get_update(&app).await;
+    assert_eq!(body["busy"], json!({"active_transfers": 2}));
+    assert_eq!(body["attempt"], Value::Null);
+    assert_eq!(body["available"]["patch"], false);
+
+    let (status, body) = apply(&app, false).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body, json!({"error": "busy", "active_transfers": 2}));
+
+    let (status, body) = apply(&app, true).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(body["attempt"]["to"], "0.4.0");
+    assert_eq!(body["attempt"]["state"], "downloading");
+
+    // These releases have no assets, so the attempt fails with nothing replaced
+    let mut attempt = Value::Null;
+    for _ in 0..200 {
+        attempt = get_update(&app).await["attempt"].clone();
+        if attempt["state"] == "failed" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(attempt["state"], "failed", "{attempt}");
+    assert!(attempt["error"].as_str().unwrap().contains("SHA256SUMS"));
+    assert_eq!(
+        std::fs::read(dir.path().join("putio-sync")).unwrap(),
+        b"old"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn update_now_names_a_folder_it_cannot_write() {
+    use std::os::unix::fs::PermissionsExt;
+    let server = releases_server(RELEASES).await;
+    let dir = tempfile::tempdir().unwrap();
+    let app = installed(&server, dir.path(), 0).await;
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+    let (status, body) = apply(&app, false).await;
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"], "not_writable");
+    assert_eq!(body["path"], dir.path().to_str().unwrap());
+}
+
+#[tokio::test]
+async fn the_notice_says_when_a_patch_exists() {
+    let Some(target) = putio_sync_update::fetch::Target::current() else {
+        return; // no release build for this platform
+    };
+    let to: putio_sync_update::version::Version = "0.4.0".parse().unwrap();
+    let asset = |name: String, size: u64| json!({"name": name, "browser_download_url": format!("https://x/{size}"), "size": size});
+    let releases = json!([{
+        "tag_name": "v0.4.0", "html_url": "u", "body": "",
+        "assets": [
+            asset(target.full(to), 9_000_000),
+            asset(target.patch("0.3.0".parse().unwrap(), to), 400_000),
+        ],
+    }]);
+    let server = releases_server(&releases.to_string()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let app = installed(&server, dir.path(), 0).await;
+    let body = get_update(&app).await;
+    assert_eq!(body["available"]["patch"], true);
+    assert_eq!(body["available"]["download_bytes"], 400_000);
+}

@@ -1065,7 +1065,6 @@
  "Revert": "回溯",
  "Revert all": "全部恢復",
  "Review": "評論",
- "Rolled back from {0}: {1}": "從{0}回滾：{1}",
  "Root (global): {0} · delete after download: {1} · when a file exists: {2} · mode: {3}{4}{5}": "根（全域性）：{0}·下載後刪除：{1}·當檔案存在時：{2}·模式：{3}{4}{5}",
  "Rotating": "旋轉的",
  "Rule for {0}": "{0} 的規則",

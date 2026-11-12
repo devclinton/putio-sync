@@ -155,6 +155,8 @@ pub struct PutioDaemon {
     pipeline: Option<Arc<putio_sync_pipeline::Pipeline>>,
     /// DLNA media server, stopped on shutdown so players hear the goodbye (feature 022)
     media_server: Option<Arc<MediaServer>>,
+    /// Stops the daemon the way Ctrl+C does, for an update's restart (feature 055)
+    stop: Arc<tokio::sync::Notify>,
 }
 
 impl PutioDaemon {
@@ -172,6 +174,7 @@ impl PutioDaemon {
             doctor: None,
             pipeline: None,
             media_server: None,
+            stop: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -201,6 +204,11 @@ impl PutioDaemon {
     pub fn with_pipeline(mut self, pipeline: Arc<putio_sync_pipeline::Pipeline>) -> Self {
         self.pipeline = Some(pipeline);
         self
+    }
+
+    /// Call `notify_one` on this to stop [`Self::start`] the way Ctrl+C does
+    pub fn stop_handle(&self) -> Arc<tokio::sync::Notify> {
+        self.stop.clone()
     }
 
     /// Stop `media_server` when the daemon shuts down, so it announces that it is leaving.
@@ -516,10 +524,13 @@ impl PutioDaemon {
         }
         info!("Press Ctrl+C to stop");
 
-        // Wait for shutdown signal
-        tokio::signal::ctrl_c().await.map_err(|e| {
-            crate::error::DaemonError::InternalError(format!("Failed to listen for Ctrl+C: {}", e))
-        })?;
+        // Wait for Ctrl+C, or a stop for an update's restart
+        tokio::select! {
+            signal = tokio::signal::ctrl_c() => signal.map_err(|e| {
+                crate::error::DaemonError::InternalError(format!("Failed to listen for Ctrl+C: {}", e))
+            })?,
+            () = self.stop.notified() => {}
+        }
 
         info!("Received shutdown signal");
 

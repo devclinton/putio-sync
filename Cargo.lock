@@ -1813,6 +1813,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "minisign-verify"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22f9645cb765ea72b8111f36c522475d2daa0d22c957a9826437e97534bc4e9e"
+
+[[package]]
 name = "miniz_oxide"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2835,8 +2841,10 @@ version = "0.2.2"
 dependencies = [
  "bsdiff",
  "chrono",
+ "libc",
  "lzma-rs",
  "minisign",
+ "minisign-verify",
  "mockito",
  "putio-sync-core",
  "putio-sync-db",
@@ -2844,6 +2852,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "tracing",

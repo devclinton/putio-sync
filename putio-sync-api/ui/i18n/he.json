@@ -1065,7 +1065,6 @@
  "Revert": "החזר",
  "Revert all": "החזר את כולם",
  "Review": "חָזַר",
- "Rolled back from {0}: {1}": "הוחזר מ־{0}: {1}",
  "Root (global): {0} · delete after download: {1} · when a file exists: {2} · mode: {3}{4}{5}": "שורש (גלובלי): {0} · מחיקה לאחר הורדה: {1} · כשקובץ קיים: {2} · מצב: {3}{4}{5}",
  "Rotating": "מתגלגל",
  "Rule for {0}": "כלל עבור {0}",
