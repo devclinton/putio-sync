@@ -64,6 +64,9 @@ async fn needs_a_token() {
         (Method::POST, "/plugins/install"),
         (Method::GET, "/plugins/registry"),
         (Method::POST, "/plugins/registry/install"),
+        (Method::POST, "/plugins/registry/preview"),
+        (Method::POST, "/plugins/registry/update"),
+        (Method::POST, "/plugins/registry/remove"),
     ] {
         let response = app.req(method, path, None, None).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
@@ -550,6 +553,23 @@ async fn registry_lists_and_installs_a_reviewed_plugin() {
         .post_json("/plugins/registry/install", json!({ "name": "nope" }))
         .await;
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+    let name = json!({ "name": "rust-clean-names" });
+    let again = app
+        .post_json("/plugins/registry/install", name.clone())
+        .await;
+    assert_eq!(again.status(), StatusCode::CONFLICT);
+    let newest = app
+        .post_json("/plugins/registry/preview", name.clone())
+        .await;
+    assert_eq!(newest.status(), StatusCode::CONFLICT);
+    let removed = app
+        .post_json("/plugins/registry/remove", name.clone())
+        .await;
+    assert_eq!(removed.status(), StatusCode::OK);
+    assert!(!dir.path().join("rust-clean-names").exists());
+    let gone = app.post_json("/plugins/registry/remove", name).await;
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
