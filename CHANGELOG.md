@@ -12,6 +12,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- The website's landing page in the same 19 languages as the docs, machine-translated and
+  marked as such, with a language menu in the header. Its Docs links open the docs in the
+  same language.
+
 ## [0.3.0] - 2026-11-11
 
 ### Added

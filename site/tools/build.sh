@@ -43,8 +43,11 @@ find "$out/docs" -name '*.html' -exec sed -i.bak \
     -e 's/<label id="mdbook-sidebar-toggle" /<label id="mdbook-sidebar-toggle" role="button" /' \
     -e 's/<pre><code/<pre><code tabindex="0"/g' {} +
 find "$out/docs" -name '*.html.bak' -delete
-for f in index.html style.css install.js; do
-    sed "s/{{version}}/$version/g" "$root/site/$f" > "$out/$f"
+# The landing page, and one more per catalog in site/i18n/landing under <lang>/
+# (machine-translated too, see site/tools/landing_i18n.py)
+python3 "$root/site/tools/landing_i18n.py" build "$out" "$version"
+for f in style.css install.js; do
+    cp "$root/site/$f" "$out/$f"
 done
 cp -R "$root/site/screenshots" "$out/" 2>/dev/null || true
 cp "$root/snap/gui/putio-sync.png" "$out/icon.png"
