@@ -17,22 +17,6 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - The website's landing page in the same 19 languages as the docs, machine-translated and
   marked as such, with a language menu in the header. Its Docs links open the docs in the
   same language.
-
-### Fixed
-
-- A plugin's sync rules no longer time out on the first file after a start or a reload. The
-  plugin now loads as soon as it starts instead of on that first call, which for a Go
-  WebAssembly plugin took longer than the 500 ms limit, so the built-in rule was used and
-  the failure counted toward the pause. Until it has loaded, the built-in rules apply.
-
-## [0.3.0] - 2026-11-11
-
-### Added
-
-- putio-sync checks GitHub for a newer release about a minute after it starts and then
-  once a day, and the What's new page shows it with its release notes, a link to the
-  release, and Check now and Dismiss buttons. The check sends nothing about your install;
-  turn it off in Settings › General › Updates (`[updates] check = false`).
 - Plugin links: `plugin.toml` can name the plugin's `author` and `license` and link its
   `docs`, `homepage`, `repository` and `issues`. Settings › Plugins shows them on the
   plugin's tab and in the list, and **Needs settings** links to the docs. Links must be
@@ -49,6 +33,22 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   plugin the registry withdrew or no longer lists.
 - `putio-sync plugins check FOLDER` checks a plugin folder the way Reload plugins does and
   prints each problem (`--json` for scripts); it needs no config or token.
+
+### Fixed
+
+- A plugin's sync rules no longer time out on the first file after a start or a reload. The
+  plugin now loads as soon as it starts instead of on that first call, which for a Go
+  WebAssembly plugin took longer than the 500 ms limit, so the built-in rule was used and
+  the failure counted toward the pause. Until it has loaded, the built-in rules apply.
+
+## [0.3.0] - 2026-11-11
+
+### Added
+
+- putio-sync checks GitHub for a newer release about a minute after it starts and then
+  once a day, and the What's new page shows it with its release notes, a link to the
+  release, and Check now and Dismiss buttons. The check sends nothing about your install;
+  turn it off in Settings › General › Updates (`[updates] check = false`).
 - The update notice says how putio-sync was installed (snap, Flatpak, Homebrew, .deb,
   winget, Docker, Unraid, CasaOS or Umbrel) and shows that channel's update command, with a
   Copy button, or its update step. For Docker it names the pull for your image's tag. Set
