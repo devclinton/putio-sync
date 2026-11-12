@@ -244,6 +244,10 @@ main { max-width: 1160px; margin: 0 auto; padding: 40px 40px 80px; outline: none
 .plugin-list { margin: 0; padding: 0; list-style: none; }
 .plugin-list li { display: flex; align-items: center; gap: var(--s-3); padding: 8px 0; border-top: 1px solid var(--ring); }
 .plugin-list li > div { flex: 1; min-width: 0; }
+#confirm-text { white-space: pre-line; }
+.registry-entry { border-top: 1px solid var(--border); padding-top: var(--s-3); }
+.registry-entry p { margin: 4px 0 0; }
+.plugin-links { display: flex; flex-wrap: wrap; gap: 4px var(--s-3); margin: 4px 0 0; font-size: 0.875em; }
 .one-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toolbar:has(> .code) { align-items: center; }
 .code { margin: 0; user-select: all; cursor: text; }

@@ -224,6 +224,34 @@ pub fn check(manifest: &str, script: &str, source: &Source) -> (Option<Manifest>
     (parsed, problems)
 }
 
+/// Check the plugin folder at `path` the way a reload loads it, and compile a Lua entry
+/// without running it (`putio-sync plugins check`, 059)
+pub fn check_folder(path: &Path) -> (Option<Manifest>, Vec<Problem>) {
+    let found = crate::discover::from_folder(path);
+    let Some(manifest) = found.manifest else {
+        let message = found.error.unwrap_or_default();
+        return (None, vec![Problem::manifest(message)]);
+    };
+    let entry = manifest.entry.clone();
+    let mut problems = Vec::new();
+    if let Some(message) = found.error {
+        problems.push(Problem {
+            file: entry,
+            line: None,
+            message,
+        });
+    } else if manifest.runtime == "lua" {
+        if let Err(message) = syntax(&found.script, &entry) {
+            problems.push(Problem {
+                line: error_line(&message, &entry),
+                file: entry,
+                message,
+            });
+        }
+    }
+    (Some(manifest), problems)
+}
+
 /// Compile `script` in a fresh sandbox without running it
 fn syntax(script: &str, entry: &str) -> Result<(), String> {
     let lua = sandbox::new_state(64, Default::default()).map_err(|e| sandbox::error_text(&e))?;

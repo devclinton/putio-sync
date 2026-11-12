@@ -265,6 +265,12 @@ pub struct Config {
     /// The plugin workbench's editor may write plugin files (feature 055)
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub plugin_editor: bool,
+    /// Where More plugins lists reviewed plugins from (feature 059)
+    #[serde(
+        default,
+        skip_serializing_if = "crate::plugins::PluginRegistryConfig::is_default"
+    )]
+    pub plugin_registry: crate::plugins::PluginRegistryConfig,
 }
 
 /// `[doctor]`: how often the daemon runs the doctor's checks (feature 010). The CLI and
@@ -1690,6 +1696,7 @@ impl Config {
         self.putio.validate()?;
         crate::hooks::validate(&self.hooks)?;
         crate::plugins::validate(&self.plugins)?;
+        self.plugin_registry.validate()?;
         self.validate_binds()?;
 
         Ok(())
@@ -1950,6 +1957,7 @@ impl ConfigBuilder {
             plugins: Vec::new(),
             database: Default::default(),
             plugin_editor: false,
+            plugin_registry: Default::default(),
         }
     }
 }
@@ -3268,6 +3276,7 @@ mod tests {
             plugins: Vec::new(),
             database: Default::default(),
             plugin_editor: false,
+            plugin_registry: Default::default(),
         }
     }
 

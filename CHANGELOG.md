@@ -24,6 +24,24 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - The website's landing page in the same 19 languages as the docs, machine-translated and
   marked as such, with a language menu in the header. Its Docs links open the docs in the
   same language.
+- Plugin links: `plugin.toml` can name the plugin's `author` and `license` and link its
+  `docs`, `homepage`, `repository` and `issues`. Settings › Plugins shows them on the
+  plugin's tab and in the list, and **Needs settings** links to the docs. Links must be
+  https (or http to a local address). The bundled plugins set them.
+- More plugins: Settings › Plugins lists the plugins in the putio-sync plugin registry, with
+  a search, and installs or updates one in a click. Each release's SHA-256 and manifest are
+  checked against the registry before anything is written, and a new plugin starts off.
+  Turn it off or use your own registry under Plugin registry settings
+  (`[plugin_registry]`).
+- `putio-sync plugins check FOLDER` checks a plugin folder the way Reload plugins does and
+  prints each problem (`--json` for scripts); it needs no config or token.
+
+### Fixed
+
+- A plugin's sync rules no longer time out on the first file after a start or a reload. The
+  plugin now loads as soon as it starts instead of on that first call, which for a Go
+  WebAssembly plugin took longer than the 500 ms limit, so the built-in rule was used and
+  the failure counted toward the pause. Until it has loaded, the built-in rules apply.
 
 ## [0.3.0] - 2026-11-11
 

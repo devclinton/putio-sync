@@ -23,6 +23,7 @@ pub mod host;
 pub mod install;
 pub mod manifest;
 pub mod paths;
+pub mod registry;
 pub mod sandbox;
 pub mod service;
 pub mod source;
@@ -32,7 +33,7 @@ pub mod workbench;
 pub mod worker;
 
 pub use service::{
-    ActionAnswer, CallError, PluginState, PluginStatus, PluginsOptions, PluginsService, TestError,
-    TEST_MESSAGE,
+    ActionAnswer, CallError, Links, PluginState, PluginStatus, PluginsOptions, PluginsService,
+    TestError, TEST_MESSAGE,
 };
 pub use worker::{PluginRun, RunResult};

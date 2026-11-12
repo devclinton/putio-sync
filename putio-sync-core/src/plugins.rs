@@ -82,6 +82,42 @@ impl Default for PluginSettings {
     }
 }
 
+/// The registry's index on GitHub
+pub const DEFAULT_REGISTRY_URL: &str =
+    "https://raw.githubusercontent.com/devclinton/putio-sync-plugin-registry/main/index.json";
+
+/// `[plugin_registry]`: where More plugins lists reviewed plugins from (feature 059)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PluginRegistryConfig {
+    /// Fetch the list at all; off makes no request
+    pub enabled: bool,
+    /// The registry's `index.json`
+    pub url: String,
+}
+
+impl Default for PluginRegistryConfig {
+    fn default() -> Self {
+        PluginRegistryConfig {
+            enabled: true,
+            url: DEFAULT_REGISTRY_URL.to_string(),
+        }
+    }
+}
+
+impl PluginRegistryConfig {
+    /// Whether nothing differs from the default, so the section is left out of a save
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The address follows the link rule
+    pub fn validate(&self) -> CoreResult<()> {
+        valid_link(&self.url)
+            .map_err(|e| CoreError::ConfigError(format!("plugin_registry.url: {}", e)))
+    }
+}
+
 /// Whether `name` is a valid plugin name: `[A-Za-z0-9_-]{1,40}`
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
@@ -101,6 +137,49 @@ pub fn valid_host(host: &str) -> bool {
         && host
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
+}
+
+/// Whether `url` may be shown as a link: up to 300 characters, `https://` with a host, or
+/// `http://` to a loopback or private host (a plugin's docs on the local network)
+pub fn valid_link(url: &str) -> Result<(), &'static str> {
+    const REFUSED: &str = "must be an https address";
+    if url.len() > 300 || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(REFUSED);
+    }
+    let (https, rest) = if let Some(rest) = url.strip_prefix("https://") {
+        (true, rest)
+    } else if let Some(rest) = url.strip_prefix("http://") {
+        (false, rest)
+    } else {
+        return Err(REFUSED);
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let authority = authority.rsplit('@').next().unwrap_or("");
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(""),
+        None => authority.split(':').next().unwrap_or(""),
+    }
+    .to_ascii_lowercase();
+    if host.is_empty() {
+        return Err(REFUSED);
+    }
+    if https || local_host(&host) {
+        Ok(())
+    } else {
+        Err(REFUSED)
+    }
+}
+
+/// Loopback, private IPv4 ranges, `localhost` and `*.local`
+fn local_host(host: &str) -> bool {
+    if host == "localhost" || host.ends_with(".local") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private(),
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback(),
+        Err(_) => false,
+    }
 }
 
 fn scalar_or_strings(value: &serde_json::Value) -> bool {
@@ -291,6 +370,51 @@ mod tests {
 
     fn err(p: PluginSettings) -> String {
         validate(&[p]).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn registry_config() {
+        let c: PluginRegistryConfig = toml::from_str("enabled = false").unwrap();
+        assert!(!c.enabled && c.url == DEFAULT_REGISTRY_URL);
+        assert!(PluginRegistryConfig::default().validate().is_ok());
+        let bad = PluginRegistryConfig {
+            url: "http://example.com/index.json".into(),
+            ..Default::default()
+        };
+        assert!(bad
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("plugin_registry.url"));
+    }
+
+    #[test]
+    fn links() {
+        for ok in [
+            "https://github.com/me/plugin",
+            "https://example.com:8443/docs#setup",
+            "http://127.0.0.1:8080/docs",
+            "http://192.168.1.10/plugin",
+            "http://nas.local/readme",
+            "http://localhost",
+            "http://[::1]:9000/",
+        ] {
+            assert_eq!(valid_link(ok), Ok(()), "{}", ok);
+        }
+        let long = format!("https://example.com/{}", "a".repeat(281));
+        for bad in [
+            "http://example.com/docs",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+            "ftp://example.com",
+            "https://",
+            "https:///path",
+            "https://exa mple.com",
+            "http://user@example.com@192.168.1.1.evil.com/",
+            long.as_str(),
+        ] {
+            assert_eq!(valid_link(bad), Err("must be an https address"), "{}", bad);
+        }
     }
 
     #[test]

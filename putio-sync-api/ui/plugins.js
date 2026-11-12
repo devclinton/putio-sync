@@ -269,3 +269,73 @@ export function linkLabel(url) {
     return url;
   }
 }
+
+const LOCAL = /^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|\[::1\]|.+\.local)$/;
+
+/** Whether a manifest link may be shown (as putio-sync-core's valid_link): https, or http to
+ *  a loopback or private host, up to 300 characters */
+export function linkOk(url) {
+  if (typeof url !== "string" || url.length > 300 || /[\s\p{Cc}]/u.test(url)) return false;
+  const m = /^(https?):\/\/([^/?#]*)/.exec(url);
+  if (!m) return false;
+  const authority = m[2].slice(m[2].lastIndexOf("@") + 1);
+  const host = (authority.startsWith("[") ? authority.slice(0, authority.indexOf("]") + 1) : authority.split(":")[0]).toLowerCase();
+  if (!host || host === "[]") return false;
+  return m[1] === "https" || LOCAL.test(host);
+}
+
+const LINKS = [
+  ["docs", "Docs"],
+  ["homepage", "Website"],
+  ["repository", "Source"],
+  ["issues", "Report a problem"],
+];
+
+/** A plugin's links in the order shown, skipping unset and refused ones */
+export function links(status) {
+  const set = (status && status.links) || {};
+  return LINKS.filter(([key]) => linkOk(set[key])).map(([key, label]) => ({ label, href: set[key] }));
+}
+
+/** "By Ada · MIT", "By Ada", "MIT", or "" */
+export function byline(status) {
+  const set = (status && status.links) || {};
+  return [set.author ? `By ${set.author}` : "", set.license || ""].filter(Boolean).join(" · ");
+}
+
+/** Registry entries whose name, description or author holds every word of `text` (059) */
+export function filterEntries(entries, text) {
+  const words = (text || "").toLowerCase().split(/\s+/).filter(Boolean);
+  return (entries || []).filter((e) => {
+    const hay = `${e.name} ${e.description} ${e.author}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  });
+}
+
+/** What a registry entry's button says and whether it can be pressed, by its state */
+export function entryAction(entry) {
+  switch (entry.state) {
+    case "available":
+      return { label: "Install", enabled: true };
+    case "update":
+      return { label: `Update to ${entry.version}`, enabled: true };
+    case "installed":
+      return { label: "Installed", enabled: false };
+    case "needs_newer":
+      return { label: `Needs putio-sync ${entry.needs}`, enabled: false };
+    default:
+      return { label: "Name in use", enabled: false };
+  }
+}
+
+/** What a registry plugin may do, for the Install confirm: events, sync rules, hosts */
+export function entryReach(entry) {
+  const hosts = (entry.hosts && entry.hosts.fixed) || [];
+  const fromConfig = (entry.hosts && entry.hosts.from_config) || [];
+  const parts = [`Runs on: ${(entry.events || []).join(", ") || "no events"}`];
+  if ((entry.hooks || []).length) parts.push(`Sync rules: ${entry.hooks.join(", ")}`);
+  if (hosts.length) parts.push(`Contacts: ${hosts.join(", ")}`);
+  if (fromConfig.length) parts.push(`Contacts the address in: ${fromConfig.join(", ")}`);
+  if (!hosts.length && !fromConfig.length) parts.push("Contacts no hosts");
+  return parts;
+}

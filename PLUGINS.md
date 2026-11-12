@@ -163,6 +163,22 @@ Up to 32 config fields. Mistakes name the file and the field, for example
 `plugins/ha/plugin.toml: events: unknown event type "download.done"`. The plugin shows as
 **Broken** with that message until it is fixed and reloaded.
 
+Say who made the plugin and where to read more. Each is optional; Settings › Plugins shows
+the author and license as text and the rest as links on the plugin's tab and in the list:
+
+```toml
+author = "your-github-login"     # up to 100 characters
+license = "MIT"                  # an SPDX identifier
+docs = "https://github.com/you/putio-sync-home-assistant#readme"
+homepage = "https://example.com/home-assistant"
+repository = "https://github.com/you/putio-sync-home-assistant"
+issues = "https://github.com/you/putio-sync-home-assistant/issues"
+```
+
+Links must be `https`, or `http` to a local address (`localhost`, a private IP, a `.local`
+name); up to 300 characters. When the plugin needs settings, its **Needs settings** line
+links to `docs`.
+
 Plugins that need setting up with the server (feature 031) can also declare:
 
 ```toml
@@ -338,6 +354,18 @@ Lua function's arguments and returns JSON. The full ABI is in
 - **JavaScript** and other languages work through a WebAssembly build of their runtime
   (such as Javy for JavaScript); no example ships for them.
 
+### Checking a plugin
+
+```bash
+putio-sync plugins check ./home-assistant
+```
+
+checks a plugin folder the way **Reload plugins** does (the manifest, the entry file, and
+the Lua script's syntax, compiled but not run) and prints each problem, then
+`home-assistant 1.0.0: ok` or the number of problems. It needs no config or Put.io token.
+`--json` prints `{"name", "version", "problems"}`. Exit code: 0 no problems, 1 problems,
+2 not a folder.
+
 ### Installing a plugin
 
 Settings › Plugins › Plugin workbench › **Install or replace a plugin** takes a URL, or files: one `.wasm` that carries
@@ -347,6 +375,38 @@ own folder in the plugins folder and starts off, with its hosts and folders list
 to check before turning it on. Installing over a plugin of the same name needs **Replace a plugin of the same name**,
 which keeps its settings and store. `POST /plugins/install` does the same from scripts; see
 the [README](README.md#http-api).
+
+### Plugins from the registry
+
+Settings › Plugins › **More plugins** lists the plugins in the
+[putio-sync plugin registry](https://github.com/devclinton/putio-sync-plugin-registry):
+plugins by other people that a maintainer reviewed. Each shows who made it, its license,
+links, the events it runs on, its sync rules and the hosts it contacts. **Install** asks
+first, then downloads the release and checks it before anything is written:
+
+- its SHA-256 must be the one the registry pinned;
+- a `.tar.gz` must hold one folder of plain files (no links, no `..`), at most 200 files
+  and 5 MB; a `.wasm` must carry its manifest;
+- its `plugin.toml` must have the name, version, runtime, events, sync rules and hosts the
+  registry lists.
+
+The plugin is written like any install and starts off; turn it on and approve its hosts as
+usual. Its folder gets a `.registry.json` saying where and which version it came from, and
+its tab says **From the plugin registry**. When the registry lists a newer release, the
+button says **Update to** that version; an update keeps the plugin's settings and store. A
+plugin you put in the folder yourself is never replaced by one from the registry of the
+same name.
+
+The list is fetched when you open More plugins, and kept for 6 hours in
+`plugin-data/registry-index.json`; **Refresh** fetches it again. If a fetch fails the kept
+list is shown with the reason. Releases that need a newer putio-sync say so instead of
+offering Install. Turn the registry off, or point it at a registry of your own, under
+**Plugin registry settings** (`[plugin_registry]` in the config). The registry's
+[CONTRIBUTING.md](https://github.com/devclinton/putio-sync-plugin-registry/blob/main/CONTRIBUTING.md)
+explains how to list a plugin.
+
+`GET /plugins/registry` (`?refresh=true` to fetch now) and
+`POST /plugins/registry/install` `{"name": "..."}` do the same from scripts.
 
 ## Sync rules
 
@@ -413,7 +473,9 @@ Limits:
   shows it as **Sync rule time limit**). A slower call is stopped and passed over.
 - **Own worker.** A plugin with sync rules gets a second worker for them, sharing its
   store and settings, so a sync never waits behind the plugin's queued events. `init` runs
-  in both.
+  in both. That worker loads the plugin as soon as it starts, and the plugin is asked only
+  once it has loaded: until then, and while it loads again after a timeout, the built-in
+  rules apply.
 - **Pause.** An error, a timeout or an answer that does not check out is logged as a
   warning and kept with the plugin's runs. After 3 in a row, the plugin's sync rules rest
   for 5 minutes. An answer resets the count, and so does a reload or a settings change.

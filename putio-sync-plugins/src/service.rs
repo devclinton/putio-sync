@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use putio_sync_core::config::Config;
 use putio_sync_core::events::{self, Event, EventType, Payload, PluginTest};
-use putio_sync_core::plugins::{dir_for, PluginSettings};
+use putio_sync_core::plugins::{dir_for, PluginRegistryConfig, PluginSettings};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::broadcast::error::RecvError;
@@ -20,7 +20,7 @@ use crate::action::{self, ActionResult, HealthItem};
 use crate::discover::{discover, Found};
 use crate::hooks::HookSlot;
 use crate::host::{system_clock, Clock};
-use crate::manifest::{Action, ConfigField, Permissions};
+use crate::manifest::{Action, ConfigField, Manifest, Permissions};
 use crate::worker::{CallReply, Env, History, Job, PluginRun, RunResult, Slot, Spec, MAX_RUNS};
 
 /// How often `on_tick` runs when the manifest sets no `tick_seconds`
@@ -93,6 +93,44 @@ pub struct PluginStatus {
     pub queued: usize,
     /// The last runs, oldest first
     pub runs: Vec<PluginRun>,
+    /// Who made it and where to read more, as its manifest says (059)
+    #[serde(default)]
+    pub links: Links,
+    /// Where it was installed from, for plugins from the registry (059)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<crate::registry::InstallRecord>,
+}
+
+/// A plugin's author, license and links; unset ones are left out
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Links {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issues: Option<String>,
+}
+
+impl Links {
+    /// The links `manifest` sets
+    pub fn of(manifest: &Manifest) -> Links {
+        let set = |s: &String| (!s.is_empty()).then(|| s.clone());
+        Links {
+            author: set(&manifest.author),
+            license: set(&manifest.license),
+            homepage: set(&manifest.homepage),
+            docs: set(&manifest.docs),
+            repository: set(&manifest.repository),
+            issues: set(&manifest.issues),
+        }
+    }
 }
 
 /// Why a test could not run
@@ -207,6 +245,8 @@ struct Inner {
     runs: crate::workbench::Runs,
     /// Bus events the dispatcher has read, counted as [`events::emitted`] counts them
     seen: AtomicU64,
+    /// The plugin registry's list and installs (059)
+    registry: crate::registry::Registry,
 }
 
 /// Holds a plugin's place in the busy set until dropped
@@ -309,6 +349,12 @@ impl PluginsService {
     ///
     /// [`start`]: PluginsService::start
     pub fn new(options: PluginsOptions) -> PluginsService {
+        if let Some(dir) = &options.dir {
+            let cleaned = crate::install::clean_leftovers(dir);
+            if cleaned > 0 {
+                tracing::info!("plugins: cleaned up {} unfinished install(s)", cleaned);
+            }
+        }
         let found = discover(options.dir.as_deref());
         PluginsService {
             inner: Arc::new(Inner {
@@ -320,7 +366,7 @@ impl PluginsService {
                     hook_slots: HashMap::new(),
                     env: None,
                 }),
-                data_dir: options.data_dir,
+                data_dir: options.data_dir.clone(),
                 clock: options.clock.unwrap_or_else(system_clock),
                 history: History::default(),
                 stores: Default::default(),
@@ -329,6 +375,7 @@ impl PluginsService {
                 busy: Mutex::new(HashSet::new()),
                 runs: Default::default(),
                 seen: AtomicU64::new(0),
+                registry: crate::registry::Registry::new(options.data_dir.clone()),
             }),
         }
     }
@@ -527,6 +574,58 @@ impl PluginsService {
         Ok(name)
     }
 
+    /// The registry's list for `config`, each entry's state against the plugins folder
+    /// (059). Fetches when the cached list is older than 6 hours or `refresh` is set.
+    pub async fn registry(
+        &self,
+        config: &PluginRegistryConfig,
+        refresh: bool,
+    ) -> crate::registry::Listing {
+        let dir = self.dir();
+        self.inner
+            .registry
+            .listing(config, refresh, dir.as_deref())
+            .await
+    }
+
+    /// Install or update `name` from the registry's cached list and reload. The release
+    /// is downloaded and checked against the list before anything is written; a new
+    /// plugin starts disabled, an update keeps its settings.
+    pub async fn install_from_registry(
+        &self,
+        config: &PluginRegistryConfig,
+        name: &str,
+    ) -> Result<String, crate::registry::RegistryError> {
+        use crate::registry::{InstallRecord, RegistryError, RECORD_FILE};
+        let dir = self
+            .dir()
+            .ok_or_else(|| RegistryError::Io("no plugins folder is set".to_string()))?;
+        let (entry, checked, _installing) = self
+            .inner
+            .registry
+            .release(config, name, Some(&dir))
+            .await?;
+        let record = InstallRecord {
+            registry: config.url.clone(),
+            version: checked.manifest.version.clone(),
+            sha256: checked.sha256.clone(),
+            installed_at: chrono::Utc::now(),
+        };
+        let record = serde_json::to_vec_pretty(&record).unwrap_or_default();
+        let replace = InstallRecord::read(&dir.join(&entry.name)).is_some();
+        let installed =
+            crate::install::install_with(&dir, checked.package, replace, &[(RECORD_FILE, record)])
+                .map_err(|e| match e {
+                    crate::install::InstallError::Exists(n) => RegistryError::Conflict(format!(
+                        "a plugin named {} that is not from the registry is installed",
+                        n
+                    )),
+                    e => RegistryError::Io(e.to_string()),
+                })?;
+        self.reload();
+        Ok(installed)
+    }
+
     /// Use another plugins folder and reload
     pub fn set_dir(&self, dir: Option<PathBuf>) -> (usize, usize) {
         self.inner.state.lock().unwrap().dir = dir;
@@ -594,6 +693,11 @@ impl PluginsService {
                         .get(&found.name)
                         .map(|r| r.iter().cloned().collect())
                         .unwrap_or_default(),
+                    links: manifest.map(Links::of).unwrap_or_default(),
+                    registry: found
+                        .source
+                        .path()
+                        .and_then(crate::registry::InstallRecord::read),
                 }
             })
             .collect()
@@ -979,6 +1083,7 @@ fn apply(state: &mut State, changed: Changed) {
                 Some(hook) => {
                     if changed {
                         hook.slot.update(spec.clone());
+                        hook.slot.push(Job::Load);
                         let fresh = Arc::new(HookSlot::new(hook.slot.clone()));
                         state.hook_slots.insert(found.name.clone(), fresh);
                     }
@@ -987,6 +1092,7 @@ fn apply(state: &mut State, changed: Changed) {
                     let slot = Slot::new(spec.clone());
                     match slot.spawn(env.clone()) {
                         Ok(()) => {
+                            slot.push(Job::Load);
                             state
                                 .hook_slots
                                 .insert(found.name.clone(), Arc::new(HookSlot::new(slot)));

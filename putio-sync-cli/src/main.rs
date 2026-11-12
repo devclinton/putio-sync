@@ -74,6 +74,13 @@ async fn main() {
         }
     };
 
+    // Plugin checks need no config, token or logging (feature 059)
+    #[cfg(feature = "plugins")]
+    if let Commands::Plugins(cli::PluginsCommands::Check { folder, json }) = &args.command {
+        let code = commands::plugins::execute_check(folder, *json, &mut std::io::stdout().lock());
+        std::process::exit(code);
+    }
+
     eprintln!("🔧 Loading configuration...");
     // Load config early for logging configuration
     let mut config = if let Some(config_path) = args.config.as_ref() {
@@ -458,6 +465,8 @@ async fn main() {
             let _ = std::io::stdout().flush();
             std::process::exit(code);
         }
+        #[cfg(feature = "plugins")]
+        Commands::Plugins(_) => unreachable!("handled before the config loads"),
         #[cfg(feature = "server")]
         Commands::Archive(job) => {
             let job = match job {

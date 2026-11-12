@@ -8,11 +8,15 @@
 //!   written to the config like a Settings save
 //! - POST /plugins/install - Add a plugin to the plugins folder from a URL or uploaded files
 //!   (029); it starts disabled
+//! - GET /plugins/registry - The plugin registry's list (059), each entry's state against
+//!   the plugins folder; `?refresh=true` fetches it again
+//! - POST /plugins/registry/install - Install or update a plugin from the registry's list;
+//!   a new one starts disabled
 //! - /plugins/workbench/... - The plugin workbench (055); see [`super::workbench`]
 
 use crate::error::ApiError;
 use axum::{
-    extract::{rejection::JsonRejection, DefaultBodyLimit, State},
+    extract::{rejection::JsonRejection, DefaultBodyLimit, Query, State},
     routing::{get, post},
     Json, Router,
 };
@@ -22,6 +26,7 @@ use putio_sync_plugins::action::ActionResult;
 use putio_sync_plugins::discover::MAX_WASM_BYTES;
 use putio_sync_plugins::install::{InstallError, Package};
 use putio_sync_plugins::manifest::Manifest;
+use putio_sync_plugins::registry::{Listing, RegistryError};
 use putio_sync_plugins::{CallError, PluginRun, PluginStatus, TestError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -39,6 +44,8 @@ pub fn router() -> Router<AppState> {
             "/install",
             post(install).layer(DefaultBodyLimit::max(INSTALL_BODY_BYTES)),
         )
+        .route("/registry", get(registry))
+        .route("/registry/install", post(registry_install))
         .nest("/workbench", super::workbench::router())
 }
 
@@ -252,6 +259,56 @@ async fn install(
         })?;
     Ok(Json(Installed {
         message: format!("Installed {}; enable it to run it", name),
+        name,
+    }))
+}
+
+#[derive(Deserialize)]
+struct RegistryQuery {
+    #[serde(default)]
+    refresh: bool,
+}
+
+/// GET /plugins/registry. Always 200: a failed fetch keeps the cached list and says why
+/// in `error`, and an off registry lists nothing.
+async fn registry(
+    State(state): State<AppState>,
+    Query(query): Query<RegistryQuery>,
+) -> Json<Listing> {
+    let config = state.config.read().await.plugin_registry.clone();
+    Json(state.plugins.registry(&config, query.refresh).await)
+}
+
+/// POST /plugins/registry/install `{"name": "..."}`. 200 with the name, 404 when the
+/// list does not have it, 409 when its state does not allow it, 422 when the download
+/// or a check fails (nothing is written).
+async fn registry_install(
+    State(state): State<AppState>,
+    request: Result<Json<TestRequest>, JsonRejection>,
+) -> Result<Json<Installed>, ApiError> {
+    let Json(request) = request.map_err(|rejection| ApiError::BadRequest(rejection.body_text()))?;
+    let config = state.config.read().await.plugin_registry.clone();
+    let updating = state
+        .plugins
+        .status()
+        .iter()
+        .any(|p| p.name == request.name && p.registry.is_some());
+    let name = state
+        .plugins
+        .install_from_registry(&config, &request.name)
+        .await
+        .map_err(|e| match e {
+            RegistryError::NotFound(e) => ApiError::NotFound(e),
+            RegistryError::Conflict(e) => ApiError::Conflict(e),
+            RegistryError::Refused(e) => ApiError::Unprocessable(e),
+            RegistryError::Io(e) => ApiError::Internal(e),
+        })?;
+    Ok(Json(Installed {
+        message: if updating {
+            format!("Updated {}", name)
+        } else {
+            format!("Installed {}; enable it to run it", name)
+        },
         name,
     }))
 }

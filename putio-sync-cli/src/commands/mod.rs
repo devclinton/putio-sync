@@ -13,6 +13,8 @@ pub mod free_space;
 pub mod history;
 pub mod list;
 pub mod login;
+#[cfg(feature = "plugins")]
+pub mod plugins;
 pub mod queue;
 #[cfg(feature = "server")]
 pub mod server;

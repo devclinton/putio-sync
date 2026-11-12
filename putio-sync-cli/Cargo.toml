@@ -139,6 +139,10 @@ required-features = ["server"]
 name = "metrics_e2e"
 required-features = ["server"]
 
+[[test]]
+name = "plugins_check"
+required-features = ["plugins"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

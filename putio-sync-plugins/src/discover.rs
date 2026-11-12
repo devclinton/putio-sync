@@ -170,7 +170,7 @@ fn bundled() -> Vec<Found> {
         .collect()
 }
 
-fn from_folder(path: &Path) -> Found {
+pub(crate) fn from_folder(path: &Path) -> Found {
     let folder = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -325,6 +325,17 @@ mod tests {
         std::fs::write(path.join("plugin.toml"), MANIFEST.replace("NAME", name)).unwrap();
         std::fs::write(path.join("main.lua"), "return {on_event = function() end}").unwrap();
         path
+    }
+
+    #[test]
+    fn bundled_plugins_say_who_made_them() {
+        for found in bundled() {
+            let m = found.manifest.as_ref().expect("bundled manifest loads");
+            assert_eq!(m.author, "devclinton", "{}", found.name);
+            assert_eq!(m.license, "MIT", "{}", found.name);
+            assert!(m.docs.starts_with("https://"), "{}", found.name);
+            assert!(m.repository.starts_with("https://"), "{}", found.name);
+        }
     }
 
     #[test]
