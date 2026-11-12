@@ -17,7 +17,7 @@ import * as media from "../settings/media.js";
 import { advancedCards, networkCards } from "../settings/advanced.js";
 
 const BUILD = { general: general.cards, putio: putio.cards, downloads: downloads.cards, rules: filters.cards, integrations: integrations.cards, plugins: plugins.cards, "media-server": media.cards, network: networkCards, advanced: advancedCards };
-const LAZY = { notifications: () => import("../settings/notifications.js") };
+const LAZY = { notifications: () => import("../settings/notifications.js"), "sign-in": () => import("../settings/signin.js") };
 const ADV_KEY = "putio-sync.settings.advanced";
 
 let seq = 0;

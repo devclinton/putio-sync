@@ -4,6 +4,7 @@
 
 import { authStatus, getIdentity, getToken, logout, onAuthExpired, post } from "./api.js";
 import { choice, setLanguage, tr } from "./i18n.js";
+import { who } from "./signin.js";
 import * as status from "./pages/status.js";
 import * as active from "./pages/active.js";
 import * as queue from "./pages/queue.js";
@@ -140,7 +141,7 @@ function route() {
   if (name === "login") {
     const params = loginParams;
     loginParams = {};
-    mount("login", params);
+    mount("login", { ...params, query, back: remembered() });
     return;
   }
   remember(window.location.hash || "#/status");
@@ -176,7 +177,8 @@ function mount(name, params) {
   currentName = name;
   showTitle();
   // Signed in by Tailscale only: there is nothing to sign out of here
-  document.getElementById("signout").hidden = name === "login" || name === "setup" || (!getToken() && Boolean(getIdentity()));
+  const id = getIdentity();
+  document.getElementById("signout").hidden = name === "login" || name === "setup" || (!getToken() && Boolean(id) && !id.session);
   showWho();
 
   view.replaceChildren();
@@ -199,13 +201,12 @@ function enter() {
 }
 
 /** Show the sign-in page; `params` may carry `reason` and `retryAfter`. */
-/** "login (Tailscale)" in the top bar when Tailscale sign-in let this browser in */
+/** "login (Tailscale)" or "login (GitHub)" in the top bar when no token is in use */
 function showWho() {
-  const who = document.getElementById("who");
+  const el = document.getElementById("who");
   const id = getIdentity();
-  who.hidden = !id || Boolean(getToken());
-  who.textContent = id ? `${id.login} (Tailscale)` : "";
-  who.title = id ? `Signed in by Tailscale as ${id.name}` : "";
+  el.hidden = !id || Boolean(getToken());
+  Object.assign(el, who(getToken() ? null : id));
 }
 
 function showLogin(params) {
@@ -397,8 +398,8 @@ onAuthExpired(async (err) => {
   }
 });
 
-document.getElementById("signout").addEventListener("click", () => {
-  logout();
+document.getElementById("signout").addEventListener("click", async () => {
+  await logout();
   showLogin({ reason: "Signed out." });
 });
 

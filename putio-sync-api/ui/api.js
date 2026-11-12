@@ -16,7 +16,8 @@ export class ApiError extends Error {
   }
 }
 
-// Who Tailscale sign-in let in (feature 036): `{login, name, via}`, or null
+// Who Tailscale sign-in (feature 036) or a session cookie (feature 019, with `session`
+// and the `csrf` its writes send) let in: `{login, name, via}`, or null
 let identity = null;
 
 export const getIdentity = () => identity;
@@ -25,7 +26,7 @@ export const getIdentity = () => identity;
 export async function authStatus() {
   const res = await fetch("/auth/status", { headers: { Accept: "application/json" } });
   const status = res.ok ? await res.json() : {};
-  identity = status.tailscale || null;
+  identity = status.user ? { ...status.user, session: true } : status.tailscale || null;
   return status;
 }
 
@@ -60,6 +61,7 @@ export async function request(method, path, body) {
   const headers = { Accept: "application/json" };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
+  else if (identity && identity.csrf) headers["X-CSRF-Token"] = identity.csrf;
   const init = { method, headers };
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -92,7 +94,7 @@ export async function request(method, path, body) {
     (data && data.details) || null,
     Number.isFinite(retry) ? retry : null,
   );
-  if (path !== "/auth/login") {
+  if (!path.startsWith("/auth/")) {
     if (res.status === 401) {
       setToken(null);
       expired(err);
@@ -129,8 +131,14 @@ export async function login(token) {
   setToken(token);
 }
 
-export function logout() {
+/** Sign in with the [sign_in] username and password; the daemon sets a session cookie */
+export const passwordLogin = (username, password) => request("POST", "/auth/password", { username, password });
+
+/** Forget the token, and end this browser's session when it has one */
+export async function logout() {
   setToken(null);
+  if (identity && identity.session) await request("POST", "/auth/logout").catch(() => {});
+  identity = null;
 }
 
 /** Start a folder sync now. Resolves with the sync object; 409 means one is running. */

@@ -168,6 +168,8 @@ fn protected_routes() -> Vec<(Method, &'static str, Option<Value>)> {
         (Method::PUT, "/settings/translation", Some(json!({}))),
         post("/settings/translation/preview"),
         post("/settings/translation/test"),
+        get("/settings/sign-in"),
+        (Method::PUT, "/settings/sign-in", Some(json!({}))),
         // Unknown paths fall through to the protected fallback
         get("/robots.txt"),
     ]
@@ -854,6 +856,59 @@ async fn no_smtp_password_in_responses_or_logs() {
     let logs = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
     for text in texts.iter().chain([&logs]) {
         assert!(!text.contains(PASSWORD), "{PASSWORD} in {text}");
+    }
+}
+
+/// The OAuth client secrets and the password hash never come back from the settings
+/// routes, the export, the doctor, the metrics or a log line (feature 019)
+#[tokio::test]
+async fn no_sign_in_secrets_in_responses_or_logs() {
+    const SECRET: &str = "OAUTHCLIENTSECRET0123";
+    let logs = captured_logs();
+    let hash = putio_sync_api::signin::hash_password("a long password").unwrap();
+    let stored = hash.clone();
+    let app = common::test_app_with(move |config| {
+        config.sign_in.password.username = "admin".to_string();
+        config.sign_in.password.password_hash = stored;
+        let github = &mut config.sign_in.github;
+        github.enabled = true;
+        github.client_id = "id".to_string();
+        github.client_secret = SECRET.to_string();
+        github.allowed_users = vec!["octocat".to_string()];
+    })
+    .await;
+    let mut texts = Vec::new();
+    for path in [
+        "/settings/sign-in",
+        "/settings/export",
+        "/settings/assistant",
+        "/doctor",
+        "/metrics",
+        "/auth/status",
+    ] {
+        texts.push(body_text(app.get(path).await).await);
+    }
+    let settings: Value = serde_json::from_str(&texts[0]).unwrap();
+    let response = app
+        .req(
+            Method::PUT,
+            "/settings/sign-in",
+            Some(&app.token),
+            Some(settings),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    texts.push(body_text(response).await);
+    assert_eq!(
+        app.state.config.read().await.sign_in.github.client_secret,
+        SECRET
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let logs = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
+    for text in texts.iter().chain([&logs]) {
+        assert!(!text.contains(SECRET), "{SECRET} in {text}");
+        assert!(!text.contains(&hash), "the password hash in {text}");
     }
 }
 

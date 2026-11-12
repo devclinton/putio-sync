@@ -69,6 +69,13 @@ base64 = "0.22"
 # UUID generation
 uuid = { version = "1.6", features = ["v4"] }
 
+# Sign-in options (feature 019): argon2id password hashes, HMAC-signed session cookies,
+# PKCE challenges and random state
+argon2 = "0.5"
+hmac = "0.12"
+sha2 = "0.10"
+getrandom = "0.2"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.8"

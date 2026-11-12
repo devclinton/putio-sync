@@ -89,6 +89,18 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ),
     ("translation.js", JS, include_bytes!("../ui/translation.js")),
     ("pages/login.js", JS, include_bytes!("../ui/pages/login.js")),
+    (
+        "pages/signin.js",
+        JS,
+        include_bytes!("../ui/pages/signin.js"),
+    ),
+    ("signin.js", JS, include_bytes!("../ui/signin.js")),
+    ("signin_text.js", JS, include_bytes!("../ui/signin_text.js")),
+    (
+        "settings/signin.js",
+        JS,
+        include_bytes!("../ui/settings/signin.js"),
+    ),
     ("pages/setup.js", JS, include_bytes!("../ui/pages/setup.js")),
     ("pages/news.js", JS, include_bytes!("../ui/pages/news.js")),
     (

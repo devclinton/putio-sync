@@ -3,6 +3,8 @@
 [![CI](https://github.com/devclinton/putio-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/devclinton/putio-sync/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/devclinton/putio-sync)](https://github.com/devclinton/putio-sync/releases/latest)
 [![Snap](https://snapcraft.io/putio-sync/badge.svg)](https://snapcraft.io/putio-sync)
+[![macOS](https://img.shields.io/badge/macOS-.pkg%20%7C%20Homebrew-black?logo=apple)](https://github.com/devclinton/putio-sync/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-installer-0078D6?logo=windows)](https://github.com/devclinton/putio-sync/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Website and docs: [devclinton.github.io/putio-sync](https://devclinton.github.io/putio-sync/)**
@@ -41,9 +43,11 @@ putio-sync is an independent project and is not affiliated with Put.io.
 | Docker / Compose | `ghcr.io/devclinton/putio-sync`; ready-made [compose.yaml](packaging/docker-compose/compose.yaml) |
 | Unraid, Umbrel, CasaOS | Templates and app packages in [packaging/](packaging/STORES.md) |
 | TrueNAS SCALE, Runtipi, Portainer, Dockge | Custom app from the same [compose.yaml](packaging/docker-compose/compose.yaml) |
-| Linux (any distro) | `sudo snap install putio-sync`, see [snap/README.md](snap/README.md) |
+| Linux (any distro) | `sudo snap install putio-sync` from the [Snap Store](https://snapcraft.io/putio-sync), see [snap/README.md](snap/README.md) |
 | Debian / Ubuntu | `.deb` packages on [Releases](https://github.com/devclinton/putio-sync/releases/latest) |
-| Linux, macOS, Windows | Binaries and installers on [Releases](https://github.com/devclinton/putio-sync/releases/latest) |
+| macOS | `brew install devclinton/putio-sync/putio-sync` ([tap](https://github.com/devclinton/homebrew-putio-sync)), or the `.pkg` installer on [Releases](https://github.com/devclinton/putio-sync/releases/latest) |
+| Windows | `-setup.exe` installer (x64, arm64) on [Releases](https://github.com/devclinton/putio-sync/releases/latest) |
+| Linux, macOS, Windows | Plain binaries on [Releases](https://github.com/devclinton/putio-sync/releases/latest) |
 | From source | `cargo install --path putio-sync-cli` (Rust 1.96, pinned in `rust-toolchain.toml`) |
 
 [INSTALLATION.md](INSTALLATION.md) has the details for each.
@@ -67,7 +71,7 @@ each build is in [CHANGELOG.md](CHANGELOG.md), and planned work is in [ROADMAP.m
 ## Contents
 
 - [All features](#all-features) · [First run](#first-run) · [Commands](#commands) · [Configuration](#configuration)
-- [Metrics](#metrics) · [Web UI](#web-ui) · [Media Server](#media-server) · [Tailscale](#tailscale)
+- [Metrics](#metrics) · [Web UI](#web-ui) · [Media Server](#media-server) · [Sign-in options](#sign-in-options) · [Tailscale](#tailscale)
 - [Radarr and Sonarr](#radarr-and-sonarr) · [Release check](#release-check) · [Event hooks](#event-hooks) · [Plugins](#plugins)
 - [Subtitles](#subtitles) · [Docker](#docker) · [Development](#development)
 
@@ -1205,14 +1209,20 @@ seen. Seen entries are kept in the database.
 
 ### HTTP API
 
-All routes except `/health`, `/`, `/assets/*`, `/auth/status`, `/auth/login` and
-`/transmission/rpc` (Basic auth, see [Radarr and Sonarr](#radarr-and-sonarr)) need the token. Errors are `{"error": "...", "details": "..."}`.
+All routes except `/health`, `/`, `/assets/*`, `/auth/*` and
+`/transmission/rpc` (Basic auth, see [Radarr and Sonarr](#radarr-and-sonarr)) need the token,
+or one of the [sign-in options](#sign-in-options). Errors are `{"error": "...", "details": "..."}`.
 
 | Route | Purpose |
 |---|---|
 | `GET /health` | Liveness, no token |
 | `GET /auth/status` | `{"token_configured": true}`, no token. With Tailscale sign-in on, adds `"tailscale_sign_in": true` and, when it lets this request in, `"tailscale": {"login", "name", "via"}` |
 | `POST /auth/login` | `{"token": "..."}` → 204, 401 or 429; counted by the lockout |
+| `POST /auth/password` | `{"username", "password"}` → 204 with the session cookie, 401, 404 when no password is set, or 429 |
+| `POST /auth/logout` | End this browser's session → 204 |
+| `GET /auth/oauth/{provider}?return=#/…` | Start a Google, GitHub or Discord sign-in (302 to the provider; 404 when that provider is off). Its `/callback` comes back to the UI |
+| `GET`/`PUT /settings/sign-in` | `[sign_in]` with client secrets masked, whether a password is `set`, and each provider's `redirect_url`; the PUT takes `password: {username, new_password, clear}` |
+| `POST /settings/sign-in/sign-out-everywhere` | A new session key: every browser signs in again → 204 |
 | `GET /status` | Everything on the status page in one response |
 | `GET /whats-new`, `POST /whats-new/seen` | The built-in changelog with each entry marked `new`; record entries as seen (`{"ids": [...]}`) |
 | `POST /local/sync` | Start a folder sync now: 202, 409 while one runs, 503 without a database |
@@ -1382,6 +1392,27 @@ roots = ["downloads", "cat:radarr"]  # downloads, cat:<folder>, watch:<path>, pu
 
 <!-- ANCHOR_END: media-server -->
 <!-- ANCHOR: tailscale -->
+## Sign-in options
+
+The API token always works. Besides it, Settings › Sign-in (or `[sign_in]` in the
+config) turns on:
+
+- **A username and password.** The sign-in page takes them, and so does HTTP basic auth
+  (`curl -u admin:… http://nas:15432/status`). Passwords are stored as argon2id hashes;
+  a new password ends the sessions signed in with the old one.
+- **Google, GitHub or Discord.** Register an OAuth app with the provider, give it the
+  redirect URL Settings shows (`<address>/auth/oauth/<provider>/callback`), and enter its
+  client ID and secret. Only accounts on the provider's allow-list get in: an account
+  name (GitHub login, Discord username) or a verified email. The doctor reports a
+  provider that is on without a client ID, secret or allow-list.
+
+Behind a reverse proxy, set `public_url` (or have the proxy send `X-Forwarded-Proto` and
+`X-Forwarded-Host`) so redirect URLs and the Secure cookie flag are right. A browser that
+signs in gets an HttpOnly, SameSite=Strict cookie for `session_hours` (default 168);
+writes made with it also need the `X-CSRF-Token` the UI reads from `/auth/status`.
+Failed sign-ins count toward the same lockout as wrong tokens. **Sign out everywhere**
+ends every session. Radarr, Sonarr and the Transmission API keep using the token.
+
 ## Tailscale
 
 putio-sync reads Tailscale's state from tailscaled's socket

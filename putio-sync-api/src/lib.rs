@@ -36,6 +36,7 @@ pub mod middleware;
 pub mod models;
 pub mod routes;
 pub mod setup;
+pub mod signin;
 pub mod ui;
 
 use axum::Router;
@@ -91,6 +92,9 @@ pub struct AppState {
     pub started_at: Instant,
     /// Failed-authentication limiter shared by the middleware and `/auth/login`
     pub limiter: Arc<middleware::ratelimit::AuthLimiter>,
+    /// Password and OAuth sign-in: the session key, Basic cache and OAuth sign-ins in
+    /// progress (feature 019)
+    pub sign_in: Arc<signin::SignIn>,
     /// The engine the API runs on, which decides what a settings save reaches live
     pub engine: Engine,
     /// Whether a config reload poller applies `[logging]` level changes from the file.
@@ -205,6 +209,12 @@ impl AppState {
             listen_flags: None,
             pipeline: None,
             opensubtitles_url: None,
+            sign_in: Arc::new(signin::SignIn::new(
+                config_path
+                    .as_ref()
+                    .and_then(|path| path.parent())
+                    .map(|dir| dir.to_path_buf()),
+            )),
             media_server: None,
             updates: None,
             organiser: None,
@@ -341,6 +351,17 @@ impl AppState {
     /// Test the OpenSubtitles settings against `url` instead of the real service
     pub fn with_opensubtitles_url(mut self, url: &str) -> AppState {
         self.opensubtitles_url = Some(url.to_string());
+        self
+    }
+
+    /// Send OAuth sign-ins to `{base}/{provider}/authorize|token|user|emails` instead of
+    /// the real providers
+    pub fn with_oauth_base(self, base: &str) -> AppState {
+        *self
+            .sign_in
+            .endpoints
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(base.to_string());
         self
     }
 
@@ -514,6 +535,23 @@ fn public_routes(state: AppState) -> Router {
         .route(
             "/auth/login",
             axum::routing::post(routes::system::auth::login),
+        )
+        // Password and OAuth sign-in (feature 019)
+        .route(
+            "/auth/password",
+            axum::routing::post(routes::system::auth::password),
+        )
+        .route(
+            "/auth/logout",
+            axum::routing::post(routes::system::auth::logout),
+        )
+        .route(
+            "/auth/oauth/:provider",
+            axum::routing::get(routes::system::auth::oauth_start),
+        )
+        .route(
+            "/auth/oauth/:provider/callback",
+            axum::routing::get(routes::system::auth::oauth_callback),
         )
         // A translation service returns its result here; the token in the path is the
         // credential (feature 026)
