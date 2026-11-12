@@ -216,8 +216,17 @@ pub fn roll_back(config_dir: &Path, reason: &str) -> Result<PathBuf, String> {
                 side.push(suffix);
                 let _ = std::fs::remove_file(side);
             }
-            std::fs::copy(&backup, &db)
-                .map_err(|e| format!("could not restore the database: {e}"))?;
+            // Copy, then rename over: a connection that is still open (the panic path, or
+            // a pool closing late) checkpoints into the file it opened, not the restored one
+            let mut restored = db.clone().into_os_string();
+            restored.push(".restore");
+            let restored = PathBuf::from(restored);
+            std::fs::copy(&backup, &restored)
+                .and_then(|_| std::fs::rename(&restored, &db))
+                .map_err(|e| {
+                    let _ = std::fs::remove_file(&restored);
+                    format!("could not restore the database: {e}")
+                })?;
         }
     }
     putio_sync_telemetry::update::record_attempt(&kind, "rolled_back");
