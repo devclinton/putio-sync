@@ -22,6 +22,9 @@ pub mod bandwidth;
 /// Configuration management
 pub mod config;
 
+/// Where the state database lives, and its move out of the download folder
+pub mod database;
+
 /// Settings risks, diffs, export and import (feature 015)
 pub mod assistant;
 
