@@ -5,6 +5,7 @@ pub(crate) mod local;
 pub(crate) mod net;
 pub(crate) mod plugins;
 pub(crate) mod putio;
+pub(crate) mod sign_in;
 pub(crate) mod sync;
 pub(crate) mod verify;
 
@@ -159,6 +160,7 @@ async fn detect(ctx: &Ctx, id: CheckId) -> Finding {
         Listen => net::listen(ctx).await,
         Hooks => hooks::hooks(ctx).await,
         Plugins => plugins::plugins(ctx).await,
+        SignIn => sign_in::sign_in(ctx).await,
     }
 }
 

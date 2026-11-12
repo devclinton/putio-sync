@@ -58,6 +58,12 @@ export const SECTIONS = [
     cards: [["network", "Network"], ["tailscale", "Tailscale"]],
   },
   {
+    id: "sign-in",
+    title: "Sign-in",
+    help: "Signing in with a username and password, or with Google, GitHub or Discord, and who is allowed.",
+    cards: [["sign-in", "Sign-in"]],
+  },
+  {
     id: "advanced",
     title: "Advanced",
     help: "Logging and how many lines the Logs page keeps, and saving or restoring every setting as one file.",
@@ -98,6 +104,7 @@ const KEY_SECTION = {
   network: "network",
   dlna: "media-server",
   tailscale: "network",
+  sign_in: "sign-in",
   api: "network",
   logging: "advanced",
   notifications: "notifications",

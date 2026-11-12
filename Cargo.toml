@@ -76,3 +76,11 @@ clap = { version = "4.5", features = ["derive", "env"] }
 # which breaks `cargo build --release`. Shipped binaries are still stripped.
 [profile.release.build-override]
 strip = "none"
+
+# Password checks (feature 019) take seconds unoptimised; tests and debug builds check
+# passwords too
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
