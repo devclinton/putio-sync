@@ -1047,6 +1047,7 @@ fn apply(state: &mut State, changed: Changed) {
                 Some(hook) => {
                     if changed {
                         hook.slot.update(spec.clone());
+                        hook.slot.push(Job::Load);
                         let fresh = Arc::new(HookSlot::new(hook.slot.clone()));
                         state.hook_slots.insert(found.name.clone(), fresh);
                     }
@@ -1055,6 +1056,7 @@ fn apply(state: &mut State, changed: Changed) {
                     let slot = Slot::new(spec.clone());
                     match slot.spawn(env.clone()) {
                         Ok(()) => {
+                            slot.push(Job::Load);
                             state
                                 .hook_slots
                                 .insert(found.name.clone(), Arc::new(HookSlot::new(slot)));
