@@ -177,6 +177,13 @@ impl UpdateService {
         )
     }
 
+    /// The same checker reporting `channel`, for tests of a channel's notice
+    #[doc(hidden)]
+    pub fn with_channel(self, channel: Channel) -> Self {
+        self.inner.state.lock().unwrap().channel = channel;
+        self
+    }
+
     /// Read what the last run stored, then check [`FIRST_CHECK`] from now and every
     /// [`INTERVAL`] after. Needs a Tokio runtime; a second call does nothing.
     pub fn start(&self) {

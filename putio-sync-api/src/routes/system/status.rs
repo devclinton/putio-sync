@@ -38,6 +38,7 @@ pub struct StatusResponse {
     pub disk: Option<DiskSection>,
     pub reachability: Reachability,
     pub auth: AuthSection,
+    pub install_channel: Option<&'static str>,
     pub unavailable: Vec<Unavailable>,
 }
 
@@ -45,6 +46,12 @@ pub struct StatusResponse {
 pub struct BuildInfo {
     pub version: &'static str,
     pub commit: &'static str,
+}
+
+/// The update channel's `kind` (feature 055, FR-012), so support output shows a wrong
+/// detection; `None` without an update checker (setup mode)
+fn install_channel(state: &AppState) -> Option<&'static str> {
+    state.updates.as_ref().map(|u| u.snapshot().channel.kind())
 }
 
 /// Folder sync state, times in RFC 3339 UTC and durations in seconds
@@ -306,6 +313,7 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
             putio: putio_auth(&config),
             api_token: true,
         },
+        install_channel: install_channel(&state),
         unavailable,
     })
 }

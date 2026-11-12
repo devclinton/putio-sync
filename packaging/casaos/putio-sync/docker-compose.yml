@@ -7,6 +7,8 @@ services:
     user: "$PUID:$PGID"
     environment:
       TZ: $TZ
+      # Tells the update checker how this install is updated (feature 055)
+      PUTIO_SYNC_INSTALL: casaos
       # 0.2.1 leaves HOME at / for uids other than 99, where logs can't be written.
       HOME: /config
     ports:
