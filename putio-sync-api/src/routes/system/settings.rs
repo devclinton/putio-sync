@@ -513,6 +513,9 @@ pub struct PluginsSettings {
     pub plugins_dir: Option<PathBuf>,
     #[serde(default)]
     pub plugins: Vec<putio_sync_core::plugins::PluginSettings>,
+    /// `[plugin_registry]` (059); a PUT without it keeps the stored one
+    #[serde(default)]
+    pub plugin_registry: Option<putio_sync_core::plugins::PluginRegistryConfig>,
 }
 
 /// Tailscale sign-in and listening (`[tailscale]`, feature 036)
@@ -1654,6 +1657,10 @@ fn apply_plugins(
         let plugins = putio_sync_core::plugins::unmask(&settings.plugins, &config.plugins)
             .map_err(invalid)?;
         config.plugins_dir = settings.plugins_dir;
+        if let Some(registry) = settings.plugin_registry {
+            registry.validate().map_err(invalid)?;
+            config.plugin_registry = registry;
+        }
         let dir = plugins_dir(state, config);
         config.plugins = state
             .plugins
@@ -1665,13 +1672,17 @@ fn apply_plugins(
 
 /// Plugins apply without a restart under both engines
 pub(crate) fn live_plugins() -> (&'static [&'static str], &'static str) {
-    (&["plugins_dir", "plugins"], "Applies now")
+    (
+        &["plugins_dir", "plugins", "plugin_registry"],
+        "Applies now",
+    )
 }
 
 fn plugins_view(config: &Config) -> PluginsSettings {
     PluginsSettings {
         plugins_dir: config.plugins_dir.clone(),
         plugins: putio_sync_core::plugins::mask(&config.plugins),
+        plugin_registry: Some(config.plugin_registry.clone()),
     }
 }
 

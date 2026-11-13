@@ -1,5 +1,6 @@
-// Plugins section (features 028, 031, 048, 029, 055): tabs for plugins that are on, a list
-// of the rest with Enable, Reload, and the workbench (workbench.js, loaded when opened).
+// Plugins section (features 028, 031, 048, 029, 055, 059): tabs for plugins that are on, a
+// list of the rest with Enable, Reload, More plugins from the registry (registry.js) and the
+// workbench (workbench.js), each loaded when opened.
 
 import { get, post, put } from "../api.js";
 import * as plugins from "../plugins.js";
@@ -17,6 +18,36 @@ const PLUGINS = {
 };
 
 export const cards = (ctx) => [groupCard(PLUGINS, ctx)];
+
+// Who made a plugin and where to read more (059); nothing when its manifest sets none
+const linksRow = (status) => {
+  const by = plugins.byline(status);
+  const links = plugins.links(status);
+  const from = plugins.registryText(status);
+  if (!by && !links.length && !from) return null;
+  return h(
+    "p",
+    { class: "plugin-links muted" },
+    by ? h("span", { text: by }) : null,
+    from ? h("span", { text: from }) : null,
+    ...links.map((l) => h("a", { href: l.href, target: "_blank", rel: "noopener noreferrer" }, l.label)),
+  );
+};
+
+// Update and Remove for a plugin from the registry (059); `load` draws the list again
+const registryButtons = (status, load) => {
+  const r = status.registry;
+  if (!r) return [];
+  const run = (what) => async (ev) => {
+    const button = ev.currentTarget;
+    const m = await import("./registry.js").catch((e) => (toastError(e), null));
+    if (m && (await m[what](status.name, button))) await load();
+  };
+  return [
+    r.update && !r.withdrawn ? h("button", { type: "button", class: "btn btn-small", onclick: run("update") }, `Update to ${r.update}`) : null,
+    h("button", { type: "button", class: "btn btn-small", onclick: run("remove") }, "Remove"),
+  ];
+};
 
 // The tab shown, kept while the card is drawn again after a save
 let selected = null;
@@ -220,13 +251,21 @@ function pluginsExtra(data, form) {
     const el = h(
       "div",
       { class: "plugin-panel", role: "tabpanel", id: `plugin-panel-${status.name}`, "aria-labelledby": `plugin-tab-${status.name}`, hidden: status.name !== selected },
-      h("p", { class: status.state === "broken" ? "error-text" : "muted", text: status.error ? `${head}: ${status.error}` : head }),
+      h(
+        "p",
+        { class: status.state === "broken" ? "error-text" : "muted" },
+        status.error ? `${head}: ${status.error}` : head,
+        status.state === "missing_config" && plugins.linkOk(status.links && status.links.docs)
+          ? [" ", h("a", { href: status.links.docs, target: "_blank", rel: "noopener noreferrer" }, "How to set it up")]
+          : null,
+      ),
       status.description ? h("p", { text: status.description }) : null,
+      linksRow(status),
       status.events && status.events.length ? h("p", { class: "muted", text: `Events: ${status.events.join(", ")}` }) : null,
       status.hooks && status.hooks.length ? h("p", { class: "muted", text: `Sync rules: ${status.hooks.join(", ")}` }) : null,
       h("p", { class: "muted" }, hosts),
       ...body,
-      h("div", { class: "toolbar spaced" }, h("button", { type: "button", class: "btn btn-small", onclick: (ev) => turn(status, false, ev.currentTarget) }, "Disable")),
+      h("div", { class: "toolbar spaced" }, h("button", { type: "button", class: "btn btn-small", onclick: (ev) => turn(status, false, ev.currentTarget) }, "Disable"), ...registryButtons(status, load)),
     );
     panels.set(status.name, { el, status });
     return el;
@@ -257,8 +296,9 @@ function pluginsExtra(data, form) {
         h("strong", { text: status.name }),
         status.version ? h("span", { class: "muted", text: ` v${status.version}` }) : null,
         h("span", { class: broken ? "error-text one-line" : "muted one-line", title: (broken ? status.error : status.description) || null, text: broken ? status.error : plugins.summary(status.description) }),
+        linksRow(status),
       ),
-      broken ? null : h("button", { type: "button", class: "btn btn-small", onclick: (ev) => turn(status, true, ev.currentTarget) }, "Enable"),
+      h("div", { class: "toolbar" }, broken ? null : h("button", { type: "button", class: "btn btn-small", onclick: (ev) => turn(status, true, ev.currentTarget) }, "Enable"), ...registryButtons(status, load)),
     );
   };
 
@@ -333,14 +373,41 @@ function pluginsExtra(data, form) {
     }
     button.disabled = false;
   };
+  // [plugin_registry] (059): on by default; the address is for a registry of your own
+  const registry = data.plugin_registry || { enabled: true, url: "" };
+  const registryOn = h("input", { type: "checkbox", checked: registry.enabled, onchange: changed });
+  const registryUrl = h("input", { class: "input", type: "url", value: registry.url, spellcheck: "false", "aria-label": "Plugin registry address", oninput: changed });
+  const registryFields = h(
+    "details",
+    { class: "spaced" },
+    h("summary", { text: "Plugin registry settings" }),
+    h(
+      "div",
+      { class: "fields" },
+      h("label", { class: "field check" }, registryOn, h("span", { text: "Show plugins from the plugin registry" })),
+      field("Registry address", registryUrl, "The index.json of the registry; https only"),
+    ),
+  );
   return {
-    nodes: [h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn-small", onclick: reload }, "Reload plugins"), docs("plugins", "", "Plugin reference")), workbench(load), list],
+    nodes: [h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn btn-small", onclick: reload }, "Reload plugins"), docs("plugins", "", "Plugin reference")), morePlugins(load), registryFields, workbench(load), list],
     read: () => {
-      if (!found) return { plugins: stored };
+      const plugin_registry = { enabled: registryOn.checked, url: registryUrl.value.trim() };
+      if (!found) return { plugins: stored, plugin_registry };
       const edited = rows.map(plugins.toSettings);
-      return { plugins: [...edited, ...stored.filter((s) => !edited.some((e) => e.name === s.name))] };
+      return { plugins: [...edited, ...stored.filter((s) => !edited.some((e) => e.name === s.name))], plugin_registry };
     },
   };
+}
+
+/** More plugins (059): the registry's list, fetched when first opened */
+function morePlugins(load) {
+  const open = (ev) => {
+    const box = ev.currentTarget;
+    if (!box.open || box.dataset.ready) return;
+    box.dataset.ready = "1";
+    import("./registry.js").then((m) => box.append(...m.panel(load))).catch(toastError);
+  };
+  return h("details", { class: "spaced", ontoggle: open }, h("summary", { text: "More plugins" }));
 }
 
 /** The workbench (055), Install (029) in it: loads when first opened, not with the page */

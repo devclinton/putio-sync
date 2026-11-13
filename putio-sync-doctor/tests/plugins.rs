@@ -1,4 +1,4 @@
-//! The Plugins check (features 028, 031)
+//! The Plugins check (features 028, 031, 059)
 
 mod support;
 
@@ -181,4 +181,72 @@ return {
     env.doctor.configure(&config);
     let found = check(&env).await;
     assert_eq!(found.status, Status::Problem, "{found:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_withdrawn_or_delisted_registry_plugin_is_a_warning() {
+    let mut env = Env::new().await;
+    env.healthy().await;
+    let plugins_dir = env.dir.path().join("plugins");
+    let data_dir = env.dir.path().join("plugin-data");
+    let url = "https://registry.example.org/index.json";
+    for name in ["pulled", "dropped", "fine"] {
+        write(
+            &plugins_dir,
+            name,
+            "version = \"1.0.0\"\nevents = [\"*\"]\n",
+            "return {}",
+        );
+        let record = serde_json::json!({
+            "registry": url, "version": "1.0.0", "sha256": "00",
+            "installed_at": "2026-11-01T00:00:00Z",
+        });
+        std::fs::write(
+            plugins_dir.join(name).join(".registry.json"),
+            record.to_string(),
+        )
+        .unwrap();
+    }
+    let entry = |name: &str, withdrawn: Option<&str>| {
+        serde_json::json!({
+            "name": name, "description": "d", "author": "ada", "license": "MIT",
+            "repository": "https://x.org", "events": ["*"], "withdrawn": withdrawn,
+            "releases": [{ "version": "1.0.0", "url": "https://x.org/a.tar.gz",
+                "sha256": "00", "min_putio_sync": "0.1.0" }],
+        })
+    };
+    let cache = serde_json::json!({
+        "url": url,
+        "fetched_at": "2026-11-01T00:00:00Z",
+        "index": { "schema_version": 1, "plugins": [entry("pulled", Some("sends tokens")), entry("fine", None)] },
+    });
+    std::fs::create_dir_all(&data_dir).unwrap();
+    std::fs::write(data_dir.join("registry-index.json"), cache.to_string()).unwrap();
+
+    let mut config = putio_sync_core::config::Config::default();
+    config.download.target_directory = env.downloads();
+    config.plugins_dir = Some(plugins_dir.clone());
+    let service = Arc::new(PluginsService::new(PluginsOptions {
+        dir: Some(plugins_dir),
+        data_dir: Some(data_dir),
+        settings: Vec::new(),
+        clock: None,
+        download_dir: None,
+    }));
+    env.doctor = env.doctor.with_plugins(service);
+    env.doctor.configure(&config);
+    let found = check(&env).await;
+    assert_eq!(found.status, Status::Warning, "{found:?}");
+    let items: Vec<(&str, &str)> = found
+        .items
+        .iter()
+        .map(|i| (i.key.as_str(), i.detail.as_deref().unwrap_or_default()))
+        .collect();
+    assert_eq!(
+        items,
+        [
+            ("dropped", "no longer in the plugin registry"),
+            ("pulled", "withdrawn from the plugin registry: sends tokens"),
+        ]
+    );
 }

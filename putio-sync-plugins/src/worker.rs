@@ -11,7 +11,7 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -197,6 +197,9 @@ pub enum Job {
         /// Where the answer goes
         reply: oneshot::Sender<CallReply>,
     },
+    /// Build the state and do nothing else, so a sync hook's first call does not wait
+    /// for the plugin to load (a Go module takes seconds to compile)
+    Load,
 }
 
 struct Queue {
@@ -215,6 +218,8 @@ pub struct Slot {
     has_tick: AtomicBool,
     testing: AtomicBool,
     load_error: Mutex<Option<String>>,
+    /// The generation whose state is built; `u64::MAX` before the first
+    built: AtomicU64,
     tick_every: Mutex<Duration>,
     last_tick: Mutex<Instant>,
 }
@@ -235,6 +240,7 @@ impl Slot {
             has_tick: AtomicBool::new(false),
             testing: AtomicBool::new(false),
             load_error: Mutex::new(None),
+            built: AtomicU64::new(u64::MAX),
             tick_every: Mutex::new(every),
             last_tick: Mutex::new(Instant::now()),
         })
@@ -311,6 +317,11 @@ impl Slot {
         } else {
             false
         }
+    }
+
+    /// Whether the state for the current spec is built
+    pub fn loaded(&self) -> bool {
+        self.built.load(Ordering::Acquire) == self.queue.lock().unwrap().generation
     }
 
     /// Why the state could not be built, until the next update
@@ -569,6 +580,7 @@ impl Worker {
             }
         }
         self.state = Some((generation, loaded));
+        self.slot.built.store(generation, Ordering::Release);
         Ok(())
     }
 
@@ -617,6 +629,10 @@ impl Worker {
         let rebuild = self.execute_on(&mut loaded, job, spec);
         if !rebuild {
             self.state = Some((generation, loaded));
+        } else if !spec.manifest.hooks.is_empty() {
+            // Load again before the next sync hook is asked
+            self.slot.built.store(u64::MAX, Ordering::Release);
+            self.slot.push(Job::Load);
         }
     }
 
@@ -640,6 +656,7 @@ impl Worker {
                     limit.unwrap_or(timeout),
                 );
             }
+            Job::Load => return false,
             Job::Tick => {
                 if !loaded.defines("on_tick") {
                     return false;

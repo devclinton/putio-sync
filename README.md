@@ -378,6 +378,17 @@ It needs no running daemon and never creates a database. Logs go to stderr, so `
 output is clean. Exit codes: 0 ok, 1 warning, 2 problem, 3 the doctor could not run. A
 fix that deletes asks first, and with `--json` it needs `--yes` or `--dry-run`.
 
+### `plugins check`
+
+Check a plugin folder the way **Reload plugins** does. See
+[Checking a plugin](PLUGINS.md#checking-a-plugin).
+
+```bash
+putio-sync plugins check FOLDER [--json]
+```
+
+It needs no config or token. Exit codes: 0 no problems, 1 problems, 2 not a folder.
+
 ### `create`
 
 Add torrents to Put.io from files or magnet links.
@@ -1282,6 +1293,11 @@ or one of the [sign-in options](#sign-in-options). Errors are `{"error": "...", 
 | `POST /plugins/reload` | Read the plugins folder again → `{"message": "Reloaded 7 plugins"}` |
 | `POST /plugins/action` | `{"name", "action", "input"?, "config"?}`: run a plugin's settings action (Sign in with Plex, Load libraries) with unsaved non-secret `config` values for this call; answers `{message, code, open_url, choices, next, done, run}`, plus `saved` (key names) and `config` when it saved values. Saved secrets are never returned. 404 unknown plugin or action, 409 while one runs, 422 when it fails |
 | `POST /plugins/install` | `{"url"}`, `{"wasm"}` (base64) or `{"manifest", "entry"}` (base64), plus `"replace"?`: install a plugin into the plugins folder, turned off → `{"name", "message"}`. A URL must be http or https, at most 16 MiB, with redirects only on the same host. 400 bad body, 409 a plugin of that name exists (send `"replace": true`), 422 not a plugin or the download failed |
+| `GET /plugins/registry` | The plugin registry's list (059) → `{"enabled", "url", "fetched_at", "error", "skipped", "plugins"}`; each plugin has its links, events, sync rules, hosts, the release offered and a `state`: `available`, `installed`, `update`, `needs_newer` or `name_in_use`. Kept for 6 hours; `?refresh=true` fetches now. A failed fetch keeps the kept list and sets `error` |
+| `POST /plugins/registry/install` | `{"name"}`: install a plugin from the registry's list; the release's SHA-256 and manifest are checked first, and it starts off → `{"name", "message"}`. 404 not listed, 409 its state does not allow it (already installed: use update), 422 the download or a check failed (nothing written) |
+| `POST /plugins/registry/preview` | `{"name"}`: what updating a registry plugin would change, from the release checked but not written → `{"name", "from", "version", "sha256", "notes", "diff", "changed"}`; `diff` has `hosts`, `settings`, `events` and `hooks`, each `{"added", "removed"}`; `changed` lists files edited since install. 404 not from the registry, 409 no newer release |
+| `POST /plugins/registry/update` | `{"name", "sha256", "replace_changed"}`: update to the release the preview showed, keeping settings → `{"name", "message"}`. 409 the release changed since the preview, or files were edited and `replace_changed` is not set; 422 the new version does not load (the old one is put back) |
+| `POST /plugins/registry/remove` | `{"name"}`: delete a registry plugin's folder; its settings are kept → `{"name", "message"}`. 404 not from the registry |
 | `GET /plugins/workbench` | The plugin workbench (feature 055) → `{editor, dir, starters, events, file}`: whether the editor is on, the plugins folder, the starter templates, a sample `data` per event type and a sample file for sync hooks |
 | `PUT /plugins/workbench/editor` | `{"enabled": true}`: turn the plugin editor on or off (`plugin_editor`) |
 | `POST /plugins/workbench/new` | `{"starter", "name"}`: make a plugin folder from a starter (webhook-notifier, store-counter, tick-poller), turned off. 403 editor off, 400 bad name, 409 name taken |
@@ -1927,6 +1943,10 @@ and a memory limit (default 32 MiB). They can only reach the HTTP hosts and fold
 declare and you approve, and they can keep a small key-value store. A slow or failing plugin never holds up a sync.
 Secret settings are masked everywhere and never logged. See [PLUGINS.md](PLUGINS.md) for
 the manifest, the `putio` API and the limits.
+
+**More plugins** in Settings › Plugins installs reviewed plugins by other people from the
+[plugin registry](https://github.com/devclinton/putio-sync-plugin-registry). To list your
+own, see its [CONTRIBUTING.md](https://github.com/devclinton/putio-sync-plugin-registry/blob/main/CONTRIBUTING.md).
 
 <!-- ANCHOR_END: plugins -->
 <!-- ANCHOR: advanced-features -->

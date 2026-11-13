@@ -251,6 +251,10 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
                 "plugins",
                 "Lua plugins: which run, their settings and the hosts they may contact",
             ),
+            (
+                "plugin_registry",
+                "Whether More plugins lists the plugin registry, and the registry's address",
+            ),
         ],
     ),
     (
@@ -501,7 +505,7 @@ struct ImportBody {
 fn group_of(section: &str) -> &str {
     match section {
         "watch" => "watcher",
-        "plugins_dir" => "plugins",
+        "plugins_dir" | "plugin_registry" => "plugins",
         other => other,
     }
 }
@@ -537,6 +541,12 @@ async fn import_settings(
             .split_once('.')
             .unwrap_or((&change.key, &change.key));
         let field = field.split('.').next().unwrap_or_default();
+        // `[plugin_registry]` is one field of the plugins group
+        let field = if section == "plugin_registry" {
+            section
+        } else {
+            field
+        };
         change.live = live
             .get(group_of(section))
             .is_some_and(|fields| fields.contains(&field));

@@ -2323,7 +2323,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-api"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2373,7 +2373,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-archive"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "flate2",
@@ -2392,7 +2392,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-arr"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2416,7 +2416,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-cli"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2486,7 +2486,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-core"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2562,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-dlna"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "axum",
  "bytes",
@@ -2593,7 +2593,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-doctor"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "filetime",
@@ -2666,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-hooks"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "libc",
@@ -2683,7 +2683,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-notify"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "lettre",
@@ -2695,7 +2695,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-pipeline"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "mockito",
  "putio-sync-client",
@@ -2718,9 +2718,10 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-plugins"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "chrono",
+ "flate2",
  "mlua",
  "mockito",
  "putio-sync-core",
@@ -2728,6 +2729,8 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
+ "tar",
  "tempfile",
  "tokio",
  "toml",
@@ -2739,7 +2742,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-precheck"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "mockito",
  "putio-sync-client",
@@ -2756,7 +2759,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-storage"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "mockito",
  "putio-sync-client",
@@ -2774,7 +2777,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-subtitles"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "encoding_rs",
  "mockito",
@@ -2792,7 +2795,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-tailscale"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2803,7 +2806,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-telemetry"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "axum",
  "prometheus",
@@ -2818,7 +2821,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-translation"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "mockito",
  "putio-sync-core",
@@ -2837,7 +2840,7 @@ dependencies = [
 
 [[package]]
 name = "putio-sync-update"
-version = "0.2.2"
+version = "0.4.0"
 dependencies = [
  "bsdiff",
  "chrono",
@@ -4009,6 +4012,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e1d1b10ced5ca923a1fcb8d03e96b8d3268065d724548c0211415ff6ac6bac4"
 dependencies = [
  "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
  "libc",
 ]
 

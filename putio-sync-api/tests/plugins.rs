@@ -1,5 +1,5 @@
 //! Plugin routes (features 028, 029, 031): the plugin list, test events, reload, settings
-//! actions and installing
+//! actions, installing, and the plugin registry (059)
 
 mod common;
 
@@ -62,6 +62,11 @@ async fn needs_a_token() {
         (Method::POST, "/plugins/reload"),
         (Method::POST, "/plugins/action"),
         (Method::POST, "/plugins/install"),
+        (Method::GET, "/plugins/registry"),
+        (Method::POST, "/plugins/registry/install"),
+        (Method::POST, "/plugins/registry/preview"),
+        (Method::POST, "/plugins/registry/update"),
+        (Method::POST, "/plugins/registry/remove"),
     ] {
         let response = app.req(method, path, None, None).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
@@ -460,4 +465,147 @@ async fn bad_installs_say_why() {
         assert!(text.contains(want), "{body}: {text}");
     }
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+/// A registry listing the rust-clean-names module, served with `module`
+async fn registry_server(module: Vec<u8>) -> (mockito::ServerGuard, String) {
+    let mut server = mockito::Server::new_async().await;
+    let index = json!({
+        "schema_version": 1,
+        "plugins": [{
+            "name": "rust-clean-names",
+            "description": "Drop release tags from video names",
+            "author": "devclinton",
+            "repository": "https://github.com/devclinton/putio-sync",
+            "license": "MIT",
+            "runtime": "wasm",
+            "events": ["download.finished"],
+            "hooks": ["rename"],
+            "releases": [{
+                "version": "1.0.0",
+                "url": format!("{}/clean-1.0.0.wasm", server.url()),
+                "sha256": putio_sync_plugins::registry::archive::sha256(&clean_names()),
+                "min_putio_sync": "0.1.0",
+            }],
+        }],
+    });
+    server
+        .mock("GET", "/index.json")
+        .with_body(index.to_string())
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/clean-1.0.0.wasm")
+        .with_body(module)
+        .create_async()
+        .await;
+    let url = format!("{}/index.json", server.url());
+    (server, url)
+}
+
+async fn put(app: &TestApp, path: &str, body: serde_json::Value) -> axum::response::Response {
+    app.req(Method::PUT, path, Some(&app.token), Some(body))
+        .await
+}
+
+async fn registry_app(dir: &Path, url: String) -> TestApp {
+    let dir = dir.to_path_buf();
+    test_app_with(move |config| {
+        config.plugins_dir = Some(dir);
+        config.plugin_registry.url = url;
+    })
+    .await
+}
+
+#[tokio::test]
+async fn registry_lists_and_installs_a_reviewed_plugin() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_server, url) = registry_server(clean_names()).await;
+    let app = registry_app(dir.path(), url.clone()).await;
+
+    let list = body_json(app.get("/plugins/registry").await).await;
+    assert_eq!(list["enabled"], true);
+    assert_eq!(list["url"], url);
+    assert_eq!(list["error"], serde_json::Value::Null);
+    let entry = listed(&list, "rust-clean-names").unwrap();
+    assert_eq!(entry["state"], "available");
+    assert_eq!(entry["version"], "1.0.0");
+
+    let response = app
+        .post_json(
+            "/plugins/registry/install",
+            json!({ "name": "rust-clean-names" }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let plugins = body_json(app.get("/plugins").await).await;
+    let plugin = listed(&plugins, "rust-clean-names").unwrap();
+    assert_eq!(plugin["state"], "disabled");
+    assert_eq!(plugin["registry"]["version"], "1.0.0");
+    assert!(dir.path().join("rust-clean-names/.registry.json").exists());
+
+    let list = body_json(app.get("/plugins/registry").await).await;
+    assert_eq!(
+        listed(&list, "rust-clean-names").unwrap()["state"],
+        "installed"
+    );
+    let missing = app
+        .post_json("/plugins/registry/install", json!({ "name": "nope" }))
+        .await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+    let name = json!({ "name": "rust-clean-names" });
+    let again = app
+        .post_json("/plugins/registry/install", name.clone())
+        .await;
+    assert_eq!(again.status(), StatusCode::CONFLICT);
+    let newest = app
+        .post_json("/plugins/registry/preview", name.clone())
+        .await;
+    assert_eq!(newest.status(), StatusCode::CONFLICT);
+    let removed = app
+        .post_json("/plugins/registry/remove", name.clone())
+        .await;
+    assert_eq!(removed.status(), StatusCode::OK);
+    assert!(!dir.path().join("rust-clean-names").exists());
+    let gone = app.post_json("/plugins/registry/remove", name).await;
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn registry_refuses_a_file_that_does_not_match_and_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_server, url) = registry_server(b"\0asm changed".to_vec()).await;
+    let app = registry_app(dir.path(), url).await;
+    app.get("/plugins/registry").await;
+    let response = app
+        .post_json(
+            "/plugins/registry/install",
+            json!({ "name": "rust-clean-names" }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body_text(response).await.contains("SHA-256"));
+    assert!(!dir.path().join("rust-clean-names").exists());
+}
+
+#[tokio::test]
+async fn registry_settings_save_and_an_off_registry_lists_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_server, url) = registry_server(clean_names()).await;
+    let app = registry_app(dir.path(), url.clone()).await;
+    let mut settings = body_json(app.get("/settings/plugins").await).await;
+    assert_eq!(settings["plugin_registry"]["url"], url);
+
+    settings["plugin_registry"]["url"] = json!("http://example.com/index.json");
+    let refused = put(&app, "/settings/plugins", settings.clone()).await;
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+
+    settings["plugin_registry"]["url"] = json!(url);
+    settings["plugin_registry"]["enabled"] = json!(false);
+    let saved = put(&app, "/settings/plugins", settings).await;
+    assert_eq!(saved.status(), StatusCode::OK);
+    let list = body_json(app.get("/plugins/registry").await).await;
+    assert_eq!(list["enabled"], false);
+    assert_eq!(list["plugins"], json!([]));
 }

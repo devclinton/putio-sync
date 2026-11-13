@@ -269,3 +269,111 @@ export function linkLabel(url) {
     return url;
   }
 }
+
+const LOCAL = /^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|\[::1\]|.+\.local)$/;
+
+/** Whether a manifest link may be shown (as putio-sync-core's valid_link): https, or http to
+ *  a loopback or private host, up to 300 characters */
+export function linkOk(url) {
+  if (typeof url !== "string" || url.length > 300 || /[\s\p{Cc}]/u.test(url)) return false;
+  const m = /^(https?):\/\/([^/?#]*)/.exec(url);
+  if (!m) return false;
+  const authority = m[2].slice(m[2].lastIndexOf("@") + 1);
+  const host = (authority.startsWith("[") ? authority.slice(0, authority.indexOf("]") + 1) : authority.split(":")[0]).toLowerCase();
+  if (!host || host === "[]") return false;
+  return m[1] === "https" || LOCAL.test(host);
+}
+
+const LINKS = [
+  ["docs", "Docs"],
+  ["homepage", "Website"],
+  ["repository", "Source"],
+  ["issues", "Report a problem"],
+];
+
+/** A plugin's links in the order shown, skipping unset and refused ones */
+export function links(status) {
+  const set = (status && status.links) || {};
+  return LINKS.filter(([key]) => linkOk(set[key])).map(([key, label]) => ({ label, href: set[key] }));
+}
+
+/** "By Ada · MIT", "By Ada", "MIT", or "" */
+export function byline(status) {
+  const set = (status && status.links) || {};
+  return [set.author ? `By ${set.author}` : "", set.license || ""].filter(Boolean).join(" · ");
+}
+
+/** Registry entries whose name, description or author holds every word of `text` (059) */
+export function filterEntries(entries, text) {
+  const words = (text || "").toLowerCase().split(/\s+/).filter(Boolean);
+  return (entries || []).filter((e) => {
+    const hay = `${e.name} ${e.description} ${e.author}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  });
+}
+
+/** What a registry entry's button says and whether it can be pressed, by its state */
+export function entryAction(entry) {
+  switch (entry.state) {
+    case "available":
+      return { label: "Install", enabled: true };
+    case "update":
+      return { label: `Update to ${entry.version}`, enabled: true };
+    case "installed":
+      return { label: "Installed", enabled: false };
+    case "needs_newer":
+      return { label: `Needs putio-sync ${entry.needs}`, enabled: false };
+    default:
+      return { label: "Name in use", enabled: false };
+  }
+}
+
+/** What a registry plugin may do, for the Install confirm: events, sync rules, hosts */
+export function entryReach(entry) {
+  const hosts = (entry.hosts && entry.hosts.fixed) || [];
+  const fromConfig = (entry.hosts && entry.hosts.from_config) || [];
+  const parts = [`Runs on: ${(entry.events || []).join(", ") || "no events"}`];
+  if ((entry.hooks || []).length) parts.push(`Sync rules: ${entry.hooks.join(", ")}`);
+  if (hosts.length) parts.push(`Contacts: ${hosts.join(", ")}`);
+  if (fromConfig.length) parts.push(`Contacts the address in: ${fromConfig.join(", ")}`);
+  if (!hosts.length && !fromConfig.length) parts.push("Contacts no hosts");
+  return parts;
+}
+
+// A host from a setting, as a diff names it: `setting:url`
+const hostText = (h) => (h.startsWith("setting:") ? `the address in ${h.slice(8)}` : h);
+
+/** What an update changes, for its confirm (059): the release notes, what it may do now
+ * that it could not before and the reverse, and files edited by hand it replaces */
+export function updateText(preview) {
+  const d = preview.diff || {};
+  const list = (c, key) => ((c && c[key]) || []).map(hostText).join(", ");
+  const lines = [];
+  const add = (label, text) => text && lines.push(`${label}: ${text}`);
+  add("Release notes", preview.notes);
+  add("New hosts", list(d.hosts, "added"));
+  add("No longer contacts", list(d.hosts, "removed"));
+  add("New settings", list(d.settings, "added"));
+  add("Settings dropped", list(d.settings, "removed"));
+  add("Now runs on", list(d.events, "added"));
+  add("No longer runs on", list(d.events, "removed"));
+  add("New sync rules", list(d.hooks, "added"));
+  add("Sync rules dropped", list(d.hooks, "removed"));
+  const asks = lines.length > (preview.notes ? 1 : 0);
+  if (!asks) lines.push("It asks for nothing new.");
+  if (((d.hosts && d.hosts.added) || []).length) lines.push("New hosts need your approval before it runs again.");
+  if ((preview.changed || []).length) lines.push(`Your edits to ${preview.changed.join(", ")} will be replaced.`);
+  lines.push("Its settings are kept; if the new version does not load, the old one stays.");
+  return lines.join("\n");
+}
+
+/** The registry line on a plugin's tab: where it came from, and an update or withdrawal */
+export function registryText(status) {
+  const r = status && status.registry;
+  if (!r) return "";
+  const parts = [`From the plugin registry, ${r.version}`];
+  if (r.withdrawn) parts.push(`withdrawn: ${r.withdrawn}`);
+  else if (r.listed === false) parts.push("no longer listed");
+  else if (r.update) parts.push(`${r.update} available`);
+  return parts.join(" · ");
+}

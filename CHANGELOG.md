@@ -14,14 +14,6 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
-- putio-sync checks GitHub for a newer release about a minute after it starts and then
-  once a day, and the What's new page shows it with its release notes, a link to the
-  release, and Check now and Dismiss buttons. The check sends nothing about your install;
-  turn it off in Settings › General › Updates (`[updates] check = false`).
-- The update notice says how putio-sync was installed (snap, Flatpak, Homebrew, .deb,
-  winget, Docker, Unraid, CasaOS or Umbrel) and shows that channel's update command, with a
-  Copy button, or its update step. For Docker it names the pull for your image's tag. Set
-  `PUTIO_SYNC_INSTALL` when it guesses wrong; `GET /status` reports it as `install_channel`.
 - Releases also publish each binary as a bare `.xz`, small bsdiff patches from the three
   previous releases, and `SHA256SUMS.minisig`, a minisign signature of `SHA256SUMS` that also
   lists each uncompressed binary's hash. These are for the self-update to come; the existing
@@ -34,6 +26,50 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   database back, restarts it, and says why. The macOS `.pkg` and Windows setup installs
   download the new installer and open it. Managed installs (snap, Homebrew, Docker and the
   rest) keep showing their own update command.
+
+## [0.4.0] - 2026-11-12
+
+### Added
+
+- The website's landing page in the same 19 languages as the docs, machine-translated and
+  marked as such, with a language menu in the header. Its Docs links open the docs in the
+  same language.
+- Plugin links: `plugin.toml` can name the plugin's `author` and `license` and link its
+  `docs`, `homepage`, `repository` and `issues`. Settings › Plugins shows them on the
+  plugin's tab and in the list, and **Needs settings** links to the docs. Links must be
+  https (or http to a local address). The bundled plugins set them.
+- More plugins: Settings › Plugins lists the plugins in the putio-sync plugin registry, with
+  a search, and installs or updates one in a click. Each release's SHA-256 and manifest are
+  checked against the registry before anything is written, and a new plugin starts off.
+  Turn it off or use your own registry under Plugin registry settings
+  (`[plugin_registry]`).
+- Registry plugin updates: **Update to** shows what the new version changes (hosts,
+  settings, events, sync rules, and files you edited) before it updates, keeps the
+  plugin's settings, and puts the old version back if the new one does not load. **Remove**
+  deletes a registry plugin and keeps its settings. `putio-sync doctor` warns about a
+  plugin the registry withdrew or no longer lists.
+- `putio-sync plugins check FOLDER` checks a plugin folder the way Reload plugins does and
+  prints each problem (`--json` for scripts); it needs no config or token.
+
+### Fixed
+
+- A plugin's sync rules no longer time out on the first file after a start or a reload. The
+  plugin now loads as soon as it starts instead of on that first call, which for a Go
+  WebAssembly plugin took longer than the 500 ms limit, so the built-in rule was used and
+  the failure counted toward the pause. Until it has loaded, the built-in rules apply.
+
+## [0.3.0] - 2026-11-11
+
+### Added
+
+- putio-sync checks GitHub for a newer release about a minute after it starts and then
+  once a day, and the What's new page shows it with its release notes, a link to the
+  release, and Check now and Dismiss buttons. The check sends nothing about your install;
+  turn it off in Settings › General › Updates (`[updates] check = false`).
+- The update notice says how putio-sync was installed (snap, Flatpak, Homebrew, .deb,
+  winget, Docker, Unraid, CasaOS or Umbrel) and shows that channel's update command, with a
+  Copy button, or its update step. For Docker it names the pull for your image's tag. Set
+  `PUTIO_SYNC_INSTALL` when it guesses wrong; `GET /status` reports it as `install_channel`.
 - History keeps each finished item's pipeline steps: a downloaded file whose item is still
   kept has a Steps button that opens its timeline, with the state, duration and attempts
   of every step. `[pipeline] history_days` (default 30, set in Settings › Integrations)

@@ -532,6 +532,13 @@ run_at = "02:30"
 # path_map = [{ from = "/downloads", to = "/data/media" }]   # this machine => server
 # delay_seconds = 20                    # wait for more files, 0 to 600. Default: 20
 # max_wait_seconds = 300                # longest wait, 10 to 3600. Default: 300
+#
+# The plugin registry (feature 059): Settings › Plugins › More plugins lists its reviewed
+# plugins to install. The list is fetched when you open More plugins, at most every 6
+# hours; nothing is fetched while it is off.
+# [plugin_registry]
+# enabled = true                        # Default: true
+# url = "https://raw.githubusercontent.com/devclinton/putio-sync-plugin-registry/main/index.json"
 
 # ============================================================================
 # Tailscale (feature 036)

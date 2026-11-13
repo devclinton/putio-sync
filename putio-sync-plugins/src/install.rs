@@ -83,6 +83,17 @@ fn unpack(package: Package) -> Result<(Manifest, String, Vec<u8>), InstallError>
 /// Write `package` to `dir/<name>`, replacing a folder of that name only when `replace`
 /// is set. Returns the plugin's name.
 pub fn install(dir: &Path, package: Package, replace: bool) -> Result<String, InstallError> {
+    install_with(dir, package, replace, &[])
+}
+
+/// [`install`], with `extra` files (name, bytes) written into the folder too, such as the
+/// registry's install record (059)
+pub fn install_with(
+    dir: &Path,
+    package: Package,
+    replace: bool,
+    extra: &[(&str, Vec<u8>)],
+) -> Result<String, InstallError> {
     let (manifest, text, entry) = unpack(package)?;
     let name = manifest.name.clone();
     let target = dir.join(&name);
@@ -95,7 +106,12 @@ pub fn install(dir: &Path, package: Package, replace: bool) -> Result<String, In
     let temp = hidden(dir, &name, "install");
     let written = std::fs::create_dir(&temp)
         .and_then(|_| std::fs::write(temp.join("plugin.toml"), &text))
-        .and_then(|_| std::fs::write(temp.join(&manifest.entry), &entry));
+        .and_then(|_| std::fs::write(temp.join(&manifest.entry), &entry))
+        .and_then(|_| {
+            extra
+                .iter()
+                .try_for_each(|(name, body)| std::fs::write(temp.join(name), body))
+        });
     if let Err(e) = written {
         let _ = std::fs::remove_dir_all(&temp);
         return Err(io(&temp, e));
@@ -122,8 +138,47 @@ pub fn install(dir: &Path, package: Package, replace: bool) -> Result<String, In
     Ok(name)
 }
 
+/// Remove the hidden folders an install or registry update that was stopped part way
+/// left in `dir`. An old copy whose new one never landed is put back. Returns how many were cleaned up.
+pub fn clean_leftovers(dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mine = format!("-{}", std::process::id());
+    let mut cleaned = 0;
+    for entry in entries.flatten() {
+        let file = entry.file_name().to_string_lossy().to_string();
+        let Some(rest) = file.strip_prefix('.') else {
+            continue;
+        };
+        let Some((head, pid)) = rest.rsplit_once('-') else {
+            continue;
+        };
+        if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) || file.ends_with(&mine) {
+            continue;
+        }
+        let path = entry.path();
+        if let Some(name) = head
+            .strip_suffix("-old")
+            .or_else(|| head.strip_suffix("-previous"))
+        {
+            let target = dir.join(name);
+            if !target.exists() && std::fs::rename(&path, &target).is_ok() {
+                cleaned += 1;
+                continue;
+            }
+        } else if head.strip_suffix("-install").is_none() {
+            continue;
+        }
+        if std::fs::remove_dir_all(&path).is_ok() {
+            cleaned += 1;
+        }
+    }
+    cleaned
+}
+
 /// A hidden folder next to the plugins, skipped by discovery
-fn hidden(dir: &Path, name: &str, what: &str) -> PathBuf {
+pub(crate) fn hidden(dir: &Path, name: &str, what: &str) -> PathBuf {
     dir.join(format!(".{}-{}-{}", name, what, std::process::id()))
 }
 
@@ -160,6 +215,24 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
             .collect();
         assert_eq!(names, vec!["hello"]);
+    }
+
+    #[test]
+    fn leftovers_are_cleaned_and_a_lost_plugin_is_put_back() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".hello-install-1")).unwrap();
+        std::fs::create_dir(dir.path().join(".gone-old-1")).unwrap();
+        std::fs::write(dir.path().join(".gone-old-1/plugin.toml"), "x").unwrap();
+        std::fs::create_dir(dir.path().join(".back-previous-1")).unwrap();
+        std::fs::create_dir(dir.path().join(".kept")).unwrap();
+        let ours = format!(".busy-install-{}", std::process::id());
+        std::fs::create_dir(dir.path().join(&ours)).unwrap();
+        assert_eq!(clean_leftovers(dir.path()), 3);
+        assert!(dir.path().join("back").exists());
+        assert!(!dir.path().join(".hello-install-1").exists());
+        assert!(dir.path().join("gone/plugin.toml").exists());
+        assert!(dir.path().join(".kept").exists());
+        assert!(dir.path().join(ours).exists());
     }
 
     #[test]

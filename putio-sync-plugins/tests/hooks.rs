@@ -20,7 +20,7 @@ fn filter_plugin(dir: &Path, name: &str, body: &str) {
     .unwrap();
     std::fs::write(
         path.join("main.lua"),
-        format!("return {{ filter = function(file) {body} end }}"),
+        format!("return {{ init = function() end, filter = function(file) {body} end }}"),
     )
     .unwrap();
 }
@@ -64,6 +64,19 @@ async fn wait_for(what: &str, mut ok: impl FnMut() -> bool) {
     }
 }
 
+/// Until each of `names` has run its init: its hooks are asked only once it has loaded
+async fn wait_loaded(plugins: &PluginsService, names: &[&str]) {
+    wait_for("the plugins to load", || {
+        let status = plugins.status();
+        names.iter().all(|name| {
+            status
+                .iter()
+                .any(|s| s.name == *name && s.runs.iter().any(|r| r.event_type == "init"))
+        })
+    })
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_first_answer_in_name_order_wins() {
     let dir = tempfile::tempdir().unwrap();
@@ -82,7 +95,7 @@ async fn the_first_answer_in_name_order_wins() {
             enabled("c-download", 2000),
         ],
     );
-    wait_for("filter", || plugins.provides(Hook::Filter)).await;
+    wait_loaded(&plugins, &["a-nothing", "b-skip", "c-download"]).await;
     assert_eq!(
         plugins.filter(&file()).await,
         Some((FilterAnswer::Skip, "b-skip".to_string()))
@@ -112,7 +125,7 @@ async fn errors_slow_plugins_and_bad_answers_fall_back() {
             enabled("c-slow", 100),
         ],
     );
-    wait_for("filter", || plugins.provides(Hook::Filter)).await;
+    wait_loaded(&plugins, &["a-error", "b-bad", "c-slow"]).await;
     let started = Instant::now();
     assert_eq!(plugins.filter(&file()).await, None);
     assert!(
@@ -122,7 +135,15 @@ async fn errors_slow_plugins_and_bad_answers_fall_back() {
     );
 
     let status = plugins.status();
-    let runs = |name: &str| status.iter().find(|s| s.name == name).unwrap().runs.clone();
+    let runs = |name: &str| -> Vec<_> {
+        let status = status.iter().find(|s| s.name == name).unwrap();
+        status
+            .runs
+            .iter()
+            .filter(|r| r.event_type != "init")
+            .cloned()
+            .collect()
+    };
     for name in ["a-error", "b-bad", "c-slow"] {
         let runs = runs(name);
         assert_eq!(runs.len(), 1, "{name}: {runs:?}");
@@ -187,7 +208,7 @@ async fn manifests_with_hooks_load_or_break() {
         dir.path(),
         vec![enabled("only-hooks", 2000), enabled("no-rename", 2000)],
     );
-    // Workers build on their first job
+    // Hook workers build when they start
     wait_for("filter", || plugins.provides(Hook::Filter)).await;
     assert_eq!(plugins.filter(&file()).await, None);
     wait_for("the broken plugin", || {
@@ -212,4 +233,36 @@ async fn manifests_with_hooks_load_or_break() {
     assert_eq!(fine.state, PluginState::Enabled, "{:?}", fine.error);
     assert_eq!(fine.hooks, vec!["filter".to_string()]);
     assert!(fine.events.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hook_plugins_load_before_the_first_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("slow-start");
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(
+        path.join("plugin.toml"),
+        "name = \"slow-start\"\nversion = \"1.0.0\"\nhooks = [\"filter\"]\n",
+    )
+    .unwrap();
+    // Loading takes longer than the hook's time limit, as compiling a Go module can
+    std::fs::write(
+        path.join("main.lua"),
+        "local n = 0\nfor i = 1, 30000000 do n = n + 1 end\n\
+         return { init = function() end, filter = function() return \"skip\" end }",
+    )
+    .unwrap();
+    let plugins = service(dir.path(), vec![enabled("slow-start", 50)]);
+    // No file has been asked about, so only starting the plugin can have run init
+    wait_for("init", || {
+        plugins
+            .status()
+            .iter()
+            .any(|s| s.name == "slow-start" && s.runs.iter().any(|r| r.event_type == "init"))
+    })
+    .await;
+    assert_eq!(
+        plugins.filter(&file()).await,
+        Some((FilterAnswer::Skip, "slow-start".to_string()))
+    );
 }

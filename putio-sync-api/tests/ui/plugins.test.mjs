@@ -233,3 +233,78 @@ test("folders a plugin may use are named on Enable and kept on save (029)", () =
   assert.equal(toSettings(fromStatus(sorter, null)).approved_paths, undefined);
 });
 
+
+test("linkOk follows the manifest link rule", async () => {
+  const { linkOk } = await import("../../ui/plugins.js");
+  for (const ok of ["https://github.com/me/p", "http://127.0.0.1:8080/docs", "http://192.168.1.10/p", "http://nas.local/readme", "http://[::1]:9000/"]) {
+    assert.ok(linkOk(ok), ok);
+  }
+  for (const bad of ["http://example.com/docs", "javascript:alert(1)", "data:text/html,hi", "ftp://x.org", "https://", "https://a b.com", "http://u@example.com@10.0.0.1.evil.com/", `https://example.com/${"a".repeat(281)}`, null]) {
+    assert.ok(!linkOk(bad), String(bad));
+  }
+});
+
+test("links come in a fixed order, unset and refused ones left out", async () => {
+  const { links, byline } = await import("../../ui/plugins.js");
+  const status = { links: { author: "Ada", license: "MIT", issues: "https://x.org/i", docs: "https://x.org/d", homepage: "javascript:alert(1)", repository: "https://x.org/r" } };
+  assert.deepEqual(links(status), [
+    { label: "Docs", href: "https://x.org/d" },
+    { label: "Source", href: "https://x.org/r" },
+    { label: "Report a problem", href: "https://x.org/i" },
+  ]);
+  assert.deepEqual(links({}), []);
+  assert.equal(byline(status), "By Ada · MIT");
+  assert.equal(byline({ links: { license: "MIT" } }), "MIT");
+  assert.equal(byline({}), "");
+});
+
+test("registry entries are searched and get a button by state (059)", async () => {
+  const { filterEntries, entryAction, entryReach } = await import("../../ui/plugins.js");
+  const entries = [
+    { name: "webhook-notifier", description: "POST a JSON message", author: "ada" },
+    { name: "clean-names", description: "Tidy video names", author: "Grace" },
+  ];
+  assert.deepEqual(filterEntries(entries, "").length, 2);
+  assert.deepEqual(filterEntries(entries, "grace video").map((e) => e.name), ["clean-names"]);
+  assert.deepEqual(filterEntries(entries, "json nobody"), []);
+  assert.deepEqual(filterEntries(undefined, "x"), []);
+
+  assert.deepEqual(entryAction({ state: "available" }), { label: "Install", enabled: true });
+  assert.deepEqual(entryAction({ state: "update", version: "1.1.0" }), { label: "Update to 1.1.0", enabled: true });
+  assert.equal(entryAction({ state: "installed" }).enabled, false);
+  assert.deepEqual(entryAction({ state: "needs_newer", needs: "0.4.0" }), { label: "Needs putio-sync 0.4.0", enabled: false });
+  assert.deepEqual(entryAction({ state: "name_in_use" }), { label: "Name in use", enabled: false });
+
+  assert.deepEqual(entryReach({ events: ["download.finished"], hooks: [], hosts: { fixed: [], from_config: [] } }), ["Runs on: download.finished", "Contacts no hosts"]);
+  assert.deepEqual(entryReach({ events: ["*"], hooks: ["rename"], hosts: { fixed: ["ntfy.sh"], from_config: ["url"] } }), [
+    "Runs on: *",
+    "Sync rules: rename",
+    "Contacts: ntfy.sh",
+    "Contacts the address in: url",
+  ]);
+});
+
+test("an update's confirm says what changes and that edits are replaced (059)", async () => {
+  const { updateText, registryText } = await import("../../ui/plugins.js");
+  const none = { added: [], removed: [] };
+  const quiet = updateText({ diff: { hosts: none, settings: none, events: none, hooks: none }, changed: [] });
+  assert.equal(quiet, "It asks for nothing new.\nIts settings are kept; if the new version does not load, the old one stays.");
+  const text = updateText({
+    notes: "https://x.org/r",
+    diff: { hosts: { added: ["api.x.org", "setting:url"], removed: [] }, settings: { added: ["token"], removed: [] }, events: { added: [], removed: ["download.failed"] }, hooks: none },
+    changed: ["main.lua"],
+  }).split("\n");
+  assert.deepEqual(text, [
+    "Release notes: https://x.org/r",
+    "New hosts: api.x.org, the address in url",
+    "New settings: token",
+    "No longer runs on: download.failed",
+    "New hosts need your approval before it runs again.",
+    "Your edits to main.lua will be replaced.",
+    "Its settings are kept; if the new version does not load, the old one stays.",
+  ]);
+  assert.equal(registryText({}), "");
+  assert.equal(registryText({ registry: { version: "1.0.0", update: "2.0.0" } }), "From the plugin registry, 1.0.0 · 2.0.0 available");
+  assert.equal(registryText({ registry: { version: "1.0.0", update: "2.0.0", withdrawn: "unsafe" } }), "From the plugin registry, 1.0.0 · withdrawn: unsafe");
+  assert.equal(registryText({ registry: { version: "1.0.0", listed: false } }), "From the plugin registry, 1.0.0 · no longer listed");
+});
