@@ -134,8 +134,11 @@ Done notes for T028–T040:
 **Goal**: install when idle, if opted in.
 **Independent test**: with the setting on and a transfer running, the update waits and then runs (spec US4).
 
-- [ ] T042 [US4] Write failing tests, then implement in `putio-sync-update/src/lib.rs`: when a check finds a newer version and `updates.auto_install` is true and `mode == Swap`, the attempt enters `waiting_for_idle`, re-checks idleness every minute, and calls `apply(false)` once idle; it never starts automatically for the version in `update_state.last_rolled_back` (FR-020, US4 scenario 3); it does nothing for other modes even with the key set (US4 scenario 4). Use `tokio::time::pause`
-- [ ] T043 [US4] Show `waiting_for_idle` ("Waiting for transfers to finish") in `putio-sync-api/ui/pages/news.js`, and run quickstart §3
+- [X] T042 [US4] Write failing tests, then implement in `putio-sync-update/src/lib.rs`: when a check finds a newer version and `updates.auto_install` is true and `mode == Swap`, the attempt enters `waiting_for_idle`, re-checks idleness every minute, and calls `apply(false)` once idle; it never starts automatically for the version in `update_state.last_rolled_back` (FR-020, US4 scenario 3); it does nothing for other modes even with the key set (US4 scenario 4). Use `tokio::time::pause`
+- [X] T043 [US4] Show `waiting_for_idle` ("Waiting for transfers to finish") in `putio-sync-api/ui/pages/news.js`, and run quickstart §3
+
+- T042: the wait is also started by turning the setting on (`configure`), as quickstart §3 expects, not only by a check. A waiting attempt gives way to "Update now", which the card keeps offering while it waits, and turning the setting off clears it. The rolled-back version comes from `update_state.last_rolled_back`, which dismissing the rollback message keeps. An automatic attempt that fails is tried again at the next check.
+- T043: the `waiting_for_idle` text was already in `update.js`, the card news.js shows. "Install updates automatically" is in Settings › General › Updates only when `/update` reports `mode == swap`. Quickstart §3 isn't run here: it needs a GitHub-archive install with a signed release to update to, so it's left with T041 for the maintainer.
 
 ## Phase 8: Polish
 

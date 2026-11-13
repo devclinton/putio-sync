@@ -146,7 +146,9 @@ export function updateCard(u, reload) {
   const actions = [checkNow];
   const problem = h("div");
   let sizeLine = null;
-  if (a && u.channel.mode !== "instructions" && !running) {
+  // An automatic update waiting for transfers still offers "Update now", which interrupts them
+  const waiting = t && t.state === "waiting_for_idle";
+  if (a && u.channel.mode !== "instructions" && (!running || waiting)) {
     const { button, size } = updateNow(u, a, reload, problem);
     actions.unshift(button);
     sizeLine = h("p", { class: "muted", text: `Update now downloads a ${size}${u.channel.mode === "swap" ? ", then restarts putio-sync" : ""}.` });

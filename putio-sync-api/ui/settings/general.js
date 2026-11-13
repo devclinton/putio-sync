@@ -6,17 +6,23 @@ import { h, toast } from "../app.js";
 import { LANGUAGES, choice, nativeName, setLanguage } from "../i18n.js";
 import { groupCard } from "./form.js";
 
-// Installing automatically comes with self-update; until then a save keeps auto_install as is
-const UPDATES = {
-  id: "updates",
-  key: "updates",
-  title: "Updates",
-  fields: [["check", "Check for updates", "Asks GitHub once a day for a newer release; nothing about this install is sent", "b"]],
-};
+const UPDATES = { id: "updates", key: "updates", title: "Updates" };
+const CHECK = ["check", "Check for updates", "Asks GitHub once a day for a newer release; nothing about this install is sent", "b"];
+const AUTO_INSTALL = ["auto_install", "Install updates automatically", "Waits until no transfer is running, then updates and restarts putio-sync", "b"];
 const PUTIO_AUTH = { token: "OAuth token set", app_password: "app password set", none: "not set" };
 const MODE_NAMES = { system: "System", light: "Light", dark: "Dark" };
 
-export const cards = (ctx) => [appearance(ctx), language(), credentials(ctx), groupCard(UPDATES, ctx)];
+export const cards = (ctx) => [appearance(ctx), language(), credentials(ctx), updates(ctx)];
+
+/** The update settings. Only an install that replaces itself can update automatically
+ * (US4); elsewhere a save keeps auto_install as it is. */
+function updates(ctx) {
+  const slot = h("div");
+  get("/update")
+    .then((u) => u.channel.mode === "swap", () => false)
+    .then((swap) => ctx.alive() && slot.replaceWith(groupCard({ ...UPDATES, fields: swap ? [CHECK, AUTO_INSTALL] : [CHECK] }, ctx)));
+  return slot;
+}
 
 /** Mode and accent radios; a change applies at once and is saved in this browser. */
 function appearance(ctx) {
