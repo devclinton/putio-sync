@@ -659,7 +659,11 @@ mod tests {
         );
         let e = server_listen(&config, Some("10.0.0.2:7000"), Some(9000)).unwrap_err();
         assert!(e.to_string().contains("give the port once"), "{e}");
-        assert!(server_listen(&config, Some("not an address"), None).is_err());
+        assert!(server_listen(&config, Some("not/an address"), None).is_err());
+        assert_eq!(
+            listen(&config, Some("Ethernet 2"), None),
+            ["Ethernet 2:8080"]
+        );
 
         // Tailnet only: `server` honours it too
         config.tailscale.tailnet_only = true;

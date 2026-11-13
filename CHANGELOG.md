@@ -12,6 +12,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- A listen setting (`[api] bind`, `[metrics] bind`) can name a Windows network interface,
+  whose name has spaces or brackets, such as `Ethernet 2:15432` or
+  `vEthernet (Default Switch):15432`. Interface names may also be in any script.
+
 ## [0.4.0] - 2026-11-12
 
 ### Added

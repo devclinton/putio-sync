@@ -905,7 +905,8 @@ listen = true
 #   "0.0.0.0:15432"        an IPv4 address (0.0.0.0 = all IPv4 addresses)
 #   "[::]:15432"           an IPv6 address in brackets ([::] = all IPv6)
 #   "eth0:15432"           every address the interface has, followed as the
-#                          interface's addresses change (DHCP, VPN up/down)
+#                          interface's addresses change (DHCP, VPN up/down);
+#                          on Windows the name has spaces: "Ethernet 2:15432"
 #   "tailnet:15432"        this machine's Tailscale IPv4 address
 # An entry with no address now (interface down, Tailscale signed out) waits and
 # is checked again; putio-sync never falls back to all addresses. In Docker,

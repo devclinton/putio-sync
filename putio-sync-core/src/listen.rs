@@ -133,11 +133,7 @@ impl FromStr for ListenAddr {
         if host.eq_ignore_ascii_case("tailnet") {
             return Ok(ListenAddr::Tailnet { port });
         }
-        let name_chars = host
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
-        let looks_numeric = host.chars().all(|c| c.is_ascii_digit() || c == '.');
-        if host.len() > 64 || !name_chars || looks_numeric {
+        if !is_interface_name(host) {
             return Err(format!("'{host}' is not an IPv4 address or interface name"));
         }
         Ok(ListenAddr::Interface {
@@ -145,6 +141,19 @@ impl FromStr for ListenAddr {
             port,
         })
     }
+}
+
+/// Whether `host` can be an interface name: letters (any script), digits, `.` `_` `-`, and
+/// for Windows' friendly names (`Ethernet 2`, `vEthernet (WSL)`, `Local Area Connection* 3`)
+/// single spaces, `(` `)`, `*` and `#`. Not a comma, which separates env entries, nor
+/// anything that reads as an IPv4 address.
+fn is_interface_name(host: &str) -> bool {
+    let name_chars = host
+        .chars()
+        .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '-' | ' ' | '(' | ')' | '*' | '#'));
+    let spaced_inside = !host.starts_with(' ') && !host.ends_with(' ') && !host.contains("  ");
+    let looks_numeric = host.chars().all(|c| c.is_ascii_digit() || c == '.');
+    host.chars().count() <= 128 && name_chars && spaced_inside && !looks_numeric
 }
 
 /// A bind setting: one entry (as before 037) or a list
@@ -324,6 +333,13 @@ mod tests {
             "tailscale0:1",
             "br-lan.10:65535",
             "tailnet:15432",
+            "Ethernet 2:15432",
+            "Wi-Fi:15432",
+            "Loopback Pseudo-Interface 1:15432",
+            "vEthernet (Default Switch):80",
+            "Local Area Connection* 3:80",
+            "Ethernet-Verbindung 2:80",
+            "Подключение по локальной сети:80",
         ] {
             let a = p(s).unwrap();
             assert_eq!(a.to_string(), s);
@@ -350,13 +366,29 @@ mod tests {
             "::1:80",
             "1.2.3:80",
             "999.1.1.1:80",
-            "bad name:80",
             "[nope]:80",
             "a/b:80",
+            "Ethernet 2 :80",
+            " :80",
+            "Ethernet  2:80",
+            "a,b:80",
+            "a\\b:80",
+            "eth\t0:80",
+            "a\"b:80",
+            "a=b:80",
         ] {
             assert!(p(s).is_err(), "{s} should be refused");
         }
         assert!(p("::1:80").unwrap_err().contains("brackets"));
+        assert!(p(&format!("{}:80", "a".repeat(128))).is_ok());
+        assert!(p(&format!("{}:80", "a".repeat(129))).is_err());
+        assert_eq!(
+            p("Ethernet 2:15432").unwrap(),
+            ListenAddr::Interface {
+                name: "Ethernet 2".to_string(),
+                port: 15432
+            }
+        );
     }
 
     #[test]
@@ -406,10 +438,10 @@ mod tests {
             .parse("api.bind")
             .unwrap_err()
             .contains("at most 16"));
-        let err = list(&["0.0.0.0:1", "x y:2"])
+        let err = list(&["0.0.0.0:1", "x/y:2"])
             .parse("metrics.bind")
             .unwrap_err();
-        assert!(err.contains("metrics.bind 'x y:2'"), "{err}");
+        assert!(err.contains("metrics.bind 'x/y:2'"), "{err}");
     }
 
     #[test]

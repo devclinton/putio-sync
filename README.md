@@ -1089,8 +1089,11 @@ bind = ["127.0.0.1:15432", "eth0:15432", "[::1]:15432", "tailnet:15432"]
 |---|---|
 | `0.0.0.0:15432`, `192.168.1.10:15432` | that IPv4 address (`0.0.0.0` = all IPv4 addresses) |
 | `[::]:15432`, `[::1]:15432` | that IPv6 address |
-| `eth0:15432`, `tailscale0:15432` | every address the interface has, followed as it changes (DHCP, VPN up or down) |
+| `eth0:15432`, `tailscale0:15432`, `Ethernet 2:15432` | every address the interface has, followed as it changes (DHCP, VPN up or down) |
 | `tailnet:15432` | this machine's Tailscale IPv4 address, once Tailscale gives one |
+
+An interface is named as the OS shows it. On Windows that is the name in Network
+Connections, spaces included, such as `Ethernet 2:15432` or `Wi-Fi:15432`.
 
 An entry with no address now (the interface is down, Tailscale is signed out) waits and
 is checked again (every second for 5 minutes, then every 30 seconds); putio-sync never falls back to all
