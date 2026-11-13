@@ -289,3 +289,28 @@ async fn check_approves_needed_hosts_and_refuses_bad_values() {
         .unwrap_err()
         .contains("plugins \"caller\".config.server"));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn drain_waits_for_queued_events() {
+    let _turn = SERIAL.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "recorder",
+        "name = \"recorder\"\nversion = \"1\"\nevents = [\"download.finished\"]\n[permissions]\nstore = true\n",
+        RECORDER,
+    );
+    let plugins = service(dir.path(), data.path(), vec![enabled("recorder")]);
+    plugins.start();
+
+    let sent: Vec<String> = (0..3)
+        .map(|_| {
+            events::emit(payload(EventType::DownloadFinished))
+                .id
+                .clone()
+        })
+        .collect();
+    assert!(plugins.drain(Duration::from_secs(10)).await);
+    assert_eq!(stored_ids(data.path()), sent);
+}

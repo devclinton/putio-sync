@@ -15,29 +15,52 @@ path = "src/lib.rs"
 name = "putio-sync"
 path = "src/main.rs"
 
+# `server` (on by default) builds the daemon, the HTTP API and web UI, the web setup
+# wizard, metrics and the archive commands, with hooks and plugins. Without it
+# (`--no-default-features`) the binary is the lighter CLI-only build: the Put.io file,
+# transfer and queue commands. `hooks` and `plugins` add event hooks and Lua/WebAssembly
+# plugins to it; the lite releases are `--features hooks` and `--features hooks,plugins`.
+[features]
+default = ["server"]
+hooks = ["dep:putio-sync-hooks", "putio-sync-doctor/hooks"]
+plugins = ["dep:putio-sync-plugins", "putio-sync-doctor/plugins"]
+server = [
+    "hooks",
+    "plugins",
+    "dep:putio-sync-api",
+    "dep:putio-sync-archive",
+    "dep:putio-sync-tailscale",
+    "dep:putio-sync-daemon",
+    "dep:putio-sync-dlna",
+    "dep:putio-sync-update",
+    "dep:putio-sync-notify",
+    "dep:putio-sync-pipeline",
+    "putio-sync-doctor/tailscale",
+]
+
 [dependencies]
 # Metrics
 putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 
 # Core library (for Config and utilities)
 putio-sync-core = { path = "../putio-sync-core" }
-putio-sync-api = { path = "../putio-sync-api" }
-putio-sync-archive = { path = "../putio-sync-archive" }
-putio-sync-tailscale = { path = "../putio-sync-tailscale" }
+putio-sync-api = { path = "../putio-sync-api", optional = true }
+putio-sync-archive = { path = "../putio-sync-archive", optional = true }
+putio-sync-tailscale = { path = "../putio-sync-tailscale", optional = true }
 
 # Specialized crates
 putio-sync-client = { path = "../putio-sync-client" }
 putio-sync-db = { path = "../putio-sync-db" }
 putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-file-manager = { path = "../putio-sync-file-manager" }
-putio-sync-daemon = { path = "../putio-sync-daemon" }
-putio-sync-dlna = { path = "../putio-sync-dlna" }
-putio-sync-update = { path = "../putio-sync-update" }
-putio-sync-doctor = { path = "../putio-sync-doctor" }
-putio-sync-hooks = { path = "../putio-sync-hooks" }
-putio-sync-notify = { path = "../putio-sync-notify" }
-putio-sync-pipeline = { path = "../putio-sync-pipeline" }
-putio-sync-plugins = { path = "../putio-sync-plugins" }
+putio-sync-daemon = { path = "../putio-sync-daemon", optional = true }
+putio-sync-dlna = { path = "../putio-sync-dlna", optional = true }
+putio-sync-update = { path = "../putio-sync-update", optional = true }
+putio-sync-doctor = { path = "../putio-sync-doctor", default-features = false }
+putio-sync-hooks = { path = "../putio-sync-hooks", optional = true }
+putio-sync-notify = { path = "../putio-sync-notify", optional = true }
+putio-sync-pipeline = { path = "../putio-sync-pipeline", optional = true }
+putio-sync-plugins = { path = "../putio-sync-plugins", optional = true }
 putio-sync-storage = { path = "../putio-sync-storage" }
 
 # Async runtime
@@ -107,6 +130,22 @@ assert_fs = "1.1"
 mockito = "1.2"
 flate2 = "1"
 
+[[test]]
+name = "archive"
+required-features = ["server"]
+
+[[test]]
+name = "metrics_e2e"
+required-features = ["server"]
+
+[[test]]
+name = "plugins_check"
+required-features = ["plugins"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[[test]]
+name = "update_trial"
+required-features = ["server"]

@@ -505,6 +505,7 @@ pub enum Commands {
     Transfers(TransfersCommands),
 
     /// Run combined download sync and torrent watch daemon
+    #[cfg(feature = "server")]
     #[command(about = "Run combined download sync and torrent watch daemon")]
     Daemon {
         /// Download sync interval in seconds
@@ -606,6 +607,7 @@ pub enum Commands {
     },
 
     /// Start HTTP API server with optional daemon modes
+    #[cfg(feature = "server")]
     #[command(about = "Start HTTP API server")]
     Server {
         /// Enable watch mode for monitoring torrent directories
@@ -710,6 +712,7 @@ pub enum Commands {
     },
 
     /// Long-term archive of metrics, database and usage summary (feature 041)
+    #[cfg(feature = "server")]
     #[command(
         subcommand,
         about = "Save metrics, database copies and usage summaries",
@@ -721,10 +724,12 @@ pub enum Commands {
     Archive(ArchiveCommands),
 
     /// Plugin tools for authors (feature 059)
+    #[cfg(feature = "plugins")]
     #[command(subcommand, about = "Check a plugin folder")]
     Plugins(PluginsCommands),
 
     /// First-run setup in the terminal (feature 013)
+    #[cfg(feature = "server")]
     #[command(
         about = "Set up putio-sync: Put.io, download folder, what to download",
         long_about = "Ask for what the web setup wizard asks for, run a dry run, and write \
@@ -781,6 +786,7 @@ pub enum Commands {
 }
 
 /// Options every archive command takes (feature 041)
+#[cfg(feature = "server")]
 #[derive(clap::Args, Debug)]
 pub struct ArchiveCommon {
     /// Archive folder
@@ -800,6 +806,7 @@ pub struct ArchiveCommon {
     pub require_manifest: bool,
 }
 
+#[cfg(feature = "server")]
 impl From<ArchiveCommon> for putio_sync_cli::commands::archive::ArchiveCommon {
     fn from(common: ArchiveCommon) -> Self {
         Self {
@@ -810,6 +817,7 @@ impl From<ArchiveCommon> for putio_sync_cli::commands::archive::ArchiveCommon {
 }
 
 /// Where the archive commands read the 5-minute series
+#[cfg(feature = "server")]
 #[derive(clap::Args, Debug)]
 pub struct ArchivePrometheus {
     /// Prometheus base URL
@@ -832,6 +840,7 @@ pub struct ArchivePrometheus {
 }
 
 /// Plugin subcommands (feature 059)
+#[cfg(feature = "plugins")]
 #[derive(Subcommand, Debug)]
 pub enum PluginsCommands {
     /// Check a plugin folder the way Reload plugins does
@@ -854,6 +863,7 @@ pub enum PluginsCommands {
 }
 
 /// Archive subcommands (feature 041)
+#[cfg(feature = "server")]
 #[derive(Subcommand, Debug)]
 pub enum ArchiveCommands {
     /// Save the 5-minute resource series of each finished day
@@ -1380,6 +1390,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "server")]
     fn test_archive_flags() {
         let cli = Cli::try_parse_from([
             "putio-sync",
@@ -1497,6 +1508,7 @@ mod tests {
             }
             _ => panic!("expected download"),
         }
+        #[cfg(feature = "server")]
         assert!(
             Cli::try_parse_from(["putio-sync", "daemon", "--on-existing", "overwrite"]).is_ok()
         );
@@ -1504,7 +1516,12 @@ mod tests {
             Cli::try_parse_from(["putio-sync", "download", "1", "--on-existing", "rename"])
                 .is_err()
         );
-        for command in [&["download", "1"][..], &["daemon"][..]] {
+        let commands: &[&[&str]] = &[
+            &["download", "1"],
+            #[cfg(feature = "server")]
+            &["daemon"],
+        ];
+        for &command in commands {
             let args = ["putio-sync"].iter().chain(command).chain(&[
                 "--on-existing",
                 "resume",
