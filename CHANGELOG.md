@@ -33,6 +33,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   database back, restarts it, and says why. The macOS `.pkg` and Windows setup installs
   download the new installer and open it. Managed installs (snap, Homebrew, Docker and the
   rest) keep showing their own update command.
+- Install updates automatically: a binary downloaded from GitHub can install a new release
+  on its own (Settings › General › Updates, off by default). It waits until no transfer is
+  running, checking every minute, and never installs a version that was rolled back;
+  "Update now" still can.
 
 ### Fixed
 

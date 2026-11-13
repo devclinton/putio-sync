@@ -38,6 +38,8 @@ pub const MIN_GAP: Duration = Duration::from_secs(60);
 /// How often the schedule looks at the wall clock, so a machine that slept through a
 /// check runs it soon after waking
 const TICK: Duration = Duration::from_secs(60);
+/// How often an automatic update looks again for transfers to finish (FR-020)
+const IDLE_RECHECK: Duration = Duration::from_secs(60);
 
 /// Why "Check now" didn't check
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,7 +109,7 @@ pub enum AttemptState {
 }
 
 impl AttemptState {
-    /// Still going: a second "Update now" gets `InProgress`
+    /// Still going: a second "Update now" gets `InProgress`, unless it only waits for idle
     pub fn is_running(self) -> bool {
         matches!(
             self,
@@ -185,6 +187,20 @@ impl Snapshot {
 
 type Clock = Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>;
 
+/// An automatic update is waiting for transfers to finish
+fn waiting(attempt: &Option<Attempt>) -> bool {
+    attempt
+        .as_ref()
+        .is_some_and(|a| a.state == AttemptState::WaitingForIdle)
+}
+
+/// An attempt that "Update now" can't start over; a waiting one gives way to it
+fn blocks(attempt: &Option<Attempt>) -> bool {
+    attempt
+        .as_ref()
+        .is_some_and(|a| a.state.is_running() && a.state != AttemptState::WaitingForIdle)
+}
+
 /// Where releases come from
 enum Source {
     Github {
@@ -227,6 +243,8 @@ struct Inner {
     restart: Mutex<Option<Restart>>,
     restart_requested: AtomicBool,
     progress: Progress,
+    /// The last version rolled back, never installed automatically again (FR-020)
+    never_auto: Mutex<Option<String>>,
 }
 
 /// The update checker, shared by the daemon's schedule and the API
@@ -287,6 +305,7 @@ impl UpdateService {
                 restart: Mutex::new(None),
                 restart_requested: AtomicBool::new(false),
                 progress: Progress::default(),
+                never_auto: Mutex::new(None),
             }),
         }
     }
@@ -425,6 +444,7 @@ impl UpdateService {
             .collect();
         putio_sync_telemetry::update::set_available(!releases.is_empty());
         *self.inner.etag.lock().unwrap() = stored.etag;
+        *self.inner.never_auto.lock().unwrap() = stored.last_rolled_back.clone();
         let mut state = self.inner.state.lock().unwrap();
         state.last_attempt_at = stored.last_attempt_at;
         state.last_success_at = stored.last_success_at;
@@ -439,9 +459,76 @@ impl UpdateService {
         self.inner.state.lock().unwrap().settings.clone()
     }
 
-    /// Apply saved settings; the schedule reads them at its next tick
+    /// Apply saved settings; the schedule reads them at its next tick. Turning on
+    /// installing automatically starts it for a release already known.
     pub fn configure(&self, settings: UpdatesConfig) {
-        self.inner.state.lock().unwrap().settings = settings;
+        {
+            let mut state = self.inner.state.lock().unwrap();
+            if !settings.auto_install && waiting(&state.attempt) {
+                state.attempt = None;
+            }
+            state.settings = settings;
+        }
+        self.auto_install();
+    }
+
+    /// Install automatically (US4): when it's on for a swap install and a newer release is
+    /// known, wait until no transfer runs, then update as "Update now" would
+    fn auto_install(&self) {
+        let snapshot = self.snapshot();
+        if !snapshot.settings.auto_install
+            || snapshot.channel.mode() != UpdateMode::Swap
+            || self.install().is_none()
+        {
+            return;
+        }
+        let Some(latest) = snapshot.latest().filter(|r| r.version > snapshot.current) else {
+            return;
+        };
+        let to = latest.version;
+        if self.inner.never_auto.lock().unwrap().as_deref() == Some(to.to_string().as_str()) {
+            return;
+        }
+        {
+            let mut state = self.inner.state.lock().unwrap();
+            if state.attempt.as_ref().is_some_and(|a| a.state.is_running()) {
+                return;
+            }
+            state.attempt = Some(Attempt {
+                to,
+                kind: snapshot.plan().map_or(AttemptKind::Full, |p| p.kind.into()),
+                state: AttemptState::WaitingForIdle,
+                error: None,
+                path: None,
+                downloaded_bytes: 0,
+            });
+        }
+        tracing::info!(from = %snapshot.current, %to, "Update waiting for transfers to finish");
+        let this = self.clone();
+        tokio::spawn(async move {
+            // Ends once the attempt stops waiting: started, replaced by "Update now", or
+            // cleared by turning the setting off
+            while waiting(&this.snapshot().attempt) {
+                match this.apply(false).await {
+                    Ok(_) | Err(ApplyError::InProgress) => return,
+                    Err(ApplyError::Busy(_)) => tokio::time::sleep(IDLE_RECHECK).await,
+                    Err(ApplyError::NotWritable(path)) => {
+                        this.set_attempt(|a| {
+                            a.state = AttemptState::Failed;
+                            a.error = Some(format!("{} can't be written", path.display()));
+                        });
+                        return;
+                    }
+                    Err(_) => {
+                        let mut state = this.inner.state.lock().unwrap();
+                        if waiting(&state.attempt) {
+                            state.attempt = None;
+                        }
+                        return;
+                    }
+                }
+            }
+        });
     }
 
     /// The state for the API
@@ -480,11 +567,7 @@ impl UpdateService {
             }
             (_, Some(install)) => install,
         };
-        if snapshot
-            .attempt
-            .as_ref()
-            .is_some_and(|a| a.state.is_running())
-        {
+        if blocks(&snapshot.attempt) {
             return Err(ApplyError::InProgress);
         }
         let latest = snapshot
@@ -512,7 +595,7 @@ impl UpdateService {
         };
         {
             let mut state = self.inner.state.lock().unwrap();
-            if state.attempt.as_ref().is_some_and(|a| a.state.is_running()) {
+            if blocks(&state.attempt) {
                 return Err(ApplyError::InProgress);
             }
             self.inner.progress.reset();
@@ -711,6 +794,7 @@ impl UpdateService {
             }
             putio_sync_telemetry::update::set_available(!state.releases.is_empty());
         }
+        self.auto_install();
 
         if let Some(db) = &self.inner.db {
             if let Err(e) = db
@@ -921,6 +1005,14 @@ mod tests {
 
     /// A GitHub-archive install of 0.3.0 in a temp folder that knows `release`
     async fn installed(release: ReleaseInfo) -> (UpdateService, TempDir) {
+        installed_with(release, None).await
+    }
+
+    /// [`installed`] with a database, loaded before the check
+    async fn installed_with(
+        release: ReleaseInfo,
+        db: Option<Arc<Database>>,
+    ) -> (UpdateService, TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("putio-sync");
         std::fs::write(&exe, b"old binary").unwrap();
@@ -932,7 +1024,7 @@ mod tests {
         }));
         let s = UpdateService::with_options(
             UpdatesConfig::default(),
-            None,
+            db,
             Channel::GithubArchive,
             v("0.3.0"),
             source,
@@ -940,6 +1032,7 @@ mod tests {
         )
         .with_pubkey(verify::tests::TEST_PUBKEY)
         .with_install(exe, dir.path().to_path_buf());
+        s.load().await;
         s.check().await;
         (s, dir)
     }
@@ -1021,6 +1114,121 @@ mod tests {
             result,
             Err(ApplyError::NotWritable(dir.path().to_path_buf()))
         );
+    }
+
+    fn auto_on() -> UpdatesConfig {
+        UpdatesConfig {
+            auto_install: true,
+            ..Default::default()
+        }
+    }
+
+    /// A busy source reading `count`
+    fn busy_count(s: UpdateService, count: &Arc<AtomicUsize>) -> UpdateService {
+        let count = count.clone();
+        s.with_busy_source(move || {
+            let n = count.load(Ordering::SeqCst);
+            Box::pin(async move { n })
+        })
+    }
+
+    fn attempt_state(s: &UpdateService) -> Option<AttemptState> {
+        s.snapshot().attempt.map(|a| a.state)
+    }
+
+    /// Off the waiting state: `apply` ran (this release has no assets, so it then fails)
+    fn started(s: &UpdateService) -> bool {
+        let attempt = s.snapshot().attempt;
+        attempt.is_some_and(|a| a.to == v("0.4.0") && a.state != AttemptState::WaitingForIdle)
+    }
+
+    #[tokio::test]
+    async fn auto_install_waits_for_transfers_then_starts() {
+        let (s, _dir) = installed(bare("0.4.0")).await;
+        tokio::time::pause();
+        let busy = Arc::new(AtomicUsize::new(1));
+        let s = busy_count(s, &busy);
+        s.configure(auto_on());
+        settle().await;
+        assert_eq!(attempt_state(&s), Some(AttemptState::WaitingForIdle));
+        tokio::time::sleep(IDLE_RECHECK * 3).await;
+        settle().await;
+        assert_eq!(attempt_state(&s), Some(AttemptState::WaitingForIdle));
+
+        busy.store(0, Ordering::SeqCst);
+        tokio::time::sleep(IDLE_RECHECK).await;
+        settle().await;
+        assert!(started(&s), "{:?}", s.snapshot().attempt);
+    }
+
+    #[tokio::test]
+    async fn auto_install_starts_after_a_check_when_idle() {
+        let (s, _dir) = installed(bare("0.4.0")).await;
+        assert!(s.snapshot().attempt.is_none());
+        s.inner.state.lock().unwrap().settings = auto_on();
+        s.check().await;
+        settle().await;
+        assert!(started(&s), "{:?}", s.snapshot().attempt);
+    }
+
+    #[tokio::test]
+    async fn auto_install_never_retries_a_rolled_back_version() {
+        let dir = TempDir::new().unwrap();
+        let db = Arc::new(Database::new(dir.path().join("test.db")).await.unwrap());
+        db.updates()
+            .record_rollback("0.4.0", "did not start")
+            .await
+            .unwrap();
+        // dismissing the message keeps the version out of automatic installs
+        db.updates().clear_rollback_message().await.unwrap();
+        let (s, _install) = installed_with(bare("0.4.0"), Some(db)).await;
+        s.configure(auto_on());
+        s.check().await;
+        settle().await;
+        assert!(s.snapshot().attempt.is_none());
+        // "Update now" still can
+        assert!(s.apply(false).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn auto_install_is_only_for_swap_installs() {
+        for channel in [Channel::Homebrew, Channel::MacPkg, Channel::WindowsSetup] {
+            let (s, _dir) = installed(bare("0.4.0")).await;
+            let s = s.with_channel(channel.clone());
+            s.configure(auto_on());
+            s.check().await;
+            settle().await;
+            assert!(s.snapshot().attempt.is_none(), "{channel:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn turning_auto_install_off_stops_the_wait() {
+        let (s, _dir) = installed(bare("0.4.0")).await;
+        tokio::time::pause();
+        let busy = Arc::new(AtomicUsize::new(1));
+        let s = busy_count(s, &busy);
+        s.configure(auto_on());
+        settle().await;
+        assert_eq!(attempt_state(&s), Some(AttemptState::WaitingForIdle));
+        s.configure(UpdatesConfig::default());
+        assert!(s.snapshot().attempt.is_none());
+        busy.store(0, Ordering::SeqCst);
+        tokio::time::sleep(IDLE_RECHECK * 2).await;
+        settle().await;
+        assert!(s.snapshot().attempt.is_none());
+    }
+
+    #[tokio::test]
+    async fn update_now_replaces_the_wait() {
+        let (s, _dir) = installed(bare("0.4.0")).await;
+        let busy = Arc::new(AtomicUsize::new(1));
+        let s = busy_count(s, &busy);
+        s.configure(auto_on());
+        settle().await;
+        assert_eq!(attempt_state(&s), Some(AttemptState::WaitingForIdle));
+        assert!(s.apply(true).await.is_ok());
+        assert!(started(&s));
     }
 
     #[tokio::test]
