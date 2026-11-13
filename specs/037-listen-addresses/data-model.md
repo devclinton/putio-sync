@@ -11,9 +11,11 @@ No database changes.
 | `tailnet:port` | `Tailnet { port }` | `tailnet:15432` (case-insensitive keyword) |
 | `name:port` | `Interface { name, port }` | `eth0:15432`, `tailscale0:15432` |
 
-Rules: port 1–65535 (0 is accepted only in tests through `Ip`); an interface name is 1–64
-characters from `[A-Za-z0-9._-]` and not all digits/dots (so `1.2.3:80` is an error, not an
-interface). `Display` gives the same text back.
+Rules: port 1–65535 (0 is accepted only in tests through `Ip`); an interface name is 1–256
+characters with no control character, `,`, `[`, `]`, `/`, `\` or `"`, no space at either end,
+and not all digits/dots (so `1.2.3:80` is an error, not an interface). Spaces and parentheses
+inside are fine, as Windows names hold them (`Loopback Pseudo-Interface 1`,
+`vEthernet (WSL)`). `Display` gives the same text back.
 
 ## BindList (config value)
 
