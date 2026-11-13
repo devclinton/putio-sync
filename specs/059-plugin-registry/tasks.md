@@ -18,8 +18,8 @@ outward-facing: ask the maintainer before each step.
 
 ## Phase 1: Setup
 
-- [ ] T001 Add `sha2 = "0.10"`, `flate2 = "1"`, `tar = "0.4"`, `zip = { version = "2", default-features = false, features = ["deflate"] }` and `semver = "1"` to putio-sync-plugins/Cargo.toml; `cargo build -p putio-sync-plugins` passes (plan.md › Primary Dependencies)
-- [ ] T002 Create empty modules putio-sync-plugins/src/registry/{mod.rs,index.rs,fetch.rs,archive.rs,install.rs} with header doc comments in the crate's style, and `pub mod registry;` in putio-sync-plugins/src/lib.rs
+- [x] T001 (done without `zip` and `semver`: archives are tar.gz only and versions compare with `registry::index::version`) Add `sha2 = "0.10"`, `flate2 = "1"`, `tar = "0.4"`, `zip = { version = "2", default-features = false, features = ["deflate"] }` and `semver = "1"` to putio-sync-plugins/Cargo.toml; `cargo build -p putio-sync-plugins` passes (plan.md › Primary Dependencies)
+- [x] T002 (done as mod.rs, index.rs and archive.rs; fetch and install live in mod.rs) Create empty modules putio-sync-plugins/src/registry/{mod.rs,index.rs,fetch.rs,archive.rs,install.rs} with header doc comments in the crate's style, and `pub mod registry;` in putio-sync-plugins/src/lib.rs
 
 ## Phase 2: Foundational (blocks all stories)
 
@@ -136,7 +136,7 @@ then update.
 - [x] T060 [US4] Run `putio-sync plugins check` (from T013) on ~/dev/putio-sync-plugin-registry/examples/webhook-notifier and examples/download-counter and fix any problem; then load both in a local daemon and use **Send test event** (quickstart.md check 2)
 - [x] T061 [US4] Ask the maintainer, then create the public repository `devclinton/putio-sync-plugin-registry`, commit (no Claude attribution) and push ~/dev/putio-sync-plugin-registry
 - [x] T062 [US4] Ask the maintainer, then create the `examples-v1.0.0` release with the archives whose SHA-256 values are in ~/dev/putio-sync-plugin-registry/examples/entries/*.toml (rebuild them and update the entries if those files are gone), and check them with `registry.py check examples/entries/*.toml` without `--offline`
-- [ ] T063 [US4] After the first putio-sync release with `plugins check`, set the `PUTIO_SYNC_VERSION` repository variable so CI runs it (~/dev/putio-sync-plugin-registry/.github/workflows/check.yml)
+- [x] T063 (PUTIO_SYNC_VERSION = 0.4.0, set 2026-11-12) [US4] After the first putio-sync release with `plugins check`, set the `PUTIO_SYNC_VERSION` repository variable so CI runs it (~/dev/putio-sync-plugin-registry/.github/workflows/check.yml)
 - [x] T064 [P] [US4] Link the registry's CONTRIBUTING.md from PLUGINS.md and README.md in the putio-sync repository
 
 ## Phase 7: Polish
