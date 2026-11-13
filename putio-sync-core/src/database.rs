@@ -172,7 +172,8 @@ async fn checkpoint(path: &Path) -> io::Result<()> {
 fn copy_into_place(from: &Path, to: &Path) -> io::Result<()> {
     let tmp = sidecar(to, ".migrating");
     fs::copy(from, &tmp)?;
-    File::open(&tmp)?.sync_all()?;
+    // Windows can only flush a handle opened for writing
+    fs::OpenOptions::new().write(true).open(&tmp)?.sync_all()?;
     fs::rename(&tmp, to)
 }
 
@@ -283,10 +284,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(
-        windows,
-        ignore = "copy_into_place can't sync_all a read-only handle on Windows"
-    )]
     async fn copies_when_rename_is_not_possible() {
         let dir = tempfile::tempdir().unwrap();
         let legacy = dir.path().join("old").join(FILE_NAME);
@@ -304,10 +301,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(
-        windows,
-        ignore = "copy_into_place can't sync_all a read-only handle on Windows"
-    )]
     async fn an_interrupted_copy_is_redone() {
         let dir = tempfile::tempdir().unwrap();
         let legacy = dir.path().join("old").join(FILE_NAME);
