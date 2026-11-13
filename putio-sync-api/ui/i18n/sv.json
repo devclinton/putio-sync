@@ -376,6 +376,7 @@
  "Downloaded, first {0}:": "Nerladdad, första {0}:",
  "Downloaded:": "Nerladdad:",
  "Downloading": "Nerladdning",
+ "Downloading {0}: {1}{2}": "Downloading {0}: {1}{2}",
  "Downloads": "Nedladdningar",
  "Downloads by local hour and weekday, by {0}. Arrow keys move between cells.": "Nedladdningar per lokal timme och vardag, i steg om {0}. Pilklickarna flyttar mellan celler.",
  "Downloads paused for an hour": "Nedladdningar pausades i en timme",

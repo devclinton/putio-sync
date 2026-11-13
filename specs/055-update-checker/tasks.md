@@ -142,11 +142,15 @@ Done notes for T028–T040:
 
 ## Phase 8: Polish
 
-- [ ] T044 [P] Add the UI strings from T013, T014, T020, T039, T040 and T043 to the English catalog and translate them into the other languages with `atranslate` (as in 051), in `putio-sync-api/ui/i18n/*.json`
-- [ ] T045 [P] Add an "Updating" section to `INSTALLATION.md` (how each channel updates, what the notice shows, turning checks off, that versions up to 0.2.0 must install the first 055 release by hand) and point the README to it
-- [ ] T046 [P] Add a CHANGELOG line under `[Unreleased]` → `### Added` in `CHANGELOG.md`
+- [X] T044 [P] Add the UI strings from T013, T014, T020, T039, T040 and T043 to the English catalog and translate them into the other languages with `atranslate` (as in 051), in `putio-sync-api/ui/i18n/*.json`
+- [X] T045 [P] Add an "Updating" section to `INSTALLATION.md` (how each channel updates, what the notice shows, turning checks off, that versions up to 0.2.0 must install the first 055 release by hand) and point the README to it
+- [X] T046 [P] Add a CHANGELOG line under `[Unreleased]` → `### Added` in `CHANGELOG.md`
 - [ ] T047 Mark 055 done in `ROADMAP.md` once merged, and record any deviations in `research.md`
 - [ ] T048 Validate: `make ci`, `docker compose config -q` for the changed compose files, `actionlint` on the changed workflows if installed, and a manual run of `gh workflow run release-binaries.yml -f version=<test tag>` (quickstart §4)
+
+- T044: `make i18n-translate` filled 19 of the 26 catalogs. The atranslate host has no model for da, fi, he, ms, nb, pt-PT or sv, so those show the new strings in English until it does: run `make i18n-translate` again then.
+- T045: the "Updating" section leaves out Flatpak and winget, since neither is published yet. The README's install table points to it.
+- T046: the Phase 5, "Update now" and "Install updates automatically" bullets went in with #21, #23 and US4, so this added no line.
 
 ## Dependencies
 
