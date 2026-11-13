@@ -178,3 +178,26 @@ are marked ✱.
   `routes/system/update.rs`. `cli` wires the service in `commands/daemon.rs` and calls the trial
   check first thing in `main`.
 - **Rationale**: Principle I. Nothing in the update crate depends on `api`, `daemon` or `cli`.
+
+## Deviations
+
+What shipped differs from the plan above in these ways.
+
+- **Feature number**: the roadmap brief said 054. It became 055, a number the plugin workbench
+  also uses, so `ROADMAP.md` has two "055" entries. The spec folder name tells them apart.
+- **Delivery**: the work landed in several PRs instead of one per story: #6 and #9 (check,
+  channels, release notes), #23 (Update now, with the Phase 5 release pipeline that started
+  in #21), #34 (automatic updates) and #35 (polish). #21 was closed after #23 took its work.
+- **Signing key (R6)**: `RELEASE_PUBKEY` is empty and the `MINISIGN_SECRET_KEY` and
+  `MINISIGN_PASSWORD` secrets are not set. Until the maintainer makes the key, every
+  self-update fails the signature check and `release-binaries.yml` stops at "Sign
+  SHA256SUMS". The code pointed to a MAINTAINING.md heading that doesn't exist; it now names
+  "MINISIGN_SECRET_KEY and MINISIGN_PASSWORD".
+- **Versions (R5)**: the asset scripts (`release-unpack.sh`, `release-patches.sh`) accept only
+  plain `X.Y.Z` versions. A tag like `v0.4.1-test` builds, but the patch step finds no
+  binaries and fails. Pre-release tags are not supported.
+- **Windows test**: the full OS matrix exposed a flaky `a_missing_database_is_exit_3`
+  (`putio-sync-cli/tests/archive.rs`, Windows OS error 32 on deleting a just-closed database).
+  #28 fixed it by never creating the database; #34 and #35 needed that fix before they passed.
+- **Compose check (T048)**: `docker compose config` on the Umbrel file fails because its
+  `app_proxy` service comes from Umbrel itself. That was already true before 055.

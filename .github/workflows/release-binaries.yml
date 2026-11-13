@@ -18,7 +18,7 @@ name: Build Release Binaries
 # pull dhi.io; MACOS_INSTALLER_P12, MACOS_INSTALLER_P12_PASSWORD and
 # MACOS_INSTALLER_IDENTITY are optional and sign the .pkg when all are set;
 # MINISIGN_SECRET_KEY (the minisign.key file) and MINISIGN_PASSWORD sign
-# SHA256SUMS and are required (MAINTAINING.md, "Release signing key").
+# SHA256SUMS and are required (MAINTAINING.md, "MINISIGN_SECRET_KEY and MINISIGN_PASSWORD").
 on:
   workflow_call:
     inputs:
