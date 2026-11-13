@@ -138,8 +138,8 @@ pub fn install_with(
     Ok(name)
 }
 
-/// Remove the hidden folders an install that was stopped part way left in `dir`. An old
-/// copy whose new one never landed is put back. Returns how many were cleaned up.
+/// Remove the hidden folders an install or registry update that was stopped part way
+/// left in `dir`. An old copy whose new one never landed is put back. Returns how many were cleaned up.
 pub fn clean_leftovers(dir: &Path) -> usize {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
@@ -158,7 +158,10 @@ pub fn clean_leftovers(dir: &Path) -> usize {
             continue;
         }
         let path = entry.path();
-        if let Some(name) = head.strip_suffix("-old") {
+        if let Some(name) = head
+            .strip_suffix("-old")
+            .or_else(|| head.strip_suffix("-previous"))
+        {
             let target = dir.join(name);
             if !target.exists() && std::fs::rename(&path, &target).is_ok() {
                 cleaned += 1;
@@ -175,7 +178,7 @@ pub fn clean_leftovers(dir: &Path) -> usize {
 }
 
 /// A hidden folder next to the plugins, skipped by discovery
-fn hidden(dir: &Path, name: &str, what: &str) -> PathBuf {
+pub(crate) fn hidden(dir: &Path, name: &str, what: &str) -> PathBuf {
     dir.join(format!(".{}-{}-{}", name, what, std::process::id()))
 }
 
@@ -220,10 +223,12 @@ mod tests {
         std::fs::create_dir(dir.path().join(".hello-install-1")).unwrap();
         std::fs::create_dir(dir.path().join(".gone-old-1")).unwrap();
         std::fs::write(dir.path().join(".gone-old-1/plugin.toml"), "x").unwrap();
+        std::fs::create_dir(dir.path().join(".back-previous-1")).unwrap();
         std::fs::create_dir(dir.path().join(".kept")).unwrap();
         let ours = format!(".busy-install-{}", std::process::id());
         std::fs::create_dir(dir.path().join(&ours)).unwrap();
-        assert_eq!(clean_leftovers(dir.path()), 2);
+        assert_eq!(clean_leftovers(dir.path()), 3);
+        assert!(dir.path().join("back").exists());
         assert!(!dir.path().join(".hello-install-1").exists());
         assert!(dir.path().join("gone/plugin.toml").exists());
         assert!(dir.path().join(".kept").exists());

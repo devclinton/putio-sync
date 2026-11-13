@@ -12,6 +12,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-12
+
 ### Added
 
 - CLI-only builds for Linux, macOS and Windows, published with each release:
@@ -33,6 +35,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   checked against the registry before anything is written, and a new plugin starts off.
   Turn it off or use your own registry under Plugin registry settings
   (`[plugin_registry]`).
+- Registry plugin updates: **Update to** shows what the new version changes (hosts,
+  settings, events, sync rules, and files you edited) before it updates, keeps the
+  plugin's settings, and puts the old version back if the new one does not load. **Remove**
+  deletes a registry plugin and keeps its settings. `putio-sync doctor` warns about a
+  plugin the registry withdrew or no longer lists.
 - `putio-sync plugins check FOLDER` checks a plugin folder the way Reload plugins does and
   prints each problem (`--json` for scripts); it needs no config or token.
 

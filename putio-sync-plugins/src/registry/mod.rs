@@ -7,7 +7,7 @@
 pub mod archive;
 pub mod index;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -50,6 +50,9 @@ pub struct InstallRecord {
     /// Of the release file
     pub sha256: String,
     pub installed_at: DateTime<Utc>,
+    /// SHA-256 of each file as installed, to tell when one was edited by hand
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub files: BTreeMap<String, String>,
 }
 
 impl InstallRecord {
@@ -58,6 +61,145 @@ impl InstallRecord {
         let text = std::fs::read(folder.join(RECORD_FILE)).ok()?;
         serde_json::from_slice(&text).ok()
     }
+
+    /// The files in `folder` that differ from the ones installed, or were added or
+    /// removed since, sorted. Empty for a record from before files were kept.
+    pub fn changed(&self, folder: &Path) -> Vec<String> {
+        if self.files.is_empty() {
+            return Vec::new();
+        }
+        let now = file_hashes(folder);
+        let mut changed: Vec<String> = self
+            .files
+            .iter()
+            .filter(|(name, hash)| now.get(*name) != Some(*hash))
+            .map(|(name, _)| name.clone())
+            .chain(now.keys().filter(|n| !self.files.contains_key(*n)).cloned())
+            .collect();
+        changed.sort();
+        changed
+    }
+}
+
+/// SHA-256 of each file in `folder`, leaving out hidden ones such as the record
+pub fn file_hashes(folder: &Path) -> BTreeMap<String, String> {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return BTreeMap::new();
+    };
+    entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                return None;
+            }
+            let bytes = std::fs::read(e.path()).ok()?;
+            Some((name, archive::sha256(&bytes)))
+        })
+        .collect()
+}
+
+/// Added and removed names in one list
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Change {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+impl Change {
+    fn between(old: &[String], new: &[String]) -> Change {
+        let mut added: Vec<String> = new.iter().filter(|n| !old.contains(n)).cloned().collect();
+        let mut removed: Vec<String> = old.iter().filter(|o| !new.contains(o)).cloned().collect();
+        added.dedup();
+        removed.dedup();
+        Change { added, removed }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty()
+    }
+}
+
+/// What an update changes in what a plugin may do, shown before updating
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Diff {
+    /// Fixed hosts, and settings that name a host (`setting:<key>`)
+    pub hosts: Change,
+    /// Setting keys
+    pub settings: Change,
+    pub events: Change,
+    pub hooks: Change,
+}
+
+impl Diff {
+    /// The changes from `old` (none for a plugin that is not loadable) to `new`
+    pub fn between(
+        old: Option<&crate::manifest::Manifest>,
+        new: &crate::manifest::Manifest,
+    ) -> Diff {
+        let hosts = |m: &crate::manifest::Manifest| -> Vec<String> {
+            let http = &m.permissions.http;
+            http.hosts
+                .iter()
+                .cloned()
+                .chain(
+                    http.host_from_config
+                        .iter()
+                        .map(|k| format!("setting:{}", k)),
+                )
+                .collect()
+        };
+        let settings = |m: &crate::manifest::Manifest| {
+            m.config.iter().map(|c| c.key.clone()).collect::<Vec<_>>()
+        };
+        let none = Vec::new();
+        Diff {
+            hosts: Change::between(&old.map(hosts).unwrap_or_default(), &hosts(new)),
+            settings: Change::between(&old.map(settings).unwrap_or_default(), &settings(new)),
+            events: Change::between(old.map(|m| &m.events).unwrap_or(&none), &new.events),
+            hooks: Change::between(old.map(|m| &m.hooks).unwrap_or(&none), &new.hooks),
+        }
+    }
+
+    /// Whether nothing the plugin may do changes
+    pub fn is_empty(&self) -> bool {
+        self.hosts.is_empty()
+            && self.settings.is_empty()
+            && self.events.is_empty()
+            && self.hooks.is_empty()
+    }
+}
+
+/// An update as shown before it is made
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Preview {
+    pub name: String,
+    /// The installed version
+    pub from: String,
+    pub version: String,
+    /// Of the release checked, to send back with the update
+    pub sha256: String,
+    pub notes: Option<String>,
+    pub diff: Diff,
+    /// Files edited since install, which the update would replace
+    pub changed: Vec<String>,
+}
+
+/// An installed registry plugin's record, with what the cached list says of it now
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RegistryInfo {
+    #[serde(flatten)]
+    pub record: InstallRecord,
+    /// A newer release the list offers
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update: Option<String>,
+    /// Why it was withdrawn from the list
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub withdrawn: Option<String>,
+    /// Whether the list it came from still has it; unset when that list is not cached
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listed: Option<bool>,
 }
 
 /// One entry as More plugins shows it
@@ -201,6 +343,15 @@ impl Registry {
             .map(|c| c.index.clone())
     }
 
+    /// The cached index fetched from `url`, whatever its age or whether the registry is on
+    pub fn cached_for(&self, url: &str) -> Option<Index> {
+        let cache = self.cache.lock().unwrap();
+        cache
+            .as_ref()
+            .filter(|c| c.url == url)
+            .map(|c| c.index.clone())
+    }
+
     /// The index, fresh enough or fetched now, and the fetch's error
     async fn index(
         &self,
@@ -310,6 +461,24 @@ impl Registry {
             .map_err(RegistryError::Refused)?;
         let checked = archive::check(&bytes, &entry, release).map_err(RegistryError::Refused)?;
         Ok((entry, checked, guard))
+    }
+
+    /// `record` with what the cached list it came from says of the plugin now
+    pub fn info(&self, name: &str, record: InstallRecord) -> RegistryInfo {
+        let index = self.cached_for(&record.registry);
+        let entry = index.as_ref().and_then(|i| i.get(name));
+        let update = entry.and_then(|e| match e.offered(RUNNING) {
+            Offer::Release(r) if index::version(&r.version) > index::version(&record.version) => {
+                Some(r.version.clone())
+            }
+            _ => None,
+        });
+        RegistryInfo {
+            update: update.filter(|_| entry.is_some_and(|e| e.withdrawn.is_none())),
+            withdrawn: entry.and_then(|e| e.withdrawn.clone()),
+            listed: index.as_ref().map(|_| entry.is_some()),
+            record,
+        }
     }
 }
 
@@ -467,8 +636,12 @@ mod tests {
         let status = plugins.status();
         let hook = status.iter().find(|p| p.name == "hook").unwrap();
         assert_eq!(hook.state, crate::PluginState::Disabled);
-        let record = hook.registry.as_ref().expect("install record");
+        let record = &hook.registry.as_ref().expect("install record").record;
         assert_eq!(record.version, "1.0.0");
+        assert_eq!(
+            record.files.keys().collect::<Vec<_>>(),
+            ["main.lua", "plugin.toml"]
+        );
         assert_eq!(record.registry, config.url);
         assert_eq!(
             plugins.registry(&config, false).await.plugins[0].state,
@@ -510,7 +683,7 @@ mod tests {
     #[tokio::test]
     async fn an_off_registry_fetches_nothing_and_a_failed_fetch_keeps_the_list() {
         let root = tempfile::tempdir().unwrap();
-        let (server, mut config) = served(good()).await;
+        let (mut server, mut config) = served(good()).await;
         let plugins = service(root.path());
         config.enabled = false;
         let off = plugins.registry(&config, true).await;
@@ -518,7 +691,13 @@ mod tests {
 
         config.enabled = true;
         plugins.registry(&config, false).await;
-        drop(server);
+        // Not drop(server): mockito pools servers, so another test may answer on its port
+        server.reset();
+        server
+            .mock("GET", "/index.json")
+            .with_status(500)
+            .create_async()
+            .await;
         let kept = plugins.registry(&config, true).await;
         assert!(kept.error.is_some());
         assert_eq!(kept.plugins.len(), 1);
@@ -530,5 +709,203 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("https"), "{}", err);
+    }
+
+    const V2: &str = "name = \"hook\"\nversion = \"2.0.0\"\nevents = [\"download.finished\"]\n\n[permissions.http]\nhosts = [\"api.example.org\"]\nhost_from_config = [\"url\"]\n\n[[config]]\nkey = \"url\"\ntype = \"url\"\n\n[[config]]\nkey = \"token\"\ntype = \"string\"\n";
+
+    fn hook(plugins: &PluginsService) -> crate::PluginStatus {
+        plugins
+            .status()
+            .into_iter()
+            .find(|p| p.name == "hook")
+            .unwrap()
+    }
+
+    /// List hook 2.0.0 (one more host and setting) with `lua` as its script
+    async fn list_v2(server: &mut mockito::ServerGuard, lua: &[u8]) {
+        let archive = super::archive::tests::targz(&[
+            ("hook/plugin.toml", V2.as_bytes()),
+            ("hook/main.lua", lua),
+        ]);
+        let (mut entry, mut release) = entry_for(&archive);
+        release.version = "2.0.0".into();
+        release.url = format!("{}/hook-2.0.0.tar.gz", server.url());
+        release.notes = Some("https://x.org/releases/2.0.0".into());
+        entry.hosts.fixed = vec!["api.example.org".into()];
+        entry.releases = vec![release];
+        let index = serde_json::json!({ "schema_version": 1, "plugins": [entry] });
+        server.reset();
+        server
+            .mock("GET", "/index.json")
+            .with_body(index.to_string())
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/hook-2.0.0.tar.gz")
+            .with_body(archive)
+            .create_async()
+            .await;
+    }
+
+    #[tokio::test]
+    async fn an_update_shows_what_it_changes_and_keeps_edits_unless_told() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut server, config) = served(good()).await;
+        let plugins = service(root.path());
+        plugins.registry(&config, false).await;
+        plugins
+            .install_from_registry(&config, "hook")
+            .await
+            .unwrap();
+        assert!(matches!(
+            plugins.install_from_registry(&config, "hook").await,
+            Err(RegistryError::Conflict(_))
+        ));
+        assert!(matches!(
+            plugins.preview_update(&config, "hook").await,
+            Err(RegistryError::Conflict(e)) if e.contains("newest")
+        ));
+
+        list_v2(&mut server, b"return {on_event = function() end}").await;
+        plugins.registry(&config, true).await;
+        let info = hook(&plugins).registry.unwrap();
+        assert_eq!(info.update.as_deref(), Some("2.0.0"));
+        assert_eq!(info.listed, Some(true));
+
+        let main = root.path().join("plugins/hook/main.lua");
+        std::fs::write(&main, "-- mine\nreturn {}").unwrap();
+        let preview = plugins.preview_update(&config, "hook").await.unwrap();
+        assert_eq!(
+            (preview.from.as_str(), preview.version.as_str()),
+            ("1.0.0", "2.0.0")
+        );
+        assert_eq!(preview.diff.hosts.added, ["api.example.org"]);
+        assert_eq!(preview.diff.settings.added, ["token"]);
+        assert!(preview.diff.events.added.is_empty() && preview.diff.hosts.removed.is_empty());
+        assert_eq!(preview.changed, ["main.lua"]);
+        assert_eq!(
+            preview.notes.as_deref(),
+            Some("https://x.org/releases/2.0.0")
+        );
+
+        let refused = plugins
+            .update_from_registry(&config, "hook", Some(&preview.sha256), false)
+            .await;
+        assert!(matches!(&refused, Err(RegistryError::Conflict(e)) if e.contains("main.lua")));
+        assert!(matches!(
+            plugins.update_from_registry(&config, "hook", Some("0000"), true).await,
+            Err(RegistryError::Conflict(e)) if e.contains("changed since")
+        ));
+        assert_eq!(
+            plugins
+                .update_from_registry(&config, "hook", Some(&preview.sha256), true)
+                .await,
+            Ok("2.0.0".to_string())
+        );
+        let status = hook(&plugins);
+        assert_eq!(status.version, "2.0.0");
+        let info = status.registry.unwrap();
+        assert_eq!((info.record.version.as_str(), info.update), ("2.0.0", None));
+        assert!(info
+            .record
+            .changed(&root.path().join("plugins/hook"))
+            .is_empty());
+        assert_eq!(
+            std::fs::read_dir(root.path().join("plugins"))
+                .unwrap()
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn an_update_that_does_not_load_puts_the_old_version_back() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut server, config) = served(good()).await;
+        let plugins = service(root.path());
+        plugins.registry(&config, false).await;
+        plugins
+            .install_from_registry(&config, "hook")
+            .await
+            .unwrap();
+
+        list_v2(&mut server, b"return {on_event = function( end}").await;
+        plugins.registry(&config, true).await;
+        let refused = plugins
+            .update_from_registry(&config, "hook", None, false)
+            .await;
+        assert!(
+            matches!(&refused, Err(RegistryError::Refused(e)) if e.contains("1.0.0 was kept")),
+            "{:?}",
+            refused
+        );
+        let status = hook(&plugins);
+        assert_eq!(status.version, "1.0.0");
+        assert_eq!(status.registry.unwrap().record.version, "1.0.0");
+        assert_eq!(
+            std::fs::read_dir(root.path().join("plugins"))
+                .unwrap()
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_deletes_only_registry_plugins_and_a_dropped_entry_shows() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut server, config) = served(good()).await;
+        let plugins = service(root.path());
+        plugins.registry(&config, false).await;
+        plugins
+            .install_from_registry(&config, "hook")
+            .await
+            .unwrap();
+
+        server.reset();
+        server
+            .mock("GET", "/index.json")
+            .with_body(r#"{"schema_version": 1, "plugins": []}"#)
+            .create_async()
+            .await;
+        plugins.registry(&config, true).await;
+        assert_eq!(hook(&plugins).registry.unwrap().listed, Some(false));
+
+        std::fs::create_dir_all(root.path().join("plugins/mine")).unwrap();
+        assert!(matches!(
+            plugins.remove_from_registry("mine"),
+            Err(RegistryError::NotFound(_))
+        ));
+        assert_eq!(plugins.remove_from_registry("hook"), Ok(()));
+        assert!(!root.path().join("plugins/hook").exists());
+        assert!(root.path().join("plugins/mine").exists());
+    }
+
+    #[test]
+    fn a_withdrawn_entry_offers_no_update() {
+        let registry = Registry::new(None);
+        let (mut entry, mut release) = entry_for(b"x");
+        release.version = "2.0.0".into();
+        entry.releases = vec![release];
+        entry.withdrawn = Some("unsafe".into());
+        *registry.cache.lock().unwrap() = Some(Cache {
+            url: "u".into(),
+            fetched_at: Utc::now(),
+            index: Index {
+                schema_version: 1,
+                plugins: vec![entry],
+            },
+            skipped: 0,
+        });
+        let record = InstallRecord {
+            registry: "u".into(),
+            version: "1.0.0".into(),
+            sha256: String::new(),
+            installed_at: Utc::now(),
+            files: Default::default(),
+        };
+        let info = registry.info("hook", record);
+        assert_eq!(info.update, None);
+        assert_eq!(info.withdrawn.as_deref(), Some("unsafe"));
+        assert_eq!(info.listed, Some(true));
     }
 }

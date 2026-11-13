@@ -283,3 +283,28 @@ test("registry entries are searched and get a button by state (059)", async () =
     "Contacts the address in: url",
   ]);
 });
+
+test("an update's confirm says what changes and that edits are replaced (059)", async () => {
+  const { updateText, registryText } = await import("../../ui/plugins.js");
+  const none = { added: [], removed: [] };
+  const quiet = updateText({ diff: { hosts: none, settings: none, events: none, hooks: none }, changed: [] });
+  assert.equal(quiet, "It asks for nothing new.\nIts settings are kept; if the new version does not load, the old one stays.");
+  const text = updateText({
+    notes: "https://x.org/r",
+    diff: { hosts: { added: ["api.x.org", "setting:url"], removed: [] }, settings: { added: ["token"], removed: [] }, events: { added: [], removed: ["download.failed"] }, hooks: none },
+    changed: ["main.lua"],
+  }).split("\n");
+  assert.deepEqual(text, [
+    "Release notes: https://x.org/r",
+    "New hosts: api.x.org, the address in url",
+    "New settings: token",
+    "No longer runs on: download.failed",
+    "New hosts need your approval before it runs again.",
+    "Your edits to main.lua will be replaced.",
+    "Its settings are kept; if the new version does not load, the old one stays.",
+  ]);
+  assert.equal(registryText({}), "");
+  assert.equal(registryText({ registry: { version: "1.0.0", update: "2.0.0" } }), "From the plugin registry, 1.0.0 · 2.0.0 available");
+  assert.equal(registryText({ registry: { version: "1.0.0", update: "2.0.0", withdrawn: "unsafe" } }), "From the plugin registry, 1.0.0 · withdrawn: unsafe");
+  assert.equal(registryText({ registry: { version: "1.0.0", listed: false } }), "From the plugin registry, 1.0.0 · no longer listed");
+});
