@@ -7,8 +7,9 @@
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
-/// The release public key (`minisign -G`, MAINTAINING.md "Release signing key"). Empty
-/// until the maintainer has made the key: every update then fails at the signature check.
+/// The release public key (`minisign -G`, MAINTAINING.md "MINISIGN_SECRET_KEY and
+/// MINISIGN_PASSWORD"). Empty until the maintainer has made the key: every update then fails
+/// at the signature check.
 pub const RELEASE_PUBKEY: &str = "";
 
 /// The key `SHA256SUMS` must be signed with. Debug builds take `PUTIO_SYNC_UPDATE_PUBKEY`,

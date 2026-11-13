@@ -233,26 +233,19 @@ come from the daemon. A translated Snap Store listing is not possible: the store
 summary and description per snap (see `specs/051-ui-i18n/research.md`); a Flathub listing
 could carry translations through AppStream.
 
-### 055 Update checker and self-update
+### 055 Update checker and self-update (done)
 
-Check GitHub Releases for a newer version on start and once a day (can be
-turned off), and show it in the web UI with that release's notes, next to
-What's new. What happens next depends on how putio-sync was installed:
-
-- A binary downloaded from GitHub (Windows, macOS, Linux) updates itself. An
-  "Update now" button, plus an opt-in setting to update automatically, which
-  waits until no transfer is running. It downloads a small LZMA patch from the
-  running version when the release has one, and falls back to the full
-  archive. It checks the SHA-256, swaps the binary, restarts, and rolls back if
-  the new version fails to start.
-- Managed installs (snap, apt, Homebrew, winget, Flatpak, Docker, and
-  Unraid/CasaOS/Umbrel) never touch their own files. They detect the channel
-  and show the exact update command or step. Docker tries to detect the image
-  and tag so it can name the right `docker pull`, and otherwise shows a plain
-  warning.
-
-Depends on 053's release binaries. The release workflow also builds the
-patches.
+Checks GitHub Releases on start and once a day (can be turned off) and shows a newer
+version, with its release notes, next to What's new. A binary downloaded from GitHub
+updates itself with Update now, or automatically once no transfer is running when that
+setting is on: it fetches a bsdiff patch (`.xz` full binary when there is none), checks it
+against the minisign-signed `SHA256SUMS`, swaps the binary, restarts, and rolls back if the
+new version fails to start. Snap, apt, Homebrew, winget, Flatpak, Docker and
+Unraid/CasaOS/Umbrel installs show their own update command or step instead. The release
+workflow builds the patches and signs `SHA256SUMS`. Left for the maintainer: the release
+signing key (`RELEASE_PUBKEY` and the `MINISIGN_*` secrets; until then every self-update
+fails the signature check and releases stop at signing), and checking channel detection
+and Update now on real installs (T023, T041). See `specs/055-update-checker/`.
 
 ### 055 Plugin workbench (done)
 
