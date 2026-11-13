@@ -48,10 +48,13 @@ pub struct Doctor {
     runs: AtomicU64,
     metrics: bool,
     /// Tailscale (feature 036); built from the config per run when not shared
+    #[cfg(feature = "tailscale")]
     tailscale: Option<Arc<putio_sync_tailscale::TailscaleService>>,
     /// The hooks service (feature 027), for each hook's last run
+    #[cfg(feature = "hooks")]
     hooks: Option<Arc<putio_sync_hooks::HooksService>>,
     /// The plugins service (feature 028), for each plugin's state and last runs
+    #[cfg(feature = "plugins")]
     plugins: Option<Arc<putio_sync_plugins::PluginsService>>,
 }
 
@@ -73,13 +76,17 @@ impl Doctor {
             running: tokio::sync::Mutex::new(()),
             runs: AtomicU64::new(0),
             metrics: false,
+            #[cfg(feature = "tailscale")]
             tailscale: None,
+            #[cfg(feature = "hooks")]
             hooks: None,
+            #[cfg(feature = "plugins")]
             plugins: None,
         }
     }
 
     /// Ask this Tailscale service (the API's), so the check shares its cache
+    #[cfg(feature = "tailscale")]
     pub fn with_tailscale(
         mut self,
         tailscale: Arc<putio_sync_tailscale::TailscaleService>,
@@ -89,12 +96,14 @@ impl Doctor {
     }
 
     /// Report the last runs of these hooks (feature 027)
+    #[cfg(feature = "hooks")]
     pub fn with_hooks(mut self, hooks: Arc<putio_sync_hooks::HooksService>) -> Self {
         self.hooks = Some(hooks);
         self
     }
 
     /// Report the state and last runs of these plugins (feature 028)
+    #[cfg(feature = "plugins")]
     pub fn with_plugins(mut self, plugins: Arc<putio_sync_plugins::PluginsService>) -> Self {
         self.plugins = Some(plugins);
         self
@@ -138,6 +147,10 @@ impl Doctor {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
+        #[cfg_attr(
+            not(any(feature = "tailscale", feature = "hooks", feature = "plugins")),
+            allow(unused_mut)
+        )]
         let mut ctx = Ctx::new(
             config,
             self.config_path.clone(),
@@ -146,9 +159,18 @@ impl Doctor {
             self.cleanup.clone(),
             self.stalls.clone(),
         );
-        ctx.tailscale = self.tailscale.clone();
-        ctx.hooks = self.hooks.clone();
-        ctx.plugins = self.plugins.clone();
+        #[cfg(feature = "tailscale")]
+        {
+            ctx.tailscale = self.tailscale.clone();
+        }
+        #[cfg(feature = "hooks")]
+        {
+            ctx.hooks = self.hooks.clone();
+        }
+        #[cfg(feature = "plugins")]
+        {
+            ctx.plugins = self.plugins.clone();
+        }
         ctx
     }
 

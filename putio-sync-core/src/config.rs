@@ -3815,8 +3815,8 @@ mod metrics_tests {
             ),
             (
                 "PUTIO_SYNC_METRICS_BIND",
-                "na s:9742",
-                "invalid metrics.bind 'na s:9742': 'na s' is not an IPv4 address or interface name (expected ip:port, [ipv6]:port, interface:port or tailnet:port)",
+                "na/s:9742",
+                "invalid metrics.bind 'na/s:9742': 'na/s' is not an IPv4 address or interface name (expected ip:port, [ipv6]:port, interface:port or tailnet:port)",
             ),
             (
                 "PUTIO_SYNC_METRICS_PATH",

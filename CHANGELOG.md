@@ -14,6 +14,13 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- CLI-only builds for Linux, macOS and Windows, published with each release:
+  putio-sync-lite (with event hooks) and putio-sync-lite-plugins (hooks and Lua/WASM
+  plugins). They have the Put.io file, download, queue, transfer and status commands and
+  `doctor`, without the daemon, API, web UI, setup wizard, metrics or archive. Their
+  `download` and `files free-space` wait for the hooks and plugins to finish before
+  exiting. Build one with `cargo build -p putio-sync-cli --no-default-features
+  --features hooks` (add `plugins`, or leave out both).
 - Releases also publish each binary as a bare `.xz`, small bsdiff patches from the three
   previous releases, and `SHA256SUMS.minisig`, a minisign signature of `SHA256SUMS` that also
   lists each uncompressed binary's hash. These are for the self-update to come; the existing
@@ -37,6 +44,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   **translated** label after the item moves into place.
 - A debug build of `putio-sync` on Windows no longer crashes with a stack overflow
   (exit code -1073741571) before it runs any command. Release builds weren't affected.
+- On Windows, moving the database from its old location no longer fails with "Access is
+  denied" when it has to be copied, for example to another drive.
+- The listen settings (`[api] bind`, `[metrics] bind`) take interface names with spaces
+  and parentheses, as Windows names them (`Ethernet 2:15432`, `vEthernet (WSL):15432`).
+  Names were limited to letters, digits, `.`, `_` and `-`, so most Windows interfaces
+  couldn't be chosen by name.
 
 ## [0.4.0] - 2026-11-12
 
