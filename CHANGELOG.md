@@ -12,6 +12,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- On Windows, a subtitle translated while its item was in the staging folder keeps its
+  **translated** label after the item moves into place.
+
 ## [0.4.0] - 2026-11-12
 
 ### Added
