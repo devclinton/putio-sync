@@ -3,6 +3,7 @@
 //! Handles downloading files from Put.io with support for workers, progress tracking,
 //! resume, and daemon mode.
 
+use crate::services::Services;
 use anyhow::{anyhow, Context, Result};
 use putio_sync_client::{FileEntry, PutioApiClient};
 use putio_sync_core::config::{AuthMethod, Config, ExistingFile, ProgressStyle, SortOrder};
@@ -50,6 +51,7 @@ pub async fn execute_download(
 
     let config = Config::load(&config_file_path)
         .context("Failed to load configuration. Have you run 'putio-sync login'?")?;
+    let services = Services::start(&config, &config_file_path);
     let db_path = putio_sync_core::database::prepare(&config, Some(&config_file_path)).await;
 
     let auth = config.auth.ok_or_else(|| {
@@ -165,9 +167,10 @@ pub async fn execute_download(
 
     let client_arc = Arc::new(client);
 
-    if daemon {
+    let result = if daemon {
         info!("Starting daemon mode with interval: {} seconds", interval);
         run_daemon_mode(
+            &services,
             client_arc,
             download_config,
             db_path,
@@ -185,6 +188,7 @@ pub async fn execute_download(
         .await
     } else {
         run_single_download(
+            &services,
             client_arc,
             download_config,
             db_path,
@@ -199,12 +203,15 @@ pub async fn execute_download(
             progress_style,
         )
         .await
-    }
+    };
+    services.finish().await;
+    result
 }
 
 /// Run a single download operation
 #[allow(clippy::too_many_arguments)]
 async fn run_single_download(
+    services: &Services,
     client: Arc<PutioApiClient>,
     download_config: DownloadConfig,
     db_path: PathBuf,
@@ -305,6 +312,7 @@ async fn run_single_download(
     } else {
         DownloadManager::new_without_database(client.clone(), download_config.clone())
     };
+    services.attach(&download_manager);
 
     // Track statistics
     let mut total_bytes = 0u64;
@@ -405,6 +413,7 @@ async fn run_single_download(
 /// Run in daemon mode
 #[allow(clippy::too_many_arguments)]
 async fn run_daemon_mode(
+    services: &Services,
     client: Arc<PutioApiClient>,
     download_config: DownloadConfig,
     db_path: PathBuf,
@@ -444,6 +453,7 @@ async fn run_daemon_mode(
 
         // Run single download cycle
         match run_single_download(
+            services,
             client.clone(),
             download_config.clone(),
             db_path.clone(),
