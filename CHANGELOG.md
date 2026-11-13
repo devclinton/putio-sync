@@ -40,6 +40,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   **translated** label after the item moves into place.
 - A debug build of `putio-sync` on Windows no longer crashes with a stack overflow
   (exit code -1073741571) before it runs any command. Release builds weren't affected.
+- On Windows, moving the database from its old location no longer fails with "Access is
+  denied" when it has to be copied, for example to another drive.
 
 ## [0.4.0] - 2026-11-12
 
