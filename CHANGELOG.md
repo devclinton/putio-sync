@@ -42,6 +42,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   (exit code -1073741571) before it runs any command. Release builds weren't affected.
 - On Windows, moving the database from its old location no longer fails with "Access is
   denied" when it has to be copied, for example to another drive.
+- The listen settings (`[api] bind`, `[metrics] bind`) take interface names with spaces
+  and parentheses, as Windows names them (`Ethernet 2:15432`, `vEthernet (WSL):15432`).
+  Names were limited to letters, digits, `.`, `_` and `-`, so most Windows interfaces
+  couldn't be chosen by name.
 
 ## [0.4.0] - 2026-11-12
 
