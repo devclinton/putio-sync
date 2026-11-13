@@ -206,11 +206,12 @@ async fn a_429_waits_and_tries_again_without_using_an_attempt() {
         async move { c.send("s", "u").await }
     });
     tokio::time::sleep(Duration::from_millis(100)).await;
-    limited.remove_async().await;
+    // Add the answer before taking the 429 away, so no retry finds neither (a 501)
     s.mock("POST", "/v1/chat/completions")
         .with_body(ok("done"))
         .create_async()
         .await;
+    limited.remove_async().await;
     assert_eq!(task.await.unwrap().unwrap(), "done");
 }
 
