@@ -12,6 +12,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- A debug build of `putio-sync` on Windows no longer crashes with a stack overflow
+  (exit code -1073741571) before it runs any command. Release builds weren't affected.
+
 ## [0.4.0] - 2026-11-12
 
 ### Added
