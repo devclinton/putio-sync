@@ -27,6 +27,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   download the new installer and open it. Managed installs (snap, Homebrew, Docker and the
   rest) keep showing their own update command.
 
+### Fixed
+
+- On Windows, a subtitle translated while its item was in the staging folder keeps its
+  **translated** label after the item moves into place.
+
 ## [0.4.0] - 2026-11-12
 
 ### Added

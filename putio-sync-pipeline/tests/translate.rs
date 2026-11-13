@@ -398,7 +398,7 @@ async fn staging_writes_inside_the_staging_folder_and_provenance_follows_the_ren
         .await
         .unwrap();
     env.pipeline.run_due().await;
-    let final_srt = target.join("tv/Show/Show.S01E01.es.srt");
+    let final_srt = target.join("tv").join("Show").join("Show.S01E01.es.srt");
     assert!(final_srt.exists(), "moved with the item");
     assert!(!staged.exists());
     let p = env

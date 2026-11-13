@@ -42,7 +42,6 @@ putio-sync-storage = { path = "../putio-sync-storage" }
 
 # Async runtime
 tokio = { workspace = true }
-futures = "0.3"
 
 # CLI
 clap = { workspace = true }

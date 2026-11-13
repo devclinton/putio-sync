@@ -283,6 +283,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(
+        windows,
+        ignore = "copy_into_place can't sync_all a read-only handle on Windows"
+    )]
     async fn copies_when_rename_is_not_possible() {
         let dir = tempfile::tempdir().unwrap();
         let legacy = dir.path().join("old").join(FILE_NAME);
@@ -300,6 +304,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(
+        windows,
+        ignore = "copy_into_place can't sync_all a read-only handle on Windows"
+    )]
     async fn an_interrupted_copy_is_redone() {
         let dir = tempfile::tempdir().unwrap();
         let legacy = dir.path().join("old").join(FILE_NAME);

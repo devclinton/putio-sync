@@ -881,21 +881,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "futures"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a31d2a3fbaaeb2af2368bbdd904aa8e812d3c04a1ee10d3171f52d556e5d0a3"
-dependencies = [
- "futures-channel",
- "futures-core",
- "futures-executor",
- "futures-io",
- "futures-sink",
- "futures-task",
- "futures-util",
-]
-
-[[package]]
 name = "futures-channel"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -968,7 +953,6 @@ version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
 dependencies = [
- "futures-channel",
  "futures-core",
  "futures-io",
  "futures-macro",
@@ -2325,7 +2309,6 @@ dependencies = [
 name = "putio-sync-api"
 version = "0.4.0"
 dependencies = [
- "anyhow",
  "argon2",
  "axum",
  "base64 0.22.1",
@@ -2428,7 +2411,6 @@ dependencies = [
  "ctrlc",
  "dotenvy",
  "flate2",
- "futures",
  "indicatif",
  "mockito",
  "oauth2",
@@ -2469,7 +2451,6 @@ dependencies = [
 name = "putio-sync-client"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "base64 0.22.1",
  "chrono",
  "futures-util",
@@ -2488,7 +2469,6 @@ dependencies = [
 name = "putio-sync-core"
 version = "0.4.0"
 dependencies = [
- "anyhow",
  "base64 0.22.1",
  "chrono",
  "dirs",
@@ -2518,7 +2498,6 @@ dependencies = [
 name = "putio-sync-daemon"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "chrono",
  "mockito",
  "putio-sync-client",
@@ -2547,7 +2526,6 @@ dependencies = [
 name = "putio-sync-db"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "chrono",
  "putio-sync-telemetry",
  "serde",
@@ -2621,12 +2599,10 @@ dependencies = [
 name = "putio-sync-download"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "bytes",
  "chrono",
  "crc",
  "futures-util",
- "indicatif",
  "mockito",
  "putio-sync-client",
  "putio-sync-core",
@@ -2801,7 +2777,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "tracing",
 ]
 
 [[package]]
