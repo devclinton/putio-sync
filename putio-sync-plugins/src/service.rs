@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -242,6 +243,8 @@ struct Inner {
     busy: Mutex<HashSet<String>>,
     /// The workbench's last runs (055)
     runs: crate::workbench::Runs,
+    /// Bus events the dispatcher has read, counted as [`events::emitted`] counts them
+    seen: AtomicU64,
     /// The plugin registry's list and installs (059)
     registry: crate::registry::Registry,
 }
@@ -371,6 +374,7 @@ impl PluginsService {
                 download_dir: Arc::new(Mutex::new(options.download_dir)),
                 busy: Mutex::new(HashSet::new()),
                 runs: Default::default(),
+                seen: AtomicU64::new(0),
                 registry: crate::registry::Registry::new(options.data_dir.clone()),
             }),
         }
@@ -443,18 +447,23 @@ impl PluginsService {
         }
         let weak = Arc::downgrade(&self.inner);
         let mut events = events::subscribe();
+        self.inner.seen.store(events::emitted(), Ordering::SeqCst);
         handle.spawn(async move {
             loop {
                 match events.recv().await {
                     Ok(event) => {
                         let Some(inner) = weak.upgrade() else { break };
                         dispatch(&inner, event);
+                        inner.seen.fetch_add(1, Ordering::SeqCst);
                     }
                     Err(RecvError::Lagged(n)) => {
                         tracing::warn!(
                             missed = n,
                             "Plugins fell behind the event bus; events skipped"
-                        )
+                        );
+                        if let Some(inner) = weak.upgrade() {
+                            inner.seen.fetch_add(n, Ordering::SeqCst);
+                        }
                     }
                     Err(RecvError::Closed) => break,
                 }
@@ -471,6 +480,33 @@ impl PluginsService {
                 PluginsService { inner }.tick_due();
             }
         });
+    }
+
+    /// Wait until every event put on the bus so far has been run by the plugins that
+    /// want it, for a command that exits when it is done. False when `timeout` passed
+    /// first.
+    pub async fn drain(&self, timeout: Duration) -> bool {
+        let target = events::emitted();
+        let deadline = Instant::now() + timeout;
+        loop {
+            let read = self.inner.seen.load(Ordering::SeqCst) >= target;
+            if read
+                && self
+                    .inner
+                    .state
+                    .lock()
+                    .unwrap()
+                    .slots
+                    .values()
+                    .all(|s| s.idle())
+            {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 
     /// Queue `on_tick` for each running plugin that has one

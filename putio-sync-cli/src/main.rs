@@ -9,7 +9,9 @@ mod logging;
 use putio_sync_cli::commands;
 
 use chrono::Utc;
-use cli::{ArchiveCommands, Cli, Commands, QueueCommands, TransfersCommands};
+#[cfg(feature = "server")]
+use cli::ArchiveCommands;
+use cli::{Cli, Commands, QueueCommands, TransfersCommands};
 use putio_sync_core::config::{Config, ExistingFile};
 use tracing::{debug, error, info};
 
@@ -89,6 +91,7 @@ async fn run() {
     };
 
     // Plugin checks need no config, token or logging (feature 059)
+    #[cfg(feature = "plugins")]
     if let Commands::Plugins(cli::PluginsCommands::Check { folder, json }) = &args.command {
         let code = commands::plugins::execute_check(folder, *json, &mut std::io::stdout().lock());
         std::process::exit(code);
@@ -136,10 +139,14 @@ async fn run() {
     putio_sync_core::log_redact::set_secrets(config.secret_values());
 
     // Initialize logging system. The doctor's stdout is its report, so its logs go to stderr.
-    if matches!(
+    #[cfg(feature = "server")]
+    let report_on_stdout = matches!(
         args.command,
         Commands::Doctor { .. } | Commands::Setup { .. } | Commands::Archive(_)
-    ) {
+    );
+    #[cfg(not(feature = "server"))]
+    let report_on_stdout = matches!(args.command, Commands::Doctor { .. });
+    if report_on_stdout {
         logging::init_stderr(&config.logging.level);
     } else if let Err(e) = putio_sync_core::logging::init_logging(&config.logging) {
         eprintln!("⚠️  Failed to initialize logging: {}", e);
@@ -402,6 +409,7 @@ async fn run() {
                 commands::transfers::execute_retry(transfer_id, args.config).await
             }
         },
+        #[cfg(feature = "server")]
         Commands::Daemon {
             download_interval,
             watch_interval,
@@ -439,6 +447,7 @@ async fn run() {
             )
             .await
         }
+        #[cfg(feature = "server")]
         Commands::Server {
             watch,
             download,
@@ -450,6 +459,7 @@ async fn run() {
         }
         Commands::Health {} => commands::execute_health(args.config).await,
         Commands::Debug {} => commands::execute_debug(args.config).await,
+        #[cfg(feature = "server")]
         Commands::Setup {
             download_dir,
             preset,
@@ -471,7 +481,9 @@ async fn run() {
             let _ = std::io::stdout().flush();
             std::process::exit(code);
         }
+        #[cfg(feature = "plugins")]
         Commands::Plugins(_) => unreachable!("handled before the config loads"),
+        #[cfg(feature = "server")]
         Commands::Archive(job) => {
             let job = match job {
                 ArchiveCommands::Metrics {

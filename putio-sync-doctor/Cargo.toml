@@ -7,15 +7,24 @@ license.workspace = true
 repository.workspace = true
 description = "Health checks and safe fixes for putio-sync (feature 010)"
 
+# Each feature (all on by default) adds that check; without it the doctor skips it. The
+# lite CLI builds leave out `tailscale`, and `plugins` (the Lua and WebAssembly engines)
+# unless they ship plugins.
+[features]
+default = ["tailscale", "hooks", "plugins"]
+tailscale = ["dep:putio-sync-tailscale"]
+hooks = ["dep:putio-sync-hooks"]
+plugins = ["dep:putio-sync-plugins"]
+
 [dependencies]
 putio-sync-core = { path = "../putio-sync-core" }
 putio-sync-client = { path = "../putio-sync-client" }
 putio-sync-db = { path = "../putio-sync-db" }
 putio-sync-download = { path = "../putio-sync-download" }
 putio-sync-telemetry = { path = "../putio-sync-telemetry" }
-putio-sync-tailscale = { path = "../putio-sync-tailscale" }
-putio-sync-hooks = { path = "../putio-sync-hooks" }
-putio-sync-plugins = { path = "../putio-sync-plugins" }
+putio-sync-tailscale = { path = "../putio-sync-tailscale", optional = true }
+putio-sync-hooks = { path = "../putio-sync-hooks", optional = true }
+putio-sync-plugins = { path = "../putio-sync-plugins", optional = true }
 
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -32,3 +41,11 @@ tempfile = "3.8"
 filetime = "0.2"
 reqwest = { workspace = true }
 toml = { workspace = true }
+
+[[test]]
+name = "hooks"
+required-features = ["hooks"]
+
+[[test]]
+name = "plugins"
+required-features = ["plugins"]
