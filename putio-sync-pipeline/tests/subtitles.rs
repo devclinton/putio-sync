@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use common::*;
+#[cfg(unix)]
 use mockito::Matcher;
 use putio_sync_client::{PutioSubtitle, SubtitleList};
 use putio_sync_core::config::StagingMode;
@@ -688,6 +689,7 @@ mod manual {
 }
 
 /// Feature 050: source modes chosen per category, and Whisper output beside the downloaded file
+#[cfg(unix)]
 mod modes {
     use super::*;
     use putio_sync_core::subtitles::SubtitleMode;

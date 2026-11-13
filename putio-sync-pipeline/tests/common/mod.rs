@@ -18,6 +18,7 @@ use putio_sync_pipeline::{ItemState, Pipeline, Stage as PStage};
 use tempfile::TempDir;
 
 /// A script in `dir` that runs `body` with `sh`; returns the command for a hook
+#[cfg(unix)]
 pub fn script(dir: &Path, name: &str, body: &str) -> Vec<String> {
     use std::os::unix::fs::PermissionsExt;
     let path = dir.join(name);

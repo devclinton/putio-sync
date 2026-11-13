@@ -97,6 +97,8 @@ async fn preflight_says_gone_when_put_io_answers_404_and_unknown_without_a_downl
     assert_eq!(body["eligible"], false);
 }
 
+// `/bin/sh` stands in for ffmpeg
+#[cfg(unix)]
 #[tokio::test]
 async fn transcription_makes_a_file_put_io_no_longer_has_eligible() {
     let mut app = test_app_with(|c| {
@@ -187,6 +189,8 @@ async fn start_without_a_pipeline_is_a_503() {
     );
 }
 
+// `/bin/sh` stands in for ffmpeg
+#[cfg(unix)]
 #[tokio::test]
 async fn whisper_only_needs_no_put_io_and_download_only_needs_no_transcription() {
     use putio_sync_core::subtitles::SubtitleMode;

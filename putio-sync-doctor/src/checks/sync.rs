@@ -444,7 +444,13 @@ mod tests {
 
         let f = orphan_partials(&c).await;
         let keys: Vec<&str> = f.items.iter().map(|i| i.key.as_str()).collect();
-        assert_eq!(keys, vec!["Movies/.orphan.mkv.downloading"]);
+        assert_eq!(
+            keys,
+            vec![format!(
+                "Movies{}.orphan.mkv.downloading",
+                std::path::MAIN_SEPARATOR
+            )]
+        );
         assert_eq!(f.status, Status::Warning);
     }
 }

@@ -534,12 +534,13 @@ mod tests {
             return;
         };
         let port = free_port();
+        // Windows names it "Loopback Pseudo-Interface 1", which a setting can't name yet
+        let Ok(lo) = format!("{lo}:{port}").parse::<ListenAddr>() else {
+            return;
+        };
         let h = Supervisor::spawn_with(
             "Test",
-            vec![
-                entry(&format!("{lo}:{port}")),
-                entry(&format!("nope-037:{port}")),
-            ],
+            vec![lo, entry(&format!("nope-037:{port}"))],
             local_resolver(),
             app(),
             Bound::default(),

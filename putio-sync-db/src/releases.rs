@@ -790,6 +790,198 @@ impl<'a> ReleasesRepository<'a> {
     }
 }
 
+const REPORT_COLUMNS: &str = "id, kind, check_id, arr_hash, file_id, transfer_id, source, \
+     category, watch_folder, stage, name, hash, total_size, file_count, types, largest_wanted, \
+     min_size, tracker_hosts, is_private, reason, note, created_at";
+
+fn report_from_row(row: &sqlx::sqlite::SqliteRow) -> ReportRow {
+    ReportRow {
+        id: row.get("id"),
+        kind: row.get("kind"),
+        check_id: row.get("check_id"),
+        arr_hash: row.get("arr_hash"),
+        file_id: row.get("file_id"),
+        transfer_id: row.get("transfer_id"),
+        source: row.get("source"),
+        category: row.get("category"),
+        watch_folder: row.get("watch_folder"),
+        stage: row.get("stage"),
+        name: row.get("name"),
+        hash: row.get("hash"),
+        total_size: row.get("total_size"),
+        file_count: row.get("file_count"),
+        types: json_list(row, "types"),
+        largest_wanted: row.get("largest_wanted"),
+        min_size: row.get("min_size"),
+        tracker_hosts: json_list(row, "tracker_hosts"),
+        is_private: row.get("is_private"),
+        reason: row.get("reason"),
+        note: row.get("note"),
+        created_at: row.get("created_at"),
+    }
+}
+
+/// A flag's release key
+enum Key<'a> {
+    Text(&'a str),
+    Int(i64),
+}
+
+/// What [`ReleasesRepository::delete_flag`] did
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlagUndo {
+    Deleted,
+    NotFound,
+    /// The row is a `rejected` report, which can't be undone
+    NotAFlag,
+}
+
+/// A JSON list column; empty when it doesn't parse
+fn json_list<T: serde::de::DeserializeOwned>(
+    row: &sqlx::sqlite::SqliteRow,
+    column: &str,
+) -> Vec<T> {
+    serde_json::from_str(&row.get::<String, _>(column)).unwrap_or_default()
+}
+
+/// One file type in a report
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
+pub struct ReportType {
+    pub ext: String,
+    pub count: i64,
+    pub largest: i64,
+}
+
+/// One `release_reports` row, with `types` and `tracker_hosts` as lists
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ReportRow {
+    pub id: i64,
+    pub kind: String,
+    pub check_id: Option<i64>,
+    pub arr_hash: Option<String>,
+    pub file_id: Option<i64>,
+    pub transfer_id: Option<i64>,
+    pub source: Option<String>,
+    pub category: Option<String>,
+    pub watch_folder: Option<String>,
+    pub stage: Option<String>,
+    pub name: String,
+    pub hash: Option<String>,
+    pub total_size: Option<i64>,
+    pub file_count: Option<i64>,
+    pub types: Vec<ReportType>,
+    pub largest_wanted: Option<i64>,
+    pub min_size: Option<i64>,
+    pub tracker_hosts: Vec<String>,
+    pub is_private: bool,
+    pub reason: Option<String>,
+    pub note: Option<String>,
+    /// UTC, `YYYY-MM-DD HH:MM:SS`
+    pub created_at: String,
+}
+
+/// `GET /stats/releases` (contracts/api.md)
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ReleaseStats {
+    pub range: StatsRange,
+    pub rejected: RejectedStats,
+    pub magnets: MagnetStats,
+    pub reports: ReportStats,
+    /// Held magnets (feature 043)
+    pub held: HoldStats,
+}
+
+/// The range counted, UTC epoch seconds; `from` is `None` for everything
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct StatsRange {
+    pub preset: &'static str,
+    pub from: Option<i64>,
+    pub to: i64,
+}
+
+/// Releases and bytes
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct CountBytes {
+    pub count: i64,
+    pub bytes: i64,
+}
+
+/// Rejections by where the check ran
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ByStage {
+    pub before: CountBytes,
+    pub putio: CountBytes,
+}
+
+/// Rejections with one reason
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ReasonCount {
+    pub reason: String,
+    pub count: i64,
+}
+
+/// `rejected` section
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct RejectedStats {
+    pub count: i64,
+    pub bytes: i64,
+    pub by_stage: ByStage,
+    /// Most first
+    pub by_reason: Vec<ReasonCount>,
+}
+
+/// Lookup results for one cache. `cache` is `None` for misses, which aren't kept per
+/// cache (the per-cache split is in `putio_sync_precheck_cache_lookups_total`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct CacheCount {
+    pub cache: Option<String>,
+    pub found: i64,
+    pub not_found: i64,
+    pub timeout: i64,
+    pub wrong_hash: i64,
+    pub error: i64,
+}
+
+/// `magnets` section
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct MagnetStats {
+    /// Magnets with an info hash
+    pub checked: i64,
+    /// .torrent found in a cache
+    pub found: i64,
+    /// Sent to Put.io unchecked
+    pub fell_back: i64,
+    /// Fallbacks rejected on Put.io
+    pub fallback_fake: i64,
+    /// What Put.io downloaded for those
+    pub fallback_putio_bytes: i64,
+    pub caches: Vec<CacheCount>,
+}
+
+/// Releases with one file type
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct TypeCount {
+    pub ext: String,
+    pub count: i64,
+}
+
+/// Releases announced to one tracker
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct TrackerCount {
+    pub host: String,
+    pub count: i64,
+}
+
+/// `reports` section
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ReportStats {
+    pub rejected: i64,
+    pub flagged_fake: i64,
+    pub flagged_not_fake: i64,
+    pub top_types: Vec<TypeCount>,
+    pub top_trackers: Vec<TrackerCount>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1040,196 +1232,4 @@ mod tests {
         assert_eq!(repo.prune(400).await.unwrap(), 2);
         assert!(repo.has_pending().await.unwrap());
     }
-}
-
-const REPORT_COLUMNS: &str = "id, kind, check_id, arr_hash, file_id, transfer_id, source, \
-     category, watch_folder, stage, name, hash, total_size, file_count, types, largest_wanted, \
-     min_size, tracker_hosts, is_private, reason, note, created_at";
-
-fn report_from_row(row: &sqlx::sqlite::SqliteRow) -> ReportRow {
-    ReportRow {
-        id: row.get("id"),
-        kind: row.get("kind"),
-        check_id: row.get("check_id"),
-        arr_hash: row.get("arr_hash"),
-        file_id: row.get("file_id"),
-        transfer_id: row.get("transfer_id"),
-        source: row.get("source"),
-        category: row.get("category"),
-        watch_folder: row.get("watch_folder"),
-        stage: row.get("stage"),
-        name: row.get("name"),
-        hash: row.get("hash"),
-        total_size: row.get("total_size"),
-        file_count: row.get("file_count"),
-        types: json_list(row, "types"),
-        largest_wanted: row.get("largest_wanted"),
-        min_size: row.get("min_size"),
-        tracker_hosts: json_list(row, "tracker_hosts"),
-        is_private: row.get("is_private"),
-        reason: row.get("reason"),
-        note: row.get("note"),
-        created_at: row.get("created_at"),
-    }
-}
-
-/// A flag's release key
-enum Key<'a> {
-    Text(&'a str),
-    Int(i64),
-}
-
-/// What [`ReleasesRepository::delete_flag`] did
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FlagUndo {
-    Deleted,
-    NotFound,
-    /// The row is a `rejected` report, which can't be undone
-    NotAFlag,
-}
-
-/// A JSON list column; empty when it doesn't parse
-fn json_list<T: serde::de::DeserializeOwned>(
-    row: &sqlx::sqlite::SqliteRow,
-    column: &str,
-) -> Vec<T> {
-    serde_json::from_str(&row.get::<String, _>(column)).unwrap_or_default()
-}
-
-/// One file type in a report
-#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
-pub struct ReportType {
-    pub ext: String,
-    pub count: i64,
-    pub largest: i64,
-}
-
-/// One `release_reports` row, with `types` and `tracker_hosts` as lists
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct ReportRow {
-    pub id: i64,
-    pub kind: String,
-    pub check_id: Option<i64>,
-    pub arr_hash: Option<String>,
-    pub file_id: Option<i64>,
-    pub transfer_id: Option<i64>,
-    pub source: Option<String>,
-    pub category: Option<String>,
-    pub watch_folder: Option<String>,
-    pub stage: Option<String>,
-    pub name: String,
-    pub hash: Option<String>,
-    pub total_size: Option<i64>,
-    pub file_count: Option<i64>,
-    pub types: Vec<ReportType>,
-    pub largest_wanted: Option<i64>,
-    pub min_size: Option<i64>,
-    pub tracker_hosts: Vec<String>,
-    pub is_private: bool,
-    pub reason: Option<String>,
-    pub note: Option<String>,
-    /// UTC, `YYYY-MM-DD HH:MM:SS`
-    pub created_at: String,
-}
-
-/// `GET /stats/releases` (contracts/api.md)
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct ReleaseStats {
-    pub range: StatsRange,
-    pub rejected: RejectedStats,
-    pub magnets: MagnetStats,
-    pub reports: ReportStats,
-    /// Held magnets (feature 043)
-    pub held: HoldStats,
-}
-
-/// The range counted, UTC epoch seconds; `from` is `None` for everything
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct StatsRange {
-    pub preset: &'static str,
-    pub from: Option<i64>,
-    pub to: i64,
-}
-
-/// Releases and bytes
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct CountBytes {
-    pub count: i64,
-    pub bytes: i64,
-}
-
-/// Rejections by where the check ran
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct ByStage {
-    pub before: CountBytes,
-    pub putio: CountBytes,
-}
-
-/// Rejections with one reason
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct ReasonCount {
-    pub reason: String,
-    pub count: i64,
-}
-
-/// `rejected` section
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct RejectedStats {
-    pub count: i64,
-    pub bytes: i64,
-    pub by_stage: ByStage,
-    /// Most first
-    pub by_reason: Vec<ReasonCount>,
-}
-
-/// Lookup results for one cache. `cache` is `None` for misses, which aren't kept per
-/// cache (the per-cache split is in `putio_sync_precheck_cache_lookups_total`).
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct CacheCount {
-    pub cache: Option<String>,
-    pub found: i64,
-    pub not_found: i64,
-    pub timeout: i64,
-    pub wrong_hash: i64,
-    pub error: i64,
-}
-
-/// `magnets` section
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct MagnetStats {
-    /// Magnets with an info hash
-    pub checked: i64,
-    /// .torrent found in a cache
-    pub found: i64,
-    /// Sent to Put.io unchecked
-    pub fell_back: i64,
-    /// Fallbacks rejected on Put.io
-    pub fallback_fake: i64,
-    /// What Put.io downloaded for those
-    pub fallback_putio_bytes: i64,
-    pub caches: Vec<CacheCount>,
-}
-
-/// Releases with one file type
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct TypeCount {
-    pub ext: String,
-    pub count: i64,
-}
-
-/// Releases announced to one tracker
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct TrackerCount {
-    pub host: String,
-    pub count: i64,
-}
-
-/// `reports` section
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct ReportStats {
-    pub rejected: i64,
-    pub flagged_fake: i64,
-    pub flagged_not_fake: i64,
-    pub top_types: Vec<TypeCount>,
-    pub top_trackers: Vec<TrackerCount>,
 }

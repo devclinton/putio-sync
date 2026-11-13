@@ -1,5 +1,6 @@
 //! Feature 038, story 1: where an item is. The stages in order, restarts, failed
-//! downloads and parallel branches.
+//! downloads and parallel branches. Unix only: the hooks are shell scripts.
+#![cfg(unix)]
 
 mod common;
 
