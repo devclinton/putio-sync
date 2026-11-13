@@ -186,10 +186,6 @@ fn archive_line(stderr: &[u8]) -> String {
 }
 
 #[tokio::test]
-#[cfg_attr(
-    windows,
-    ignore = "the CLI overflows its 1 MB main-thread stack on Windows"
-)]
 async fn metrics_without_a_prometheus_url_is_exit_1() {
     let dir = tempfile::tempdir().unwrap();
     let config = setup(dir.path()).await;
@@ -203,10 +199,6 @@ async fn metrics_without_a_prometheus_url_is_exit_1() {
 }
 
 #[tokio::test]
-#[cfg_attr(
-    windows,
-    ignore = "the CLI overflows its 1 MB main-thread stack on Windows"
-)]
 async fn an_unreachable_prometheus_is_exit_2_and_the_line_shows_no_secret() {
     let dir = tempfile::tempdir().unwrap();
     let config = setup(dir.path()).await;
@@ -237,10 +229,6 @@ async fn an_unreachable_prometheus_is_exit_2_and_the_line_shows_no_secret() {
 }
 
 #[tokio::test]
-#[cfg_attr(
-    windows,
-    ignore = "the CLI overflows its 1 MB main-thread stack on Windows"
-)]
 async fn a_missing_database_is_exit_3() {
     let dir = tempfile::tempdir().unwrap();
     let config = setup(dir.path()).await;
@@ -254,10 +242,6 @@ async fn a_missing_database_is_exit_3() {
 }
 
 #[tokio::test]
-#[cfg_attr(
-    windows,
-    ignore = "the CLI overflows its 1 MB main-thread stack on Windows"
-)]
 async fn an_archive_folder_that_cannot_be_made_is_exit_4() {
     let dir = tempfile::tempdir().unwrap();
     let config = setup(dir.path()).await;
@@ -270,10 +254,6 @@ async fn an_archive_folder_that_cannot_be_made_is_exit_4() {
 }
 
 #[tokio::test]
-#[cfg_attr(
-    windows,
-    ignore = "the CLI overflows its 1 MB main-thread stack on Windows"
-)]
 async fn the_default_folder_is_beside_the_config_and_env_sets_the_folder() {
     let dir = tempfile::tempdir().unwrap();
     let config = setup(dir.path()).await;
