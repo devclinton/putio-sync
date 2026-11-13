@@ -257,6 +257,10 @@ snapcraft export-login --snaps=putio-sync --channels=stable,candidate,beta,edge 
 the signature with the public key built into the binary before it trusts any hash, so a
 release without these secrets fails at the "Sign SHA256SUMS" step.
 
+**Status**: done on 2026-11-13. The key ID is 04274C6A5272F89A; `RELEASE_PUBKEY` holds its
+public half, and the private key and password are in the maintainer's password manager
+(the only copy) and in the two secrets.
+
 **Setup** (once, by the maintainer):
 ```bash
 brew install minisign            # or apt-get install minisign

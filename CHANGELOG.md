@@ -37,6 +37,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   on its own (Settings › General › Updates, off by default). It waits until no transfer is
   running, checking every minute, and never installs a version that was rolled back;
   "Update now" still can.
+- Releases sign `SHA256SUMS` with the putio-sync release key (key ID 04274C6A5272F89A), and
+  self-updates check that signature before trusting any download.
 
 ### Fixed
 

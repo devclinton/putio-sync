@@ -7,10 +7,10 @@
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
-/// The release public key (`minisign -G`, MAINTAINING.md "MINISIGN_SECRET_KEY and
-/// MINISIGN_PASSWORD"). Empty until the maintainer has made the key: every update then fails
-/// at the signature check.
-pub const RELEASE_PUBKEY: &str = "";
+/// The release public key, key ID 04274C6A5272F89A (`minisign -G`, MAINTAINING.md
+/// "MINISIGN_SECRET_KEY and MINISIGN_PASSWORD"). Installs trust only the key they were built
+/// with, so changing it means every install updates by hand once.
+pub const RELEASE_PUBKEY: &str = "RWSa+HJSakwnBG+s8zT7lzE/uTEAKFJIzj3B2roT0gJNnDN1iCddWZsJ";
 
 /// The key `SHA256SUMS` must be signed with. Debug builds take `PUTIO_SYNC_UPDATE_PUBKEY`,
 /// so the quickstart's fake release can be signed with the test key in `tests/data/`.
@@ -218,6 +218,11 @@ pub(crate) mod tests {
         assert!(refused(list.as_bytes(), &theirs, TEST_PUBKEY));
         // no key in this build
         assert!(refused(list.as_bytes(), &good, ""));
+    }
+
+    #[test]
+    fn the_release_key_parses() {
+        minisign_verify::PublicKey::from_base64(RELEASE_PUBKEY).unwrap();
     }
 
     #[test]
