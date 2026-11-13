@@ -1097,7 +1097,6 @@
  "Revert": "العودة",
  "Revert all": "العودة إلى الكل",
  "Review": "مراجعة",
- "Rolled back from {0}: {1}": "تم التراجع من {0}: {1}",
  "Root (global): {0} · delete after download: {1} · when a file exists: {2} · mode: {3}{4}{5}": "الجذر (عالمي): {0} · حذف بعد التنزيل: {1} · عند وجود ملف: {2} · الوضع: {3}{4}{5}",
  "Rotating": "دوار",
  "Rule for {0}": "القاعدة لـ {0}",
