@@ -61,7 +61,8 @@ pub async fn start(config: &Config, state: AppState) -> Result<Option<Bound>, Co
     Ok(Some(bound))
 }
 
-#[cfg(test)]
+// The fake tailscaled listens on a unix socket
+#[cfg(all(test, unix))]
 mod tests {
     use putio_sync_api::listen::{resolve_all, Bound, Gives, Schedule, Supervisor};
     use putio_sync_core::listen::ListenAddr;

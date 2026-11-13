@@ -1,6 +1,7 @@
 //! Feature 038, story 2: the operator's own steps. What a hook is given, how its result is
 //! read, retries for optional steps, the pre-download gate, and the operator's retry and
-//! skip.
+//! skip. Unix only: the hooks are shell scripts.
+#![cfg(unix)]
 
 mod common;
 

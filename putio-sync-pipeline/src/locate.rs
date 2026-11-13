@@ -198,7 +198,10 @@ mod tests {
         let ids = vec![(7, tmp.path().join("a.mkv"))];
         let files = list_files(tmp.path(), &ids);
         assert_eq!(files.len(), 2);
-        assert_eq!(files[0].relative_path, "Subs/en.srt");
+        assert_eq!(
+            files[0].relative_path,
+            format!("Subs{}en.srt", std::path::MAIN_SEPARATOR)
+        );
         assert_eq!(files[1].relative_path, "a.mkv");
         assert_eq!((files[1].size, files[1].putio_id), (5, Some(7)));
         let single = list_files(&tmp.path().join("a.mkv"), &ids);

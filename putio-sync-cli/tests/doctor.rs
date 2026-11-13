@@ -232,6 +232,10 @@ async fn unknown_fixes_and_unconfirmable_json_exit_3() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "the CLI overflows its 1 MB main-thread stack on Windows"
+)]
 fn an_unreadable_config_exits_3() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("config.toml");
