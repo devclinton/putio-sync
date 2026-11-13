@@ -12,8 +12,6 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-11-12
-
 ### Added
 
 - CLI-only builds for Linux, macOS and Windows, published with each release:
@@ -23,6 +21,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   `download` and `files free-space` wait for the hooks and plugins to finish before
   exiting. Build one with `cargo build -p putio-sync-cli --no-default-features
   --features hooks` (add `plugins`, or leave out both).
+
+## [0.4.0] - 2026-11-12
+
+### Added
+
 - The website's landing page in the same 19 languages as the docs, machine-translated and
   marked as such, with a language menu in the header. Its Docs links open the docs in the
   same language.
