@@ -224,6 +224,14 @@ Radarr and Sonarr must not import an item before its pipeline is done:
   import back forever: after a set number of retries the item completes
   without it, and the failure shows on the item and in notifications.
 
+### 060 Multi-language CLI
+
+The CLI's help, command output, prompts, table headers and error messages in the 051
+languages, from built-in catalogs keyed by English text and filled by the same translation
+service. Picked by `--lang`, then `PUTIO_SYNC_LANG`, then the config's UI language (shared with
+056), then the OS locale, then English. `--json`, `--csv`, exit codes and log lines stay
+English. A build can leave the catalogs out. See `specs/060-cli-i18n/`.
+
 ### 051 Multi-language web UI (done)
 
 The web UI is translated through catalogs keyed by its English text, in every base language
