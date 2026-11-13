@@ -41,8 +41,24 @@ fn get_version_with_commit() -> String {
     }
 }
 
+/// Stack for the thread that runs the CLI. Parsing the arguments takes more than the 1 MB
+/// Windows gives the main thread in debug builds, so match Linux's 8 MB.
+const MAIN_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+fn main() {
+    let cli = std::thread::Builder::new()
+        .name("main".to_string())
+        .stack_size(MAIN_STACK_SIZE)
+        .spawn(run)
+        .expect("failed to start the main thread");
+    // A panic has already been reported by the thread; exit as a panicking main would
+    if cli.join().is_err() {
+        std::process::exit(101);
+    }
+}
+
 #[tokio::main]
-async fn main() {
+async fn run() {
     // Get version with commit info
     let version = get_version_with_commit();
 
