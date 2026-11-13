@@ -376,6 +376,7 @@
  "Downloaded, first {0}:": "Ladataan, ensimmäinen {0}:",
  "Downloaded:": "Ladataan:",
  "Downloading": "Lataus",
+ "Downloading {0}: {1}{2}": "Downloading {0}: {1}{2}",
  "Downloads": "Lataukset",
  "Downloads by local hour and weekday, by {0}. Arrow keys move between cells.": "Lataukset paikallisittain tunnissa ja arkipäivinä, {0}:n välein. Nuolinäppäimet siirtävät soluissa.",
  "Downloads paused for an hour": "Lataukset keskeytettiin tunniksi",

@@ -376,6 +376,7 @@
  "Downloaded, first {0}:": "Lastet ned, første {0}:",
  "Downloaded:": "Lastet ned:",
  "Downloading": "Lasting ned",
+ "Downloading {0}: {1}{2}": "Downloading {0}: {1}{2}",
  "Downloads": "Nedlastinger",
  "Downloads by local hour and weekday, by {0}. Arrow keys move between cells.": "Nedlastinger etter lokal time og ukedag, i intervaller på {0}. Pilene beveger deg mellom celler.",
  "Downloads paused for an hour": "Nedlastinger ble pause i en time",
