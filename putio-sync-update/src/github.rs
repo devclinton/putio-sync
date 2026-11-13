@@ -41,7 +41,51 @@ pub struct ReleaseInfo {
     pub html_url: String,
     /// The release notes: the CHANGELOG section, as `scripts/changelog-section.sh` writes it
     pub body: String,
-    pub assets: Vec<String>,
+    pub assets: Vec<Asset>,
+}
+
+impl ReleaseInfo {
+    /// The asset called `name`
+    pub fn asset(&self, name: &str) -> Option<&Asset> {
+        self.assets.iter().find(|a| a.name == name)
+    }
+}
+
+/// A file attached to a release
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "AssetRepr")]
+pub struct Asset {
+    pub name: String,
+    /// `browser_download_url`
+    pub url: String,
+    pub size: u64,
+}
+
+/// What `update_state.releases_json` holds: a bare name before 055 US3, then the whole asset
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AssetRepr {
+    Name(String),
+    Full {
+        name: String,
+        #[serde(default)]
+        url: String,
+        #[serde(default)]
+        size: u64,
+    },
+}
+
+impl From<AssetRepr> for Asset {
+    fn from(repr: AssetRepr) -> Self {
+        match repr {
+            AssetRepr::Name(name) => Self {
+                name,
+                url: String::new(),
+                size: 0,
+            },
+            AssetRepr::Full { name, url, size } => Self { name, url, size },
+        }
+    }
 }
 
 /// What a check found
@@ -101,6 +145,10 @@ struct ApiRelease {
 #[derive(Deserialize)]
 struct ApiAsset {
     name: String,
+    #[serde(default)]
+    browser_download_url: String,
+    #[serde(default)]
+    size: u64,
 }
 
 /// Fetch `<base_url>/releases` and keep the published releases newer than `current`.
@@ -159,7 +207,15 @@ pub async fn fetch_releases(
                 published_at: r.published_at,
                 html_url: r.html_url,
                 body: r.body.unwrap_or_default(),
-                assets: r.assets.into_iter().map(|a| a.name).collect(),
+                assets: r
+                    .assets
+                    .into_iter()
+                    .map(|a| Asset {
+                        name: a.name,
+                        url: a.browser_download_url,
+                        size: a.size,
+                    })
+                    .collect(),
             })
         })
         .collect();
@@ -181,7 +237,8 @@ mod tests {
          "published_at": "2026-11-20T10:00:00Z", "html_url": "u5", "body": "", "assets": []},
         {"tag_name": "v0.4.0", "prerelease": false, "draft": false,
          "published_at": "2026-11-15T10:00:00Z", "html_url": "https://example/v0.4.0",
-         "body": "### Added\n\n- A thing", "assets": [{"name": "SHA256SUMS"}]},
+         "body": "### Added\n\n- A thing", "assets": [{"name": "SHA256SUMS", "size": 9,
+            "browser_download_url": "https://example/d/SHA256SUMS"}]},
         {"tag_name": "v0.6.0", "prerelease": false, "draft": true,
          "published_at": null, "html_url": "u6", "body": null, "assets": []},
         {"tag_name": "nightly", "prerelease": false, "draft": false,
@@ -222,7 +279,14 @@ mod tests {
         assert_eq!(versions, ["0.4.0", "0.3.1"]);
         assert_eq!(releases[0].html_url, "https://example/v0.4.0");
         assert_eq!(releases[0].body, "### Added\n\n- A thing");
-        assert_eq!(releases[0].assets, ["SHA256SUMS"]);
+        assert_eq!(
+            releases[0].assets,
+            [Asset {
+                name: "SHA256SUMS".into(),
+                url: "https://example/d/SHA256SUMS".into(),
+                size: 9,
+            }]
+        );
         assert_eq!(releases[1].body, "");
         assert_eq!(
             releases[0].published_at.unwrap().to_rfc3339(),
@@ -311,5 +375,16 @@ mod tests {
     #[test]
     fn the_client_times_out_after_30_seconds() {
         assert_eq!(TIMEOUT, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn stored_asset_names_still_load() {
+        let old = r#"[{"version": "0.4.0", "published_at": null, "html_url": "u", "body": "",
+            "assets": ["SHA256SUMS"]}]"#;
+        let releases: Vec<ReleaseInfo> = serde_json::from_str(old).unwrap();
+        assert_eq!(releases[0].asset("SHA256SUMS").unwrap().url, "");
+        let again: Vec<ReleaseInfo> =
+            serde_json::from_str(&serde_json::to_string(&releases).unwrap()).unwrap();
+        assert_eq!(again, releases);
     }
 }

@@ -1097,7 +1097,6 @@
  "Revert": "Zurückkehren",
  "Revert all": "Alles rückgängig machen",
  "Review": "Überprüfung",
- "Rolled back from {0}: {1}": "Zurückgerollt von {0}: {1}",
  "Root (global): {0} · delete after download: {1} · when a file exists: {2} · mode: {3}{4}{5}": "Root (global): {0} · nach dem Download löschen: {1} · wenn eine Datei existiert: {2} · Modus: {3}{4}{5}",
  "Rotating": "Drehend",
  "Rule for {0}": "Regel für {0}",

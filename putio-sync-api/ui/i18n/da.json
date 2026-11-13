@@ -1070,7 +1070,6 @@
  "Revert": "hjemfalde",
  "Revert all": "Gendan alt",
  "Review": "undersøge",
- "Rolled back from {0}: {1}": "Rullet tilbage fra {0}: {1}",
  "Root (global): {0} · delete after download: {1} · when a file exists: {2} · mode: {3}{4}{5}": "Rod (global): {0} · slet efter download: {1} · når en fil findes: {2} · tilstand: {3}{4}{5}",
  "Rotating": "roterende",
  "Rule for {0}": "Regel for {0}",
