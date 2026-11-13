@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 /// use std::path::PathBuf;
 ///
 /// // Absolute path - unchanged
+/// # #[cfg(unix)]
 /// assert_eq!(expand_path("/downloads").unwrap(), PathBuf::from("/downloads"));
 ///
 /// // Relative path - resolved from current directory
@@ -191,6 +192,16 @@ pub fn normalize_path<P: AsRef<Path>>(path: P) -> CoreResult<PathBuf> {
     }
 }
 
+/// `path`, a Unix absolute path, made absolute on Windows too by putting it on `C:`
+#[cfg(test)]
+pub(crate) fn test_abs(path: &str) -> String {
+    if cfg!(windows) {
+        format!("C:{path}")
+    } else {
+        path.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,8 +209,8 @@ mod tests {
 
     #[test]
     fn test_absolute_path() {
-        let result = expand_path("/tmp/test").unwrap();
-        assert_eq!(result, PathBuf::from("/tmp/test"));
+        let result = expand_path(test_abs("/tmp/test")).unwrap();
+        assert_eq!(result, PathBuf::from(test_abs("/tmp/test")));
     }
 
     #[test]

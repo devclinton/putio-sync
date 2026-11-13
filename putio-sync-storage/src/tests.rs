@@ -238,6 +238,7 @@ async fn plan_is_empty_when_the_target_is_met() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn free_deletes_exactly_the_plan_files_and_records_the_run() {
     let mut w = full_world().await;
     for id in 3..=5 {
@@ -278,6 +279,7 @@ async fn free_deletes_exactly_the_plan_files_and_records_the_run() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn free_skips_files_that_changed_since_the_preview() {
     let mut w = full_world().await;
     let mut paths = HashMap::new();
@@ -424,6 +426,7 @@ async fn no_database_means_no_plan_and_no_runs() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn auto_run_only_when_on_and_below_the_warning_level() {
     // Off: nothing, not even an account read
     let w = full_world().await;

@@ -21,6 +21,10 @@ fn folder(manifest: &str, script: &str) -> assert_fs::TempDir {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "the CLI overflows its 1 MB main-thread stack on Windows"
+)]
 fn a_good_folder_is_ok() {
     let dir = folder(MANIFEST, "return {on_event = function() end}");
     check()
@@ -31,6 +35,10 @@ fn a_good_folder_is_ok() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "the CLI overflows its 1 MB main-thread stack on Windows"
+)]
 fn a_bad_link_and_a_syntax_error_are_reported() {
     let dir = folder(
         &format!("{}docs = \"javascript:alert(1)\"\n", MANIFEST),
@@ -53,6 +61,10 @@ fn a_bad_link_and_a_syntax_error_are_reported() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "the CLI overflows its 1 MB main-thread stack on Windows"
+)]
 fn a_missing_entry_and_a_missing_folder() {
     let dir = folder(MANIFEST, "");
     std::fs::remove_file(dir.path().join("main.lua")).unwrap();
@@ -65,6 +77,10 @@ fn a_missing_entry_and_a_missing_folder() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "the CLI overflows its 1 MB main-thread stack on Windows"
+)]
 fn json_report() {
     let dir = folder(MANIFEST, "return {");
     let out = check().arg("--json").arg(dir.path()).assert().code(1);

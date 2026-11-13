@@ -168,6 +168,10 @@ async fn a_slow_server_times_out_without_leaking_the_url() {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows retries a refused connection for about 2 s, past the hook's timeout"
+)]
 async fn a_refused_connection_is_retried_then_fails() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();

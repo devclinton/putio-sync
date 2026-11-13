@@ -399,12 +399,13 @@ pub fn unmask(new: &[HookConfig], current: &[HookConfig]) -> CoreResult<Vec<Hook
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::path_utils::test_abs;
 
     fn command_hook() -> HookConfig {
         HookConfig {
             name: "on-download".to_string(),
             events: vec!["download.finished".to_string()],
-            command: Some(vec!["/config/hooks/on-download.py".to_string()]),
+            command: Some(vec![test_abs("/config/hooks/on-download.py")]),
             env: BTreeMap::from([("LIBRARY".to_string(), "/data".to_string())]),
             ..Default::default()
         }
@@ -440,7 +441,7 @@ mod tests {
         HookConfig {
             name: "tidy".to_string(),
             stage: Some(HookStage::PostProcessing),
-            command: Some(vec!["/config/tidy.sh".to_string()]),
+            command: Some(vec![test_abs("/config/tidy.sh")]),
             ..Default::default()
         }
     }
@@ -449,9 +450,10 @@ mod tests {
     #[test]
     fn pipeline_hooks_are_checked() {
         stage_hook().validate(0).unwrap();
-        let hook: HookConfig = toml::from_str(
-            "name = \"t\"\nstage = \"pre_download\"\nrequired = false\ncategories = [\"sonarr\"]\ncommand = [\"/a\"]",
-        )
+        let hook: HookConfig = toml::from_str(&format!(
+            "name = \"t\"\nstage = \"pre_download\"\nrequired = false\ncategories = [\"sonarr\"]\ncommand = [\"{}\"]",
+            test_abs("/a")
+        ))
         .unwrap();
         assert_eq!(hook.stage, Some(HookStage::PreDownload));
         assert!(!hook.required);
