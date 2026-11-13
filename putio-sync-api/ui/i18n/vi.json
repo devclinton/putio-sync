@@ -1097,7 +1097,6 @@
  "Revert": "Hoàn hồi",
  "Revert all": "Hoàn tác tất cả",
  "Review": "Đánh giá",
- "Rolled back from {0}: {1}": "Quay trở lại từ {0}: {1}",
  "Root (global): {0} · delete after download: {1} · when a file exists: {2} · mode: {3}{4}{5}": "Root (toàn cầu): {0} · xóa sau khi tải xuống: {1} · khi một tệp tồn tại: {2} · chế độ: {3}{4}{5}",
  "Rotating": "Quay",
  "Rule for {0}": "Quy tắc cho {0}",

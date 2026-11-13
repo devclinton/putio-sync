@@ -299,9 +299,9 @@ mod tests {
         assert_eq!(clock_skew(&c).await.status, Status::Skipped);
     }
 
-    #[cfg(feature = "tailscale")]
     /// A temp dir under /tmp: unix socket paths must stay under about 104 bytes, which a
     /// long `TMPDIR` breaks
+    #[cfg(all(unix, feature = "tailscale"))]
     fn short_dir() -> tempfile::TempDir {
         tempfile::Builder::new()
             .prefix("ts")
@@ -309,8 +309,8 @@ mod tests {
             .unwrap()
     }
 
-    #[cfg(feature = "tailscale")]
     /// A fake tailscaled answering every request with `status`
+    #[cfg(all(unix, feature = "tailscale"))]
     fn fake_tailscaled(dir: &std::path::Path, status: &'static str) -> std::path::PathBuf {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let socket = dir.join("ts.sock");
@@ -332,7 +332,7 @@ mod tests {
         socket
     }
 
-    #[cfg(feature = "tailscale")]
+    #[cfg(all(unix, feature = "tailscale"))]
     fn with_tailscale(
         socket: std::path::PathBuf,
         edit: impl FnOnce(&mut putio_sync_core::config::TailscaleConfig),
@@ -372,8 +372,8 @@ mod tests {
         assert!(f.summary.contains("tailscale serve"), "{}", f.summary);
     }
 
+    #[cfg(all(unix, feature = "tailscale"))]
     #[tokio::test]
-    #[cfg(feature = "tailscale")]
     async fn tailscale_grades() {
         let dir = short_dir();
         let missing = dir.path().join("none.sock");

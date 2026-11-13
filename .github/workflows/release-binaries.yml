@@ -7,13 +7,18 @@ name: Build Release Binaries
 # and on each, the CLI-only builds (no daemon, API or web UI) as a tarball or
 # zip alone: putio-sync-lite (event hooks) and putio-sync-lite-plugins (hooks
 # and Lua/WASM plugins),
-# plus SHA256SUMS over all of them. release.yml calls it with upload: true; run
+# plus, for the updater (055), each bare binary as .xz and bsdiff patches from the
+# 3 newest earlier releases, and SHA256SUMS over all of them signed with minisign
+# (specs/055-update-checker/contracts/release-assets.md). release.yml calls it
+# with upload: true; run
 # it by hand for a dry run that keeps everything as workflow artifacts:
 #   gh workflow run release-binaries.yml -f version=v0.1.2
 #
 # Secrets: DHI_USERNAME and DHI_TOKEN (a Docker account and access token) to
 # pull dhi.io; MACOS_INSTALLER_P12, MACOS_INSTALLER_P12_PASSWORD and
-# MACOS_INSTALLER_IDENTITY are optional and sign the .pkg when all are set.
+# MACOS_INSTALLER_IDENTITY are optional and sign the .pkg when all are set;
+# MINISIGN_SECRET_KEY (the minisign.key file) and MINISIGN_PASSWORD sign
+# SHA256SUMS and are required (MAINTAINING.md, "Release signing key").
 on:
   workflow_call:
     inputs:
@@ -250,22 +255,109 @@ jobs:
           name: release-windows-${{ matrix.arch }}
           path: dist/*
 
-  checksums:
-    name: Checksums and upload
+  patches:
+    name: Update patches
     needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
     steps:
+      - uses: actions/checkout@v4
+
+      # rustup reads rust-toolchain.toml; make-patch is built with it
+      - name: Install pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: built
+          merge-multiple: true
+
+      - name: This release's binaries
+        run: scripts/release-unpack.sh built bins/new
+
+      - name: The 3 newest earlier releases' binaries
+        run: |
+          this="${VERSION#v}"
+          # Published releases older than this one, newest 3 (a re-run of an old
+          # tag must not patch from newer releases)
+          earlier=$(
+            {
+              gh release list --exclude-drafts --exclude-pre-releases --limit 50 \
+                --json tagName --jq '.[].tagName' | sed 's/^v//'
+              echo "$this"
+            } | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -uV \
+              | awk -v this="$this" '$0 == this { exit } { print }' | tail -3
+          )
+          echo "Patching from: ${earlier:-none}"
+          mkdir -p bins/old
+          for from in $earlier; do
+            mkdir -p "old/$from"
+            # 055 and later publish each bare binary as .xz; before that, only archives
+            if ! gh release download "v$from" -D "old/$from" -p "putio-sync-$from-*.xz"; then
+              gh release download "v$from" -D "old/$from" \
+                -p "putio-sync-$from-*.tar.gz" -p "putio-sync-v$from-*-pc-windows-msvc.zip" \
+                || echo "v$from has no binaries; no patches from it"
+            fi
+            scripts/release-unpack.sh "old/$from" bins/old
+          done
+
+      - name: Full .xz binaries and patches
+        run: scripts/release-patches.sh bins/old bins/new patches bin-sums
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-patches
+          path: patches/*
+
+      # Hashes of the uncompressed binaries; no file by that name is uploaded
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-sums
+          path: bin-sums
+
+  checksums:
+    name: Checksums and upload
+    needs: [build-linux, build-macos, build-windows, patches]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           pattern: release-*
           path: dist
           merge-multiple: true
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: bin-sums
+          path: sums
+
       - name: SHA256SUMS
-        working-directory: dist
+        run: scripts/release-sums.sh dist sums/bin-sums
+
+      - name: Sign SHA256SUMS
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
         run: |
-          sha256sum -- * > SHA256SUMS
-          cat SHA256SUMS
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::error::MINISIGN_SECRET_KEY is not set; updaters reject an unsigned SHA256SUMS"
+            exit 1
+          fi
+          sudo apt-get update -q
+          sudo apt-get install -y -q minisign
+          key="$RUNNER_TEMP/minisign.key"
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
+          printf '%s\n' "$MINISIGN_PASSWORD" \
+            | minisign -S -s "$key" -m dist/SHA256SUMS -t "putio-sync ${VERSION#v}"
+          rm -f "$key"
+          cat dist/SHA256SUMS.minisig
 
       - uses: actions/upload-artifact@v4
         with:

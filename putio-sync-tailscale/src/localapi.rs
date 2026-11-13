@@ -4,6 +4,7 @@
 use std::path::Path;
 
 /// The most a LocalAPI answer may be
+#[cfg(unix)]
 const MAX_RESPONSE: usize = 1024 * 1024;
 
 /// A LocalAPI answer: the status code and the body
@@ -53,6 +54,7 @@ pub async fn get(_socket: &Path, _path: &str) -> Result<Response, String> {
 }
 
 /// Split an HTTP/1.x response into its code and body, de-chunking when needed
+#[cfg(any(unix, test))]
 pub(crate) fn parse_response(raw: &[u8]) -> Result<Response, String> {
     let split = raw
         .windows(4)
@@ -81,6 +83,7 @@ pub(crate) fn parse_response(raw: &[u8]) -> Result<Response, String> {
     Ok(Response { code, body })
 }
 
+#[cfg(any(unix, test))]
 fn dechunk(mut data: &[u8]) -> Result<Vec<u8>, String> {
     let bad = || "bad chunked answer from tailscaled".to_string();
     let mut out = Vec::new();

@@ -3208,13 +3208,13 @@ mod tests {
         Config {
             auth: Some(AuthConfig::with_token("test_token_123".to_string())),
             sync: SyncConfig {
-                local_path: PathBuf::from("/tmp/putio"),
+                local_path: PathBuf::from(crate::path_utils::test_abs("/tmp/putio")),
                 remote_parent_id: Some(0),
                 delete_after_download: true,
             },
             download: DownloadConfig {
                 workers: 3,
-                target_directory: PathBuf::from("/tmp/putio"),
+                target_directory: PathBuf::from(crate::path_utils::test_abs("/tmp/putio")),
                 max_concurrent: Some(3),
                 buffer_size_mb: 16,
                 chunk_size_mb: Some(256),
@@ -3246,7 +3246,7 @@ mod tests {
             },
             watch: WatchConfig {
                 enabled: false,
-                paths: vec![PathBuf::from("/remote/movies")],
+                paths: vec![PathBuf::from(crate::path_utils::test_abs("/remote/movies"))],
                 refresh_cycle: 60,
                 parent_folder_id: Some(0),
                 archive_directory: None,
@@ -3305,7 +3305,10 @@ mod tests {
         let auth = loaded.auth.as_ref().unwrap();
         assert_eq!(auth.auth_method, AuthMethod::Token);
         assert_eq!(auth.token.as_ref().unwrap(), "test_token_123");
-        assert_eq!(loaded.sync.local_path, PathBuf::from("/tmp/putio"));
+        assert_eq!(
+            loaded.sync.local_path,
+            PathBuf::from(crate::path_utils::test_abs("/tmp/putio"))
+        );
         assert_eq!(loaded.sync.remote_parent_id, Some(0));
         assert!(loaded.sync.delete_after_download);
         assert_eq!(loaded.download.workers, 3);
@@ -3321,7 +3324,10 @@ mod tests {
             Some("*.exe".to_string())
         );
         assert!(!loaded.watch.enabled);
-        assert_eq!(loaded.watch.paths, vec![PathBuf::from("/remote/movies")]);
+        assert_eq!(
+            loaded.watch.paths,
+            vec![PathBuf::from(crate::path_utils::test_abs("/remote/movies"))]
+        );
         assert_eq!(loaded.watch.refresh_cycle, 60);
         assert_eq!(loaded.watch.parent_folder_id, Some(0));
     }
@@ -5204,11 +5210,16 @@ mod dlna_tests {
     fn root_rules() {
         let ok = |roots: &str| {
             parse(&format!(
-                "[watch]\nenabled = true\npaths = [\"/tmp\"]\nrefresh_cycle = 60\n[dlna]\nenabled = true\nroots = {roots}\nputio_folder = 5\n"
+                "[watch]\nenabled = true\npaths = ['{tmp}']\nrefresh_cycle = 60\n[dlna]\nenabled = true\nroots = {roots}\nputio_folder = 5\n",
+                tmp = std::env::temp_dir().display(),
             ))
             .validate()
         };
-        assert!(ok(r#"["downloads", "cat:radarr", "watch:/tmp", "putio"]"#).is_ok());
+        let watch = format!(
+            r#"["downloads", "cat:radarr", 'watch:{}', "putio"]"#,
+            std::env::temp_dir().display()
+        );
+        assert!(ok(&watch).is_ok(), "{:?}", ok(&watch));
         for bad in [
             r#"["movies"]"#,
             r#"["cat:"]"#,

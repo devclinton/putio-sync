@@ -21,6 +21,25 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   `download` and `files free-space` wait for the hooks and plugins to finish before
   exiting. Build one with `cargo build -p putio-sync-cli --no-default-features
   --features hooks` (add `plugins`, or leave out both).
+- Releases also publish each binary as a bare `.xz`, small bsdiff patches from the three
+  previous releases, and `SHA256SUMS.minisig`, a minisign signature of `SHA256SUMS` that also
+  lists each uncompressed binary's hash. These are for the self-update to come; the existing
+  archives and installers keep their names. `make release-patches` builds them locally.
+- Update now: a binary downloaded from GitHub updates itself from the What's new page. It
+  downloads the small patch from the running version when the release has one, else the
+  full binary, checks it against the signed `SHA256SUMS`, replaces the binary and restarts.
+  It asks first when transfers are running; they resume after the restart. If the new
+  version doesn't start cleanly within 90 seconds, putio-sync puts the old binary and its
+  database back, restarts it, and says why. The macOS `.pkg` and Windows setup installs
+  download the new installer and open it. Managed installs (snap, Homebrew, Docker and the
+  rest) keep showing their own update command.
+
+### Fixed
+
+- On Windows, a subtitle translated while its item was in the staging folder keeps its
+  **translated** label after the item moves into place.
+- A debug build of `putio-sync` on Windows no longer crashes with a stack overflow
+  (exit code -1073741571) before it runs any command. Release builds weren't affected.
 
 ## [0.4.0] - 2026-11-12
 

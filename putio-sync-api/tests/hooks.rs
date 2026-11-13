@@ -1,4 +1,6 @@
-//! Event hook routes (feature 027): the hook list, test events and the event schema
+//! Event hook routes (feature 027): the hook list, test events and the event schema. Unix
+//! only: the hooks are shell scripts.
+#![cfg(unix)]
 
 mod common;
 
