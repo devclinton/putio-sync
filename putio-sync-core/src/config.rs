@@ -3246,7 +3246,7 @@ mod tests {
             },
             watch: WatchConfig {
                 enabled: false,
-                paths: vec![PathBuf::from("/remote/movies")],
+                paths: vec![PathBuf::from(crate::path_utils::test_abs("/remote/movies"))],
                 refresh_cycle: 60,
                 parent_folder_id: Some(0),
                 archive_directory: None,
@@ -3324,7 +3324,10 @@ mod tests {
             Some("*.exe".to_string())
         );
         assert!(!loaded.watch.enabled);
-        assert_eq!(loaded.watch.paths, vec![PathBuf::from("/remote/movies")]);
+        assert_eq!(
+            loaded.watch.paths,
+            vec![PathBuf::from(crate::path_utils::test_abs("/remote/movies"))]
+        );
         assert_eq!(loaded.watch.refresh_cycle, 60);
         assert_eq!(loaded.watch.parent_folder_id, Some(0));
     }
@@ -5207,13 +5210,13 @@ mod dlna_tests {
     fn root_rules() {
         let ok = |roots: &str| {
             parse(&format!(
-                "[watch]\nenabled = true\npaths = [\"{tmp}\"]\nrefresh_cycle = 60\n[dlna]\nenabled = true\nroots = {roots}\nputio_folder = 5\n",
+                "[watch]\nenabled = true\npaths = ['{tmp}']\nrefresh_cycle = 60\n[dlna]\nenabled = true\nroots = {roots}\nputio_folder = 5\n",
                 tmp = crate::path_utils::test_abs("/tmp"),
             ))
             .validate()
         };
         let watch = format!(
-            r#"["downloads", "cat:radarr", "watch:{}", "putio"]"#,
+            r#"["downloads", "cat:radarr", 'watch:{}', "putio"]"#,
             crate::path_utils::test_abs("/tmp")
         );
         assert!(ok(&watch).is_ok());

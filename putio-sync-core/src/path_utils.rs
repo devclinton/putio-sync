@@ -196,7 +196,7 @@ pub fn normalize_path<P: AsRef<Path>>(path: P) -> CoreResult<PathBuf> {
 #[cfg(test)]
 pub(crate) fn test_abs(path: &str) -> String {
     if cfg!(windows) {
-        format!("C:{path}")
+        format!("C:{}", path.replace('/', "\\"))
     } else {
         path.to_string()
     }

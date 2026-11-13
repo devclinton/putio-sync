@@ -150,8 +150,8 @@ async fn orphan_partials_are_deleted_unless_changed() {
         .apply(
             FixId::OrphanPartialsDelete,
             &req(&[
-                "A/.old.mkv.downloading",
-                "B/.busy.mkv.downloading",
+                &format!("A{MAIN_SEPARATOR}.old.mkv.downloading"),
+                &format!("B{MAIN_SEPARATOR}.busy.mkv.downloading"),
                 "../outside.downloading",
             ]),
         )

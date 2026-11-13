@@ -451,7 +451,7 @@ mod tests {
     fn pipeline_hooks_are_checked() {
         stage_hook().validate(0).unwrap();
         let hook: HookConfig = toml::from_str(&format!(
-            "name = \"t\"\nstage = \"pre_download\"\nrequired = false\ncategories = [\"sonarr\"]\ncommand = [\"{}\"]",
+            "name = \"t\"\nstage = \"pre_download\"\nrequired = false\ncategories = [\"sonarr\"]\ncommand = ['{}']",
             test_abs("/a")
         ))
         .unwrap();

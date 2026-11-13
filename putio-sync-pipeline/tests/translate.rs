@@ -360,6 +360,7 @@ async fn a_target_that_appeared_meanwhile_passes_already_exists() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "rekey_provenance only matches `/` separators")]
 async fn staging_writes_inside_the_staging_folder_and_provenance_follows_the_rename() {
     let s = chat_server(&[]).await;
     let env = env_for(&["en", "es"], chat(&s.url())).await;
