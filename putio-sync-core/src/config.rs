@@ -5211,15 +5211,15 @@ mod dlna_tests {
         let ok = |roots: &str| {
             parse(&format!(
                 "[watch]\nenabled = true\npaths = ['{tmp}']\nrefresh_cycle = 60\n[dlna]\nenabled = true\nroots = {roots}\nputio_folder = 5\n",
-                tmp = crate::path_utils::test_abs("/tmp"),
+                tmp = std::env::temp_dir().display(),
             ))
             .validate()
         };
         let watch = format!(
             r#"["downloads", "cat:radarr", 'watch:{}', "putio"]"#,
-            crate::path_utils::test_abs("/tmp")
+            std::env::temp_dir().display()
         );
-        assert!(ok(&watch).is_ok());
+        assert!(ok(&watch).is_ok(), "{:?}", ok(&watch));
         for bad in [
             r#"["movies"]"#,
             r#"["cat:"]"#,

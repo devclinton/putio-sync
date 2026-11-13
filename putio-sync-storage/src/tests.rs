@@ -198,6 +198,7 @@ async fn summary_lists_largest_first_and_flags_low() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn plan_picks_verified_downloads_oldest_first_to_the_target() {
     let w = full_world().await;
     // 1 and 2 not downloaded; 3, 4, 5 downloaded
@@ -215,6 +216,7 @@ async fn plan_picks_verified_downloads_oldest_first_to_the_target() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn plan_reports_a_shortfall_and_keeps_queued_files() {
     let w = full_world().await;
     w.downloaded(1, 5 * GB).await;
@@ -229,6 +231,7 @@ async fn plan_reports_a_shortfall_and_keeps_queued_files() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn plan_is_empty_when_the_target_is_met() {
     let mut w = World::new(Config::default()).await;
     w.account(100 * GB, 50 * GB).await;
@@ -322,6 +325,7 @@ async fn free_skips_files_that_changed_since_the_preview() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn free_skips_newly_queued_and_transfer_files() {
     let mut w = World::new(Config::default()).await;
     w.account(100 * GB, 95 * GB).await;
@@ -370,6 +374,7 @@ async fn free_skips_newly_queued_and_transfer_files() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn a_failed_delete_batch_is_reported() {
     let mut w = full_world().await;
     for id in 1..=3 {
