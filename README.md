@@ -50,7 +50,8 @@ putio-sync is an independent project and is not affiliated with Put.io.
 | Linux, macOS, Windows | Plain binaries on [Releases](https://github.com/devclinton/putio-sync/releases/latest) |
 | From source | `cargo install --path putio-sync-cli` (Rust 1.96, pinned in `rust-toolchain.toml`) |
 
-[INSTALLATION.md](INSTALLATION.md) has the details for each.
+[INSTALLATION.md](INSTALLATION.md) has the details for each, and [how each one
+updates](INSTALLATION.md#updating).
 
 ## Quick start
 

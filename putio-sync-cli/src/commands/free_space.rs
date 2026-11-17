@@ -3,7 +3,9 @@
 
 use super::clean_empty::{build_client, load_config};
 use crate::output::format_bytes;
+use crate::services::Services;
 use anyhow::{Context, Result};
+use putio_sync_core::config::Config;
 use putio_sync_db::Database;
 use putio_sync_storage::{FreeResult, Plan, StorageService, Trigger};
 use std::io::{self, Write};
@@ -20,9 +22,26 @@ pub async fn execute_free_space(
     config_path: Option<PathBuf>,
 ) -> Result<()> {
     let config = load_config(config_path.clone())?;
-    let client = Arc::new(build_client(&config)?);
+    // Low-storage events go to the hooks and plugins
+    let resolved = config_path
+        .clone()
+        .or_else(|| Config::default_path().ok())
+        .unwrap_or_default();
+    let services = Services::start(&config, &resolved);
+    let result = free_space(&config, config_path, dry_run, yes).await;
+    services.finish().await;
+    result
+}
+
+async fn free_space(
+    config: &Config,
+    config_path: Option<PathBuf>,
+    dry_run: bool,
+    yes: bool,
+) -> Result<()> {
+    let client = Arc::new(build_client(config)?);
     // The download records decide what is safe to delete; never create the database here
-    let db_path = putio_sync_core::database::prepare(&config, config_path.as_deref()).await;
+    let db_path = putio_sync_core::database::prepare(config, config_path.as_deref()).await;
     anyhow::ensure!(
         db_path.is_file(),
         "No download database at {}; freeing space needs the download records",
@@ -33,7 +52,7 @@ pub async fn execute_free_space(
             .await
             .with_context(|| format!("Could not open the database {}", db_path.display()))?,
     );
-    let storage = StorageService::from_config(client, Some(db), &config);
+    let storage = StorageService::from_config(client, Some(db), config);
 
     let plan = storage.plan().await?;
     print_plan(&plan);

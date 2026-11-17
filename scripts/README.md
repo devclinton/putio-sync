@@ -218,3 +218,18 @@ else
     error "Validation failed"
 fi
 ```
+
+## Update Assets (055)
+
+What `release-binaries.yml` publishes for the updater
+(`specs/055-update-checker/contracts/release-assets.md`):
+
+- `release-unpack.sh <assets-dir> <out-dir>`: the bare binaries out of a release's `.xz`,
+  `.tar.gz` and `.zip` assets, as `putio-sync-<ver>-<target>.bin`
+- `release-patches.sh <old-dir> <new-dir> <out-dir> <bin-sums>`: each new binary as `.xz`,
+  a `.bsdiff.xz` patch from every older binary of the same target, and the `.bin` hash lines
+- `release-sums.sh <dir> [<bin-sums>]`: `SHA256SUMS` over the folder plus those lines
+- `fake-release.sh <ver> <dir>`: all of the above from local binaries, signed with the test
+  key, behind a fake releases API on `localhost:8099` (055 quickstart)
+
+`make release-patches OLD=<dir> NEW=<dir>` runs the first three on two releases' assets.

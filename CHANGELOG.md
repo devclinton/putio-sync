@@ -12,6 +12,47 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- CLI-only builds for Linux, macOS and Windows, published with each release:
+  putio-sync-lite (with event hooks) and putio-sync-lite-plugins (hooks and Lua/WASM
+  plugins). They have the Put.io file, download, queue, transfer and status commands and
+  `doctor`, without the daemon, API, web UI, setup wizard, metrics or archive. Their
+  `download` and `files free-space` wait for the hooks and plugins to finish before
+  exiting. Build one with `cargo build -p putio-sync-cli --no-default-features
+  --features hooks` (add `plugins`, or leave out both).
+- Releases also publish each binary as a bare `.xz`, small bsdiff patches from the three
+  previous releases, and `SHA256SUMS.minisig`, a minisign signature of `SHA256SUMS` that also
+  lists each uncompressed binary's hash. These are for the self-update to come; the existing
+  archives and installers keep their names. `make release-patches` builds them locally.
+- Update now: a binary downloaded from GitHub updates itself from the What's new page. It
+  downloads the small patch from the running version when the release has one, else the
+  full binary, checks it against the signed `SHA256SUMS`, replaces the binary and restarts.
+  It asks first when transfers are running; they resume after the restart. If the new
+  version doesn't start cleanly within 90 seconds, putio-sync puts the old binary and its
+  database back, restarts it, and says why. The macOS `.pkg` and Windows setup installs
+  download the new installer and open it. Managed installs (snap, Homebrew, Docker and the
+  rest) keep showing their own update command.
+- Install updates automatically: a binary downloaded from GitHub can install a new release
+  on its own (Settings › General › Updates, off by default). It waits until no transfer is
+  running, checking every minute, and never installs a version that was rolled back;
+  "Update now" still can.
+- Releases sign `SHA256SUMS` with the putio-sync release key (key ID 04274C6A5272F89A), and
+  self-updates check that signature before trusting any download.
+
+### Fixed
+
+- On Windows, a subtitle translated while its item was in the staging folder keeps its
+  **translated** label after the item moves into place.
+- A debug build of `putio-sync` on Windows no longer crashes with a stack overflow
+  (exit code -1073741571) before it runs any command. Release builds weren't affected.
+- On Windows, moving the database from its old location no longer fails with "Access is
+  denied" when it has to be copied, for example to another drive.
+- The listen settings (`[api] bind`, `[metrics] bind`) take interface names with spaces
+  and parentheses, as Windows names them (`Ethernet 2:15432`, `vEthernet (WSL):15432`).
+  Names were limited to letters, digits, `.`, `_` and `-`, so most Windows interfaces
+  couldn't be chosen by name.
+
 ## [0.4.0] - 2026-11-12
 
 ### Added

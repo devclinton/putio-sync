@@ -5,6 +5,7 @@ mod support;
 use mockito::Matcher;
 use putio_sync_db::models::QueueStatus;
 use putio_sync_doctor::{FixError, FixId, FixRequest, Status};
+use std::path::MAIN_SEPARATOR;
 use std::time::Duration;
 use support::*;
 
@@ -136,7 +137,10 @@ async fn orphan_partials_are_deleted_unless_changed() {
     let keys: Vec<&str> = preview.items.iter().map(|i| i.key.as_str()).collect();
     assert_eq!(
         keys,
-        vec!["A/.old.mkv.downloading", "B/.busy.mkv.downloading"]
+        vec![
+            format!("A{MAIN_SEPARATOR}.old.mkv.downloading"),
+            format!("B{MAIN_SEPARATOR}.busy.mkv.downloading")
+        ]
     );
 
     // Written to after the preview: no longer stale
@@ -146,8 +150,8 @@ async fn orphan_partials_are_deleted_unless_changed() {
         .apply(
             FixId::OrphanPartialsDelete,
             &req(&[
-                "A/.old.mkv.downloading",
-                "B/.busy.mkv.downloading",
+                &format!("A{MAIN_SEPARATOR}.old.mkv.downloading"),
+                &format!("B{MAIN_SEPARATOR}.busy.mkv.downloading"),
                 "../outside.downloading",
             ]),
         )

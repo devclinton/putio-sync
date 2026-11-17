@@ -3,6 +3,8 @@
 //! - GET /update - The running version, how it was installed, the last check and any
 //!   newer release with its notes
 //! - POST /update/check - Check now; `409 checked_recently` within a minute of the last
+//! - POST /update/apply - "Update now": `{"interrupt": false}`; `202` with the GET body, then
+//!   poll GET for `attempt`
 //! - POST /update/dismiss - `{"version": "0.4.0"}` hides that notice; `{"rolled_back": true}`
 //!   hides the rollback message
 
@@ -16,7 +18,7 @@ use axum::{
     Json, Router,
 };
 use putio_sync_update::channel::{deb_arch, Channel, Instruction, UpdateMode};
-use putio_sync_update::{CheckNowError, Snapshot, UpdateService};
+use putio_sync_update::{ApplyError, Attempt, CheckNowError, Snapshot, UpdateService};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -27,6 +29,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(get_update))
         .route("/check", post(check))
+        .route("/apply", post(apply))
         .route("/dismiss", post(dismiss))
 }
 
@@ -37,7 +40,14 @@ struct UpdateView {
     check: CheckView,
     available: Option<AvailableView>,
     auto_install: bool,
+    busy: BusyView,
+    attempt: Option<Attempt>,
     rolled_back: Option<RolledBackView>,
+}
+
+#[derive(Serialize)]
+struct BusyView {
+    active_transfers: usize,
 }
 
 #[derive(Serialize)]
@@ -70,6 +80,10 @@ struct AvailableView {
     releases: Vec<ReleaseView>,
     /// How to update this channel to `version`
     instruction: Instruction,
+    /// Mode `swap`: a patch from the running version exists
+    patch: bool,
+    /// What "Update now" downloads (the patch, the full binary or the installer)
+    download_bytes: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -99,6 +113,12 @@ struct RolledBackView {
     reason: String,
 }
 
+#[derive(Deserialize, Default)]
+struct ApplyRequest {
+    #[serde(default)]
+    interrupt: bool,
+}
+
 #[derive(Deserialize)]
 struct DismissRequest {
     version: Option<String>,
@@ -106,7 +126,15 @@ struct DismissRequest {
     rolled_back: bool,
 }
 
-fn view(snapshot: Snapshot) -> UpdateView {
+fn view(snapshot: Snapshot, busy: usize) -> UpdateView {
+    let plan = match snapshot.channel.mode() {
+        UpdateMode::Swap => snapshot.plan(),
+        _ => None,
+    };
+    let installer_bytes = snapshot.latest().and_then(|latest| {
+        let name = putio_sync_update::installer::asset_name(&snapshot.channel, latest.version)?;
+        Some(latest.asset(&name)?.size)
+    });
     let available = snapshot.latest().map(|latest| AvailableView {
         version: latest.version.to_string(),
         date: latest.published_at.map(|t| t.date_naive().to_string()),
@@ -143,6 +171,10 @@ fn view(snapshot: Snapshot) -> UpdateView {
             })
             .collect(),
         instruction: snapshot.channel.instruction(&latest.version, deb_arch()),
+        patch: plan
+            .as_ref()
+            .is_some_and(|p| p.kind == putio_sync_update::fetch::Kind::Patch),
+        download_bytes: plan.as_ref().map(|p| p.asset.size).or(installer_bytes),
     });
     let (image, variant) = match &snapshot.channel {
         Channel::Container { image, variant } => (Some(image.clone()), variant.clone()),
@@ -165,6 +197,10 @@ fn view(snapshot: Snapshot) -> UpdateView {
         },
         available,
         auto_install: snapshot.settings.auto_install,
+        busy: BusyView {
+            active_transfers: busy,
+        },
+        attempt: snapshot.attempt.clone(),
         rolled_back: snapshot
             .rolled_back
             .map(|(version, reason)| RolledBackView { version, reason }),
@@ -180,13 +216,55 @@ fn service(state: &AppState) -> Result<&UpdateService, ApiError> {
 
 /// GET /update
 async fn get_update(State(state): State<AppState>) -> Result<Json<UpdateView>, ApiError> {
-    Ok(Json(view(service(&state)?.snapshot())))
+    let updates = service(&state)?;
+    let busy = updates.busy().await;
+    Ok(Json(view(updates.snapshot(), busy)))
+}
+
+/// POST /update/apply
+async fn apply(
+    State(state): State<AppState>,
+    request: Result<Json<ApplyRequest>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    // An empty body is `{"interrupt": false}`
+    let request = match request {
+        Ok(Json(request)) => request,
+        Err(JsonRejection::MissingJsonContentType(_)) => ApplyRequest::default(),
+        Err(e) => return Err(ApiError::BadRequest(e.body_text())),
+    };
+    let updates = service(&state)?;
+    let refused = |status, body| Ok((status, Json(body)).into_response());
+    match updates.apply(request.interrupt).await {
+        Ok(snapshot) => {
+            let busy = updates.busy().await;
+            Ok((StatusCode::ACCEPTED, Json(view(snapshot, busy))).into_response())
+        }
+        Err(ApplyError::Busy(n)) => refused(
+            StatusCode::CONFLICT,
+            json!({ "error": "busy", "active_transfers": n }),
+        ),
+        Err(ApplyError::NotSupported(mode)) => refused(
+            StatusCode::CONFLICT,
+            json!({ "error": "not_supported", "mode": mode }),
+        ),
+        Err(ApplyError::InProgress) => {
+            refused(StatusCode::CONFLICT, json!({ "error": "in_progress" }))
+        }
+        Err(ApplyError::NotWritable(path)) => refused(
+            StatusCode::CONFLICT,
+            json!({ "error": "not_writable", "path": path }),
+        ),
+        Err(ApplyError::NoUpdate) => {
+            refused(StatusCode::NOT_FOUND, json!({ "error": "no_update" }))
+        }
+    }
 }
 
 /// POST /update/check
 async fn check(State(state): State<AppState>) -> Result<Response, ApiError> {
-    match service(&state)?.check_now().await {
-        Ok(snapshot) => Ok(Json(view(snapshot)).into_response()),
+    let updates = service(&state)?;
+    match updates.check_now().await {
+        Ok(snapshot) => Ok(Json(view(snapshot, updates.busy().await)).into_response()),
         Err(CheckNowError::CheckedRecently) => Ok((
             StatusCode::CONFLICT,
             Json(json!({ "error": "checked_recently" })),

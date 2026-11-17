@@ -172,7 +172,8 @@ async fn checkpoint(path: &Path) -> io::Result<()> {
 fn copy_into_place(from: &Path, to: &Path) -> io::Result<()> {
     let tmp = sidecar(to, ".migrating");
     fs::copy(from, &tmp)?;
-    File::open(&tmp)?.sync_all()?;
+    // Windows can only flush a handle opened for writing
+    fs::OpenOptions::new().write(true).open(&tmp)?.sync_all()?;
     fs::rename(&tmp, to)
 }
 

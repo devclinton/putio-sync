@@ -9,8 +9,9 @@ use std::sync::Arc;
 use support::*;
 
 fn command_hook(name: &str, program: &str) -> HookConfig {
+    // A literal string, so a Windows path's backslashes aren't escapes
     toml::from_str(&format!(
-        "name = \"{name}\"\nevents = [\"*\"]\ncommand = [\"{program}\"]\ntimeout_secs = 5"
+        "name = \"{name}\"\nevents = [\"*\"]\ncommand = ['{program}']\ntimeout_secs = 5"
     ))
     .unwrap()
 }

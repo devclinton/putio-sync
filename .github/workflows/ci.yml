@@ -85,7 +85,8 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Run tests
-      run: cargo test --all-features
+      # Report every failing test binary, not just the first
+      run: cargo test --all-features --no-fail-fast
 
   beta:
     name: Check (Rust beta)

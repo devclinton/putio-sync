@@ -7,6 +7,7 @@ use common::{body_json, body_text, test_app, test_app_with, TestApp};
 use mockito::Matcher;
 use putio_sync_core::config::{ArrConfig, ArrKind, ArrServer, Config};
 use serde_json::{json, Value};
+use std::path::MAIN_SEPARATOR;
 
 fn server(kind: ArrKind, url: String, api_key: Option<&str>, category: &str) -> ArrServer {
     ArrServer {
@@ -631,7 +632,7 @@ fn putio_sync_client(field: &str, category: &str) -> String {
 
 /// The *arr's mappings, and a listing of `folder`'s parent that has it or not
 async fn mock_folder(arr: &mut mockito::Server, folder: &str, mappings: Value, listed: bool) {
-    let (parent, name) = folder.rsplit_once('/').unwrap();
+    let (parent, name) = folder.rsplit_once(['/', '\\']).unwrap();
     let parent = if parent.is_empty() { "/" } else { parent };
     arr.mock("GET", "/api/v3/remotepathmapping")
         .with_body(mappings.to_string())
@@ -1156,7 +1157,7 @@ async fn the_folder_step_proposes_a_mapping_and_making_it_fixes_the_check() {
         .await;
     arr.mock("GET", "/api/v3/remotepathmapping")
         .with_body(
-            json!([{"id": 4, "host": "putio-sync", "remotePath": format!("{}/", folder),
+            json!([{"id": 4, "host": "putio-sync", "remotePath": format!("{folder}{MAIN_SEPARATOR}"),
                     "localPath": "/data/dl/"}])
             .to_string(),
         )
@@ -1165,7 +1166,7 @@ async fn the_folder_step_proposes_a_mapping_and_making_it_fixes_the_check() {
     let create = arr
         .mock("POST", "/api/v3/remotepathmapping")
         .match_body(Matcher::Json(json!({"host": "putio-sync",
-            "remotePath": format!("{}/", folder), "localPath": "/data/dl/"})))
+            "remotePath": format!("{folder}{MAIN_SEPARATOR}"), "localPath": "/data/dl/"})))
         .with_status(201)
         .with_body(r#"{"id": 4}"#)
         .expect(1)
@@ -1190,7 +1191,7 @@ async fn the_folder_step_proposes_a_mapping_and_making_it_fixes_the_check() {
     let proposal = body["folder"]["proposal"].clone();
     assert_eq!(
         proposal,
-        json!({"action": "create", "host": "putio-sync", "remote_path": format!("{}/", folder),
+        json!({"action": "create", "host": "putio-sync", "remote_path": format!("{folder}{MAIN_SEPARATOR}"),
                "local_path": "/data/dl/", "id": null})
     );
     // The settings the app lacks are left out
@@ -1247,7 +1248,7 @@ async fn a_stale_proposal_is_refused_with_the_new_one() {
         .create_async()
         .await;
     let stale = json!({"action": "create", "host": "putio-sync",
-        "remote_path": format!("{}/", folder), "local_path": "/old/", "id": null});
+        "remote_path": format!("{folder}{MAIN_SEPARATOR}"), "local_path": "/old/", "id": null});
     let body = body_json(
         app.post_json(
             "/arr/setup/mapping",

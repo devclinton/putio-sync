@@ -250,7 +250,6 @@ async fn daemon_down_refuses_tailnet_peers() {
     ));
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn cli_fallback() {
     use std::os::unix::fs::PermissionsExt;

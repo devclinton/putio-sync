@@ -25,7 +25,6 @@ if [ -n "$missing" ]; then
 fi
 
 if [ -z "${HOME_NETWORK_DIR:-}" ] || [ ! -d "$HOME_NETWORK_DIR" ]; then
-    echo "HOME_NETWORK_DIR not set or missing; skipped the home-network compare"
     exit 0
 fi
 

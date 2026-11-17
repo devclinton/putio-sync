@@ -9,7 +9,8 @@ mod cli;
 mod localapi;
 mod model;
 
-#[cfg(test)]
+// The fake tailscaled listens on a unix socket
+#[cfg(all(test, unix))]
 mod tests;
 
 pub use model::{

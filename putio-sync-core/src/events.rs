@@ -7,6 +7,7 @@
 
 use std::fmt;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -563,13 +564,23 @@ fn bus() -> &'static broadcast::Sender<Arc<Event>> {
     BUS.get_or_init(|| broadcast::channel(BUS_CAPACITY).0)
 }
 
+/// Events put on the bus so far
+static EMITTED: AtomicU64 = AtomicU64::new(0);
+
 /// Put an event on the bus. Nobody listening is fine.
 pub fn emit(mut payload: Payload) -> Arc<Event> {
     payload.cut_errors();
     let event = Arc::new(Event::new(payload));
     putio_sync_telemetry::hooks::record_event(event.event_type().as_str());
+    EMITTED.fetch_add(1, Ordering::SeqCst);
     let _ = bus().send(event.clone());
     event
+}
+
+/// How many events have been put on the bus, so a listener can tell when it has read
+/// up to a point (a one-shot CLI command waiting for its hooks before it exits)
+pub fn emitted() -> u64 {
+    EMITTED.load(Ordering::SeqCst)
 }
 
 /// Listen for events emitted from now on.

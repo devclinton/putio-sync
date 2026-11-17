@@ -194,3 +194,43 @@ async fn a_full_queue_drops_the_oldest() {
     }
     assert_eq!(service.status()[0].queued, 1000);
 }
+
+#[tokio::test]
+async fn drain_waits_for_queued_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("ids");
+    let program = script(
+        dir.path(),
+        "slow.sh",
+        &format!(
+            "sleep 0.3; echo \"$PUTIO_SYNC_EVENT_ID\" >> {}",
+            log.display()
+        ),
+    );
+    let mut hook = command_hook("drain", &program);
+    hook.events = vec!["storage.low".to_string()];
+    let service = HooksService::new(vec![hook]);
+    service.start();
+
+    let first = events::emit(storage_low());
+    let second = events::emit(storage_low());
+    assert!(service.drain(Duration::from_secs(10)).await);
+    let text = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(text.lines().any(|l| l == first.id), "{text}");
+    assert!(text.lines().any(|l| l == second.id), "{text}");
+}
+
+#[tokio::test]
+async fn drain_gives_up_after_its_timeout() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = script(dir.path(), "slower.sh", "sleep 2");
+    let mut hook = command_hook("drain-timeout", &program);
+    hook.events = vec!["storage.low".to_string()];
+    let service = HooksService::new(vec![hook]);
+    service.start();
+
+    events::emit(storage_low());
+    let start = Instant::now();
+    assert!(!service.drain(Duration::from_millis(200)).await);
+    assert!(start.elapsed() < Duration::from_secs(1));
+}

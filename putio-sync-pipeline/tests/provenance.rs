@@ -100,6 +100,38 @@ async fn rekey_moves_rows_under_a_folder_and_leaves_lookalikes() {
 }
 
 #[tokio::test]
+async fn rekey_matches_windows_backslash_paths() {
+    let env = env(vec![]).await;
+    for p in [
+        r"C:\dl\tv\.putio-sync-staging\Show\a.en.srt",
+        r"C:\dl\tv\.putio-sync-staging\Show2\c.en.srt",
+    ] {
+        env.store
+            .upsert_provenance(&row(p, "translated", 5))
+            .await
+            .unwrap();
+    }
+    let n = env
+        .store
+        .rekey_provenance(r"C:\dl\tv\.putio-sync-staging\Show\", r"C:\dl\tv\Show")
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    assert!(env
+        .store
+        .provenance(r"C:\dl\tv\Show\a.en.srt", None)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(env
+        .store
+        .provenance(r"C:\dl\tv\.putio-sync-staging\Show2\c.en.srt", None)
+        .await
+        .unwrap()
+        .is_some());
+}
+
+#[tokio::test]
 async fn prune_drops_rows_older_than_ninety_days() {
     let env = env(vec![]).await;
     env.store

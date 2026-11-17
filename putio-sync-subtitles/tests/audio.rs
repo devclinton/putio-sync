@@ -171,13 +171,30 @@ async fn dropping_the_future_kills_ffmpeg() {
         len_secs: 60.0,
     };
     let work = tempfile::tempdir().unwrap();
-    let run = audio::extract_chunk(&ffmpeg, Path::new("/m/a.mkv"), &chunk, work.path());
-    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), run).await;
-    let pid: i32 = std::fs::read_to_string(&pidfile)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
+    let mut run = Box::pin(audio::extract_chunk(
+        &ffmpeg,
+        Path::new("/m/a.mkv"),
+        &chunk,
+        work.path(),
+    ));
+    // Drop it once the fake ffmpeg has written its pid, however slow the machine
+    let pid = async {
+        loop {
+            if let Ok(pid) = std::fs::read_to_string(&pidfile)
+                .unwrap_or_default()
+                .trim()
+                .parse::<i32>()
+            {
+                return pid;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    };
+    let pid = tokio::select! {
+        _ = &mut run => panic!("ffmpeg finished before it was dropped"),
+        pid = tokio::time::timeout(std::time::Duration::from_secs(10), pid) => pid.expect("ffmpeg started"),
+    };
+    drop(run);
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let alive = std::process::Command::new("kill")
         .args(["-0", &pid.to_string()])

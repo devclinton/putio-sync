@@ -9,7 +9,9 @@ mod logging;
 use putio_sync_cli::commands;
 
 use chrono::Utc;
-use cli::{ArchiveCommands, Cli, Commands, QueueCommands, TransfersCommands};
+#[cfg(feature = "server")]
+use cli::ArchiveCommands;
+use cli::{Cli, Commands, QueueCommands, TransfersCommands};
 use putio_sync_core::config::{Config, ExistingFile};
 use tracing::{debug, error, info};
 
@@ -41,8 +43,24 @@ fn get_version_with_commit() -> String {
     }
 }
 
+/// Stack for the thread that runs the CLI. Parsing the arguments takes more than the 1 MB
+/// Windows gives the main thread in debug builds, so match Linux's 8 MB.
+const MAIN_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+fn main() {
+    let cli = std::thread::Builder::new()
+        .name("main".to_string())
+        .stack_size(MAIN_STACK_SIZE)
+        .spawn(run)
+        .expect("failed to start the main thread");
+    // A panic has already been reported by the thread; exit as a panicking main would
+    if cli.join().is_err() {
+        std::process::exit(101);
+    }
+}
+
 #[tokio::main]
-async fn main() {
+async fn run() {
     // Get version with commit info
     let version = get_version_with_commit();
 
@@ -73,6 +91,7 @@ async fn main() {
     };
 
     // Plugin checks need no config, token or logging (feature 059)
+    #[cfg(feature = "plugins")]
     if let Commands::Plugins(cli::PluginsCommands::Check { folder, json }) = &args.command {
         let code = commands::plugins::execute_check(folder, *json, &mut std::io::stdout().lock());
         std::process::exit(code);
@@ -120,10 +139,14 @@ async fn main() {
     putio_sync_core::log_redact::set_secrets(config.secret_values());
 
     // Initialize logging system. The doctor's stdout is its report, so its logs go to stderr.
-    if matches!(
+    #[cfg(feature = "server")]
+    let report_on_stdout = matches!(
         args.command,
         Commands::Doctor { .. } | Commands::Setup { .. } | Commands::Archive(_)
-    ) {
+    );
+    #[cfg(not(feature = "server"))]
+    let report_on_stdout = matches!(args.command, Commands::Doctor { .. });
+    if report_on_stdout {
         logging::init_stderr(&config.logging.level);
     } else if let Err(e) = putio_sync_core::logging::init_logging(&config.logging) {
         eprintln!("⚠️  Failed to initialize logging: {}", e);
@@ -386,6 +409,7 @@ async fn main() {
                 commands::transfers::execute_retry(transfer_id, args.config).await
             }
         },
+        #[cfg(feature = "server")]
         Commands::Daemon {
             download_interval,
             watch_interval,
@@ -423,6 +447,7 @@ async fn main() {
             )
             .await
         }
+        #[cfg(feature = "server")]
         Commands::Server {
             watch,
             download,
@@ -434,6 +459,7 @@ async fn main() {
         }
         Commands::Health {} => commands::execute_health(args.config).await,
         Commands::Debug {} => commands::execute_debug(args.config).await,
+        #[cfg(feature = "server")]
         Commands::Setup {
             download_dir,
             preset,
@@ -455,7 +481,9 @@ async fn main() {
             let _ = std::io::stdout().flush();
             std::process::exit(code);
         }
+        #[cfg(feature = "plugins")]
         Commands::Plugins(_) => unreachable!("handled before the config loads"),
+        #[cfg(feature = "server")]
         Commands::Archive(job) => {
             let job = match job {
                 ArchiveCommands::Metrics {

@@ -11,7 +11,7 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -222,6 +222,17 @@ pub struct Slot {
     built: AtomicU64,
     tick_every: Mutex<Duration>,
     last_tick: Mutex<Instant>,
+    /// Jobs queued or running
+    pending: AtomicUsize,
+}
+
+/// Counts a job done when the worker moves on from it
+struct Done(Arc<Slot>);
+
+impl Drop for Done {
+    fn drop(&mut self) {
+        self.0.pending.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl Slot {
@@ -243,6 +254,7 @@ impl Slot {
             built: AtomicU64::new(u64::MAX),
             tick_every: Mutex::new(every),
             last_tick: Mutex::new(Instant::now()),
+            pending: AtomicUsize::new(0),
         })
     }
 
@@ -284,12 +296,14 @@ impl Slot {
                 if q.jobs.len() >= MAX_QUEUE {
                     if let Some(i) = q.jobs.iter().position(|j| !matches!(j, Job::Test(..))) {
                         q.jobs.remove(i);
+                        self.pending.fetch_sub(1, Ordering::SeqCst);
                         putio_sync_telemetry::plugins::record_dropped(&self.name, 1);
                     }
                 }
                 q.jobs.push_back(job);
             }
         }
+        self.pending.fetch_add(1, Ordering::SeqCst);
         drop(q);
         self.ready.notify_one();
     }
@@ -297,6 +311,11 @@ impl Slot {
     /// Jobs waiting
     pub fn queued(&self) -> usize {
         self.queue.lock().unwrap().jobs.len()
+    }
+
+    /// Whether nothing is queued or running
+    pub fn idle(&self) -> bool {
+        self.pending.load(Ordering::SeqCst) == 0
     }
 
     /// Whether the module has `on_tick` (known once the state is built)
@@ -338,6 +357,7 @@ impl Slot {
     pub fn stop(&self) {
         let mut q = self.queue.lock().unwrap();
         q.stop = true;
+        self.pending.fetch_sub(q.jobs.len(), Ordering::SeqCst);
         q.jobs.clear();
         drop(q);
         self.ready.notify_one();
@@ -426,6 +446,7 @@ impl Worker {
             host::LOG_LIMIT.with(|l| l.set(MAX_WORKBENCH_LOG_LINES));
         }
         while let Some((job, generation, spec)) = self.slot.next() {
+            let _done = Done(self.slot.clone());
             if self.state.as_ref().is_some_and(|(g, _)| *g != generation) {
                 self.state = None;
             }

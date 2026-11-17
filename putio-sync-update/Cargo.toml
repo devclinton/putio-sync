@@ -26,11 +26,35 @@ chrono = { version = "0.4", features = ["serde"] }
 # Logging
 tracing = { workspace = true }
 
+# Patches: bsdiff to make and apply them, lzma-rs to unpack the xz assets
+bsdiff = "0.2"
+lzma-rs = "0.3"
+
+# Release checks: the minisign signature on SHA256SUMS, and the hashes in it
+minisign-verify = "0.2"
+sha2 = "0.10"
+
+# Downloads go to a temp file next to the binary
+tempfile = "3.8"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The installer opens only for a non-root launchd agent
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
-# The Windows installer's uninstall key (channel detection)
-windows-sys = { version = "0.59", features = ["Win32_System_Registry"] }
+# The Windows installer's uninstall key (channel detection); the desktop session check and
+# opening the new installer elevated
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Registry",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-tempfile = "3.8"
 mockito = "1.2"
+# Signs SHA256SUMS with the test key (examples/sign.rs, scripts/fake-release.sh)
+minisign = "0.7"

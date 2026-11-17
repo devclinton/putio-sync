@@ -22,9 +22,8 @@ fn at(text: &str) -> DateTime<Utc> {
 
 /// A config with a Put.io token and a download folder holding a database with a download
 async fn setup(dir: &Path) -> PathBuf {
-    let downloads = dir.join("downloads");
-    std::fs::create_dir_all(&downloads).unwrap();
-    let db = Database::new(downloads.join(".putiosync.db"))
+    let config = config_only(dir);
+    let db = Database::new(dir.join("downloads/.putiosync.db"))
         .await
         .unwrap();
     db.history()
@@ -32,6 +31,15 @@ async fn setup(dir: &Path) -> PathBuf {
         .await
         .unwrap();
     db.close().await.unwrap();
+    config
+}
+
+/// The same config with an empty download folder, no database in it. Deleting the
+/// database `setup` made can fail on Windows: the file stays in use for a moment after
+/// it is closed.
+fn config_only(dir: &Path) -> PathBuf {
+    let downloads = dir.join("downloads");
+    std::fs::create_dir_all(&downloads).unwrap();
     let config = dir.join("config.toml");
     let mut settings = Config {
         auth: Some(AuthConfig::with_token(TOKEN.to_string())),
@@ -231,8 +239,7 @@ async fn an_unreachable_prometheus_is_exit_2_and_the_line_shows_no_secret() {
 #[tokio::test]
 async fn a_missing_database_is_exit_3() {
     let dir = tempfile::tempdir().unwrap();
-    let config = setup(dir.path()).await;
-    std::fs::remove_file(dir.path().join("downloads/.putiosync.db")).unwrap();
+    let config = config_only(dir.path());
     let assert = archive_command(&config)
         .args(["db", "--dir"])
         .arg(dir.path().join("archive"))

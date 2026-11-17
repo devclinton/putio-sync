@@ -1,2 +1,4 @@
+# Check text out with LF everywhere: the UI is embedded and size-checked as checked out
+* text=auto eol=lf
 # Windows batch files run under cmd.exe, which wants CRLF
 *.cmd text eol=crlf

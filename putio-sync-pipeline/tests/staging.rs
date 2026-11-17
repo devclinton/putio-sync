@@ -1,5 +1,6 @@
 //! Feature 038, story 3: watch-folder staging. An item is built in a hidden folder and
-//! moved into place with one rename.
+//! moved into place with one rename. Unix only: the hooks are shell scripts.
+#![cfg(unix)]
 
 mod common;
 

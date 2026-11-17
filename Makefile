@@ -1,5 +1,5 @@
 .PHONY: help build test clean fmt lint ci install run-cli dev release check doc i18n i18n-translate \
-	dist-linux dist-macos docker-dhi \
+	dist-linux dist-macos docker-dhi release-patches \
 	docker-build docker-test docker-run docker-push docker-clean \
 	build-deb build-snap build-flatpak packages \
 	ci-docker workflow-ci workflow-docker
@@ -362,6 +362,20 @@ dist-linux: ## Static musl Linux binary in dist/ (DIST_ARCH=x86_64|aarch64; othe
 dist-macos: ## macOS .pkg installer in dist/ from a release build (PACKAGE_VERSION=x.y.z)
 	cargo build --release --locked --package putio-sync-cli
 	bash packaging/macos/build-pkg.sh $(PACKAGE_VERSION) target/release/putio-sync dist
+
+# Update assets (feature 055, contracts/release-assets.md): what the release workflow's
+# patches job makes, without signing. OLD and NEW are folders of release assets (from
+# `gh release download`, say) or putio-sync-<ver>-<target>.bin files.
+RELEASE_PATCHES_OUT ?= target/release-patches
+
+release-patches: ## Update patches and SHA256SUMS from two releases' assets (OLD=<dir> NEW=<dir>)
+	@test -n "$(OLD)" && test -n "$(NEW)" || { echo "usage: make release-patches OLD=<dir> NEW=<dir>"; exit 2; }
+	rm -rf $(RELEASE_PATCHES_OUT)
+	scripts/release-unpack.sh $(OLD) $(RELEASE_PATCHES_OUT)/old
+	scripts/release-unpack.sh $(NEW) $(RELEASE_PATCHES_OUT)/new
+	scripts/release-patches.sh $(RELEASE_PATCHES_OUT)/old $(RELEASE_PATCHES_OUT)/new \
+		$(RELEASE_PATCHES_OUT)/assets $(RELEASE_PATCHES_OUT)/bin-sums
+	scripts/release-sums.sh $(RELEASE_PATCHES_OUT)/assets $(RELEASE_PATCHES_OUT)/bin-sums
 
 docker-dhi: ## Build a dhi.io image (DHI_TARGET=runtime|runtime-ffmpeg|dev|dev-ffmpeg)
 	docker buildx build -f Dockerfile.dhi --target $(DHI_TARGET) --load \

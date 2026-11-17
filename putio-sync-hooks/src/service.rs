@@ -1,9 +1,9 @@
 //! The hooks service: one dispatcher reading the bus, one queue and worker per hook.
 
 use std::collections::{HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use putio_sync_core::events::{self, Event, EventType, HookTest, Payload};
 use putio_sync_core::hooks::{HookConfig, HookKind};
@@ -54,6 +54,8 @@ struct Slot {
     wake: Notify,
     runs: Mutex<VecDeque<HookRun>>,
     removed: AtomicBool,
+    /// Events queued or running
+    in_flight: AtomicUsize,
 }
 
 impl Slot {
@@ -65,6 +67,7 @@ impl Slot {
             wake: Notify::new(),
             runs: Mutex::new(VecDeque::new()),
             removed: AtomicBool::new(false),
+            in_flight: AtomicUsize::new(0),
         })
     }
 
@@ -76,11 +79,13 @@ impl Slot {
         let mut queue = self.queue.lock().expect("hook queue lock");
         if queue.len() >= QUEUE_LIMIT {
             queue.pop_front();
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
             let name = self.config().name;
             metrics::record_dropped(&name, 1);
             tracing::warn!(hook = %name, "hook queue full; dropped the oldest event");
         }
         queue.push_back(event);
+        self.in_flight.fetch_add(1, Ordering::SeqCst);
         drop(queue);
         self.wake.notify_one();
     }
@@ -98,6 +103,8 @@ struct Inner {
     retry_delays: Vec<Duration>,
     started: AtomicBool,
     testing: Mutex<HashSet<String>>,
+    /// Bus events the dispatcher has read, counted as [`events::emitted`] counts them
+    seen: AtomicU64,
 }
 
 /// Runs the configured hooks for events on the bus. Cheap to clone.
@@ -121,6 +128,7 @@ impl HooksService {
                 retry_delays,
                 started: AtomicBool::new(false),
                 testing: Mutex::new(HashSet::new()),
+                seen: AtomicU64::new(0),
             }),
         }
     }
@@ -132,6 +140,7 @@ impl HooksService {
             return;
         }
         let rx = events::subscribe();
+        self.inner.seen.store(events::emitted(), Ordering::SeqCst);
         for slot in self.slots() {
             self.spawn_worker(slot);
         }
@@ -172,6 +181,28 @@ impl HooksService {
             for slot in added {
                 self.spawn_worker(slot);
             }
+        }
+    }
+
+    /// Wait until every event put on the bus so far has been run by its hooks, for a
+    /// command that exits when it is done. False when `timeout` passed first.
+    pub async fn drain(&self, timeout: Duration) -> bool {
+        let target = events::emitted();
+        let deadline = Instant::now() + timeout;
+        loop {
+            let read = self.inner.seen.load(Ordering::SeqCst) >= target;
+            if read
+                && self
+                    .slots()
+                    .iter()
+                    .all(|s| s.in_flight.load(Ordering::SeqCst) == 0)
+            {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
 
@@ -249,6 +280,7 @@ impl HooksService {
                 let config = slot.config();
                 let run = execute(&inner, &config, &event, &inner.retry_delays).await;
                 slot.record(run);
+                slot.in_flight.fetch_sub(1, Ordering::SeqCst);
             }
         });
     }
@@ -289,9 +321,11 @@ async fn dispatch(inner: Arc<Inner>, mut rx: broadcast::Receiver<Arc<Event>>) {
                         slot.push(event.clone());
                     }
                 }
+                inner.seen.fetch_add(1, Ordering::SeqCst);
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
                 tracing::warn!(missed = n, "event hooks fell behind the event bus");
+                inner.seen.fetch_add(n, Ordering::SeqCst);
                 for slot in inner.slots.lock().expect("hook slots lock").iter() {
                     metrics::record_dropped(&slot.config().name, n);
                 }

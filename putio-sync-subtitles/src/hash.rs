@@ -24,9 +24,10 @@ pub fn opensubtitles_hash(path: &Path) -> std::io::Result<Option<String>> {
     for start in [0, size - BLOCK] {
         file.seek(SeekFrom::Start(start))?;
         file.read_exact(&mut buf)?;
-        hash = buf.chunks_exact(8).fold(hash, |h, w| {
-            h.wrapping_add(u64::from_le_bytes(w.try_into().expect("8 bytes")))
-        });
+        let (words, _) = buf.as_chunks::<8>();
+        hash = words
+            .iter()
+            .fold(hash, |h, w| h.wrapping_add(u64::from_le_bytes(*w)));
     }
     Ok(Some(format!("{hash:016x}")))
 }

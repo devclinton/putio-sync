@@ -681,18 +681,19 @@ impl Store {
     }
 
     /// Staging rename: rows whose path starts with `from` now live under `to`. Returns how
-    /// many were re-keyed.
+    /// many were re-keyed. A folder ends at `/` or, for Windows paths, `\`.
     pub async fn rekey_provenance(&self, from: &str, to: &str) -> Result<u64> {
-        let from = from.trim_end_matches('/');
-        let to = to.trim_end_matches('/');
+        let from = from.trim_end_matches(['/', '\\']);
+        let to = to.trim_end_matches(['/', '\\']);
         Ok(sqlx::query(
             "UPDATE OR REPLACE subtitle_provenance SET path = ? || substr(path, ?) \
-             WHERE path = ? OR substr(path, 1, ?) = ? || '/'",
+             WHERE path = ? OR substr(path, 1, ?) IN (? || '/', ? || '\\')",
         )
         .bind(to)
         .bind(from.chars().count() as i64 + 1)
         .bind(from)
         .bind(from.chars().count() as i64 + 1)
+        .bind(from)
         .bind(from)
         .execute(&self.pool)
         .await?

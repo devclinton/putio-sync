@@ -1,6 +1,7 @@
 //! Tailscale awareness (feature 036) against a fake tailscaled on a temp unix socket:
 //! `GET /tailscale`, Tailscale sign-in through `serve`'s headers and `whois`, and the
 //! `tailscale` settings group. Nothing here needs Tailscale installed.
+#![cfg(unix)]
 
 mod common;
 

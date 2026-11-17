@@ -45,7 +45,9 @@ async fn plugins_are_checked_for_their_state_and_last_run() {
     write(
         &plugins_dir,
         "fails",
-        "version = \"1\"\nevents = [\"*\"]\n",
+        // Not `*`: the other tests' doctor runs send `doctor.problem` on the same bus, which
+        // would replace the last run this test reads
+        "version = \"1\"\nevents = [\"sync.completed\"]\n",
         "return {on_event = function() error('webhook said no') end}",
     );
     write(

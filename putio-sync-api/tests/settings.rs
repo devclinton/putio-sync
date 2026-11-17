@@ -837,9 +837,15 @@ async fn hooks_save_masks_values_and_applies_now() {
 #[tokio::test]
 async fn pipeline_step_hooks_save_in_order_and_bad_ones_are_refused() {
     let app = test_app().await;
+    // Only saved, never run, but it has to be absolute here
+    let program = if cfg!(windows) {
+        r"C:\Windows\System32\whoami.exe"
+    } else {
+        "/bin/true"
+    };
     let step = |name: &str, stage: &str| {
         json!({
-            "name": name, "events": [], "command": ["/bin/true"], "timeout_secs": 10,
+            "name": name, "events": [], "command": [program], "timeout_secs": 10,
             "stage": stage, "required": false, "categories": ["radarr"]
         })
     };

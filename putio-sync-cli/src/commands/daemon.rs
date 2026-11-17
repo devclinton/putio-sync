@@ -43,6 +43,15 @@ pub async fn execute_daemon(
         .or_else(|| Config::default_path().ok())
         .ok_or_else(|| anyhow!("Could not determine config file path"))?;
 
+    // The first start after "Update now" is a trial: it rolls back unless it gets as far as
+    // a running API (feature 055 US3). The old version ran with this config, so
+    // landing in setup mode counts as a failed start too.
+    let config_dir = config_file_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+    let _trial = start_trial(&config_dir);
+
     // Without a usable config, wait in setup mode instead of exiting (feature 013)
     while let Some((base, reasons)) = super::setup_mode::needs_setup(&config_file_path).await {
         if !super::setup_mode::run(&config_file_path, base, reasons).await? {
@@ -336,11 +345,27 @@ pub async fn execute_daemon(
     daemon = daemon.with_media_server(media_server.clone());
 
     // One update checker for its schedule and the API (feature 055). Setup mode has none.
-    let updates = putio_sync_update::UpdateService::new(
+    let mut updates = putio_sync_update::UpdateService::new(
         config.updates.clone(),
         daemon.get_database(),
         putio_sync_update::channel::Channel::detect(),
     );
+    if let Ok(exe) = std::env::current_exe() {
+        updates = updates.with_install(exe, config_dir.clone());
+    }
+    if let Some(manager) = daemon.get_download_manager() {
+        updates = updates.with_busy_source(move || {
+            let manager = manager.clone();
+            Box::pin(async move {
+                manager
+                    .get_active_downloads()
+                    .await
+                    .map_or(0, |active| active.len())
+            })
+        });
+    }
+    let stop = daemon.stop_handle();
+    let updates = updates.with_restart(move || stop.notify_one());
     updates.start();
 
     // API and web UI on the daemon's own engine (feature 004). Needs a local download
@@ -387,6 +412,8 @@ pub async fn execute_daemon(
         }
         _ => warn!("API listener not started: no local download manager (api.enabled is set)"),
     }
+    // Healthy: keep this version
+    putio_sync_update::trial::commit(&config_dir);
 
     info!("✅ Daemon initialized successfully");
     info!("🔄 Starting daemon loop...");
@@ -394,8 +421,49 @@ pub async fn execute_daemon(
 
     daemon.start().await.context("Daemon execution failed")?;
 
+    if updates.restart_requested() {
+        let e = putio_sync_update::swap::restart_self();
+        return Err(anyhow!("Could not restart into the new version: {e}"));
+    }
     info!("👋 Daemon stopped gracefully");
     Ok(())
+}
+
+/// Rolls the update back when the trial start returns an error before [`trial::commit`]
+///
+/// [`trial::commit`]: putio_sync_update::trial::commit
+struct TrialGuard(PathBuf);
+
+impl Drop for TrialGuard {
+    fn drop(&mut self) {
+        if putio_sync_update::trial::in_trial() {
+            putio_sync_update::trial::roll_back_and_restart(
+                &self.0,
+                "stopped with an error at start",
+            );
+        }
+    }
+}
+
+/// Check `update-pending.json` in `config_dir`: roll back, start the trial, or do nothing
+fn start_trial(config_dir: &std::path::Path) -> Option<TrialGuard> {
+    use putio_sync_update::{trial, version::Version};
+    match trial::on_start(config_dir, Version::current()) {
+        trial::Start::Normal => return None,
+        trial::Start::RollBack(reason) => {
+            trial::roll_back_and_restart(config_dir, &reason);
+            return None;
+        }
+        trial::Start::Trial => {}
+    }
+    info!("First start after an update: rolling back unless the API is up within 90s");
+    trial::arm(config_dir, trial::DEADLINE);
+    // The quickstart's failed-start check (debug builds only)
+    #[cfg(debug_assertions)]
+    if std::env::var("PUTIO_SYNC_TEST_FAIL_START").as_deref() == Ok("1") {
+        panic!("PUTIO_SYNC_TEST_FAIL_START is set");
+    }
+    Some(TrialGuard(config_dir.to_path_buf()))
 }
 
 /// The daemon's configuration from `config.toml` and the CLI arguments. Every

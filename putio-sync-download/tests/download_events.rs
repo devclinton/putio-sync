@@ -99,7 +99,11 @@ async fn downloads_emit_finished_and_failed_but_skips_do_not() {
     assert_eq!(d.relative_path, "Shows/S1/ep.mkv");
     assert_eq!(
         d.local_path,
-        dir.path().join("Shows/S1/ep.mkv").display().to_string()
+        dir.path()
+            .join("Shows/S1")
+            .join("ep.mkv")
+            .display()
+            .to_string()
     );
     assert_eq!(d.size_bytes, SIZE as u64);
     assert!(!d.resumed);

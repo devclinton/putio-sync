@@ -133,11 +133,15 @@ impl FromStr for ListenAddr {
         if host.eq_ignore_ascii_case("tailnet") {
             return Ok(ListenAddr::Tailnet { port });
         }
-        let name_chars = host
+        // Windows names hold spaces, brackets and more ("vEthernet (WSL)"), so refuse only
+        // what no name holds: control characters, the env list's comma, path and quote
+        // characters, and spaces at either end
+        let name_chars = !host
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+            .any(|c| c.is_control() || matches!(c, ',' | '[' | ']' | '/' | '\\' | '"'));
         let looks_numeric = host.chars().all(|c| c.is_ascii_digit() || c == '.');
-        if host.len() > 64 || !name_chars || looks_numeric {
+        let padded = host.trim() != host;
+        if host.chars().count() > 256 || !name_chars || looks_numeric || padded {
             return Err(format!("'{host}' is not an IPv4 address or interface name"));
         }
         Ok(ListenAddr::Interface {
@@ -337,6 +341,30 @@ mod tests {
     }
 
     #[test]
+    fn takes_windows_interface_names() {
+        for s in [
+            "Loopback Pseudo-Interface 1:15432",
+            "Ethernet 2:80",
+            "vEthernet (WSL):80",
+            "Local Area Connection* 12:80",
+            "Wi-Fi:80",
+            "Intel(R) Ethernet #2:80",
+            "以太网:80",
+        ] {
+            let a = p(s).unwrap_or_else(|e| panic!("{s}: {e}"));
+            assert!(matches!(a, ListenAddr::Interface { .. }), "{s}");
+            assert_eq!(a.to_string(), s);
+        }
+        assert_eq!(
+            p("Ethernet 2:80").unwrap(),
+            ListenAddr::Interface {
+                name: "Ethernet 2".into(),
+                port: 80
+            }
+        );
+    }
+
+    #[test]
     fn refuses_bad_entries() {
         for s in [
             "nope",
@@ -350,13 +378,21 @@ mod tests {
             "::1:80",
             "1.2.3:80",
             "999.1.1.1:80",
-            "bad name:80",
             "[nope]:80",
             "a/b:80",
+            "a\\b:80",
+            "a,b:80",
+            "a]b:80",
+            "eth0 :80",
+            "tab\tname:80",
+            "line\nbreak:80",
+            "\"quoted\":80",
         ] {
             assert!(p(s).is_err(), "{s} should be refused");
         }
         assert!(p("::1:80").unwrap_err().contains("brackets"));
+        assert!(p(&format!("{}:80", "x".repeat(256))).is_ok());
+        assert!(p(&format!("{}:80", "x".repeat(257))).is_err());
     }
 
     #[test]
@@ -406,10 +442,10 @@ mod tests {
             .parse("api.bind")
             .unwrap_err()
             .contains("at most 16"));
-        let err = list(&["0.0.0.0:1", "x y:2"])
+        let err = list(&["0.0.0.0:1", "x/y:2"])
             .parse("metrics.bind")
             .unwrap_err();
-        assert!(err.contains("metrics.bind 'x y:2'"), "{err}");
+        assert!(err.contains("metrics.bind 'x/y:2'"), "{err}");
     }
 
     #[test]

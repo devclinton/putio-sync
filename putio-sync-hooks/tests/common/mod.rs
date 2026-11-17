@@ -1,13 +1,14 @@
 #![allow(dead_code)]
 
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use putio_sync_core::events::{Event, HookTest, Payload};
 use putio_sync_core::hooks::HookConfig;
 
 /// Write an executable `#!/bin/sh` script.
-pub fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
+#[cfg(unix)]
+pub fn script(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
     let path = dir.join(name);
     std::fs::write(&path, format!("#!/bin/sh\n{}\n", body)).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();

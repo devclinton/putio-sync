@@ -12,8 +12,10 @@ Complete installation instructions for putio-sync across all supported platforms
   - [Arch Linux](#arch-linux)
   - [Fedora/RHEL](#fedorarhel)
 - [From Source](#from-source)
+- [CLI-only build (lite)](#cli-only-build-lite)
 - [Docker](#docker)
 - [Home servers (Unraid, Umbrel, CasaOS, TrueNAS, Runtipi)](#home-servers)
+- [Updating](#updating)
 - [Verification](#verification)
 - [Troubleshooting](#troubleshooting)
 
@@ -282,6 +284,46 @@ cargo run -- --help
 
 ---
 
+## CLI-only build (lite)
+
+The CLI-only builds are the same `putio-sync` command without the daemon, the HTTP API
+and web UI, the setup wizard, metrics or the archive commands. They keep `login`,
+`files`, `download`, `stat`, `history`, `queue`, `transfers`, `status`, `health`,
+`debug` and `doctor`, and use the same config file. Use one to manage Put.io from a
+terminal or a script without running a server. There are two:
+
+| Edition | Event hooks | Lua/WASM plugins |
+|---------|-------------|------------------|
+| `putio-sync-lite` | yes | no |
+| `putio-sync-lite-plugins` | yes | yes |
+
+Hooks and plugins run on the events a command emits (a download finishing or failing,
+low Put.io storage), and the command waits up to two minutes for them before it exits.
+With plugins, `download` also applies their filters and rename and folder rules. The
+transfer events come from the daemon, so a lite build never sends them. In `doctor`,
+both skip the Tailscale check, and `putio-sync-lite` also skips the plugins check.
+
+Each release has these tarballs and zips next to the full one, for each edition
+(`lite` or `lite-plugins`): `putio-sync-lite-X.Y.Z-linux-x86_64.tar.gz`,
+`-linux-aarch64.tar.gz`, `-macos-arm64.tar.gz`, and
+`putio-sync-lite-vX.Y.Z-x86_64-pc-windows-msvc.zip` (and `aarch64-`). The binary
+inside is still named `putio-sync`.
+
+```bash
+curl -LO https://github.com/devclinton/putio-sync/releases/latest/download/putio-sync-lite-X.Y.Z-linux-x86_64.tar.gz
+tar -xzf putio-sync-lite-X.Y.Z-linux-x86_64.tar.gz
+sudo install putio-sync-lite-X.Y.Z-linux-x86_64/putio-sync /usr/local/bin/
+putio-sync login
+```
+
+From source, pick the features (leave them out for a CLI with neither):
+
+```bash
+cargo build --release -p putio-sync-cli --no-default-features --features hooks,plugins
+```
+
+---
+
 ## Docker
 
 ```bash
@@ -363,6 +405,47 @@ enter it (or the web UI token you set), and choose `/downloads` as the download 
 The config file and the state database (`.putiosync.db`) live in `/config`; keep that
 volume on local storage. Versions up to 0.2.x kept the database in `/downloads`; the first
 start of a newer image moves it to `/config` by itself.
+
+---
+
+## Updating
+
+putio-sync looks for a newer release on GitHub about a minute after it starts, then once a
+day. The request sends only a User-Agent with the running version. When a newer release is
+out, the **What's new** page shows it with its release notes, a link to the release, and
+**Check now** and **Dismiss** buttons. The notice also says how this copy was installed and
+how that install gets the new version:
+
+| Installed with | How it updates |
+|---|---|
+| Binary from GitHub Releases (Linux, macOS, Windows) | **Update now** downloads a small patch from the running version when the release has one, or else the full binary. It checks the download against the signed `SHA256SUMS`, replaces the binary and restarts. If transfers are running, it asks first; they resume after the restart. If the new version doesn't start cleanly within 90 seconds, the old binary and its database are put back. |
+| macOS `.pkg`, Windows `-setup.exe` | **Update now** downloads the new installer, checks it, and opens it, or tells you where it is. |
+| Homebrew | `brew upgrade putio-sync` |
+| Snap | `sudo snap refresh putio-sync` |
+| Debian/Ubuntu `.deb` | Download and install the new `.deb`. |
+| Docker | `docker pull` for your image and tag, then recreate the container. |
+| Unraid, CasaOS, Umbrel | The app store's own update. |
+
+Package managers and containers keep their own files, so putio-sync never replaces itself
+there: the notice shows the command or step with a **Copy** button. If it names the wrong
+install, set `PUTIO_SYNC_INSTALL`; `GET /status` reports what it detected as
+`install_channel`.
+
+**Install updates automatically** (Settings › General › Updates, `[updates] auto_install`,
+off by default) is offered only for a binary from GitHub Releases. With it on, a new release
+installs once no transfer is running, checking every minute. A version that was rolled back
+is never installed again automatically, though **Update now** can still install it.
+
+To stop checking, turn off **Check for updates** in Settings › General › Updates, or set:
+
+```toml
+[updates]
+check = false
+```
+
+**Older versions:** 0.2.x and earlier don't check for updates. 0.3.0 and 0.4.0 show the
+notice but can't install it. Update those by hand once, the way you installed them; after
+that, a binary from GitHub Releases updates itself.
 
 ---
 

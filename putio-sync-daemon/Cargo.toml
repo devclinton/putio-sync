@@ -30,7 +30,6 @@ reqwest = { workspace = true }
 # File watching
 
 # Error handling
-anyhow = { workspace = true }
 thiserror = { workspace = true }
 
 # Logging

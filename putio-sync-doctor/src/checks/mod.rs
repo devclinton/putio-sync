@@ -1,8 +1,10 @@
 //! The checks: shared data for one run, and dispatch by [`CheckId`]
 
+#[cfg(feature = "hooks")]
 pub(crate) mod hooks;
 pub(crate) mod local;
 pub(crate) mod net;
+#[cfg(feature = "plugins")]
 pub(crate) mod plugins;
 pub(crate) mod putio;
 pub(crate) mod sign_in;
@@ -43,10 +45,13 @@ pub(crate) struct Ctx {
     pub cleanup: Arc<EmptyFolderCleanup>,
     pub stalls: Option<Arc<StallTracker>>,
     /// The shared Tailscale service; the check builds one from the config without it
+    #[cfg(feature = "tailscale")]
     pub tailscale: Option<Arc<putio_sync_tailscale::TailscaleService>>,
     /// The running hooks, for their last runs; the check reads the config alone without it
+    #[cfg(feature = "hooks")]
     pub hooks: Option<Arc<putio_sync_hooks::HooksService>>,
     /// The running plugins, for their state and last runs
+    #[cfg(feature = "plugins")]
     pub plugins: Option<Arc<putio_sync_plugins::PluginsService>>,
     pub started: Instant,
     probe: OnceCell<(AccountProbe, DateTime<Utc>)>,
@@ -70,8 +75,11 @@ impl Ctx {
             db,
             cleanup,
             stalls,
+            #[cfg(feature = "tailscale")]
             tailscale: None,
+            #[cfg(feature = "hooks")]
             hooks: None,
+            #[cfg(feature = "plugins")]
             plugins: None,
             started: Instant::now(),
             probe: OnceCell::new(),
@@ -156,10 +164,19 @@ async fn detect(ctx: &Ctx, id: CheckId) -> Finding {
         Reachability => net::reachability(ctx).await,
         RateLimit => net::rate_limit(ctx).await,
         ClockSkew => net::clock_skew(ctx).await,
+        #[cfg(feature = "tailscale")]
         Tailscale => net::tailscale(ctx).await,
         Listen => net::listen(ctx).await,
+        #[cfg(feature = "hooks")]
         Hooks => hooks::hooks(ctx).await,
+        #[cfg(feature = "plugins")]
         Plugins => plugins::plugins(ctx).await,
+        #[cfg(not(feature = "tailscale"))]
+        Tailscale => Finding::skipped("Skipped: this putio-sync build has no web UI."),
+        #[cfg(not(feature = "hooks"))]
+        Hooks => Finding::skipped("Skipped: this putio-sync build has no event hooks."),
+        #[cfg(not(feature = "plugins"))]
+        Plugins => Finding::skipped("Skipped: this putio-sync build has no plugins."),
         SignIn => sign_in::sign_in(ctx).await,
     }
 }

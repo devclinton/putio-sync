@@ -198,6 +198,7 @@ async fn summary_lists_largest_first_and_flags_low() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn plan_picks_verified_downloads_oldest_first_to_the_target() {
     let w = full_world().await;
     // 1 and 2 not downloaded; 3, 4, 5 downloaded
@@ -215,6 +216,7 @@ async fn plan_picks_verified_downloads_oldest_first_to_the_target() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn plan_reports_a_shortfall_and_keeps_queued_files() {
     let w = full_world().await;
     w.downloaded(1, 5 * GB).await;
@@ -229,6 +231,7 @@ async fn plan_reports_a_shortfall_and_keeps_queued_files() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn plan_is_empty_when_the_target_is_met() {
     let mut w = World::new(Config::default()).await;
     w.account(100 * GB, 50 * GB).await;
@@ -238,6 +241,7 @@ async fn plan_is_empty_when_the_target_is_met() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn free_deletes_exactly_the_plan_files_and_records_the_run() {
     let mut w = full_world().await;
     for id in 3..=5 {
@@ -278,6 +282,7 @@ async fn free_deletes_exactly_the_plan_files_and_records_the_run() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn free_skips_files_that_changed_since_the_preview() {
     let mut w = full_world().await;
     let mut paths = HashMap::new();
@@ -320,6 +325,7 @@ async fn free_skips_files_that_changed_since_the_preview() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn free_skips_newly_queued_and_transfer_files() {
     let mut w = World::new(Config::default()).await;
     w.account(100 * GB, 95 * GB).await;
@@ -368,6 +374,7 @@ async fn free_skips_newly_queued_and_transfer_files() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn a_failed_delete_batch_is_reported() {
     let mut w = full_world().await;
     for id in 1..=3 {
@@ -424,6 +431,7 @@ async fn no_database_means_no_plan_and_no_runs() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
 async fn auto_run_only_when_on_and_below_the_warning_level() {
     // Off: nothing, not even an account read
     let w = full_world().await;

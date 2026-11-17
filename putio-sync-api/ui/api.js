@@ -94,6 +94,7 @@ export async function request(method, path, body) {
     (data && data.details) || null,
     Number.isFinite(retry) ? retry : null,
   );
+  err.body = data; // the whole answer, for errors that carry more than `error`
   if (!path.startsWith("/auth/")) {
     if (res.status === 401) {
       setToken(null);

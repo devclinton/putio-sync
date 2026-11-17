@@ -987,6 +987,7 @@ default = 5
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "its folders are Unix absolute paths")]
     fn wasm_runtime_and_folders() {
         let m = parse(&with("events = [\"*\"]\nruntime = \"wasm\"")).unwrap();
         assert_eq!(m.entry, "plugin.wasm");

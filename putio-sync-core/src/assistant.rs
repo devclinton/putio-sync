@@ -645,6 +645,8 @@ mod tests {
         assert!(found[0].keys.contains(&"download.delete_after_download"));
     }
 
+    // Off Unix `device` is always None
+    #[cfg(unix)]
     #[test]
     fn delete_on_container_layer_is_danger_only_in_a_container() {
         let dir = tempfile::tempdir().unwrap();
@@ -746,7 +748,7 @@ mod tests {
     fn with_secrets() -> Config {
         let mut config = Config::default();
         config.expand_paths().unwrap();
-        config.download.target_directory = PathBuf::from("/srv/dl");
+        config.download.target_directory = PathBuf::from(crate::path_utils::test_abs("/srv/dl"));
         config.auth = Some(AuthConfig::with_token("putio-secret-token".to_string()));
         config.api.auth_token = Some("api-secret-token".to_string());
         config.subtitles.transcription.api_key = "whisper-secret-key".to_string();
@@ -779,7 +781,7 @@ mod tests {
         config.hooks.push(crate::hooks::HookConfig {
             name: "script".to_string(),
             events: vec!["*".to_string()],
-            command: Some(vec!["/bin/true".to_string()]),
+            command: Some(vec![crate::path_utils::test_abs("/bin/true")]),
             env: [("API_KEY".to_string(), "hook-secret-env".to_string())].into(),
             ..Default::default()
         });
