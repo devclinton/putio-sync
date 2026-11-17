@@ -21,7 +21,9 @@ release image `ghcr.io/devclinton/putio-sync`, so nothing here builds anything.
    icon has no Put.io branding. Keep it that way.
 
 On each release, bump the version in the Umbrel and CasaOS files (and the Umbrel digest)
-and open an update PR in their store repositories.
+and open an update PR in their store repositories. Until the TrueNAS app is listed, also
+bump `app_version`, `version` and the image tag and digest in `truenas/putio-sync/`; once
+it is listed, their Renovate bot does that.
 
 ## Unraid Community Applications
 
