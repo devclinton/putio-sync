@@ -24,6 +24,8 @@ const PIPELINE = {
   ],
 };
 
+/** The groups whose fields the settings catalog lists (061) */
+export const groups = [HOOKS, PIPELINE];
 export const cards = (ctx) => [arrCard(ctx), groupCard(HOOKS, ctx), groupCard(PIPELINE, ctx)];
 
 /**

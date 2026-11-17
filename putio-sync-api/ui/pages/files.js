@@ -5,7 +5,8 @@
 // filter (globs with AND, OR and NOT), sort by a heading, and tick rows (or Select all of
 // what the filter shows) to delete several at once. Feature 034: "Verify" checks the
 // ticked files (or everything under ticked folders) against Put.io; History shows the run.
-// Route: #/files/<root>?path=<folder>&q=<filter>&sort=<key>-<asc|desc>
+// Feature 061: `select=<name>` (from the command palette) marks that row and scrolls to it once.
+// Route: #/files/<root>?path=<folder>&select=<name>&q=<filter>&sort=<key>-<asc|desc>
 
 import { del, get, post, startVerify } from "../api.js";
 import { confirm, empty, h, navigate, poll, toast } from "../app.js";
@@ -27,6 +28,8 @@ let seq = 0;
 let ctl = null;
 let sel = null;
 let shown = null; // the root and truncated flag of the last listing, to redraw it
+let mark = null; // the name `?select=` points at, until its row has been shown
+let marked = null; // ...and then, so refreshes keep it marked
 
 const COLUMNS = {
   name: { label: "Name", value: (e) => e.name },
@@ -42,6 +45,8 @@ const canAct = (e) => e.valid_name && !e.in_use;
 export function mount(el, { path: route = [], query } = {}) {
   root = route[0] || null;
   path = (query && query.get("path")) || "";
+  mark = (query && query.get("select")) || null;
+  marked = mark;
   entries = [];
   editing = null;
   shown = null;
@@ -323,6 +328,11 @@ function renderList(current, truncated) {
     ),
   );
   sel.update();
+  const at = mark && els.list.querySelector("tr.marked");
+  if (at) {
+    at.scrollIntoView({ block: "center" });
+    mark = null;
+  }
 }
 
 function badges(e) {
@@ -352,7 +362,7 @@ function row(current, e) {
   }
   return h(
     "tr",
-    { dataset: { path: e.path } },
+    { class: marked != null && e.name === marked ? "marked" : null, dataset: { path: e.path } },
     sel.box(e.path, { label: `Select ${e.name}`, disabled: !canAct(e), title: e.in_use ? "A download is writing here; cancel it in the Queue to delete" : null }),
     h("td", { class: "name-cell name", "data-label": "Name" }, name, e.partial ? h("small", { class: "muted", text: ` → ${e.partial}` }) : null),
     h("td", { "data-label": "Kind" }, badges(e)),

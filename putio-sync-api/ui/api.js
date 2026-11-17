@@ -57,12 +57,13 @@ function expired(err) {
   if (expiredHandler) expiredHandler(err);
 }
 
-export async function request(method, path, body) {
+/** `signal` (an AbortSignal) cancels the request; it then rejects with the AbortError */
+export async function request(method, path, body, signal = undefined) {
   const headers = { Accept: "application/json" };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   else if (identity && identity.csrf) headers["X-CSRF-Token"] = identity.csrf;
-  const init = { method, headers };
+  const init = { method, headers, signal };
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
@@ -71,7 +72,8 @@ export async function request(method, path, body) {
   let res;
   try {
     res = await fetch(path, init);
-  } catch {
+  } catch (e) {
+    if (signal && signal.aborted) throw e;
     throw new ApiError(0, "Can't reach the daemon");
   }
 
@@ -106,7 +108,7 @@ export async function request(method, path, body) {
   throw err;
 }
 
-export const get = (path) => request("GET", path);
+export const get = (path, signal) => request("GET", path, undefined, signal);
 export const post = (path, body) => request("POST", path, body);
 export const put = (path, body) => request("PUT", path, body);
 

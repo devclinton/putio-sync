@@ -18,4 +18,6 @@ const MEDIA = {
   extra: mediaServerExtra,
 };
 
+/** The groups whose fields the settings catalog lists (061) */
+export const groups = [MEDIA];
 export const cards = (ctx) => [groupCard(MEDIA, ctx)];

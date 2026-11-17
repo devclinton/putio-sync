@@ -114,6 +114,8 @@ const VERIFY = {
   advanced: ["verify_max_redownloads", "verify_read_limit_mb_per_sec", "verify_follow_bandwidth_pause"],
 };
 
+/** The groups whose fields the settings catalog lists (061) */
+export const groups = [DOWNLOAD, STREAM, BANDWIDTH, VERIFY];
 export const cards = (ctx) => [...[DOWNLOAD, STREAM, BANDWIDTH, VERIFY].map((g) => groupCard(g, ctx)), ...subtitleCards(ctx), ...translationCards(ctx)];
 
 const LIMIT_KINDS = [

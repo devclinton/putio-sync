@@ -189,3 +189,6 @@ function effectiveTable(rows) {
     h("p", { class: "muted spaced", text: "As saved; changes apply after a restart." }),
   );
 }
+
+/** The groups whose fields the settings catalog lists (061) */
+export const groups = [FILTERS, PRECHECK];

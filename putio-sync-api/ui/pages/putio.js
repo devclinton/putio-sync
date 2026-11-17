@@ -6,7 +6,8 @@
 // folder's rule card, and "blocked" / "skipped" badges on files its rule won't download.
 // Feature 042: flag a file as fake, and undo it. Feature 045: the filter takes globs with
 // AND, OR and NOT, and the Name, Size and Date headings sort (folders stay first).
-// Feature 033: the Storage card at the top of the root (storage.js).
+// Feature 033: the Storage card at the top of the root (storage.js). Feature 061:
+// `?select=<name>` (from the command palette) marks that row and scrolls to it once.
 
 import { del, get, post } from "../api.js";
 import { confirm, empty, h, toast } from "../app.js";
@@ -30,6 +31,8 @@ let seq = 0;
 let els = null;
 let sel = null;
 let rule = null;
+let mark = null; // the name `?select=` points at
+let scrolled = false; // its row has been scrolled to
 let ctl = null;
 
 const COLUMNS = {
@@ -40,6 +43,8 @@ const COLUMNS = {
 
 export function mount(el, { path = [], query } = {}) {
   folder = Number.parseInt(path[0], 10) || 0;
+  mark = (query && query.get("select")) || null;
+  scrolled = false;
   const at = crumbs.findIndex((c) => c.id === folder);
   if (folder === 0) crumbs = [ROOT];
   else if (at >= 0) crumbs = crumbs.slice(0, at + 1);
@@ -361,6 +366,14 @@ function renderList() {
     ),
   );
   sel.update();
+  scrollToMark();
+}
+
+function scrollToMark() {
+  const row = !scrolled && els.list.querySelector("tr.marked");
+  if (!row) return;
+  row.scrollIntoView({ block: "center" });
+  scrolled = true;
 }
 
 function fileRow(f) {
@@ -371,7 +384,7 @@ function fileRow(f) {
   const verdict = !isFolder(f) && rule && rule.badge(f.name);
   return h(
     "tr",
-    {},
+    { class: mark != null && f.name === mark ? "marked" : null },
     sel.box(f.id, { label: `Select ${f.name}`, disabled: keep, title: keep ? "In the queue; skip or cancel it to delete" : null }),
     h("td", { class: "name-cell name", "data-label": "Name" }, name),
     h(
