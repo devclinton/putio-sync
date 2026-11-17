@@ -47,7 +47,8 @@ COPY putio-sync-dlna/Cargo.toml ./putio-sync-dlna/
 COPY putio-sync-translation/Cargo.toml ./putio-sync-translation/
 COPY putio-sync-update/Cargo.toml ./putio-sync-update/
 
-# Create minimal source files for dependency analysis
+# Create minimal source files for dependency analysis. Each [[test]] a manifest names gets an
+# empty file too: cargo can't read a manifest whose named test is missing.
 RUN mkdir -p putio-sync-client/src \
              putio-sync-db/src \
              putio-sync-download/src \
@@ -94,7 +95,13 @@ RUN mkdir -p putio-sync-client/src \
     echo 'pub fn placeholder() {}' > putio-sync-subtitles/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-dlna/src/lib.rs && \
     echo 'pub fn placeholder() {}' > putio-sync-translation/src/lib.rs && \
-    echo 'pub fn placeholder() {}' > putio-sync-update/src/lib.rs
+    echo 'pub fn placeholder() {}' > putio-sync-update/src/lib.rs && \
+    for m in putio-sync-*/Cargo.toml; do \
+      d=${m%/Cargo.toml}; \
+      for t in $(awk '/^\[\[test\]\]/{t=1; next} /^\[/{t=0} t && /^name *=/{gsub(/[" ]/, "", $0); sub(/name=/, ""); print}' "$m"); do \
+        mkdir -p "$d/tests" && echo 'fn main() {}' > "$d/tests/$t.rs"; \
+      done; \
+    done
 
 # Generate dependency recipe
 RUN cargo chef prepare --recipe-path recipe.json

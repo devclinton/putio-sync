@@ -48,6 +48,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- The Docker image builds again. The `:main` image had stopped updating on November 13,
+  when crates started naming their tests in `Cargo.toml`.
 - On Windows, a subtitle translated while its item was in the staging folder keeps its
   **translated** label after the item moves into place.
 - A debug build of `putio-sync` on Windows no longer crashes with a stack overflow
