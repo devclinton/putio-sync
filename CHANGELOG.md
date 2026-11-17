@@ -14,6 +14,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- A TrueNAS SCALE app for the community catalog (`packaging/truenas/`), ready to submit.
+  It runs as the `apps` user (568), with datasets for config, downloads and the watch
+  folder, an optional web UI token, and an optional Prometheus metrics port.
 - CLI-only builds for Linux, macOS and Windows, published with each release:
   putio-sync-lite (with event hooks) and putio-sync-lite-plugins (hooks and Lua/WASM
   plugins). They have the Put.io file, download, queue, transfer and status commands and
