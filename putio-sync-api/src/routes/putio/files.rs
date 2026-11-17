@@ -2,6 +2,7 @@
 //!
 //! Provides REST API endpoints for Put.io file operations:
 //! - GET  /putio/files           - List files for folder (supports sorting)
+//! - GET  /putio/files/search?q= - Find files by name (feature 061)
 //! - GET  /putio/files/:id       - Get file details
 //! - DELETE /putio/files/:id     - Delete file/folder (recursive optional)
 //! - POST /putio/files/delete    - Delete several files/folders with one Put.io call
@@ -9,7 +10,7 @@
 
 use crate::error::ApiError;
 use crate::handlers::{files, unique_ids};
-use crate::models::files::{DeleteFilesRequest, FileResponse, ListFilesRequest};
+use crate::models::files::{DeleteFilesRequest, FileResponse, ListFilesRequest, SearchQuery};
 use crate::models::{ListResponse, SuccessResponse};
 use axum::{
     extract::{rejection::JsonRejection, Path, Query, State},
@@ -28,6 +29,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_files))
         .route("/delete", post(delete_many))
+        .route("/search", get(search))
         .route("/:id", get(get_file))
         .route("/:id", delete(delete_file))
         .route("/:id/download", get(get_download_url))
@@ -41,6 +43,49 @@ async fn list_files(
     Query(request): Query<ListFilesRequest>,
 ) -> Result<Json<ListResponse<FileResponse>>, ApiError> {
     files::list_files(&state.client, request).await.map(Json)
+}
+
+/// Results the command palette asks put.io for
+const SEARCH_LIMIT: u32 = 50;
+
+/// One put.io match for the command palette
+#[derive(Debug, serde::Serialize)]
+struct PutioHit {
+    id: i64,
+    name: String,
+    parent_id: i64,
+    is_folder: bool,
+    size: u64,
+}
+
+/// Find files by name with put.io's search (feature 061)
+///
+/// GET /putio/files/search?q=<text> → `{ files: [{ id, name, parent_id, is_folder, size }] }`
+async fn search(
+    State(state): State<AppState>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let q = query.text()?;
+    let found = state
+        .client
+        .search_files(q, SEARCH_LIMIT)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "put.io search failed");
+            ApiError::BadGateway("Put.io search failed".to_string()).with_details(e.to_string())
+        })?;
+    tracing::debug!(hits = found.len(), "put.io search");
+    let files: Vec<PutioHit> = found
+        .into_iter()
+        .map(|f| PutioHit {
+            id: f.id,
+            parent_id: f.parent_id.unwrap_or(0),
+            is_folder: f.is_folder,
+            size: u64::try_from(f.size).unwrap_or(0),
+            name: f.name,
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "files": files })))
 }
 
 /// Get file details

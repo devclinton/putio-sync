@@ -17,6 +17,12 @@ pub struct UploadResponse {
     pub transfer: Option<Transfer>,
 }
 
+/// `GET /files/search` reply; `cursor` and `total` are not used
+#[derive(Debug, Deserialize)]
+struct SearchResponse {
+    files: Vec<FileEntry>,
+}
+
 /// A file's MP4 version on Put.io (feature 022)
 #[derive(Debug, Clone, Deserialize)]
 pub struct Mp4Status {
@@ -128,6 +134,22 @@ impl PutioApiClient {
         let path = format!("/files/list?parent_id={}", parent_id);
         let response: ApiResponse<FilesListResponse> = self.get(&path).await?;
         Ok(response.data)
+    }
+
+    /// Search the account's files by name (feature 061): put.io's own search, first page
+    /// only, at most `per_page` results. Deleted files sit in put.io's trash, which search
+    /// does not cover.
+    pub async fn search_files(&self, query: &str, per_page: u32) -> ClientResult<Vec<FileEntry>> {
+        let mut params = reqwest::Url::parse("http://query/").expect("a fixed URL");
+        params
+            .query_pairs_mut()
+            .append_pair("query", query)
+            .append_pair("per_page", &per_page.to_string());
+        let path = format!("/files/search?{}", params.query().unwrap_or_default());
+        let response: ApiResponse<SearchResponse> = self.get(&path).await?;
+        let mut files = response.data.files;
+        files.truncate(per_page as usize);
+        Ok(files)
     }
 
     /// Get details for a specific file
@@ -379,6 +401,43 @@ mod tests {
         client.move_files(&[], 40).await.unwrap();
         rename.assert_async().await;
         moved.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn search_sends_the_query_and_caps_the_results() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/files/search")
+            .match_header("authorization", "Bearer test_token")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("query".into(), "the show & more".into()),
+                mockito::Matcher::UrlEncoded("per_page".into(), "2".into()),
+            ]))
+            .with_status(200)
+            .with_body(
+                serde_json::json!({
+                    "status": "OK",
+                    "cursor": null,
+                    "total": 3,
+                    "files": [
+                        {"id": 1, "name": "The Show", "size": 0, "file_type": "FOLDER", "parent_id": 0},
+                        {"id": 2, "name": "The Show S01E01.mkv", "size": 1024, "file_type": "VIDEO", "parent_id": 1},
+                        {"id": 3, "name": "The Show S01E02.mkv", "size": 2048, "file_type": "VIDEO", "parent_id": 1}
+                    ]
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        let files = client.search_files("the show & more", 2).await.unwrap();
+        mock.assert_async().await;
+        assert_eq!(files.len(), 2);
+        assert!(files[0].is_folder);
+        assert_eq!(
+            (files[1].id, files[1].parent_id, files[1].size),
+            (2, Some(1), 1024)
+        );
     }
 
     #[tokio::test]

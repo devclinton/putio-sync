@@ -19,6 +19,8 @@ const SUBTITLES = {
   extra: languagesExtra,
 };
 
+/** The groups whose fields the settings catalog lists (061) */
+export const groups = [SUBTITLES];
 export const cards = (ctx) => [groupCard(SUBTITLES, ctx)];
 
 /** The known languages, a reminder of how files are named, and the transcription section */

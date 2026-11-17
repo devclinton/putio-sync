@@ -987,6 +987,22 @@ The pages:
 The UI is built into the binary and the Docker image; there is nothing else to install
 or mount.
 
+### Command palette
+
+**Cmd+K** (macOS) or **Ctrl+K** opens one search box from any page; on a phone, tap the
+magnifier in the top bar. Type to find:
+
+- **Actions**: Sync now, Pause or Resume downloads, Clear completed (asks first), Check for
+  updates, Toggle theme and Sign out;
+- **Pages** and **Settings**: every page, settings section, card and field, which opens with
+  the field in view;
+- **Queue**: items in the download queue;
+- **Put.io files**: Put.io's own search, opening the folder with the file marked;
+- **Local files**: names under the download folder and watch folders, at most 50 hits or
+  2 seconds of searching, opening the folder with the file marked.
+
+Matching is loose, so "subt" finds Subtitles. Arrow keys move, Enter opens, Esc closes.
+
 ### Languages
 
 The UI follows the browser's language when it has a translation, and English otherwise.

@@ -3,6 +3,7 @@
 //! Browse and fix by hand what is in the download folder and the watch folders:
 //! - GET    /local/files                     - The roots: downloads, and each watch path
 //!   when watching is on
+//! - GET    /local/files/search?q=           - Find names under every root (feature 061)
 //! - GET    /local/files/{root}?path=        - One folder of a root
 //! - GET    /local/files/{root}/summary?path= - Files and bytes under an entry
 //! - DELETE /local/files/{root}?path=        - Delete a file, link or folder
@@ -105,6 +106,7 @@ pub struct RequeueRequest {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_roots))
+        .route("/search", get(search))
         .route("/:root", get(list_folder).delete(delete_entry))
         .route("/:root/summary", get(summarize))
         .route("/:root/rename", post(rename_entry))
@@ -117,6 +119,65 @@ pub fn router() -> Router<AppState> {
             "/:root/translate",
             get(super::translate::preflight).post(super::translate::start),
         )
+}
+
+/// Names the command palette asks for, and how long it may look (feature 061)
+const SEARCH_LIMIT: usize = 50;
+const SEARCH_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
+
+#[derive(Debug, Serialize)]
+pub struct SearchHitInfo {
+    pub root: String,
+    pub root_label: String,
+    pub path: String,
+    pub name: String,
+    pub kind: &'static str,
+    pub size: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SearchResponse {
+    pub hits: Vec<SearchHitInfo>,
+    pub truncated: bool,
+}
+
+/// GET /local/files/search?q=<text>: names containing the text under every root, at
+/// most 50 or 2 s of looking in all; `truncated` says it stopped early
+async fn search(
+    State(state): State<AppState>,
+    Query(query): Query<crate::models::files::SearchQuery>,
+) -> Result<Json<SearchResponse>, ApiError> {
+    let q = query.text()?.to_string();
+    let roots = roots(&state).await;
+    let paths: Vec<PathBuf> = roots.iter().map(|r| r.path.clone()).collect();
+    let started = std::time::Instant::now();
+    let found = tokio::task::spawn_blocking(move || {
+        local_files::search(&paths, &q, SEARCH_LIMIT, SEARCH_BUDGET)
+    })
+    .await
+    .map_err(|e| ApiError::InternalError(e.to_string()))?;
+    tracing::debug!(
+        hits = found.hits.len(),
+        truncated = found.truncated,
+        ms = started.elapsed().as_millis() as u64,
+        "local file search"
+    );
+    let hits = found
+        .hits
+        .into_iter()
+        .map(|h| SearchHitInfo {
+            root: roots[h.root].key.clone(),
+            root_label: roots[h.root].label.clone(),
+            kind: h.kind.as_str(),
+            path: h.path,
+            name: h.name,
+            size: h.size,
+        })
+        .collect();
+    Ok(Json(SearchResponse {
+        hits,
+        truncated: found.truncated,
+    }))
 }
 
 /// One configured root

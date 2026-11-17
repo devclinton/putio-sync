@@ -1,10 +1,13 @@
 // Settings (features 015, 046, 048): every settings card, in sections shown one at a time.
 // `#/settings/<section>?field=<address>` opens a section and jumps to a field. All sections
-// load at once, so search covers every field and the section list marks unsaved changes and
-// problems anywhere; Notifications (030) loads when opened. Advanced fields are hidden per
-// section until Show advanced is on.
+// load at once, so the section list marks unsaved changes and problems anywhere; search uses
+// the settings catalog (061), which the command palette shares. Notifications (030) loads
+// when opened. Advanced fields are hidden per section until Show advanced is on.
 
 import { h, navigate, toastError } from "../app.js";
+import { rank } from "../fuzzy.js";
+import { entryText } from "../settings/catalog.js";
+import { settingsCatalog } from "../settings/groups.js";
 import { SECTIONS, fieldId, sectionOf, sectionOfKey, settingsHref } from "../settings/sections.js";
 import { assistant, riskList } from "../settings/form.js";
 import * as general from "../settings/general.js";
@@ -125,33 +128,13 @@ export function mount(el, params) {
     marks();
   }
 
-  // Search the labelled fields and card titles on every section
+  // Search the settings catalog (061), the same list the command palette uses
   const results = h("ul", { class: "search-results", hidden: true });
   const search = h("input", { class: "input", type: "search", placeholder: "Search settings", "aria-label": "Search settings", autocomplete: "off" });
-  let uid = 0;
-  const find = (q) => {
-    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-    const hits = [];
-    const add = (text, target, card, section) => {
-      if (words.every((w) => text.toLowerCase().includes(w))) hits.push({ target, card, section });
-    };
-    for (const s of SECTIONS) {
-      for (const card of panels[s.id].node.querySelectorAll(".card")) {
-        const title = card.querySelector("h2, h3")?.textContent || "";
-        if (card.id) add(title, card.id, title, s);
-        for (const label of card.querySelectorAll("label.field")) {
-          const input = label.querySelector("input, select, textarea");
-          if (!input) continue;
-          input.id ||= `set-found-${++uid}`;
-          add(label.textContent, input.id, `${title} › ${label.querySelector("span")?.firstChild?.textContent || label.textContent}`, s);
-        }
-      }
-    }
-    return hits.slice(0, 10);
-  };
+  const find = (q) => rank(q, settingsCatalog(), entryText, 10);
   const go = (hit) => {
     clear();
-    navigate(settingsHref(hit.section.id, hit.target));
+    navigate(hit.href);
   };
   const clear = () => {
     search.value = "";
@@ -163,7 +146,7 @@ export function mount(el, params) {
     const hits = find(q);
     results.replaceChildren(
       ...(hits.length
-        ? hits.map((hit) => h("li", {}, h("button", { type: "button", class: "link", onclick: () => go(hit) }, h("span", { text: hit.card }), h("small", { class: "muted", text: ` · ${hit.section.title}` }))))
+        ? hits.map((hit) => h("li", {}, h("button", { type: "button", class: "link", onclick: () => go(hit) }, h("span", { text: hit.label }), h("small", { class: "muted", text: ` · ${hit.detail}` }))))
         : [h("li", { class: "muted", text: "Nothing matched." })]),
     );
     results.hidden = false;

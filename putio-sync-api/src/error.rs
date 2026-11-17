@@ -33,6 +33,8 @@ pub enum ApiError {
     ServiceUnavailable(String),
     /// The request is well formed but cannot be acted on now (422)
     Unprocessable(String),
+    /// A service the route relies on, such as Put.io, failed (502)
+    BadGateway(String),
     /// Too many failed authentication attempts (429 with `Retry-After`)
     TooManyRequests {
         /// Seconds until the client may try again
@@ -66,6 +68,7 @@ impl fmt::Display for ApiError {
             ApiError::Conflict(msg) => write!(f, "Conflict: {}", msg),
             ApiError::ServiceUnavailable(msg) => write!(f, "Service unavailable: {}", msg),
             ApiError::Unprocessable(msg) => write!(f, "Unprocessable: {}", msg),
+            ApiError::BadGateway(msg) => write!(f, "Bad gateway: {}", msg),
             ApiError::TooManyRequests {
                 retry_after_seconds,
             } => write!(f, "Too many requests: retry after {}s", retry_after_seconds),
@@ -117,6 +120,7 @@ impl IntoResponse for ApiError {
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             ApiError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg.clone()),
             ApiError::Unprocessable(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg.clone()),
+            ApiError::BadGateway(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
             ApiError::TooManyRequests { .. } => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "Too many failed authentication attempts".to_string(),

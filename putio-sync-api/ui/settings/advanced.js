@@ -50,6 +50,8 @@ const LOGGING = {
   advanced: ["console_format", "module_filters", "buffer_lines"],
 };
 
+/** The groups whose fields the settings catalog lists (061) */
+export const groups = [NETWORK, TAILSCALE, LOGGING];
 export const networkCards = (ctx) => [groupCard(NETWORK, ctx), groupCard(TAILSCALE, ctx)];
 export const advancedCards = (ctx) => [groupCard(LOGGING, ctx), backupCard(ctx.remount)];
 

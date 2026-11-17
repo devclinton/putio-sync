@@ -56,6 +56,8 @@ const GROUPS = [
   },
 ];
 
+/** The groups whose fields the settings catalog lists (061) */
+export const groups = GROUPS;
 export const cards = (ctx) => GROUPS.map((g) => groupCard(g, ctx));
 
 /** Where the app ID in use comes from, and where to register one */

@@ -26,6 +26,8 @@ const TRANSLATION = {
   extra: translationExtra,
 };
 
+/** The groups whose fields the settings catalog lists (061) */
+export const groups = [TRANSLATION];
 export const cards = (ctx) => [groupCard(TRANSLATION, ctx)];
 
 function translationExtra(data) {

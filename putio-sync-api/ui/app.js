@@ -418,12 +418,35 @@ onAuthExpired(async (err) => {
   }
 });
 
+/** No palette on the sign-in, setup and sign-in pages, or over another dialog */
+export function paletteBlocked() {
+  if (document.body.classList.contains("signed-out")) return true;
+  if (/^#\/(login|setup|signin)\b/.test(window.location.hash)) return true;
+  return Boolean(document.querySelector("dialog[open]:not(#palette)"));
+}
+
 document.getElementById("signout").addEventListener("click", async () => {
   await logout();
   showLogin({ reason: "Signed out." });
 });
 
 window.addEventListener("hashchange", route);
+// The command palette (061) loads on first use; leaving a page by the back button closes it
+const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+let palette = null;
+const loadPalette = () => (palette ||= import("./palette.js").catch((e) => Promise.reject(e, (palette = null))));
+const openPalette = () => loadPalette().then((m) => m.open(), toastError);
+window.addEventListener("hashchange", () => palette && palette.then((m) => m.close(), () => {}));
+document.addEventListener("keydown", (ev) => {
+  if (ev.key.toLowerCase() !== "k" || ev.altKey || ev.shiftKey || (MAC ? !ev.metaKey || ev.ctrlKey : !ev.ctrlKey || ev.metaKey)) return;
+  if (paletteBlocked()) return;
+  ev.preventDefault();
+  openPalette();
+});
+const find = document.getElementById("find");
+find.addEventListener("click", openPalette);
+find.setAttribute("aria-keyshortcuts", MAC ? "Meta+K" : "Control+K");
+find.querySelector("kbd").textContent = MAC ? "⌘K" : "Ctrl+K";
 
 // The saved or browser language (feature 051), before the first page shows
 await setLanguage(choice(), false);

@@ -30,6 +30,10 @@
   - The exact request shape and response fields (`files[]` with `id`, `name`, `parent_id`,
     `file_type`, `size`) MUST be checked against put.io's API docs before the client is
     written. The mockito test is then written from that shape.
+  - Checked during implementation against put.io's own client, putdotio/putio-js
+    (`src/domains/files.ts`): `GET /v2/files/search` with `query` and `per_page`, answering
+    `{ cursor, files, status, total }`. Trash is a separate store that search does not
+    cover, so there is nothing to drop.
   - The API route `GET /putio/files/search?q=` lives in `routes/putio/files.rs`. Axum matches
     the fixed `/search` segment before `/:id`.
 - **Rationale**: put.io has an index already, and walking the whole account would mean

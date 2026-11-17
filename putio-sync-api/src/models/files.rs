@@ -2,6 +2,29 @@
 
 use serde::{Deserialize, Serialize};
 
+/// `?q=` for the file searches, trimmed
+#[derive(Debug, Deserialize)]
+pub struct SearchQuery {
+    #[serde(default)]
+    pub q: String,
+}
+
+impl SearchQuery {
+    /// The search text: 2 to 200 characters once trimmed
+    pub fn text(&self) -> Result<&str, crate::error::ApiError> {
+        let q = self.q.trim();
+        match q.chars().count() {
+            0..=1 => Err(crate::error::ApiError::BadRequest(
+                "Type at least 2 characters".to_string(),
+            )),
+            201.. => Err(crate::error::ApiError::BadRequest(
+                "Search is limited to 200 characters".to_string(),
+            )),
+            _ => Ok(q),
+        }
+    }
+}
+
 /// Request to list files
 #[derive(Debug, Deserialize)]
 pub struct ListFilesRequest {

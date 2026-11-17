@@ -17,6 +17,8 @@ const PLUGINS = {
   extra: pluginsExtra,
 };
 
+/** The groups whose fields the settings catalog lists (061) */
+export const groups = [PLUGINS];
 export const cards = (ctx) => [groupCard(PLUGINS, ctx)];
 
 // Who made a plugin and where to read more (059); nothing when its manifest sets none

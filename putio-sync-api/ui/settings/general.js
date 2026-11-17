@@ -12,6 +12,8 @@ const AUTO_INSTALL = ["auto_install", "Install updates automatically", "Waits un
 const PUTIO_AUTH = { token: "OAuth token set", app_password: "app password set", none: "not set" };
 const MODE_NAMES = { system: "System", light: "Light", dark: "Dark" };
 
+/** The groups whose fields the settings catalog lists (061); both update fields, as either may show */
+export const groups = [{ ...UPDATES, fields: [CHECK, AUTO_INSTALL] }];
 export const cards = (ctx) => [appearance(ctx), language(), credentials(ctx), updates(ctx)];
 
 /** The update settings. Only an install that replaces itself can update automatically

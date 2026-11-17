@@ -310,6 +310,94 @@ pub fn summary(target: &Resolved, in_use: &HashSet<PathBuf>) -> LocalResult<Summ
     Ok(summary)
 }
 
+/// A name a search found (feature 061)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchHit {
+    /// Index of the root in the list searched
+    pub root: usize,
+    /// Relative to the root, `/`-separated
+    pub path: String,
+    pub name: String,
+    /// [`EntryKind::File`] or [`EntryKind::Dir`]; links are never returned
+    pub kind: EntryKind,
+    /// Bytes; 0 for folders
+    pub size: u64,
+}
+
+/// What a search found
+#[derive(Debug, Clone, Default)]
+pub struct SearchResult {
+    pub hits: Vec<SearchHit>,
+    /// Stopped at `limit` hits or when `budget` ran out; there may be more
+    pub truncated: bool,
+}
+
+/// Find files and folders under `roots` whose name contains `query`, ignoring case.
+/// Breadth-first, root by root, with one `limit` and one `budget` for all of them.
+/// Links are neither followed nor returned, and names starting with `.` (hidden files,
+/// partial downloads) are skipped with everything under them. Names that are not UTF-8
+/// are skipped. Folders that can't be read are passed over.
+pub fn search(
+    roots: &[PathBuf],
+    query: &str,
+    limit: usize,
+    budget: std::time::Duration,
+) -> SearchResult {
+    let started = std::time::Instant::now();
+    let needle = query.to_lowercase();
+    let mut out = SearchResult::default();
+    for (index, root) in roots.iter().enumerate() {
+        let mut todo = std::collections::VecDeque::from([(root.clone(), String::new())]);
+        while let Some((dir, rel)) = todo.pop_front() {
+            let Ok(items) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for item in items.flatten() {
+                if out.hits.len() >= limit || started.elapsed() >= budget {
+                    out.truncated = true;
+                    return out;
+                }
+                let Ok(name) = item.file_name().into_string() else {
+                    continue;
+                };
+                if name.starts_with('.') {
+                    continue;
+                }
+                let Ok(meta) = item.path().symlink_metadata() else {
+                    continue;
+                };
+                let kind = EntryKind::of(&meta);
+                if kind == EntryKind::Link {
+                    continue;
+                }
+                let path = if rel.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{rel}/{name}")
+                };
+                if kind == EntryKind::Dir {
+                    todo.push_back((item.path(), path.clone()));
+                }
+                if name.to_lowercase().contains(&needle) {
+                    let size = if kind == EntryKind::File {
+                        meta.len()
+                    } else {
+                        0
+                    };
+                    out.hits.push(SearchHit {
+                        root: index,
+                        path,
+                        name,
+                        kind,
+                        size,
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The entry an action works on: not the root, and there
 fn action_target(target: &Resolved) -> LocalResult<std::fs::Metadata> {
     if target.is_root() {
@@ -541,5 +629,89 @@ mod tests {
         assert_eq!(listing.entries[1].partial.as_deref(), Some("A.mkv"));
         assert!(listing.entries[1].in_use);
         assert_eq!(listing.entries[2].size, 5);
+    }
+
+    #[test]
+    fn search_finds_names_in_every_root() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(a.path().join("TV/The Show")).unwrap();
+        std::fs::write(a.path().join("TV/The Show/the.show.s01e01.mkv"), b"12345").unwrap();
+        std::fs::write(a.path().join("notes.txt"), b"x").unwrap();
+        std::fs::write(b.path().join("SHOW.torrent"), b"x").unwrap();
+        let found = search(
+            &[a.path().into(), b.path().into()],
+            "show",
+            50,
+            std::time::Duration::from_secs(2),
+        );
+        assert!(!found.truncated);
+        let mut got: Vec<_> = found
+            .hits
+            .iter()
+            .map(|h| (h.root, h.path.as_str(), h.kind.as_str(), h.size))
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                (0, "TV/The Show", "dir", 0),
+                (0, "TV/The Show/the.show.s01e01.mkv", "file", 5),
+                (1, "SHOW.torrent", "file", 1),
+            ]
+        );
+        assert_eq!(
+            found
+                .hits
+                .iter()
+                .find(|h| h.kind == EntryKind::Dir)
+                .unwrap()
+                .name,
+            "The Show"
+        );
+    }
+
+    #[test]
+    fn search_skips_hidden_names_and_links() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("show-outside.mkv"), b"x").unwrap();
+        std::fs::create_dir(root.path().join(".hidden")).unwrap();
+        std::fs::write(root.path().join(".hidden/show.mkv"), b"x").unwrap();
+        std::fs::write(root.path().join(".show.mkv.downloading"), b"x").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(outside.path(), root.path().join("show-link")).unwrap();
+            std::os::unix::fs::symlink(
+                outside.path().join("show-outside.mkv"),
+                root.path().join("show-file-link"),
+            )
+            .unwrap();
+        }
+        let found = search(
+            &[root.path().into()],
+            "show",
+            50,
+            std::time::Duration::from_secs(2),
+        );
+        assert!(found.hits.is_empty(), "{:?}", found.hits);
+    }
+
+    #[test]
+    fn search_stops_at_the_limit_across_roots() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        for i in 0..3 {
+            std::fs::write(a.path().join(format!("ep{i}.mkv")), b"x").unwrap();
+            std::fs::write(b.path().join(format!("ep{i}.mkv")), b"x").unwrap();
+        }
+        let roots = [a.path().into(), b.path().into()];
+        let found = search(&roots, "EP", 4, std::time::Duration::from_secs(2));
+        assert_eq!(found.hits.len(), 4);
+        assert!(found.truncated);
+        assert_eq!(found.hits.iter().filter(|h| h.root == 1).count(), 1);
+        // No time left: stops before the first name
+        let none = search(&roots, "ep", 50, std::time::Duration::ZERO);
+        assert!(none.hits.is_empty() && none.truncated);
     }
 }

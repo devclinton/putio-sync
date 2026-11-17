@@ -232,7 +232,7 @@ service. Picked by `--lang`, then `PUTIO_SYNC_LANG`, then the config's UI langua
 056), then the OS locale, then English. `--json`, `--csv`, exit codes and log lines stay
 English. A build can leave the catalogs out. See `specs/060-cli-i18n/`.
 
-### 061 Command palette
+### 061 Command palette (done)
 
 Cmd/Ctrl+K opens one search box from any web UI page. It lists actions (sync now, pause or
 resume downloads, clear completed and others), pages, settings cards and fields, queue items,
