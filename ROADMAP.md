@@ -232,6 +232,15 @@ service. Picked by `--lang`, then `PUTIO_SYNC_LANG`, then the config's UI langua
 056), then the OS locale, then English. `--json`, `--csv`, exit codes and log lines stay
 English. A build can leave the catalogs out. See `specs/060-cli-i18n/`.
 
+### 061 Command palette
+
+Cmd/Ctrl+K opens one search box from any web UI page. It lists actions (sync now, pause or
+resume downloads, clear completed and others), pages, settings cards and fields, queue items,
+put.io files and local files, and picking a result goes there or runs it. Two new routes
+search put.io files (put.io's own search) and the sync folders on disk (at most 50 hits or
+2 seconds). Settings search moves onto a catalog built from the settings declarations, so it
+works from any page. See `specs/061-command-palette/`.
+
 ### 051 Multi-language web UI (done)
 
 The web UI is translated through catalogs keyed by its English text, in every base language
