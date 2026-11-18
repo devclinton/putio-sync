@@ -19,8 +19,8 @@ I18N = os.path.normpath(os.path.dirname(os.path.abspath(__file__)) + "/../i18n")
 
 # Languages the atranslate service has models for (GET /languages), as book
 # language codes; SERVICE maps the ones it names differently
-LANGUAGES = ["ar", "de", "es", "fr", "hi", "id", "it", "ja", "ko", "nl", "pl", "pt",
-             "ru", "th", "tr", "uk", "vi", "zh", "zh-TW"]
+LANGUAGES = ["ar", "da", "de", "es", "fr", "hi", "id", "it", "ja", "ko", "nl", "pl", "pt",
+             "ru", "sv", "th", "tr", "uk", "vi", "zh", "zh-TW"]
 SERVICE = {"ar": "ar-AE"}
 # Chapters kept in English: the release history and the license text
 ENGLISH_ONLY = {"changelog.md", "license.md"}

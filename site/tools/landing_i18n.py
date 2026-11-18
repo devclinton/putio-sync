@@ -30,9 +30,9 @@ SKIP = {"pre", "code", "script", "style"}
 VOID = {"meta", "link", "img", "source", "br", "hr", "input", "wbr"}
 RTL = {"ar"}
 # Each language's name in that language, for the language menu
-NAMES = {"en": "English", "ar": "العربية", "de": "Deutsch", "es": "Español", "fr": "Français",
+NAMES = {"en": "English", "ar": "العربية", "da": "Dansk", "de": "Deutsch", "es": "Español", "fr": "Français",
          "hi": "हिन्दी", "id": "Bahasa Indonesia", "it": "Italiano", "ja": "日本語", "ko": "한국어",
-         "nl": "Nederlands", "pl": "Polski", "pt": "Português", "ru": "Русский", "th": "ไทย",
+         "nl": "Nederlands", "pl": "Polski", "pt": "Português", "ru": "Русский", "sv": "Svenska", "th": "ไทย",
          "tr": "Türkçe", "uk": "Українська", "vi": "Tiếng Việt", "zh": "简体中文", "zh-TW": "繁體中文"}
 # Added to every translated page's footer, and the language menu's hidden label
 NOTICE = '<p class="notice">This page was machine-translated from English and may contain mistakes. <a href="../" hreflang="en" lang="en">Read the English version</a>.</p>'

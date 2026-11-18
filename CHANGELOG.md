@@ -17,6 +17,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - A command palette in the web UI: Cmd/Ctrl+K (or the search button) finds actions, pages,
   settings, queue items, Put.io files and local files from any page. Picking a file opens
   its folder with the row marked.
+- The website and docs in Swedish and Danish, machine-translated and marked as such like the
+  other 19 languages.
 - A TrueNAS SCALE app for the community catalog (`packaging/truenas/`), ready to submit.
   It runs as the `apps` user (568), with datasets for config, downloads and the watch
   folder, an optional web UI token, and an optional Prometheus metrics port.
