@@ -12,6 +12,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- Setup guides in the docs, one per platform: Unraid, TrueNAS SCALE, Raspberry Pi, Docker
+  and Compose, macOS, Windows and Linux. Each ends with the same walk-through of the setup
+  wizard and the first sync.
+
 ## [0.5.0] - 2026-11-17
 
 ### Added
