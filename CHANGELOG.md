@@ -12,6 +12,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-17
+
 ### Added
 
 - A command palette in the web UI: Cmd/Ctrl+K (or the search button) finds actions, pages,
@@ -29,7 +31,7 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   --features hooks` (add `plugins`, or leave out both).
 - Releases also publish each binary as a bare `.xz`, small bsdiff patches from the three
   previous releases, and `SHA256SUMS.minisig`, a minisign signature of `SHA256SUMS` that also
-  lists each uncompressed binary's hash. These are for the self-update to come; the existing
+  lists each uncompressed binary's hash. The self-update below downloads these; the existing
   archives and installers keep their names. `make release-patches` builds them locally.
 - Update now: a binary downloaded from GitHub updates itself from the What's new page. It
   downloads the small patch from the running version when the release has one, else the
