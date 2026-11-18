@@ -2,6 +2,18 @@
 
 [Introduction](introduction.md)
 
+# Guides
+
+- [Guides](guides/index.md)
+  - [Unraid](guides/unraid.md)
+  - [TrueNAS SCALE](guides/truenas.md)
+  - [Raspberry Pi](guides/raspberry-pi.md)
+  - [Docker and Compose](guides/docker.md)
+  - [macOS](guides/macos.md)
+  - [Windows](guides/windows.md)
+  - [Linux](guides/linux.md)
+  - [Your first sync](guides/first-sync.md)
+
 # Getting started
 
 - [Installation](installation.md)

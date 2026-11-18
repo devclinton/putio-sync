@@ -15,19 +15,19 @@ walk-through is recorded as a checklist in its PR body.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm mdBook 0.5.4 and atranslate are available locally (`mdbook --version`; `curl -fsS http://localhost:8400/health`), and that `site/tools/build.sh` builds main cleanly into `target/site`
-- [ ] T002 Read the reference chapters the guides will link to (`site/book/src/installation.md`, `docker.md`, `web-ui.md`, `radarr-and-sonarr.md`, `media-server.md`, `metrics.md`, `configuration.md`) and note each section's anchor id from the built HTML in `target/site/docs/`
+- [x] T001 Confirm mdBook 0.5.4 and atranslate are available locally (`mdbook --version`; `curl -fsS http://localhost:8400/health`), and that `site/tools/build.sh` builds main cleanly into `target/site`
+- [x] T002 Read the reference chapters the guides will link to (`site/book/src/installation.md`, `docker.md`, `web-ui.md`, `radarr-and-sonarr.md`, `media-server.md`, `metrics.md`, `configuration.md`) and note each section's anchor id from the built HTML in `target/site/docs/`
 
 ## Phase 2: Foundational
 
-- [ ] T003 Add a "Guides" part to `site/book/src/SUMMARY.md` right after `[Introduction](introduction.md)`, with `- [Guides](guides/index.md)` and the chapters nested under it in the order of plan.md
-- [ ] T004 Write `site/book/src/guides/index.md`:
+- [x] T003 Add a "Guides" part to `site/book/src/SUMMARY.md` right after `[Introduction](introduction.md)`, with `- [Guides](guides/index.md)` and the chapters nested under it in the order of plan.md
+- [x] T004 Write `site/book/src/guides/index.md`:
   - three short sections: "I'm new", "I'm adding something" and "I'm switching";
   - each lists its guides with one line saying who the guide is for;
   - CasaOS and Umbrel are mentioned under Docker, with a link to their app stores.
 
   Guides not written yet are left out of the index and SUMMARY until their PR.
-- [ ] T005 Write the shared guide conventions as a comment block at the top of `site/book/src/guides/index.md` (HTML comment, not rendered):
+- [x] T005 Write the shared guide conventions as a comment block at the top of `site/book/src/guides/index.md` (HTML comment, not rendered):
   - each guide opens with "You'll need" and "You'll end with";
   - steps are numbered;
   - UI labels are in bold, exactly as the UI shows them;
@@ -43,31 +43,31 @@ walk-through is recorded as a checklist in its PR body.
 
 **Independent Test**: follow the guide on a clean machine of that platform; the reader ends with a test file synced and knows how it updates (quickstart.md, Walk-throughs).
 
-- [ ] T006 [P] [US1] Write `site/book/src/guides/unraid.md`:
+- [x] T006 [P] [US1] Write `site/book/src/guides/unraid.md`:
   - install from the Community Applications template in `packaging/unraid`;
   - paths and ports, the web UI on port 15432, and signing in to put.io in the setup wizard;
   - choose the folder and run Sync now;
   - updates via Unraid's Docker page.
-- [ ] T007 [P] [US1] Write `site/book/src/guides/truenas.md`:
+- [x] T007 [P] [US1] Write `site/book/src/guides/truenas.md`:
   - install the community app from `packaging/truenas` (its questions in `questions.yaml`), and storage and port choices;
   - the first sync;
   - updates via TrueNAS Apps.
-- [ ] T008 [P] [US1] Write `site/book/src/guides/raspberry-pi.md`:
+- [x] T008 [P] [US1] Write `site/book/src/guides/raspberry-pi.md`:
   - a 64-bit OS is required (research R7), checked with `uname -m` showing `aarch64`;
   - Docker, or the aarch64 tarball from the latest release, run as a systemd service;
   - the first sync and updates;
   - the R9 untested note at the top.
-- [ ] T009 [P] [US1] Write `site/book/src/guides/docker.md`:
+- [x] T009 [P] [US1] Write `site/book/src/guides/docker.md`:
   - `docker run` and the Compose file in `packaging/docker-compose`, with volumes, ports, the API token and PUID/PGID if the image uses them (check `Dockerfile`);
   - the first sync and updates (`docker compose pull && docker compose up -d`);
   - other NAS boxes (Synology, QNAP) as a short note.
-- [ ] T010 [P] [US1] Write `site/book/src/guides/macos.md`: Homebrew (tap, install, `brew services start`) or the .pkg, then opening the web UI, signing in, the first sync, and updates via `brew upgrade` or the in-app update for .pkg
-- [ ] T011 [P] [US1] Write `site/book/src/guides/windows.md`: the installer or winget, opening the web UI, signing in, the first sync, and updates (the in-app installer update, or `winget upgrade`)
-- [ ] T012 [P] [US1] Write `site/book/src/guides/linux.md`: sections for snap (with its interface connections), .deb and the standalone binary (with a systemd unit), each going to the same "open the web UI and sign in" steps; and updates per method
-- [ ] T013 [US1] Add the seven setup guides to `site/book/src/SUMMARY.md` and `site/book/src/guides/index.md`, then run `site/tools/build.sh`, lychee and `npm run a11y` (quickstart.md) and fix any failures
+- [x] T010 [P] [US1] Write `site/book/src/guides/macos.md`: Homebrew (tap, install, `brew services start`) or the .pkg, then opening the web UI, signing in, the first sync, and updates via `brew upgrade` or the in-app update for .pkg
+- [x] T011 [P] [US1] Write `site/book/src/guides/windows.md`: the installer or winget, opening the web UI, signing in, the first sync, and updates (the in-app installer update, or `winget upgrade`)
+- [x] T012 [P] [US1] Write `site/book/src/guides/linux.md`: sections for snap (with its interface connections), .deb and the standalone binary (with a systemd unit), each going to the same "open the web UI and sign in" steps; and updates per method
+- [x] T013 [US1] Add the seven setup guides to `site/book/src/SUMMARY.md` and `site/book/src/guides/index.md`, then run `site/tools/build.sh`, lychee and `npm run a11y` (quickstart.md) and fix any failures
 - [ ] T014 [US1] Walk through macOS (this Mac), Unraid (a second container on Mnemosyne with its own port and config path, removed afterwards) and Docker. Correct each guide where a step differs, and time SC-001. Never print the NAS token or config.
-- [ ] T015 [US1] Refresh docs translations with `site/tools/translate-docs.py` (quickstart.md) and commit `site/i18n/*.json`
-- [ ] T016 [US1] Add a CHANGELOG `[Unreleased]` line, and open draft PR A with a walk-through checklist per guide: Claude for macOS/Unraid/Docker, the maintainer for Windows/Linux/TrueNAS, and the Pi marked untested
+- [x] T015 [US1] Refresh docs translations with `site/tools/translate-docs.py` (quickstart.md) and commit `site/i18n/*.json`
+- [x] T016 [US1] Add a CHANGELOG `[Unreleased]` line, and open draft PR A with a walk-through checklist per guide: Claude for macOS/Unraid/Docker, the maintainer for Windows/Linux/TrueNAS, and the Pi marked untested
 
 **Checkpoint**: PR A merged once the maintainer's walk-throughs are ticked; the setup guides are live.
 
