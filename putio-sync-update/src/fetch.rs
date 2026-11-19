@@ -234,12 +234,43 @@ pub(crate) async fn small(
     let asset = release
         .asset(name)
         .ok_or_else(|| PrepareError::Missing(name.to_string()))?;
-    let response = get(client, asset).await?;
-    let bytes = response
-        .bytes()
+    let mut response = get(client, asset).await?;
+    let too_big =
+        || PrepareError::Download(format!("{name} is larger than {MAX_SMALL_BYTES} bytes"));
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_SMALL_BYTES)
+    {
+        return Err(too_big());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|e| PrepareError::Download(e.without_url().to_string()))?;
-    Ok(bytes.to_vec())
+        .map_err(|e| PrepareError::Download(e.without_url().to_string()))?
+    {
+        if (bytes.len() + chunk.len()) as u64 > MAX_SMALL_BYTES {
+            return Err(too_big());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+/// The most a checksum list or signature may be: they are a few hundred bytes
+const MAX_SMALL_BYTES: u64 = 512 * 1024;
+
+/// The most a binary may be when the release doesn't list its size
+const MAX_BINARY_BYTES: u64 = 256 * 1024 * 1024;
+
+/// How much of `asset` to accept: its listed size (a server that sends more is not
+/// serving what the release says), or [`MAX_BINARY_BYTES`] when none is listed
+fn download_cap(asset: &Asset) -> u64 {
+    if asset.size > 0 {
+        asset.size.min(MAX_BINARY_BYTES)
+    } else {
+        MAX_BINARY_BYTES
+    }
 }
 
 async fn get(client: &reqwest::Client, asset: &Asset) -> Result<reqwest::Response, PrepareError> {
@@ -281,11 +312,21 @@ pub(crate) async fn download_to(
         .map_err(|e| PrepareError::Io(e.to_string()))?;
     let mut hasher = Sha256::new();
     progress.reset();
+    let cap = download_cap(asset);
+    let too_big = || PrepareError::Download(format!("{} is larger than {cap} bytes", asset.name));
+    if response.content_length().is_some_and(|n| n > cap) {
+        return Err(too_big());
+    }
+    let mut received = 0u64;
     while let Some(chunk) = response
         .chunk()
         .await
         .map_err(|e| PrepareError::Download(e.without_url().to_string()))?
     {
+        received += chunk.len() as u64;
+        if received > cap {
+            return Err(too_big());
+        }
         hasher.update(&chunk);
         file.write_all(&chunk)
             .map_err(|e| PrepareError::Io(e.to_string()))?;
@@ -434,6 +475,34 @@ mod tests {
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect()
+    }
+
+    #[tokio::test]
+    async fn refuses_more_bytes_than_the_release_lists() {
+        let f = fixture();
+        let t = target();
+        let mut server = mockito::Server::new_async().await;
+        let files = [(t.full(v("0.4.0")).leak() as &str, f.full_xz.clone())];
+        let mut rel = release(&mut server, &files, &sums_for(&f)).await;
+        // The release says the asset is smaller than what the server sends
+        for asset in rel.assets.iter_mut().filter(|a| a.name.ends_with(".xz")) {
+            asset.size = 4;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let err = run(&rel, &f, dir.path()).await.unwrap_err();
+        assert!(err.to_string().contains("larger than"), "{err}");
+        assert!(left_in(dir.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn refuses_an_oversized_checksum_list() {
+        let mut server = mockito::Server::new_async().await;
+        let big = vec![b'a'; (MAX_SMALL_BYTES + 1) as usize];
+        let rel = release(&mut server, &[], std::str::from_utf8(&big).unwrap()).await;
+        let err = small(&crate::github::client(), &rel, SUMS)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("larger than"), "{err}");
     }
 
     #[tokio::test]

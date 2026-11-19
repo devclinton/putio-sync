@@ -14,6 +14,25 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Security
 
+- A request that came through a reverse proxy on the same machine no longer counts as a
+  Tailscale sign-in, so a forged `Tailscale-User-Login` header can't get in. Identity sign-in
+  still works with `tailscale serve` or a direct tailnet connection.
+- Writes made with a Tailscale identity or Basic credentials are refused when the browser says
+  they come from another site, or when the Origin doesn't match the address used.
+- Signing out now ends that session on the server too, so a copied cookie stops working.
+- Webhook, hook and settings views no longer show any part of a URL's path, so tokens in paths
+  (Telegram bots, for example) are not exposed. Only the scheme, host and port are shown.
+- A config file with a syntax error no longer prints the offending line, which could hold a
+  password or token.
+- The web UI and API send nosniff, no-referrer, frame-denial and Content-Security-Policy
+  headers.
+- IPv6 clients are rate-limited by /64.
+- Update downloads are capped: 512 KiB for the checksum list and signature, and the listed
+  size for the binary.
+- Plugins can no longer write through a symlink to a missing path outside their folders.
+- Hook item files are created with a random name, private permissions and exclusive creation.
+- A warning is logged when the metrics port is open on a non-loopback address; it has no
+  authentication.
 - Updated lettre (SMTP) and quick-xml (DLNA) to fix their published advisories, and login no
   longer pulls in a second, outdated HTTP and TLS stack.
 

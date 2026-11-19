@@ -7,7 +7,7 @@
 
 use axum::extract::{ConnectInfo, Request};
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -16,6 +16,19 @@ pub const AUTH_FAILURE_LIMIT: u32 = 5;
 
 /// Length of the failure window
 pub const AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(60);
+
+/// The key an address is counted under: IPv4 as is, IPv6 by its /64, since one host
+/// usually holds a whole /64 and could otherwise rotate addresses past the limit
+fn bucket(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => {
+            let mut octets = v6.octets();
+            octets[8..].fill(0);
+            IpAddr::V6(Ipv6Addr::from(octets))
+        }
+        v4 => v4,
+    }
+}
 
 /// Failed-authentication counter keyed by client IP
 pub struct AuthLimiter {
@@ -36,6 +49,7 @@ impl AuthLimiter {
 
     /// `Err(seconds left in the window)` when `ip` has used up its failures
     pub fn check(&self, ip: IpAddr) -> Result<(), u64> {
+        let ip = bucket(ip);
         let map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         match map.get(&ip) {
             Some((start, failures)) if *failures >= self.limit => {
@@ -55,6 +69,7 @@ impl AuthLimiter {
 
     /// Count a failure for `ip` and return its failures in the current window
     pub fn record_failure(&self, ip: IpAddr) -> u32 {
+        let ip = bucket(ip);
         let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         let window = self.window;
@@ -105,6 +120,19 @@ mod tests {
         assert!(limiter.check(ip(1)).is_ok());
         assert_eq!(limiter.record_failure(ip(1)), 1, "expired window resets");
         assert!(limiter.check(ip(1)).is_ok());
+    }
+
+    #[test]
+    fn ipv6_clients_share_their_64() {
+        let limiter = AuthLimiter::new(AUTH_FAILURE_LIMIT, AUTH_FAILURE_WINDOW);
+        for n in 1..=5u16 {
+            let addr: IpAddr = format!("2001:db8:1:2::{n:x}").parse().unwrap();
+            limiter.record_failure(addr);
+        }
+        let same_64: IpAddr = "2001:db8:1:2:aaaa::1".parse().unwrap();
+        assert!(limiter.check(same_64).is_err());
+        let other_64: IpAddr = "2001:db8:1:3::1".parse().unwrap();
+        assert!(limiter.check(other_64).is_ok());
     }
 
     #[test]

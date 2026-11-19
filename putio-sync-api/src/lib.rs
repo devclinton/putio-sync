@@ -418,8 +418,9 @@ fn build_arr(
     Some(routes::arr::ArrRpc::new(service))
 }
 
-/// How often held magnets are looked at (043); each has its own next ask time
-const HOLD_TICK: std::time::Duration = std::time::Duration::from_secs(10);
+/// How often held magnets are looked at (043); each has its own next ask time, so a
+/// minute is fine and keeps an idle server quiet
+const HOLD_TICK: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Ask the caches again about held magnets that are due. Outside a runtime (some unit
 /// tests build the state without one) nothing runs.
@@ -514,6 +515,7 @@ pub fn router(state: AppState) -> Router {
 
     public_routes(state)
         .merge(protected)
+        .layer(axum::middleware::map_response(security_headers))
         .layer(
             TraceLayer::new_for_http().make_span_with(|req: &axum::http::Request<_>| {
                 // The callback token is a credential: it never reaches a log line
@@ -521,6 +523,30 @@ pub fn router(state: AppState) -> Router {
                 tracing::info_span!("request", method = %req.method(), uri = %path)
             }),
         )
+}
+
+/// The Content-Security-Policy of the web UI and the API. The UI loads only its own
+/// scripts and stylesheet (no inline script or style, no eval), inline SVG icons as
+/// `data:` URLs, and talks only to this server.
+pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; \
+     style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; \
+     base-uri 'none'; form-action 'self'; object-src 'none'; frame-ancestors 'none'";
+
+/// Add the browser hardening headers to every response, unless a handler set its own
+async fn security_headers(mut response: axum::response::Response) -> axum::response::Response {
+    use axum::http::{header::HeaderName, HeaderValue};
+    let headers = response.headers_mut();
+    for (name, value) in [
+        ("x-content-type-options", "nosniff"),
+        ("referrer-policy", "no-referrer"),
+        ("x-frame-options", "DENY"),
+        ("content-security-policy", CONTENT_SECURITY_POLICY),
+    ] {
+        headers
+            .entry(HeaderName::from_static(name))
+            .or_insert(HeaderValue::from_static(value));
+    }
+    response
 }
 
 /// Routes that answer without a token: health, sign-in, and the web UI page and its

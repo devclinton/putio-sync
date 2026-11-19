@@ -45,11 +45,9 @@ export function targetLabel(row) {
       return "<invalid url>";
     }
     if (!/^https?:$/.test(u.protocol)) return "<invalid url>";
-    const [first, ...more] = u.pathname.split("/").filter(Boolean);
-    let out = `${u.protocol}//${u.host}${first ? `/${first}` : ""}`;
-    if (more.length) out += "/…";
-    else if (u.search) out += "…";
-    return out;
+    // Any part of the path or query can be the secret, so none of it is shown
+    const hasPath = u.pathname.split("/").some(Boolean);
+    return `${u.protocol}//${u.host}${hasPath || u.search ? "/…" : ""}`;
   }
   return row.program.trim();
 }

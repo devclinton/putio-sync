@@ -96,7 +96,10 @@ pub async fn require_auth(
             if sign_in.password.is_set() && signin::basic_credentials(&value).is_some() =>
         {
             if signin::basic_matches(&state.sign_in, &value, &sign_in.password).await {
-                if is_write(request.method()) && cross_site(request.headers()) {
+                if is_write(request.method())
+                    && (cross_site(request.headers())
+                        || origin_mismatch(request.headers(), sign_in.base_url()))
+                {
                     return Err(ApiError::Forbidden(
                         "Cross-site writes with Basic credentials are refused".to_string(),
                     ));
@@ -139,6 +142,16 @@ pub async fn require_auth(
         .get::<ConnectInfo<SocketAddr>>()
         .map(|ConnectInfo(addr)| *addr);
     if let Some(identity) = tailscale_identity(&state, request.headers(), peer).await {
+        // Like Basic, the identity is ambient: a browser on the tailnet sends it for
+        // any site that asks, so a write must not come from another origin
+        if is_write(request.method())
+            && (cross_site(request.headers())
+                || origin_mismatch(request.headers(), sign_in.base_url()))
+        {
+            return Err(ApiError::Forbidden(
+                "Cross-site writes with a Tailscale identity are refused".to_string(),
+            ));
+        }
         let mut request = request;
         request.extensions_mut().insert(identity);
         return Ok(next.run(request).await);
@@ -168,6 +181,15 @@ pub async fn tailscale_identity(
         return None;
     }
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    // The headers only mean something when `tailscale serve` set them. A reverse proxy
+    // on this machine connects from loopback too, and passes the client's own
+    // `Tailscale-User-Login` through, so a proxied request has no identity.
+    if peer.is_some_and(|p| p.ip().to_canonical().is_loopback()) && proxied(headers) {
+        if header(TAILSCALE_USER_LOGIN).is_some() {
+            warn_proxied_once();
+        }
+        return None;
+    }
     let lookup = state
         .tailscale
         .identity_for(
@@ -197,6 +219,70 @@ pub async fn tailscale_identity(
             None
         }
     }
+}
+
+/// Whether a request carries reverse-proxy forwarding headers that `tailscale serve`
+/// does not send. `tailscale serve` may add an `X-Forwarded-For` (and `-Host`/`-Proto`)
+/// naming the tailnet client, so those pass; `Forwarded`, `X-Real-IP`, an
+/// `X-Forwarded-For` with an address outside the tailnet, or an `X-Forwarded-Host` with
+/// no tailnet `X-Forwarded-For` mean another proxy handled the request.
+pub fn proxied(headers: &HeaderMap) -> bool {
+    if headers.contains_key("forwarded") || headers.contains_key("x-real-ip") {
+        return true;
+    }
+    let mut forwarded_for = headers.get_all("x-forwarded-for").iter().peekable();
+    if forwarded_for.peek().is_none() {
+        return headers.contains_key("x-forwarded-host");
+    }
+    !forwarded_for.all(|v| {
+        v.to_str().is_ok_and(|v| {
+            v.split(',').all(|part| {
+                part.trim()
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(putio_sync_tailscale::is_tailnet_ip)
+            })
+        })
+    })
+}
+
+fn warn_proxied_once() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        warn!(
+            "Ignoring Tailscale-User-Login on a request that came through a reverse proxy \
+             (X-Forwarded-For, X-Forwarded-Host, Forwarded or X-Real-IP is set): the header \
+             could be forged by the client. Tailscale identity sign-in works with \
+             `tailscale serve` or a direct tailnet connection, not behind another proxy."
+        );
+    });
+}
+
+/// Whether the request has an `Origin` that isn't the host it was sent to: the `Host`
+/// header, the proxy's `X-Forwarded-Host`, or the host of `public_url`. Requests without
+/// an `Origin` (scripts, curl, same-origin GETs) are never refused for it.
+fn origin_mismatch(headers: &HeaderMap, public_url: Option<&str>) -> bool {
+    let Some(origin) = headers.get("origin").and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    let authority = |url: &str| {
+        url.split_once("://")
+            .map(|(_, rest)| rest)
+            .unwrap_or(url)
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase()
+    };
+    let origin = authority(origin);
+    let matches = |value: &str| value.trim().to_ascii_lowercase() == origin;
+    let hosts = ["host", "x-forwarded-host"].iter().any(|name| {
+        headers
+            .get_all(*name)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .any(|v| v.split(',').any(matches))
+    });
+    !(hosts || public_url.is_some_and(|u| authority(u) == origin))
 }
 
 /// Whether `method` changes something (anything but GET, HEAD and OPTIONS)
@@ -262,6 +348,67 @@ fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.append(
+                axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                v.parse().unwrap(),
+            );
+        }
+        h
+    }
+
+    #[test]
+    fn proxied_detects_forwarding_headers() {
+        assert!(!proxied(&headers(&[])));
+        assert!(!proxied(&headers(&[("x-forwarded-for", "100.64.1.2")])));
+        assert!(!proxied(&headers(&[
+            ("x-forwarded-for", "fd7a:115c:a1e0::1"),
+            ("x-forwarded-host", "nas.tail1234.ts.net"),
+        ])));
+        assert!(proxied(&headers(&[("x-forwarded-for", "203.0.113.9")])));
+        assert!(proxied(&headers(&[(
+            "x-forwarded-for",
+            "100.64.1.2, 203.0.113.9"
+        )])));
+        assert!(proxied(&headers(&[(
+            "x-forwarded-host",
+            "nas.example.net"
+        )])));
+        assert!(proxied(&headers(&[("forwarded", "for=203.0.113.9")])));
+        assert!(proxied(&headers(&[("x-real-ip", "100.64.1.2")])));
+    }
+
+    #[test]
+    fn origin_must_match_host() {
+        assert!(!origin_mismatch(&headers(&[("host", "nas:8080")]), None));
+        let same = headers(&[("host", "nas:8080"), ("origin", "http://nas:8080")]);
+        assert!(!origin_mismatch(&same, None));
+        let other = headers(&[("host", "nas:8080"), ("origin", "https://evil.example")]);
+        assert!(origin_mismatch(&other, None));
+        assert!(origin_mismatch(
+            &headers(&[("host", "nas"), ("origin", "null")]),
+            None
+        ));
+        // A proxy that rewrites Host: the forwarded host or public_url still match
+        let proxied_host = headers(&[
+            ("host", "127.0.0.1:8080"),
+            ("x-forwarded-host", "sync.example.net"),
+            ("origin", "https://sync.example.net"),
+        ]);
+        assert!(!origin_mismatch(&proxied_host, None));
+        let rewritten = headers(&[
+            ("host", "127.0.0.1:8080"),
+            ("origin", "https://sync.example.net"),
+        ]);
+        assert!(origin_mismatch(&rewritten, None));
+        assert!(!origin_mismatch(
+            &rewritten,
+            Some("https://sync.example.net/")
+        ));
+    }
 
     #[test]
     fn test_validate_token_with_bearer() {

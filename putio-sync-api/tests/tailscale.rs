@@ -361,3 +361,118 @@ fn short_dir() -> tempfile::TempDir {
         .tempdir_in("/tmp")
         .unwrap()
 }
+
+/// `method path` from `peer` with no token, and `headers`
+async fn send_from(
+    app: &TestApp,
+    method: Method,
+    path: &str,
+    peer: Option<SocketAddr>,
+    headers: &[(&str, &str)],
+) -> Response {
+    let mut builder = Request::builder().method(method).uri(path);
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    let mut request = builder.body(Body::empty()).unwrap();
+    if let Some(peer) = peer {
+        request.extensions_mut().insert(ConnectInfo(peer));
+    }
+    app.send(request).await
+}
+
+#[tokio::test]
+async fn a_reverse_proxy_on_this_machine_gets_no_identity() {
+    let (_dir, app) = running_app(sign_in_for(&["alice@example.com"])).await;
+    // nginx or Caddy on 127.0.0.1 passes the client's own header through
+    let proxied: &[&[(&str, &str)]] = &[
+        &[
+            ("Tailscale-User-Login", "alice@example.com"),
+            ("X-Forwarded-For", "203.0.113.9"),
+        ],
+        &[
+            ("Tailscale-User-Login", "alice@example.com"),
+            ("X-Forwarded-Host", "sync.example.net"),
+        ],
+        &[
+            ("Tailscale-User-Login", "alice@example.com"),
+            ("Forwarded", "for=203.0.113.9"),
+        ],
+        &[
+            ("Tailscale-User-Login", "alice@example.com"),
+            ("X-Real-IP", "203.0.113.9"),
+        ],
+    ];
+    for headers in proxied {
+        let response = from_peer(&app, "/status", loopback(), headers).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{headers:?}");
+    }
+    // `tailscale serve` names the tailnet client in X-Forwarded-For
+    let serve = &[
+        ("Tailscale-User-Login", "alice@example.com"),
+        ("X-Forwarded-For", "100.90.1.2"),
+        ("X-Forwarded-Host", "nas.tail1234.ts.net"),
+    ];
+    let response = from_peer(&app, "/status", loopback(), serve).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn identity_writes_refuse_cross_site_requests() {
+    let (_dir, app) = running_app(sign_in_for(&["alice@example.com"])).await;
+    let from = |extra: &[(&'static str, &'static str)]| {
+        let mut h = SERVE_ALICE.to_vec();
+        h.extend_from_slice(extra);
+        h
+    };
+    // The same-site UI, a script (no Origin), and a proxy-rewritten Host all pass
+    let ok: &[&[(&str, &str)]] = &[
+        &[
+            ("Host", "nas.tail1234.ts.net"),
+            ("Origin", "https://nas.tail1234.ts.net"),
+        ],
+        &[("Sec-Fetch-Site", "same-origin")],
+        &[],
+    ];
+    for extra in ok {
+        let response = send_from(
+            &app,
+            Method::POST,
+            "/update/dismiss",
+            loopback(),
+            &from(extra),
+        )
+        .await;
+        assert_ne!(response.status(), StatusCode::FORBIDDEN, "{extra:?}");
+        assert_ne!(response.status(), StatusCode::UNAUTHORIZED, "{extra:?}");
+    }
+    // A body-less POST (no JSON content type) from another site, such as /update/apply
+    let bad: &[&[(&str, &str)]] = &[
+        &[("Sec-Fetch-Site", "cross-site")],
+        &[
+            ("Host", "nas.tail1234.ts.net"),
+            ("Origin", "https://evil.example"),
+        ],
+    ];
+    for extra in bad {
+        let response = send_from(
+            &app,
+            Method::POST,
+            "/update/apply",
+            loopback(),
+            &from(extra),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{extra:?}");
+    }
+    // Reads are not affected
+    let response = send_from(
+        &app,
+        Method::GET,
+        "/status",
+        loopback(),
+        &from(&[("Sec-Fetch-Site", "cross-site")]),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}

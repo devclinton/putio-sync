@@ -260,6 +260,16 @@ pub async fn password(State(state): State<AppState>, request: Request) -> Respon
 ///
 /// POST /auth/logout
 pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    // Sessions are signed, not stored: remember this one as signed out, so a copy of
+    // the cookie stops working too
+    if let (Some(value), Some(key)) = (
+        session::cookie(&headers, session::COOKIE_NAME),
+        state.sign_in.key(),
+    ) {
+        if let Some(found) = session::verify(&key, value) {
+            state.sign_in.revoke(value, found.exp);
+        }
+    }
     let public = state
         .config
         .read()

@@ -17,9 +17,10 @@ test("runs read as people say them", () => {
 
 test("targets hide what a URL may carry", () => {
   const row = { ...blankHook(), kind: "url" };
-  assert.equal(targetLabel({ ...row, url: "https://u:pw@ha.local:8123/api/webhook/abc?token=x" }), "https://ha.local:8123/api/…");
-  assert.equal(targetLabel({ ...row, url: "http://10.0.0.2/hook" }), "http://10.0.0.2/hook");
-  assert.equal(targetLabel({ ...row, url: "https://h/hook?token=s" }), "https://h/hook…");
+  assert.equal(targetLabel({ ...row, url: "https://u:pw@ha.local:8123/api/webhook/abc?token=x" }), "https://ha.local:8123/…");
+  assert.equal(targetLabel({ ...row, url: "http://10.0.0.2/hook" }), "http://10.0.0.2/…");
+  assert.equal(targetLabel({ ...row, url: "https://h/hook?token=s" }), "https://h/…");
+  assert.equal(targetLabel({ ...row, url: "https://api.telegram.org/bot1:SECRET/sendMessage" }), "https://api.telegram.org/…");
   assert.equal(targetLabel({ ...row, url: "nope" }), "<invalid url>");
   assert.equal(targetLabel({ ...blankHook(), program: " /config/run.sh " }), "/config/run.sh");
 });

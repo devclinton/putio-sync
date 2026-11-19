@@ -163,7 +163,7 @@ async fn a_slow_server_times_out_without_leaking_the_url() {
     let error = run.error.unwrap();
     assert_eq!(
         error,
-        format!("timed out after 1 s calling http://{}/api/…", addr)
+        format!("timed out after 1 s calling http://{}/…", addr)
     );
 }
 
@@ -182,6 +182,6 @@ async fn a_refused_connection_is_retried_then_fails() {
     assert_eq!(run.attempts, 3);
     assert_eq!(
         run.error.as_deref(),
-        Some(format!("could not connect to http://{}/hook…", addr).as_str())
+        Some(format!("could not connect to http://{}/…", addr).as_str())
     );
 }

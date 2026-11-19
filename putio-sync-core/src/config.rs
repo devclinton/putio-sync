@@ -1435,8 +1435,11 @@ impl Config {
         eprintln!("📝 Config file size: {} bytes", contents.len());
         eprintln!("🔧 Parsing TOML configuration...");
         let mut config: Config = toml::from_str(&contents).map_err(|e| {
-            eprintln!("❌ Failed to parse TOML: {}", e);
-            e
+            // Not the error's own text: it quotes the offending source line, which
+            // may hold a token or password
+            let summary = toml_error_summary(&contents, &e);
+            eprintln!("❌ Failed to parse TOML: {}", summary);
+            CoreError::ConfigError(summary)
         })?;
 
         eprintln!("✅ TOML parsing successful");
@@ -3049,8 +3052,59 @@ fn write_atomically(
     })
 }
 
+/// A TOML parse error as its message and line:column, without the source snippet
+/// `toml` adds, and with quoted values in the message blanked
+fn toml_error_summary(contents: &str, error: &toml::de::Error) -> String {
+    let mut message = String::new();
+    let mut quoted = false;
+    for c in error.message().chars() {
+        match (c, quoted) {
+            ('"', false) => {
+                quoted = true;
+                message.push_str("\"…\"");
+            }
+            ('"', true) => quoted = false,
+            (_, false) => message.push(c),
+            _ => {}
+        }
+    }
+    match error.span() {
+        Some(span) => {
+            let before = &contents[..span.start.min(contents.len())];
+            let line = before.matches('\n').count() + 1;
+            let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+            format!("{message} (line {line}, column {column})")
+        }
+        None => message,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn buffer_size_is_capped() {
+        let mut config = super::Config::default();
+        config.download.buffer_size_mb = super::MAX_BUFFER_SIZE_MB;
+        assert!(config.validate().is_ok());
+        config.download.buffer_size_mb = super::MAX_BUFFER_SIZE_MB + 1;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn toml_errors_do_not_quote_the_source() {
+        let text = "[putio]\ntoken = \"super-secret-token\"\nbad = = 1\n";
+        let error = toml::from_str::<toml::Table>(text).unwrap_err();
+        let summary = super::toml_error_summary(text, &error);
+        assert!(!summary.contains("super-secret-token"), "{summary}");
+        assert!(summary.contains("line 3"), "{summary}");
+
+        let text = "[download]\nmax_concurrent = \"hunter2\"\n";
+        let error = toml::from_str::<super::Config>(text).unwrap_err();
+        let summary = super::toml_error_summary(text, &error);
+        assert!(!summary.contains("hunter2"), "{summary}");
+        assert!(summary.contains("line 2"), "{summary}");
+    }
+
     #[test]
     fn updates_section_defaults_and_round_trips() {
         // feature 055: a config without [updates] checks, and saves without the section
