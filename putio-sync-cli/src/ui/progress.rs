@@ -7,6 +7,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle as
 use putio_sync_core::config::ProgressStyle;
 use putio_sync_download::ProgressCallback;
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -48,7 +49,7 @@ impl ProgressDisplay {
         let multi = MultiProgress::new();
 
         // Detect if we're in an interactive terminal
-        if !atty::is(atty::Stream::Stdout) || style == ProgressStyle::None {
+        if !std::io::stdout().is_terminal() || style == ProgressStyle::None {
             multi.set_draw_target(ProgressDrawTarget::hidden());
         }
 

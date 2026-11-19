@@ -80,14 +80,12 @@ tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# Terminal detection
-atty = "0.2"
-
 # Browser opening
 open = "5.0"
 
-# OAuth 2.0
-oauth2 = "4.4"
+# OAuth 2.0 authorize URL and CSRF state
+base64 = "0.22"
+getrandom = "0.2"
 
 # Environment variables
 dotenvy = "0.15"
@@ -105,7 +103,7 @@ reqwest = { workspace = true }
 urlencoding = "2.1"
 
 # Progress bars
-indicatif = "0.17"
+indicatif = "0.18"
 
 # Signal handling
 ctrlc = "3.4"
@@ -149,3 +147,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [[test]]
 name = "update_trial"
 required-features = ["server"]
+
+# The static Linux builds are musl, whose malloc is slow under tokio's worker threads
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = { version = "0.1", default-features = false }

@@ -12,6 +12,15 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Security
+
+- Updated lettre (SMTP) and quick-xml (DLNA) to fix their published advisories, and login no
+  longer pulls in a second, outdated HTTP and TLS stack.
+
+### Changed
+
+- Release builds use thin LTO, and static Linux builds use the mimalloc allocator.
+
 ## [0.5.0] - 2026-11-17
 
 ### Added

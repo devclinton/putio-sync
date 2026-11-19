@@ -1,7 +1,7 @@
 //! SOAP for UPnP control: reading an action, writing a reply or a fault (feature 022).
 
 use quick_xml::events::Event;
-use quick_xml::Reader;
+use quick_xml::{Reader, XmlVersion};
 use std::collections::HashMap;
 
 /// ContentDirectory service type
@@ -53,14 +53,12 @@ impl Action {
 #[error("not a SOAP action: {0}")]
 pub struct ParseError(pub String);
 
-fn local(name: &[u8]) -> String {
-    let s = String::from_utf8_lossy(name);
-    s.rsplit(':').next().unwrap_or("").to_string()
+fn local(name: &str) -> String {
+    name.rsplit(':').next().unwrap_or("").to_string()
 }
 
-fn prefix(name: &[u8]) -> Option<String> {
-    let s = String::from_utf8_lossy(name);
-    s.split_once(':').map(|(p, _)| p.to_string())
+fn prefix(name: &str) -> Option<String> {
+    name.split_once(':').map(|(p, _)| p.to_string())
 }
 
 /// Read the action from a SOAP envelope. Namespace prefixes don't matter.
@@ -95,14 +93,22 @@ fn walk(body: &str) -> Result<Action, ParseError> {
             Event::Text(t) => {
                 if depth == 4 {
                     if let Some((_, v)) = arg.as_mut() {
-                        v.push_str(&t.unescape().map_err(|e| ParseError(e.to_string()))?);
+                        v.push_str(&t.xml10_content());
+                    }
+                }
+            }
+            // Entity and character references arrive as their own events
+            Event::GeneralRef(r) => {
+                if depth == 4 {
+                    if let Some((_, v)) = arg.as_mut() {
+                        v.push(resolve_ref(&r)?);
                     }
                 }
             }
             Event::CData(t) => {
                 if depth == 4 {
                     if let Some((_, v)) = arg.as_mut() {
-                        v.push_str(&String::from_utf8_lossy(&t.into_inner()));
+                        v.push_str(&t.xml10_content());
                     }
                 }
             }
@@ -121,6 +127,24 @@ fn walk(body: &str) -> Result<Action, ParseError> {
     action.ok_or_else(|| ParseError("no action in the body".into()))
 }
 
+/// One `&name;` or `&#N;` reference: the five predefined entities and character references
+fn resolve_ref(r: &quick_xml::events::BytesRef<'_>) -> Result<char, ParseError> {
+    if let Some(c) = r
+        .resolve_char_ref()
+        .map_err(|e| ParseError(e.to_string()))?
+    {
+        return Ok(c);
+    }
+    match &**r {
+        "lt" => Ok('<'),
+        "gt" => Ok('>'),
+        "amp" => Ok('&'),
+        "apos" => Ok('\''),
+        "quot" => Ok('"'),
+        other => Err(ParseError(format!("unknown entity &{other};"))),
+    }
+}
+
 fn open(
     e: &quick_xml::events::BytesStart<'_>,
     depth: usize,
@@ -130,9 +154,9 @@ fn open(
     arg: &mut Option<(String, String)>,
 ) {
     for a in e.attributes().flatten() {
-        let key = String::from_utf8_lossy(a.key.as_ref()).to_string();
+        let key = a.key.as_ref().to_string();
         let val = a
-            .unescape_value()
+            .normalized_value(XmlVersion::Implicit1_0)
             .map(|v| v.to_string())
             .unwrap_or_default();
         if key == "xmlns" {
@@ -264,5 +288,18 @@ mod tests {
     #[test]
     fn escape_drops_control_characters() {
         assert_eq!(escape("a\u{1}b&"), "ab&amp;");
+    }
+
+    #[test]
+    fn resolves_entities_and_character_references_in_arguments() {
+        let body = BROWSE.replace("downloads/A%20%26%20B", "a &amp; b &lt;&#65;&#x42;&gt;");
+        let action = parse_action(&body).unwrap();
+        assert_eq!(action.arg("ObjectID"), Some("a & b <AB>"));
+    }
+
+    #[test]
+    fn rejects_an_unknown_entity() {
+        let body = BROWSE.replace("downloads/A%20%26%20B", "&bogus;");
+        assert!(parse_action(&body).is_err());
     }
 }

@@ -4,9 +4,6 @@
 
 use anyhow::{anyhow, Context, Result};
 use axum::{extract::Query, response::Html, routing::get, Router};
-use oauth2::{
-    basic::BasicClient, AuthUrl, ClientId, ClientSecret, CsrfToken, RedirectUrl, Scope, TokenUrl,
-};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthConfig, Config};
 use serde::Deserialize;
@@ -68,14 +65,8 @@ pub async fn execute_login(
     // Load OAuth configuration from .env file
     let oauth_config = load_oauth_config()?;
 
-    // Create OAuth client
-    let client = create_oauth_client(&oauth_config)?;
-
     // Generate authorization URL
-    let (auth_url, csrf_token) = client
-        .authorize_url(CsrfToken::new_random)
-        .add_scope(Scope::new("*".to_string()))
-        .url();
+    let (auth_url, csrf_token) = build_authorize_url(&oauth_config)?;
 
     println!("Step 1: Starting local callback server");
     println!("-------------------------------");
@@ -89,7 +80,7 @@ pub async fn execute_login(
     let (tx, rx) = oneshot::channel::<Result<String>>();
 
     // Start callback server
-    let app = create_callback_app(tx, csrf_token.secret().clone());
+    let app = create_callback_app(tx, csrf_token);
 
     // Bind TCP listener
     let listener = tokio::net::TcpListener::bind(addr)
@@ -275,19 +266,29 @@ fn load_oauth_config() -> Result<OAuthConfig> {
     })
 }
 
-/// Create OAuth client
-fn create_oauth_client(config: &OAuthConfig) -> Result<BasicClient> {
-    let client = BasicClient::new(
-        ClientId::new(config.client_id.clone()),
-        Some(ClientSecret::new(config.client_secret.clone())),
-        AuthUrl::new(PUTIO_AUTH_URL.to_string()).context("Invalid authorization URL")?,
-        Some(TokenUrl::new(PUTIO_TOKEN_URL.to_string()).context("Invalid token URL")?),
-    )
-    .set_redirect_uri(
-        RedirectUrl::new(config.redirect_uri.clone()).context("Invalid redirect URI")?,
-    );
+/// Build the authorization URL (response_type=code, client_id, redirect_uri, scope=*,
+/// state) and the random CSRF state it carries
+fn build_authorize_url(config: &OAuthConfig) -> Result<(url::Url, String)> {
+    let state = new_csrf_token()?;
+    let mut url = url::Url::parse(PUTIO_AUTH_URL).context("Invalid authorization URL")?;
+    // Reject a redirect URI that isn't a URL before it goes in the query
+    url::Url::parse(&config.redirect_uri).context("Invalid redirect URI")?;
+    url.query_pairs_mut()
+        .append_pair("response_type", "code")
+        .append_pair("client_id", &config.client_id)
+        .append_pair("state", &state)
+        .append_pair("redirect_uri", &config.redirect_uri)
+        .append_pair("scope", "*");
+    Ok((url, state))
+}
 
-    Ok(client)
+/// 128 random bits, base64url without padding
+fn new_csrf_token() -> Result<String> {
+    use base64::Engine;
+    let mut bytes = [0u8; 16];
+    getrandom::getrandom(&mut bytes)
+        .map_err(|e| anyhow!("No random bytes for the CSRF token: {e}"))?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
 }
 
 /// Extract port from redirect URI
@@ -374,5 +375,39 @@ fn load_or_create_config(config_path: &PathBuf) -> Result<Config> {
     } else {
         debug!("Creating new config (file does not exist)");
         Ok(Config::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config() -> OAuthConfig {
+        OAuthConfig {
+            client_id: "id 1".into(),
+            client_secret: "secret".into(),
+            redirect_uri: "http://localhost:29876/auth/callback".into(),
+        }
+    }
+
+    #[test]
+    fn authorize_url_carries_oauth_parameters() {
+        let (url, state) = build_authorize_url(&config()).unwrap();
+        let pairs: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(url.path(), "/v2/oauth2/authenticate");
+        assert_eq!(pairs["response_type"], "code");
+        assert_eq!(pairs["client_id"], "id 1");
+        assert_eq!(
+            pairs["redirect_uri"],
+            "http://localhost:29876/auth/callback"
+        );
+        assert_eq!(pairs["scope"], "*");
+        assert_eq!(pairs["state"], state);
+        assert!(!url.as_str().contains("secret"));
+    }
+
+    #[test]
+    fn csrf_tokens_differ() {
+        assert_ne!(new_csrf_token().unwrap(), new_csrf_token().unwrap());
     }
 }
