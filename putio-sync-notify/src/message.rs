@@ -153,6 +153,11 @@ impl Grouper {
         }
     }
 
+    /// Whether any window is open, so a tick has something to close
+    pub fn has_open(&self) -> bool {
+        !self.groups.is_empty()
+    }
+
     /// Change the window; open groups keep their start
     pub fn set_window(&mut self, window: Duration) {
         self.window = window;

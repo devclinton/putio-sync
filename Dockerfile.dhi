@@ -69,6 +69,8 @@ ENV PUTIO_SYNC_IMAGE=$PUTIO_SYNC_IMAGE PUTIO_SYNC_IMAGE_VARIANT=dev
 VOLUME ["/config", "/downloads", "/watches"]
 WORKDIR /config
 EXPOSE 9742 15432
+# The daemon is PID 1 and handles SIGTERM itself (graceful stop, then exit)
+STOPSIGNAL SIGTERM
 CMD ["putio-sync", "--config", "/config/config.toml", "daemon", "--download-interval", "60", "--watch-interval", "60"]
 
 FROM dev AS dev-ffmpeg
@@ -86,6 +88,8 @@ ENV PUTIO_SYNC_IMAGE=$PUTIO_SYNC_IMAGE PUTIO_SYNC_IMAGE_VARIANT=dhi
 VOLUME ["/config", "/downloads", "/watches"]
 WORKDIR /config
 EXPOSE 9742 15432
+# The daemon is PID 1 and handles SIGTERM itself (graceful stop, then exit)
+STOPSIGNAL SIGTERM
 CMD ["putio-sync", "--config", "/config/config.toml", "daemon", "--download-interval", "60", "--watch-interval", "60"]
 
 FROM runtime AS runtime-ffmpeg

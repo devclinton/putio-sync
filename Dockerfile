@@ -197,5 +197,9 @@ ENV PUTIO_SYNC_IMAGE=$PUTIO_SYNC_IMAGE PUTIO_SYNC_IMAGE_VARIANT=latest
 # embedded in the binary; publish the ports with -p or the Unraid template.
 EXPOSE 9742 15432
 
+# The daemon runs as PID 1 and shuts down cleanly on SIGTERM (it installs a handler, so
+# no init is needed); docker stop waits up to 10 s for it
+STOPSIGNAL SIGTERM
+
 # Set default command
 CMD ["putio-sync", "--config", "/config/config.toml", "daemon", "--download-interval", "60", "--watch-interval", "60"]

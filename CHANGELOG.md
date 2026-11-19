@@ -56,10 +56,30 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - File names made only of dots or with control characters, and folder paths that would leave
   the download directory, are cleaned or refused. Two files whose names differ only in case
   no longer write at the same time.
+- The daemon stops cleanly on `docker stop` (SIGTERM): running downloads are paused with their
+  partial files kept, hooks and plugins finish their events, and the database is checkpointed
+  and closed before exit.
+- `[logging] max_backups` now deletes old daily log files.
+- Old processed torrents (90 days), Put.io free-up run records (90 days) and download history
+  (2 years) are pruned daily.
+- A .torrent file still being copied into the watch folder is no longer read half-written and
+  rejected; the watcher waits until it stops changing. Upper-case `.TORRENT` and `.MAGNET`
+  files are picked up.
+- The watch daemon's file events now archive or delete uploaded files like a scan does.
+  Archiving onto another filesystem works, and an existing archived file with the same name
+  is no longer overwritten.
 - `[download]`, `[watch]` and `[sync]` tables load with only some of their keys set, and
   `[watch] refresh_cycle` accepts values above 127.
 - `putio-sync health` exits with an error naming the file when the config file exists but
   can't be read, instead of checking default settings.
+- The legacy `server` command no longer restarts the same completed transfer download every
+  minute.
+- A panic in one hook, plugin or pipeline task no longer breaks every later one.
+- Database files with `?` or `#` in their path now open.
+- Update instructions use the right Flatpak ID (`io.github.devclinton.putio-sync`) and winget
+  ID (`devclinton.putio-sync`).
+- "Check for updates" in the command palette no longer shows an error when a check ran under a
+  minute ago, and a corrupt stored release list no longer keeps the update list empty.
 - README and the example configs match the code again: the subtitles settings, the database
   location, the Docker healthcheck and the glob patterns.
 
@@ -68,8 +88,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - Watched .torrent and .magnet files stay in the folder after upload unless
   `delete_after_upload = true` or `archive_directory` is set, also when the config has no
   `[watch]` table.
+- Lower idle CPU and wakeups: download workers wait for new work instead of polling every
+  second, and the pipeline, plugin, email, cleanup, storage, update and held-magnet loops back
+  off or sleep until due.
 - Downloads checksum faster, use less memory, and reserve disk space up front on Linux.
 - `buffer_size_mb` above 1024 is rejected when the config is loaded.
+- The doctor stops scanning for partial files after 30 s.
 - Release builds use thin LTO, and static Linux builds use the mimalloc allocator.
 - The `daemon` flags `--filter`, `--delete-after`, `--delete-empty-folders`, `--watch-only`,
   `--download-only`, `--archive-dir` and `--delete-torrents`, and `download --chunk-size`, are

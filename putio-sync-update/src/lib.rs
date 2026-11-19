@@ -37,7 +37,7 @@ pub const INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 pub const MIN_GAP: Duration = Duration::from_secs(60);
 /// How often the schedule looks at the wall clock, so a machine that slept through a
 /// check runs it soon after waking
-const TICK: Duration = Duration::from_secs(60);
+const TICK: Duration = Duration::from_secs(5 * 60);
 /// How often an automatic update looks again for transfers to finish (FR-020)
 const IDLE_RECHECK: Duration = Duration::from_secs(60);
 
@@ -432,18 +432,26 @@ impl UpdateService {
             }
         };
         let current = self.snapshot().current;
-        let releases: Vec<ReleaseInfo> = stored
+        let parsed: Option<Vec<ReleaseInfo>> = stored
             .releases_json
             .as_deref()
-            .and_then(|json| serde_json::from_str(json).ok())
-            .unwrap_or_default();
+            .and_then(|json| serde_json::from_str(json).ok());
+        // With unreadable stored releases a 304 would keep the list empty for good, so the
+        // next check must fetch in full
+        let etag = if parsed.is_none() && stored.releases_json.is_some() {
+            tracing::warn!("Stored releases could not be read; dropping the stored ETag");
+            None
+        } else {
+            stored.etag
+        };
+        let releases = parsed.unwrap_or_default();
         // An upgrade since the last check leaves only what is still newer
         let releases: Vec<ReleaseInfo> = releases
             .into_iter()
             .filter(|r| r.version > current)
             .collect();
         putio_sync_telemetry::update::set_available(!releases.is_empty());
-        *self.inner.etag.lock().unwrap() = stored.etag;
+        *self.inner.etag.lock().unwrap() = etag;
         *self.inner.never_auto.lock().unwrap() = stored.last_rolled_back.clone();
         let mut state = self.inner.state.lock().unwrap();
         state.last_attempt_at = stored.last_attempt_at;
@@ -977,6 +985,23 @@ mod tests {
         assert_eq!(snap.latest().unwrap().version, v("0.4.0"));
         assert!(snap.dismissed());
         assert_eq!(again.inner.etag.lock().unwrap().as_deref(), Some("\"e1\""));
+    }
+
+    #[tokio::test]
+    async fn unreadable_stored_releases_drop_the_stored_etag() {
+        let dir = TempDir::new().unwrap();
+        let db = Arc::new(Database::new(dir.path().join("test.db")).await.unwrap());
+        db.updates()
+            .record_check(Utc::now(), None, Some("\"e1\""), Some("not json"))
+            .await
+            .unwrap();
+        let s = service(
+            "http://127.0.0.1:9".into(),
+            UpdatesConfig::default(),
+            Some(db),
+        );
+        s.load().await;
+        assert_eq!(*s.inner.etag.lock().unwrap(), None);
     }
 
     #[tokio::test]

@@ -172,14 +172,14 @@ impl Tap {
             duration_ms: sent.then(|| took.as_millis().min(u64::MAX as u128) as u64),
             error: status.err().map(scrub),
         };
-        let mut recorded = self.recorded.lock().unwrap();
+        let mut recorded = self.recorded.lock().unwrap_or_else(|e| e.into_inner());
         if recorded.requests.len() < MAX_RECORDED {
             recorded.requests.push(record);
         }
     }
 
     pub(crate) fn record_write(&self, path: &str, bytes: usize) {
-        let mut recorded = self.recorded.lock().unwrap();
+        let mut recorded = self.recorded.lock().unwrap_or_else(|e| e.into_inner());
         if recorded.writes.len() < MAX_RECORDED {
             recorded.writes.push(FileWrite {
                 path: host::scrub(path, &self.secrets),
@@ -189,7 +189,10 @@ impl Tap {
     }
 
     pub(crate) fn set_memory(&self, bytes: u64) {
-        self.recorded.lock().unwrap().memory_bytes = Some(bytes);
+        self.recorded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .memory_bytes = Some(bytes);
     }
 }
 
@@ -432,7 +435,7 @@ fn hook_answer(hook: &str, value: &Value) -> Option<String> {
 
 /// A store's contents, secrets masked
 fn snapshot(store: &SharedStore, secrets: &[String]) -> Value {
-    let store = store.lock().unwrap();
+    let store = store.lock().unwrap_or_else(|e| e.into_inner());
     let mut out = Map::new();
     for key in store.keys() {
         if let Some(v) = store.get(&key) {
@@ -570,7 +573,7 @@ impl PluginsService {
         slot.finish();
         slot.spawn(env).map_err(|_| WorkbenchError::Unavailable)?;
         let reply = answer.await.map_err(|_| WorkbenchError::Unavailable)?;
-        let recorded = std::mem::take(&mut *tap.recorded.lock().unwrap());
+        let recorded = std::mem::take(&mut *tap.recorded.lock().unwrap_or_else(|e| e.into_inner()));
         let answer = match (&request.call, &reply.value) {
             (Call::Hook { hook, .. }, Some(v)) if reply.run.result == RunResult::Success => {
                 hook_answer(hook, v)
@@ -597,7 +600,10 @@ impl PluginsService {
     /// Run a kept run's request again
     pub async fn workbench_rerun(&self, id: u64) -> Result<Run, WorkbenchError> {
         let request = {
-            let runs = self.workbench_runs_lock().lock().unwrap();
+            let runs = self
+                .workbench_runs_lock()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             runs.1
                 .iter()
                 .find(|r| r.id == id)
@@ -609,12 +615,18 @@ impl PluginsService {
 
     /// The kept runs, newest first
     pub fn workbench_runs(&self) -> Vec<Run> {
-        let runs = self.workbench_runs_lock().lock().unwrap();
+        let runs = self
+            .workbench_runs_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         runs.1.iter().rev().cloned().collect()
     }
 
     fn keep(&self, mut run: Run) -> Run {
-        let mut runs = self.workbench_runs_lock().lock().unwrap();
+        let mut runs = self
+            .workbench_runs_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         runs.0 += 1;
         run.id = runs.0;
         if runs.1.len() >= MAX_RUNS_KEPT {

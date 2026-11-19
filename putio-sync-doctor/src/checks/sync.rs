@@ -14,6 +14,8 @@ use std::time::{Duration, SystemTime};
 pub(crate) const FAILING_RETRIES: i64 = 3;
 /// Partial files deeper than this under the download folder are not looked at
 const MAX_DEPTH: usize = 32;
+/// The longest a walk for partial files runs; a huge or slow library gets what was found
+const WALK_LIMIT: Duration = Duration::from_secs(30);
 
 /// Where a queue row downloads to, without `.` components
 pub(crate) fn target_path(target_dir: &Path, row: &QueueItem) -> PathBuf {
@@ -183,12 +185,21 @@ pub(crate) struct Partial {
     pub age: Duration,
 }
 
-/// Every partial file under `root`, without following links
+/// Every partial file under `root`, without following links, for up to [`WALK_LIMIT`]
 pub(crate) fn partials(root: &Path) -> Vec<Partial> {
+    partials_within(root, WALK_LIMIT)
+}
+
+fn partials_within(root: &Path, limit: Duration) -> Vec<Partial> {
+    let started = std::time::Instant::now();
     let now = SystemTime::now();
     let mut found = Vec::new();
     let mut dirs = vec![(root.to_path_buf(), 0)];
     while let Some((dir, depth)) = dirs.pop() {
+        if started.elapsed() > limit {
+            tracing::warn!(root = %root.display(), "Stopped looking for partial files: the walk took too long");
+            break;
+        }
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -418,6 +429,15 @@ mod tests {
         let keys: Vec<&str> = f.items.iter().map(|i| i.key.as_str()).collect();
         assert_eq!(keys, vec!["1", "2"]);
         assert_eq!(f.items[1].detail.as_deref(), Some("failed after 1 retry"));
+    }
+
+    #[test]
+    fn partial_walk_stops_at_its_time_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".a.mkv.downloading"), "x").unwrap();
+        assert_eq!(partials_within(dir.path(), Duration::from_secs(5)).len(), 1);
+        // A zero limit stops before the first folder is read
+        assert!(partials_within(dir.path(), Duration::ZERO).is_empty());
     }
 
     #[tokio::test]

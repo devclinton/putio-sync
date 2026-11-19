@@ -363,15 +363,30 @@ impl Pipeline {
         let languages = cfg.wanted();
         // What each wanted language does for this item's category (feature 050)
         let modes = ModePlan::new(&cfg, item.category.as_deref(), &languages);
-        let source = self.inner.source.read().unwrap().clone();
+        let source = self
+            .inner
+            .source
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         // Whisper only needs no Put.io client; every other mode does
         let source = match source {
             Some(s) => s,
             None if modes.download_languages().is_empty() => Arc::new(NoSource),
             None => return self.skip_step(step, SkipReason::NotConfigured).await,
         };
-        let search = self.inner.search.read().unwrap().clone();
-        let media = self.inner.media.read().unwrap().clone();
+        let search = self
+            .inner
+            .search
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let media = self
+            .inner
+            .media
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let store = &self.inner.store;
         let Ok((attempt_id, n)) = store.start_attempt(step.id).await else {
             return Outcome::Stopped;

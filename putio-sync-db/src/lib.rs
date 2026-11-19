@@ -37,6 +37,7 @@ pub mod downloads;
 pub mod error;
 pub mod held;
 pub mod history;
+pub mod maintenance;
 pub mod models;
 pub mod organise_moves;
 pub mod pipeline;
@@ -82,7 +83,6 @@ use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
 };
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::time::Duration;
 use tracing::{debug, info};
 
@@ -128,13 +128,17 @@ impl Database {
         debug!("Opening database at: {}", path.display());
 
         // Create connection options
-        let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", path.display()))
-            .map_err(tracked(DbOp::Migrate, "Invalid database path"))?
+        // `filename` takes the path as it is; a `sqlite:` URL would cut it at a `?` or `#`
+        let options = SqliteConnectOptions::new()
+            .filename(path)
             .create_if_missing(true)
             // WAL lets readers and the claiming writer run side by side; the busy timeout
             // makes brief write contention wait instead of failing.
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
+            // 20 MB page cache per connection (negative means KiB) and temp tables in memory
+            .pragma("cache_size", "-20000")
+            .pragma("temp_store", "memory")
             .busy_timeout(Duration::from_secs(10));
 
         // Create connection pool

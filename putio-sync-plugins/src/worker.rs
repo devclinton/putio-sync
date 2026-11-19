@@ -138,7 +138,7 @@ impl Env {
     pub fn store_for(&self, name: &str) -> SharedStore {
         self.stores
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .entry(name.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(Store::open(self.data_dir.as_deref(), name))))
             .clone()
@@ -148,7 +148,7 @@ impl Env {
     pub fn counters_for(&self, name: &str) -> Counters {
         self.counters
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .entry(name.to_string())
             .or_default()
             .clone()
@@ -157,7 +157,7 @@ impl Env {
     fn download_dir_text(&self) -> String {
         self.download_dir
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|p| p.display().to_string())
             .unwrap_or_default()
@@ -270,22 +270,27 @@ impl Slot {
 
     /// The current spec
     pub fn spec(&self) -> Arc<Spec> {
-        self.queue.lock().unwrap().spec.clone()
+        self.queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .spec
+            .clone()
     }
 
     /// Swap the spec; the worker rebuilds before its next job
     pub fn update(&self, spec: Spec) {
-        *self.tick_every.lock().unwrap() = Duration::from_secs(spec.manifest.tick_every());
-        let mut q = self.queue.lock().unwrap();
+        *self.tick_every.lock().unwrap_or_else(|e| e.into_inner()) =
+            Duration::from_secs(spec.manifest.tick_every());
+        let mut q = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         q.spec = Arc::new(spec);
         q.generation += 1;
-        *self.load_error.lock().unwrap() = None;
+        *self.load_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     /// Queue a job: tests go first, a second tick is not queued, and past
     /// [`MAX_QUEUE`] the oldest event or tick is dropped
     pub fn push(&self, job: Job) {
-        let mut q = self.queue.lock().unwrap();
+        let mut q = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         if q.stop {
             return;
         }
@@ -310,7 +315,11 @@ impl Slot {
 
     /// Jobs waiting
     pub fn queued(&self) -> usize {
-        self.queue.lock().unwrap().jobs.len()
+        self.queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .jobs
+            .len()
     }
 
     /// Whether nothing is queued or running
@@ -327,8 +336,8 @@ impl Slot {
     /// it has, that becomes the last tick. Half a second early counts, so a 5 s tick on
     /// a 5 s ticker is not skipped by jitter.
     pub fn tick_due(&self, now: Instant) -> bool {
-        let every = *self.tick_every.lock().unwrap();
-        let mut last = self.last_tick.lock().unwrap();
+        let every = *self.tick_every.lock().unwrap_or_else(|e| e.into_inner());
+        let mut last = self.last_tick.lock().unwrap_or_else(|e| e.into_inner());
         let slack = Duration::from_millis(500);
         if now.saturating_duration_since(*last) + slack >= every {
             *last = now;
@@ -340,12 +349,20 @@ impl Slot {
 
     /// Whether the state for the current spec is built
     pub fn loaded(&self) -> bool {
-        self.built.load(Ordering::Acquire) == self.queue.lock().unwrap().generation
+        self.built.load(Ordering::Acquire)
+            == self
+                .queue
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .generation
     }
 
     /// Why the state could not be built, until the next update
     pub fn load_error(&self) -> Option<String> {
-        self.load_error.lock().unwrap().clone()
+        self.load_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Mark a test as running; false when one already is
@@ -355,7 +372,7 @@ impl Slot {
 
     /// Stop the thread, dropping what is queued
     pub fn stop(&self) {
-        let mut q = self.queue.lock().unwrap();
+        let mut q = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         q.stop = true;
         self.pending.fetch_sub(q.jobs.len(), Ordering::SeqCst);
         q.jobs.clear();
@@ -365,12 +382,12 @@ impl Slot {
 
     /// Stop the thread once the queue is empty
     pub fn finish(&self) {
-        self.queue.lock().unwrap().stop = true;
+        self.queue.lock().unwrap_or_else(|e| e.into_inner()).stop = true;
         self.ready.notify_one();
     }
 
     fn next(&self) -> Option<(Job, u64, Arc<Spec>)> {
-        let mut q = self.queue.lock().unwrap();
+        let mut q = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         loop {
             if let Some(job) = q.jobs.pop_front() {
                 return Some((job, q.generation, q.spec.clone()));
@@ -459,7 +476,11 @@ impl Worker {
                     }
                 }
                 if let Err(error) = self.build(generation, &spec) {
-                    *self.slot.load_error.lock().unwrap() = Some(error.clone());
+                    *self
+                        .slot
+                        .load_error
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()) = Some(error.clone());
                     self.broken = Some((generation, error.clone()));
                     self.refuse(job, error);
                     continue;
@@ -836,7 +857,7 @@ impl Worker {
                 Duration::ZERO,
             );
         }
-        let mut history = self.env.history.lock().unwrap();
+        let mut history = self.env.history.lock().unwrap_or_else(|e| e.into_inner());
         let runs = history.entry(self.slot.name.clone()).or_default();
         if runs.len() >= MAX_RUNS {
             runs.pop_front();

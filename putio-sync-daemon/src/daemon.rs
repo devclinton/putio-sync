@@ -79,6 +79,12 @@ pub const PIPELINE_TICK: Duration = Duration::from_secs(10);
 /// Put.io is asked at most once per this; open pages ask every 10 s and the loop reuses
 /// their list
 pub const PIPELINE_MAX_AGE: Duration = Duration::from_secs(60);
+/// The pipeline loop's tick while Put.io lists no transfers and nothing is queued; it
+/// returns to [`PIPELINE_TICK`] on the first tick that finds activity
+pub const PIPELINE_IDLE_TICK: Duration = PIPELINE_MAX_AGE;
+/// How long a shutdown waits for the download workers before it gives up on them. Docker
+/// sends SIGKILL ten seconds after SIGTERM, so this leaves time to close the database.
+pub const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(7);
 
 /// (Put.io sync interval, queue worker interval) in seconds.
 /// The sync loop used to run on `watch_interval`, which made `--download-interval` a no-op.
@@ -440,12 +446,17 @@ impl PutioDaemon {
             .database
             .clone()
             .map(|db| tokio::spawn(Self::run_release_prune(db)));
+        let maintenance_task = self
+            .database
+            .clone()
+            .map(|db| tokio::spawn(Self::run_db_maintenance(db)));
         // Spawn the stall check task (feature 007): flags Put.io transfers whose bytes stop
         let interval = self.config.read().await.stall_check_interval;
+        let stall_dm = self.get_download_manager();
         let stall_task = self.client.clone().map(|client| {
             let tracker = self.stall_tracker.clone();
             tokio::spawn(async move {
-                Self::run_stall_loop(client, tracker, interval).await;
+                Self::run_stall_loop(client, stall_dm, tracker, interval).await;
             })
         });
 
@@ -524,51 +535,28 @@ impl PutioDaemon {
         }
         info!("Press Ctrl+C to stop");
 
-        // Wait for Ctrl+C, or a stop for an update's restart
+        // Wait for Ctrl+C or SIGTERM (`docker stop`), or a stop for an update's restart
         tokio::select! {
-            signal = tokio::signal::ctrl_c() => signal.map_err(|e| {
-                crate::error::DaemonError::InternalError(format!("Failed to listen for Ctrl+C: {}", e))
-            })?,
-            () = self.stop.notified() => {}
+            signal = wait_for_signal() => signal?,
+            () = self.stop.notified() => info!("Received stop request"),
         }
 
-        info!("Received shutdown signal");
-
-        if let Some(media_server) = &self.media_server {
-            media_server.stop().await;
-        }
-
-        // Tasks will be automatically cancelled when dropped
-        if let Some(task) = watch_task {
-            task.abort();
-        }
-        if let Some(task) = sync_task {
-            task.abort();
-        }
-        if let Some(task) = download_task {
-            task.abort();
-        }
-        if let Some(task) = pipeline_task {
-            task.abort();
-        }
-        if let Some(task) = cleanup_task {
-            task.abort();
-        }
-        if let Some(task) = storage_task {
-            task.abort();
-        }
-        if let Some(task) = stall_task {
-            task.abort();
-        }
-        if let Some(task) = doctor_task {
-            task.abort();
-        }
-        if let Some(task) = prune_task {
-            task.abort();
-        }
-
-        info!("Daemon shutting down...");
-        Ok(())
+        let tasks: Vec<tokio::task::JoinHandle<()>> = [
+            watch_task,
+            sync_task,
+            download_task,
+            pipeline_task,
+            cleanup_task,
+            storage_task,
+            stall_task,
+            doctor_task,
+            prune_task,
+            maintenance_task,
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        self.shutdown_with(tasks).await
     }
 
     /// Set the Active pipeline gauge every [`PIPELINE_TICK`]
@@ -582,10 +570,8 @@ impl PutioDaemon {
             tick_secs = PIPELINE_TICK.as_secs(),
             "Active pipeline task started"
         );
-        let mut tick = tokio::time::interval(PIPELINE_TICK);
         loop {
-            tick.tick().await;
-            if let Err(e) = pipeline_tick_with(
+            let delay = match pipeline_step(
                 &download_manager,
                 &tracker,
                 retention_hours,
@@ -593,8 +579,14 @@ impl PutioDaemon {
             )
             .await
             {
-                debug!(error = %e, "Active pipeline update failed; keeping the gauge");
-            }
+                Ok((_, idle)) => next_pipeline_delay(idle),
+                Err(e) => {
+                    debug!(error = %e, "Active pipeline update failed; keeping the gauge");
+                    // The cached list cannot change before it is allowed to age out
+                    PIPELINE_IDLE_TICK
+                }
+            };
+            tokio::time::sleep(delay).await;
         }
     }
 
@@ -612,9 +604,25 @@ impl PutioDaemon {
         }
     }
 
-    /// Check the Put.io transfer list for stalls every `interval_secs`
+    /// Prune old rows, optimise the database and checkpoint its WAL once a day, starting
+    /// a minute after the daemon does so startup stays quiet
+    async fn run_db_maintenance(database: Arc<Database>) {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        let mut tick = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
+        loop {
+            tick.tick().await;
+            if let Err(e) = database.run_maintenance().await {
+                warn!(error = %e, "Database maintenance failed");
+            }
+        }
+    }
+
+    /// Check the Put.io transfer list for stalls every `interval_secs`. With a local
+    /// download manager the list comes from its shared snapshot (at most
+    /// [`PIPELINE_MAX_AGE`] old), so this adds no Put.io call of its own.
     async fn run_stall_loop(
         client: Arc<PutioApiClient>,
+        download_manager: Option<Arc<DownloadManager>>,
         tracker: Arc<StallTracker>,
         interval_secs: u64,
     ) {
@@ -622,7 +630,26 @@ impl PutioDaemon {
         let mut tick = tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
         loop {
             tick.tick().await;
-            if let Err(e) = check_stalls(&client, &tracker, SystemTime::now()).await {
+            let result = match &download_manager {
+                Some(dm) => match dm.transfers_snapshot(PIPELINE_MAX_AGE).await {
+                    Ok(snapshot) if snapshot.stale => {
+                        // Put.io failed: the old list would only repeat old verdicts
+                        debug!("Stall check skipped: Put.io is unreachable");
+                        continue;
+                    }
+                    Ok(snapshot) => Ok(observe_stalls(
+                        &snapshot.transfers,
+                        &tracker,
+                        SystemTime::now(),
+                    )),
+                    Err(e) => {
+                        warn!(error = %e, "Stall check failed; keeping previous verdicts");
+                        continue;
+                    }
+                },
+                None => check_stalls(&client, &tracker, SystemTime::now()).await,
+            };
+            if let Err(e) = result {
                 warn!(error = %e, "Stall check failed; keeping previous verdicts");
             }
         }
@@ -722,29 +749,6 @@ impl PutioDaemon {
         }
     }
 
-    /// Handle a configuration update
-    ///
-    /// Not called yet: only `[logging]` settings reload at runtime, via
-    /// `putio_sync_core::config::spawn_reload_poller`.
-    #[allow(dead_code)]
-    async fn handle_config_update(&mut self, new_config: DaemonConfig) -> DaemonResult<()> {
-        info!("Handling configuration update");
-
-        let mut config = self.config.write().await;
-        let _old_config = config.clone();
-
-        // Update the config
-        *config = new_config.clone();
-        drop(config); // Release the write lock
-
-        // Reinitialize components that depend on changed config
-        // This is a simplified version - a full implementation would
-        // selectively reinitialize only what's needed
-
-        info!("Configuration update applied");
-        Ok(())
-    }
-
     /// Get the current configuration
     pub async fn get_config(&self) -> DaemonConfig {
         self.config.read().await.clone()
@@ -795,19 +799,110 @@ impl PutioDaemon {
         self.config.clone()
     }
 
-    /// Shutdown the daemon gracefully
+    /// Shutdown the daemon gracefully: stop running downloads (their partials and queue
+    /// rows are kept) and wait up to [`SHUTDOWN_DEADLINE`] for the workers, then close
+    /// the database after a WAL checkpoint. [`Self::start`] does this when it is stopped.
     pub async fn shutdown(&mut self) -> DaemonResult<()> {
-        info!("Shutting down daemon");
+        self.shutdown_with(Vec::new()).await
+    }
 
-        // In a full implementation, this would:
-        // - Stop file watcher
-        // - Stop config watcher
-        // - Wait for in-progress downloads
-        // - Close database connections
-        // - Save state
+    /// [`Self::shutdown`], after ending the background `tasks` that would otherwise queue
+    /// new work
+    async fn shutdown_with(&self, tasks: Vec<tokio::task::JoinHandle<()>>) -> DaemonResult<()> {
+        info!("Daemon shutting down...");
+        for task in &tasks {
+            task.abort();
+        }
+
+        if let Some(media_server) = &self.media_server {
+            media_server.stop().await;
+        }
+
+        if let Some(DownloadMode::Local(dm)) = &self.download_mode {
+            stop_downloads(dm, self.database.as_deref(), SHUTDOWN_DEADLINE).await;
+        }
+
+        // Let the aborted tasks drop what they hold before the pool closes
+        for task in tasks {
+            let _ = task.await;
+        }
+        if let Some(db) = &self.database {
+            db.shutdown().await;
+        }
 
         info!("Daemon shutdown complete");
         Ok(())
+    }
+}
+
+/// Wait for Ctrl+C, or SIGTERM on Unix (what `docker stop` sends)
+async fn wait_for_signal() -> DaemonResult<()> {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c().await.map_err(|e| {
+            crate::error::DaemonError::InternalError(format!("Failed to listen for Ctrl+C: {}", e))
+        })
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .map_err(|e| {
+                crate::error::DaemonError::InternalError(format!(
+                    "Failed to listen for SIGTERM: {}",
+                    e
+                ))
+            })?;
+        term.recv().await;
+        Ok::<(), crate::error::DaemonError>(())
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<DaemonResult<()>>();
+
+    tokio::select! {
+        result = ctrl_c => {
+            info!("Received Ctrl+C");
+            result
+        }
+        result = terminate => {
+            info!("Received SIGTERM");
+            result
+        }
+    }
+}
+
+/// Stop the running downloads and shut the workers down, giving up after `deadline`.
+/// Running rows go back to `pending` and keep their partials, so the next start resumes
+/// them. Workers shut down one after another and a freed one may claim the next file, so
+/// the stop is repeated until they are gone.
+async fn stop_downloads(dm: &Arc<DownloadManager>, db: Option<&Database>, deadline: Duration) {
+    let stopper = async {
+        loop {
+            if let Some(db) = db {
+                match db.queue().get_downloading().await {
+                    Ok(running) => {
+                        let ids: Vec<i64> = running.iter().map(|item| item.file_id).collect();
+                        match db.queue().unclaim_files(&ids).await {
+                            Ok(requeued) => {
+                                dm.stop_files(&requeued).await;
+                            }
+                            Err(e) => warn!(error = %e, "Could not requeue running downloads"),
+                        }
+                    }
+                    Err(e) => warn!(error = %e, "Could not list running downloads"),
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    };
+    tokio::select! {
+        () = dm.shutdown_all_workers() => {}
+        () = stopper => {}
+        () = tokio::time::sleep(deadline) => {
+            warn!(
+                deadline_secs = deadline.as_secs(),
+                "Download workers did not stop in time; unfinished files resume at the next start"
+            );
+        }
     }
 }
 
@@ -829,6 +924,29 @@ pub async fn pipeline_tick_with(
     retention_hours: u64,
     processing: Option<&putio_sync_pipeline::Pipeline>,
 ) -> DownloadResult<Counts> {
+    pipeline_step(download_manager, tracker, retention_hours, processing)
+        .await
+        .map(|(counts, _)| counts)
+}
+
+/// The delay before the next pipeline tick: [`PIPELINE_TICK`] while there is activity,
+/// [`PIPELINE_IDLE_TICK`] when there is none
+fn next_pipeline_delay(idle: bool) -> Duration {
+    if idle {
+        PIPELINE_IDLE_TICK
+    } else {
+        PIPELINE_TICK
+    }
+}
+
+/// [`pipeline_tick_with`], also saying whether the pipeline is idle: no transfer on Put.io
+/// and nothing queued or running locally
+async fn pipeline_step(
+    download_manager: &DownloadManager,
+    tracker: &StallTracker,
+    retention_hours: u64,
+    processing: Option<&putio_sync_pipeline::Pipeline>,
+) -> DownloadResult<(Counts, bool)> {
     let pipeline = download_manager
         .pipeline(PIPELINE_MAX_AGE, tracker, retention_hours)
         .await?;
@@ -854,7 +972,7 @@ pub async fn pipeline_tick_with(
             processing.mark_deleted(&done.refused).await;
         }
     }
-    Ok(pipeline.counts)
+    Ok((pipeline.counts, pipeline.items.is_empty()))
 }
 
 /// Every `(stage, state)` gauge value of `counts`, zeros included
@@ -894,9 +1012,18 @@ pub async fn check_stalls(
     now: SystemTime,
 ) -> putio_sync_client::error::ClientResult<usize> {
     let list = client.list_transfers().await?;
-    let stalled = tracker.observe(&list.transfers, now);
+    Ok(observe_stalls(&list.transfers, tracker, now))
+}
+
+/// [`check_stalls`] for a transfer list already fetched
+pub fn observe_stalls(
+    transfers: &[putio_sync_client::models::Transfer],
+    tracker: &StallTracker,
+    now: SystemTime,
+) -> usize {
+    let stalled = tracker.observe(transfers, now);
     putio_sync_telemetry::transfers::set_stalled(stalled);
-    for transfer in &list.transfers {
+    for transfer in transfers {
         if let Some(stall) = tracker.get(transfer.id) {
             debug!(
                 transfer_id = transfer.id,
@@ -906,7 +1033,7 @@ pub async fn check_stalls(
             );
         }
     }
-    Ok(stalled)
+    stalled
 }
 
 #[cfg(test)]
@@ -934,6 +1061,74 @@ mod tests {
             .with_body(serde_json::json!({ "status": "OK", "transfers": transfers }).to_string())
             .create_async()
             .await
+    }
+
+    /// An idle pipeline backs off to the cache age and returns to the fast tick on activity
+    #[test]
+    fn pipeline_tick_backs_off_when_idle() {
+        assert_eq!(next_pipeline_delay(true), PIPELINE_IDLE_TICK);
+        assert_eq!(next_pipeline_delay(false), PIPELINE_TICK);
+        assert!(PIPELINE_IDLE_TICK > PIPELINE_TICK);
+    }
+
+    /// A tick with no transfers and nothing queued is idle; a listed transfer is not
+    #[tokio::test]
+    async fn pipeline_step_reports_idle_only_without_activity() {
+        let mut server = mockito::Server::new_async().await;
+        let empty = mock_list(&mut server, serde_json::json!([])).await;
+        let (_dir, manager, _db) = pipeline_manager(&server).await;
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+        let (_, idle) = pipeline_step(&manager, &tracker, 24, None).await.unwrap();
+        assert!(idle);
+        empty.remove_async().await;
+
+        let _busy = mock_list(&mut server, serde_json::json!([downloading(5, 970)])).await;
+        let (_dir, manager, _db) = pipeline_manager(&server).await;
+        let (_, idle) = pipeline_step(&manager, &tracker, 24, None).await.unwrap();
+        assert!(!idle);
+    }
+
+    /// The stall loop reads the manager's shared snapshot: one Put.io call serves both
+    #[tokio::test]
+    async fn stalls_are_observed_from_the_shared_snapshot() {
+        let mut server = mockito::Server::new_async().await;
+        let list = server
+            .mock("GET", "/transfers/list")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({ "status": "OK", "transfers": [downloading(5, 970)] })
+                    .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let (_dir, manager, _db) = pipeline_manager(&server).await;
+        let tracker = StallTracker::new(Duration::from_secs(3600));
+        pipeline_tick(&manager, &tracker, 24).await.unwrap();
+        let snapshot = manager.transfers_snapshot(PIPELINE_MAX_AGE).await.unwrap();
+        observe_stalls(&snapshot.transfers, &tracker, SystemTime::now());
+        list.assert_async().await;
+    }
+
+    /// Shutdown checkpoints and closes the database
+    #[tokio::test]
+    async fn shutdown_closes_the_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut daemon = PutioDaemon::new(DaemonConfig {
+            oauth_token: "t".to_string(),
+            database_path: Some(dir.path().join("d.db")),
+            download: DownloadConfig {
+                target_directory: dir.path().to_path_buf(),
+                ..DownloadConfig::default()
+            },
+            ..DaemonConfig::default()
+        });
+        daemon.initialize().await.unwrap();
+        let db = daemon.get_database().unwrap();
+        assert!(!db.pool().is_closed());
+        daemon.shutdown().await.unwrap();
+        assert!(db.pool().is_closed());
     }
 
     /// FR-001..FR-004: a downloading transfer whose bytes do not move is flagged once the

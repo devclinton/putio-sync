@@ -59,7 +59,11 @@ pub fn client() -> reqwest::Client {
         .referer(false)
         .redirect(reqwest::redirect::Policy::limited(3))
         .build()
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            // The default client follows redirects with a referer; say so
+            tracing::warn!(error = %e, "Could not build the cache client; using defaults");
+            reqwest::Client::default()
+        })
 }
 
 /// Try `caches` in order for `hash` (lower-case hex), within `limit` in total. A cache

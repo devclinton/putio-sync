@@ -192,7 +192,7 @@ impl Pipeline {
             .search_fixed
             .load(std::sync::atomic::Ordering::Relaxed)
         {
-            *self.inner.search.write().unwrap() =
+            *self.inner.search.write().unwrap_or_else(|e| e.into_inner()) =
                 OpenSubtitles::from_config(&settings.subtitles.opensubtitles)
                     .map(|c| Arc::new(c) as Arc<dyn SubtitleSearch>);
         }
@@ -239,7 +239,7 @@ impl Pipeline {
 
     /// Where Put.io's subtitles come from (the daemon gives the real client, tests a fake)
     pub fn set_subtitle_source(&self, source: Arc<dyn SubtitleSource>) {
-        *self.inner.source.write().unwrap() = Some(source);
+        *self.inner.source.write().unwrap_or_else(|e| e.into_inner()) = Some(source);
     }
 
     /// Search OpenSubtitles through `search` instead of the client the settings describe (tests)
@@ -247,12 +247,12 @@ impl Pipeline {
         self.inner
             .search_fixed
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        *self.inner.search.write().unwrap() = Some(search);
+        *self.inner.search.write().unwrap_or_else(|e| e.into_inner()) = Some(search);
     }
 
     /// Where the IDs of an *arr download come from (the daemon gives the history reader)
     pub fn set_media_lookup(&self, media: Arc<dyn MediaLookup>) {
-        *self.inner.media.write().unwrap() = Some(media);
+        *self.inner.media.write().unwrap_or_else(|e| e.into_inner()) = Some(media);
     }
 
     /// The gate for Radarr and Sonarr
@@ -354,7 +354,11 @@ impl Pipeline {
         {
             match present.get(row.key.as_str()) {
                 Some(item) => {
-                    self.inner.missed.lock().unwrap().remove(&row.key);
+                    self.inner
+                        .missed
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(&row.key);
                     self.follow(row, item).await;
                 }
                 None => self.resolve_departed(row, finished.get(&row.key)).await,
@@ -529,18 +533,26 @@ impl Pipeline {
         };
         match outcome {
             Some(FinishedOutcome::Done) if row.stage != Stage::PreDownload => {
-                self.inner.missed.lock().unwrap().remove(&row.key);
+                self.inner
+                    .missed
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&row.key);
                 self.downloaded(row).await;
             }
             Some(FinishedOutcome::Failed) => {
-                self.inner.missed.lock().unwrap().remove(&row.key);
+                self.inner
+                    .missed
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&row.key);
                 let _ = store
                     .set_item(&row.key, Stage::Downloading, ItemState::Failed)
                     .await;
             }
             _ => {
                 let n = {
-                    let mut missed = self.inner.missed.lock().unwrap();
+                    let mut missed = self.inner.missed.lock().unwrap_or_else(|e| e.into_inner());
                     let n = missed.entry(row.key.clone()).or_insert(0);
                     *n += 1;
                     *n
@@ -611,7 +623,13 @@ impl Pipeline {
             .store
             .set_item(key, Stage::Downloading, ItemState::Cancelled)
             .await;
-        if let Some(notify) = self.inner.cancels.lock().unwrap().get(key) {
+        if let Some(notify) = self
+            .inner
+            .cancels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(key)
+        {
             notify.notify_waiters();
         }
         if let Ok(jobs) = self
@@ -622,7 +640,11 @@ impl Pipeline {
         {
             self.abandon_jobs(jobs).await;
         }
-        self.inner.missed.lock().unwrap().remove(key);
+        self.inner
+            .missed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(key);
         info!(key, "Pipeline item cancelled: it is gone from Put.io");
     }
 

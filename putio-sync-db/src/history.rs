@@ -27,6 +27,17 @@ pub struct HistoryRepository<'a> {
 }
 
 impl<'a> HistoryRepository<'a> {
+    /// Delete history rows older than `days` days; the rows deleted
+    pub async fn prune(&self, days: i64) -> DbResult<u64> {
+        let result =
+            sqlx::query("DELETE FROM download_history WHERE timestamp < datetime('now', ?)")
+                .bind(format!("-{days} days"))
+                .execute(self.pool)
+                .await
+                .map_err(tracked(DbOp::Other, "Failed to prune download history"))?;
+        Ok(result.rows_affected())
+    }
+
     /// Create a new history repository
     pub fn new(pool: &'a SqlitePool) -> Self {
         Self { pool }

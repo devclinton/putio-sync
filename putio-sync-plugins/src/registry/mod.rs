@@ -280,7 +280,11 @@ pub(crate) struct Installing<'a> {
 
 impl Drop for Installing<'_> {
     fn drop(&mut self) {
-        self.registry.installing.lock().unwrap().remove(&self.name);
+        self.registry
+            .installing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.name);
     }
 }
 
@@ -336,7 +340,7 @@ impl Registry {
 
     /// The cached index for `config.url`, without fetching
     pub fn cached(&self, config: &PluginRegistryConfig) -> Option<Index> {
-        let cache = self.cache.lock().unwrap();
+        let cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         cache
             .as_ref()
             .filter(|c| config.enabled && c.url == config.url)
@@ -345,7 +349,7 @@ impl Registry {
 
     /// The cached index fetched from `url`, whatever its age or whether the registry is on
     pub fn cached_for(&self, url: &str) -> Option<Index> {
-        let cache = self.cache.lock().unwrap();
+        let cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         cache
             .as_ref()
             .filter(|c| c.url == url)
@@ -362,7 +366,7 @@ impl Registry {
         let current = self
             .cache
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
             .filter(|c| c.url == config.url);
         let fresh = current.as_ref().is_some_and(|c| {
@@ -395,7 +399,7 @@ impl Registry {
                         tracing::warn!("plugin registry: cannot keep the list: {}", e);
                     }
                 }
-                *self.cache.lock().unwrap() = Some(cache.clone());
+                *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(cache.clone());
                 (Some(cache), None)
             }
             Err(e) => {
@@ -443,7 +447,12 @@ impl Registry {
                 name, reason
             )));
         }
-        if !self.installing.lock().unwrap().insert(name.to_string()) {
+        if !self
+            .installing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(name.to_string())
+        {
             return Err(RegistryError::Conflict(format!(
                 "{} is being installed",
                 name

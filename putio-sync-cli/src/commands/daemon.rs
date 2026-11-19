@@ -139,7 +139,7 @@ pub async fn execute_daemon(
     // Reload [logging] when the config file changes (FR-016)
     putio_sync_core::config::spawn_reload_poller(
         config_file_path.clone(),
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(30),
         |logging| {
             let _ = putio_sync_core::logging::apply_level(&logging);
             putio_sync_core::log_capture::set_capacity(logging.buffer_lines);
@@ -420,6 +420,13 @@ pub async fn execute_daemon(
     info!("Press Ctrl+C to stop");
 
     daemon.start().await.context("Daemon execution failed")?;
+    // Let hooks and plugins finish the events already on the bus; the daemon's own
+    // shutdown used most of Docker's 10 s grace, so this gets 2 s
+    let drain = std::time::Duration::from_secs(2);
+    let (hooks_done, plugins_done) = tokio::join!(hooks.drain(drain), plugins.drain(drain));
+    if !hooks_done || !plugins_done {
+        warn!("Stopped with hook or plugin events still running");
+    }
 
     if updates.restart_requested() {
         let e = putio_sync_update::swap::restart_self();

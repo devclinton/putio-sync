@@ -55,6 +55,8 @@ struct Inner {
     queue: mpsc::Sender<Message>,
     waiting: Mutex<Option<mpsc::Receiver<Message>>>,
     started: AtomicBool,
+    /// Woken when a grouping window opens, so the ticker can sleep while none is
+    window_opened: tokio::sync::Notify,
 }
 
 /// Sends the chosen events as email. Cheap to clone.
@@ -86,6 +88,7 @@ impl EmailService {
                 queue,
                 waiting: Mutex::new(Some(waiting)),
                 started: AtomicBool::new(false),
+                window_opened: tokio::sync::Notify::new(),
             }),
         }
     }
@@ -96,16 +99,25 @@ impl EmailService {
         if self.inner.started.swap(true, Ordering::SeqCst) {
             return;
         }
-        let Some(mut waiting) = self.inner.waiting.lock().expect("email queue lock").take() else {
+        let Some(mut waiting) = self
+            .inner
+            .waiting
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        else {
             return;
         };
         let rx = events::subscribe();
         tokio::spawn(dispatch(self.clone(), rx));
         let ticker = self.clone();
         tokio::spawn(async move {
-            let mut every = tokio::time::interval(TICK);
             loop {
-                every.tick().await;
+                // With no window open there is nothing to close: sleep until one opens
+                if !ticker.has_open_window() {
+                    ticker.inner.window_opened.notified().await;
+                }
+                tokio::time::sleep(TICK).await;
                 ticker.tick();
             }
         });
@@ -125,15 +137,19 @@ impl EmailService {
         self.inner
             .grouper
             .lock()
-            .expect("email grouper lock")
+            .unwrap_or_else(|e| e.into_inner())
             .set_window(window(&config));
         self.status_mut().enabled = config.enabled;
-        *self.inner.config.write().expect("email config lock") = config;
+        *self.inner.config.write().unwrap_or_else(|e| e.into_inner()) = config;
     }
 
     /// The settings in use
     pub fn config(&self) -> SmtpConfig {
-        self.inner.config.read().expect("email config lock").clone()
+        self.inner
+            .config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Counts and the last delivery
@@ -143,7 +159,7 @@ impl EmailService {
 
     /// Whether email is on for `event_type`
     pub fn wants(&self, event_type: EventType) -> bool {
-        let config = self.inner.config.read().expect("email config lock");
+        let config = self.inner.config.read().unwrap_or_else(|e| e.into_inner());
         config.enabled && config.event_types().contains(&event_type)
     }
 
@@ -155,12 +171,20 @@ impl EmailService {
         }))
         .source
         .host;
-        *self.inner.host.lock().expect("email host lock") = host;
+        *self.inner.host.lock().unwrap_or_else(|e| e.into_inner()) = host;
         let message = Message {
             title: "Test email".to_string(),
             text: "Email notifications from putio-sync work.".to_string(),
         };
         self.deliver(config, &message).await
+    }
+
+    fn has_open_window(&self) -> bool {
+        self.inner
+            .grouper
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .has_open()
     }
 
     /// Queue the summaries of grouping windows that have closed
@@ -169,7 +193,7 @@ impl EmailService {
             .inner
             .grouper
             .lock()
-            .expect("email grouper lock")
+            .unwrap_or_else(|e| e.into_inner())
             .tick(Instant::now());
         self.queue(due);
     }
@@ -178,13 +202,14 @@ impl EmailService {
         if !self.wants(event.event_type()) {
             return;
         }
-        *self.inner.host.lock().expect("email host lock") = event.source.host.clone();
+        *self.inner.host.lock().unwrap_or_else(|e| e.into_inner()) = event.source.host.clone();
         let out = self
             .inner
             .grouper
             .lock()
-            .expect("email grouper lock")
+            .unwrap_or_else(|e| e.into_inner())
             .event(event, Instant::now());
+        self.inner.window_opened.notify_one();
         self.queue(out);
     }
 
@@ -197,7 +222,12 @@ impl EmailService {
     }
 
     async fn deliver(&self, config: &SmtpConfig, message: &Message) -> Result<(), String> {
-        let host = self.inner.host.lock().expect("email host lock").clone();
+        let host = self
+            .inner
+            .host
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let body = if host.is_empty() {
             format!("{}\n\nSent by putio-sync.\n", message.text)
         } else {

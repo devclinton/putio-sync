@@ -94,7 +94,8 @@ pub struct LoggingConfig {
     #[serde(default = "default_max_file_size")]
     pub max_file_size_mb: u64,
 
-    /// Number of rotated log files to keep - currently unused
+    /// Number of daily log files to keep; older ones are deleted when a new day's file is
+    /// opened (0 keeps all)
     #[serde(default = "default_max_backups")]
     pub max_backups: usize,
 
@@ -197,7 +198,7 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
     match (config.console_enabled, config.file_enabled, &format) {
         // Both console and file logging
         (true, true, ConsoleFormat::Compact) => {
-            let file_layer = create_file_layer_concrete(&config.file_path)?;
+            let file_layer = create_file_layer_concrete(&config.file_path, config.max_backups)?;
             tracing_subscriber::registry()
                 .with(filter)
                 .with(crate::log_capture::CaptureLayer::new())
@@ -209,7 +210,7 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
                 })?;
         }
         (true, true, ConsoleFormat::Pretty) => {
-            let file_layer = create_file_layer_concrete(&config.file_path)?;
+            let file_layer = create_file_layer_concrete(&config.file_path, config.max_backups)?;
             tracing_subscriber::registry()
                 .with(filter)
                 .with(crate::log_capture::CaptureLayer::new())
@@ -221,7 +222,7 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
                 })?;
         }
         (true, true, ConsoleFormat::Json) => {
-            let file_layer = create_file_layer_concrete(&config.file_path)?;
+            let file_layer = create_file_layer_concrete(&config.file_path, config.max_backups)?;
             tracing_subscriber::registry()
                 .with(filter)
                 .with(crate::log_capture::CaptureLayer::new())
@@ -265,7 +266,7 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
         }
         // File only
         (false, true, _) => {
-            let file_layer = create_file_layer_concrete(&config.file_path)?;
+            let file_layer = create_file_layer_concrete(&config.file_path, config.max_backups)?;
             tracing_subscriber::registry()
                 .with(filter)
                 .with(crate::log_capture::CaptureLayer::new())
@@ -307,9 +308,32 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingResult<()> {
     Ok(())
 }
 
+/// A daily-rotating appender that keeps the newest `max_backups` log files (0 keeps all).
+/// Names match `rolling::daily`: `<filename>.<date>`.
+fn daily_appender(
+    directory: &std::path::Path,
+    filename: &std::ffi::OsStr,
+    max_backups: usize,
+) -> LoggingResult<rolling::RollingFileAppender> {
+    let mut builder = rolling::Builder::new()
+        .rotation(rolling::Rotation::DAILY)
+        .filename_prefix(filename.to_string_lossy());
+    if max_backups > 0 {
+        builder = builder.max_log_files(max_backups);
+    }
+    builder.build(directory).map_err(|e| {
+        CoreError::ConfigError(format!(
+            "Failed to open log file in {}: {}",
+            directory.display(),
+            e
+        ))
+    })
+}
+
 /// Create a file logging layer with daily rotation
 fn create_file_layer_concrete<S>(
     file_path: &PathBuf,
+    max_backups: usize,
 ) -> LoggingResult<impl Layer<S> + Send + Sync + 'static>
 where
     S: tracing::Subscriber + for<'a> LookupSpan<'a>,
@@ -338,7 +362,7 @@ where
         .ok_or_else(|| CoreError::ConfigError("Invalid log file name".to_string()))?;
 
     // Create rolling file appender (daily rotation)
-    let file_appender = rolling::daily(directory, filename);
+    let file_appender = daily_appender(directory, filename, max_backups)?;
     let (non_blocking, _guard) = non_blocking(file_appender);
 
     // Create file layer without ANSI colors
@@ -848,6 +872,28 @@ pub fn init_from_env() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn daily_appender_keeps_only_max_backups_files() {
+        let dir = tempfile::tempdir().unwrap();
+        for day in 1..=6 {
+            std::fs::write(dir.path().join(format!("app.log.2020-01-0{day}")), "x").unwrap();
+        }
+        std::fs::write(dir.path().join("unrelated.txt"), "x").unwrap();
+        let _appender = daily_appender(dir.path(), "app.log".as_ref(), 3).unwrap();
+        let logs = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("app.log.")
+            })
+            .count();
+        assert_eq!(logs, 3);
+        assert!(dir.path().join("unrelated.txt").exists());
+    }
 
     #[test]
     fn test_default_logging_config() {

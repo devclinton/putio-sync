@@ -210,6 +210,7 @@
  "Check the port: Radarr is usually 7878 and Sonarr 8989. Add the URL base if it has one.": "Check the port: Radarr is usually 7878 and Sonarr 8989. Add the URL base if it has one.",
  "Check this folder.": "Check this folder.",
  "Checked": "Checked",
+ "Checked for updates a moment ago": "Checked for updates a moment ago",
  "Checked less than a minute ago": "Checked less than a minute ago",
  "Checking": "Checking",
  "Checking the daemon…": "Checking the daemon…",

@@ -72,11 +72,14 @@ impl Slot {
     }
 
     fn config(&self) -> HookConfig {
-        self.config.read().expect("hook config lock").clone()
+        self.config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn push(&self, event: Arc<Event>) {
-        let mut queue = self.queue.lock().expect("hook queue lock");
+        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         if queue.len() >= QUEUE_LIMIT {
             queue.pop_front();
             self.in_flight.fetch_sub(1, Ordering::SeqCst);
@@ -91,7 +94,7 @@ impl Slot {
     }
 
     fn record(&self, run: HookRun) {
-        let mut runs = self.runs.lock().expect("hook runs lock");
+        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
         runs.push_front(run);
         runs.truncate(HISTORY);
     }
@@ -155,13 +158,13 @@ impl HooksService {
     pub fn configure(&self, hooks: Vec<HookConfig>) {
         let mut added = Vec::new();
         {
-            let mut slots = self.inner.slots.lock().expect("hook slots lock");
+            let mut slots = self.inner.slots.lock().unwrap_or_else(|e| e.into_inner());
             let mut next = Vec::with_capacity(hooks.len());
             for config in hooks {
                 match slots.iter().position(|s| s.config().name == config.name) {
                     Some(i) => {
                         let slot = slots.remove(i);
-                        *slot.config.write().expect("hook config lock") = config;
+                        *slot.config.write().unwrap_or_else(|e| e.into_inner()) = config;
                         next.push(slot);
                     }
                     None => {
@@ -262,7 +265,11 @@ impl HooksService {
     }
 
     fn slots(&self) -> Vec<Arc<Slot>> {
-        self.inner.slots.lock().expect("hook slots lock").clone()
+        self.inner
+            .slots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn spawn_worker(&self, slot: Arc<Slot>) {
@@ -272,7 +279,11 @@ impl HooksService {
                 if slot.removed.load(Ordering::SeqCst) {
                     break;
                 }
-                let next = slot.queue.lock().expect("hook queue lock").pop_front();
+                let next = slot
+                    .queue
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .pop_front();
                 let Some(event) = next else {
                     slot.wake.notified().await;
                     continue;
@@ -294,7 +305,7 @@ struct TestGuard<'a> {
 
 impl<'a> TestGuard<'a> {
     fn claim(inner: &'a Inner, name: &str) -> Option<TestGuard<'a>> {
-        let mut testing = inner.testing.lock().expect("hook testing lock");
+        let mut testing = inner.testing.lock().unwrap_or_else(|e| e.into_inner());
         testing.insert(name.to_string()).then(|| TestGuard {
             inner,
             name: name.to_string(),
@@ -314,7 +325,11 @@ async fn dispatch(inner: Arc<Inner>, mut rx: broadcast::Receiver<Arc<Event>>) {
     loop {
         match rx.recv().await {
             Ok(event) => {
-                let slots = inner.slots.lock().expect("hook slots lock").clone();
+                let slots = inner
+                    .slots
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
                 for slot in slots {
                     let config = slot.config();
                     if config.enabled && config.matches(event.event_type()) {
@@ -326,7 +341,7 @@ async fn dispatch(inner: Arc<Inner>, mut rx: broadcast::Receiver<Arc<Event>>) {
             Err(broadcast::error::RecvError::Lagged(n)) => {
                 tracing::warn!(missed = n, "event hooks fell behind the event bus");
                 inner.seen.fetch_add(n, Ordering::SeqCst);
-                for slot in inner.slots.lock().expect("hook slots lock").iter() {
+                for slot in inner.slots.lock().unwrap_or_else(|e| e.into_inner()).iter() {
                     metrics::record_dropped(&slot.config().name, n);
                 }
             }

@@ -313,8 +313,11 @@ fn spawn_watch_daemon(config: Config) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         use putio_sync_file_manager::TorrentWatcher;
 
-        // Create a new Tokio runtime for this thread
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+        // A watch loop is light work: one thread is enough
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create Tokio runtime");
 
         rt.block_on(async move {
             info!("Watch daemon started");
@@ -387,8 +390,12 @@ fn spawn_download_daemon(
     queue_db: Arc<OnceLock<Arc<Database>>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        // Create a new Tokio runtime for this thread
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+        // Two worker threads instead of one per core: the transfers are network bound
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("Failed to create Tokio runtime");
 
         rt.block_on(async move {
             info!("Download daemon started");
@@ -473,16 +480,25 @@ fn spawn_download_daemon(
             }
             info!("Download daemon: Manager initialized");
 
+            // Transfers already handed to the download manager, so the 60 s loop does not start
+            // the same download again; a failed one is removed and tried again next time
+            let started: Arc<std::sync::Mutex<std::collections::HashSet<i64>>> = Arc::default();
+
             // Run download daemon loop
             loop {
                 // Check for completed transfers
                 match client.list_transfers().await {
                     Ok(response) => {
-                        let completed: Vec<_> = response
+                        let mut completed: Vec<_> = response
                             .transfers
                             .iter()
                             .filter(|t| t.status == "COMPLETED" && t.file_id.is_some())
                             .collect();
+                        {
+                            let mut started = started.lock().unwrap_or_else(|e| e.into_inner());
+                            started.retain(|id| completed.iter().any(|t| t.id == *id));
+                            completed.retain(|t| !started.contains(&t.id));
+                        }
 
                         if !completed.is_empty() {
                             info!("Found {} completed transfer(s)", completed.len());
@@ -504,12 +520,20 @@ fn spawn_download_daemon(
                                     "Starting automatic download: {} (file_id: {})",
                                     transfer.name, file_id
                                 );
+                                started
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .insert(transfer.id);
 
                                 // Get file details from Put.io
                                 let file_details = match client.get_file_details(file_id).await {
                                     Ok(details) => details,
                                     Err(e) => {
                                         error!("Failed to get file details for {}: {}", file_id, e);
+                                        started
+                                            .lock()
+                                            .unwrap_or_else(|e| e.into_inner())
+                                            .remove(&transfer.id);
                                         continue;
                                     }
                                 };
@@ -535,12 +559,20 @@ fn spawn_download_daemon(
                                 // Spawn download task
                                 let download_manager_clone = download_manager.clone();
                                 let filename = download_file.filename.clone();
+                                let started = started.clone();
+                                let transfer_id = transfer.id;
 
                                 tokio::spawn(async move {
-                                    match download_manager_clone
+                                    let outcome = download_manager_clone
                                         .download_file(download_file, None)
-                                        .await
-                                    {
+                                        .await;
+                                    if !matches!(&outcome, Ok(result) if result.success) {
+                                        started
+                                            .lock()
+                                            .unwrap_or_else(|e| e.into_inner())
+                                            .remove(&transfer_id);
+                                    }
+                                    match outcome {
                                         Ok(result) => {
                                             if result.success {
                                                 info!(
