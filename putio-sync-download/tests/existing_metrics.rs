@@ -71,6 +71,10 @@ async fn every_outcome_is_counted_once_and_kept_on_its_history_row() {
                 .mock("GET", format!("/files/{id}/download").as_str())
                 .match_header("range", Matcher::Any)
                 .with_status(206)
+                .with_header(
+                    "content-range",
+                    format!("bytes {}-{}/{}", SIZE / 2, SIZE - 1, SIZE).as_str(),
+                )
                 .with_body(vec![9u8; SIZE / 2])
                 .create_async()
                 .await,

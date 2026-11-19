@@ -220,6 +220,32 @@ impl<'a> QueueRepository<'a> {
         Ok(items)
     }
 
+    /// The rows being downloaded now, in queue order
+    pub async fn get_downloading(&self) -> DbResult<Vec<QueueItem>> {
+        sqlx::query_as::<_, QueueItem>(
+            r#"
+            SELECT * FROM download_queue
+            WHERE status = 'downloading'
+            ORDER BY priority DESC, created_at ASC
+            "#,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(
+            DbOp::Queue,
+            "Failed to get downloading queue items",
+        ))
+    }
+
+    /// `(file_id, status)` of every queue row: one read for a pass that would otherwise
+    /// look each file up on its own
+    pub async fn statuses(&self) -> DbResult<Vec<(i64, String)>> {
+        sqlx::query_as::<_, (i64, String)>("SELECT file_id, status FROM download_queue")
+            .fetch_all(self.pool)
+            .await
+            .map_err(tracked(DbOp::Queue, "Failed to read queue statuses"))
+    }
+
     /// The queue rows of one Put.io transfer, through `download_sources`, in queue order
     /// (feature 039, FR-023)
     pub async fn get_for_transfer(&self, transfer_id: i64) -> DbResult<Vec<QueueItem>> {

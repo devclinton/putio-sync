@@ -472,6 +472,7 @@ async fn retry_item(
             item.status
         )));
     }
+    state.download_manager.wake_workers();
     info!(file_id, name = %item.filename, "Retrying file");
     Ok(Json(SuccessResponse {
         message: format!("Item {} queued again", file_id),

@@ -9,9 +9,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::fs::OpenOptions;
-use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
+
+/// The writer collects chunks into batches of this size before a disk write
+const WRITE_BATCH: usize = 2 * 1024 * 1024;
 
 /// Default buffer size for streaming downloads (128MB)
 pub const DEFAULT_BUFFER_SIZE: usize = 64 * 1024 * 1024;
@@ -169,7 +172,7 @@ impl StopSignal {
     }
 
     /// Resolves once a stop is asked for
-    async fn stopped(&self) {
+    pub(crate) async fn stopped(&self) {
         while !self.is_stopped() {
             self.notify.notified().await;
         }
@@ -177,7 +180,10 @@ impl StopSignal {
 }
 
 /// Run `fut`, unless `stop` asks to stop first
-async fn unless_stopped<F: Future>(stop: Option<&StopSignal>, fut: F) -> DownloadResult<F::Output> {
+pub(crate) async fn unless_stopped<F: Future>(
+    stop: Option<&StopSignal>,
+    fut: F,
+) -> DownloadResult<F::Output> {
     match stop {
         Some(stop) => tokio::select! {
             biased;
@@ -264,18 +270,46 @@ pub async fn stream_download(
     })
 }
 
-/// Atomically rename a verified hidden `.downloading` file to its final path
+/// Atomically rename a verified hidden `.downloading` file to its final path, durably:
+/// the file's data is flushed to disk first and the folder entry after, so a power cut
+/// right after cannot leave a complete-looking file with missing bytes, or no file at
+/// all, once the caller deletes the original from Put.io.
 pub async fn finish_download(temp_path: &Path, target_path: &Path) -> DownloadResult<()> {
-    tokio::fs::rename(temp_path, target_path)
-        .await
-        .map_err(|e| {
-            DownloadError::IoError(std::io::Error::new(
-                e.kind(),
-                format!("Failed to rename download file: {}", e),
-            ))
+    let temp = temp_path.to_path_buf();
+    let target = target_path.to_path_buf();
+    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+        // Opened for writing: Windows refuses to flush a read-only handle
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&temp)
+            .and_then(|file| file.sync_all())
+            .map_err(|e| {
+                std::io::Error::new(e.kind(), format!("Failed to flush download file: {}", e))
+            })?;
+        std::fs::rename(&temp, &target).map_err(|e| {
+            std::io::Error::new(e.kind(), format!("Failed to rename download file: {}", e))
         })?;
+        sync_parent_dir(&target);
+        Ok(())
+    })
+    .await
+    .map_err(|e| DownloadError::InternalError(format!("Finishing the download panicked: {e}")))?
+    .map_err(DownloadError::IoError)?;
     info!("Download saved to {}", target_path.display());
     Ok(())
+}
+
+/// Flush the folder entry of `path` to disk (Unix). Best effort: some network shares
+/// refuse to sync a folder, and the file itself is already on disk.
+fn sync_parent_dir(path: &Path) {
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::File::open(parent).and_then(|dir| dir.sync_all()) {
+            debug!("Could not sync folder {}: {}", parent.display(), e);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// [`stream_download`] without the final rename: the file stays at its hidden
@@ -297,7 +331,8 @@ pub async fn stream_to_temp(
     stop: Option<&StopSignal>,
     digest: Option<Crc32>,
 ) -> DownloadResult<StreamDownloadResult> {
-    let buffer_size = buffer_size_mb * 1024 * 1024;
+    // Config validation caps it; a caller that skipped it still cannot overflow
+    let buffer_size = buffer_size_mb.min(putio_sync_core::config::MAX_BUFFER_SIZE_MB) * 1024 * 1024;
 
     if let Some(resume_from) = resume_from_byte {
         debug!(
@@ -329,7 +364,8 @@ pub async fn stream_to_temp(
         })?;
     }
 
-    // Make authenticated HTTP request with extended timeout for downloads
+    // Make the authenticated request on the shared download client (connect and read
+    // timeouts, no total one); a stop ends the wait for the server's answer
     debug!("Making download request to: {}", url);
     let mut request_builder = client.authenticated_download_request(url)?;
 
@@ -357,10 +393,12 @@ pub async fn stream_to_temp(
     debug!("Request method: {}", request.method());
     debug!("Request headers: {:?}", request.headers());
 
-    let response = reqwest::Client::new().execute(request).await.map_err(|e| {
-        error!("HTTP request failed: {}", e);
-        DownloadError::HttpError(e)
-    })?;
+    let response = unless_stopped(stop, client.download_client().execute(request))
+        .await?
+        .map_err(|e| {
+            error!("HTTP request failed: {}", e);
+            DownloadError::HttpError(e)
+        })?;
 
     let status = response.status();
     debug!(
@@ -384,11 +422,18 @@ pub async fn stream_to_temp(
         debug!("Content-Range: {:?}", content_range);
     }
 
-    // Check for valid response status: 200 (OK) for full download, 206 (Partial Content) for range requests
-    let is_valid_response =
-        status.is_success() || (resume_from_byte.is_some() && status.as_u16() == 206);
+    // The server cannot serve the range asked for (the file changed, or it no longer
+    // allows ranges): the partial file is no use, so the next attempt starts over
+    if status.as_u16() == 416 && resume_from_byte.is_some() {
+        warn!("Server answered 416 to a resume of {}; starting over", url);
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(DownloadError::ApiError(
+            "Resume refused by the server (416); the partial download was discarded".to_string(),
+        ));
+    }
 
-    if !is_valid_response {
+    // Check for valid response status: 200 (OK) for full download, 206 (Partial Content) for range requests
+    if !status.is_success() {
         // Try to get response body for more detailed error info
         let error_body = response
             .text()
@@ -433,13 +478,51 @@ pub async fn stream_to_temp(
         return Err(DownloadError::ApiError(error_msg));
     }
 
-    // Open file for writing with buffering
-    let file = if resume_from_byte.is_some() {
-        // For resume, open in append mode
-        OpenOptions::new()
-            .create(true)
+    // Where the body starts. A resume needs a 206 whose Content-Range begins at the
+    // byte asked for; a plain 200 means the server ignored the Range header and sends
+    // the whole file, so it replaces the partial one. Appending that to the partial
+    // file would corrupt it.
+    let requested_from = resume_from_byte.filter(|from| *from > 0);
+    let from = match requested_from {
+        Some(want) if status.as_u16() == 206 => match content_range_start(response.headers()) {
+            Some(start) if start == want => want,
+            other => {
+                warn!(
+                    "Resume asked for byte {} but the server's range starts at {:?}; starting over",
+                    want, other
+                );
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(DownloadError::ApiError(format!(
+                    "Resume refused: the server's range does not start at byte {want}; \
+                     the partial download was discarded"
+                )));
+            }
+        },
+        Some(_) => {
+            warn!(
+                "The server ignored the Range header (status {}); downloading from the start",
+                status
+            );
+            0
+        }
+        None => 0,
+    };
+    // What the server says it is sending, to tell a cut connection from a short file
+    let body_length = match content_range(response.headers()) {
+        Some((start, end)) if from > 0 && end >= start => Some(end - start + 1),
+        _ => response.content_length(),
+    };
+    // A restart from 0 hashes from scratch, not from the partial file's prefix
+    let digest = if requested_from.is_some() && from == 0 {
+        digest.map(|_| Crc32::new())
+    } else {
+        digest
+    };
+
+    // Open file for writing
+    let file = if from > 0 {
+        let mut file = OpenOptions::new()
             .write(true)
-            .append(true)
             .open(&temp_path)
             .await
             .map_err(|e| {
@@ -447,10 +530,24 @@ pub async fn stream_to_temp(
                     e.kind(),
                     format!("Failed to open download file for resume: {}", e),
                 ))
-            })?
+            })?;
+        let len = file.metadata().await?.len();
+        if len < from {
+            drop(file);
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(DownloadError::ApiError(format!(
+                "The partial download is shorter ({len} bytes) than the resume point ({from}); \
+                 it was discarded"
+            )));
+        }
+        if len > from {
+            file.set_len(from).await?;
+        }
+        file.seek(std::io::SeekFrom::Start(from)).await?;
+        file
     } else {
         // For new downloads, truncate the file
-        OpenOptions::new()
+        let file = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
@@ -461,12 +558,16 @@ pub async fn stream_to_temp(
                     e.kind(),
                     format!("Failed to create download file: {}", e),
                 ))
-            })?
+            })?;
+        match expected_size {
+            Some(size) if size > 0 => preallocate(file, size).await,
+            _ => file,
+        }
     };
 
     // Create channel for continuous disk writing
     // Channel size determines how much data can be buffered in memory
-    let channel_capacity = buffer_size / (128 * 1024); // Number of ~128KB chunks that fit in buffer
+    let channel_capacity = (buffer_size / (128 * 1024)).max(2); // Number of ~128KB chunks that fit in buffer
     let (tx, mut rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(channel_capacity);
 
     let mut bytes_downloaded = 0u64;
@@ -477,24 +578,35 @@ pub async fn stream_to_temp(
 
     // Task-locals don't reach the writer task, so take the worker id here
     let worker = crate::manager::current_worker();
-    let written_before = resume_from_byte.unwrap_or(0);
+    let written_before = from;
 
     // Spawn disk writer task that runs concurrently
     let writer_handle = tokio::spawn({
         let temp_path = temp_path.clone();
         async move {
-            let mut writer = BufWriter::with_capacity(buffer_size, file);
+            // The channel is the read-ahead buffer; the file gets batches of a few MiB,
+            // so there is no second buffer of `buffer_size` to copy through
+            let mut file = file;
+            let mut batch: Vec<u8> = Vec::with_capacity(WRITE_BATCH + 256 * 1024);
             let mut total_written = 0u64;
             let mut digest = digest;
+            let write_error = |e: std::io::Error| {
+                let message = if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded
+                ) {
+                    format!(
+                        "The disk is full: no space left to write {}",
+                        temp_path.display()
+                    )
+                } else {
+                    format!("Failed to write to download file: {}", e)
+                };
+                DownloadError::IoError(std::io::Error::new(e.kind(), message))
+            };
 
             // Continuously read from channel and write to disk
             while let Some(chunk) = rx.recv().await {
-                writer.write_all(&chunk).await.map_err(|e| {
-                    DownloadError::IoError(std::io::Error::new(
-                        e.kind(),
-                        format!("Failed to write to download file: {}", e),
-                    ))
-                })?;
                 if let Some(digest) = digest.as_mut() {
                     digest.update(&chunk);
                 }
@@ -506,23 +618,24 @@ pub async fn stream_to_temp(
                         written_before + total_written,
                     );
                 }
+                if batch.is_empty() && chunk.len() >= WRITE_BATCH {
+                    file.write_all(&chunk).await.map_err(write_error)?;
+                } else {
+                    batch.extend_from_slice(&chunk);
+                    if batch.len() >= WRITE_BATCH {
+                        file.write_all(&batch).await.map_err(write_error)?;
+                        batch.clear();
+                    }
+                }
             }
 
-            // Flush any remaining buffered data
-            writer.flush().await.map_err(|e| {
-                DownloadError::IoError(std::io::Error::new(
-                    e.kind(),
-                    format!("Failed to flush download file: {}", e),
-                ))
-            })?;
+            // Write the last, smaller batch
+            if !batch.is_empty() {
+                file.write_all(&batch).await.map_err(write_error)?;
+            }
 
-            // Ensure all data is written to disk
-            writer.shutdown().await.map_err(|e| {
-                DownloadError::IoError(std::io::Error::new(
-                    e.kind(),
-                    format!("Failed to close download file: {}", e),
-                ))
-            })?;
+            // Hand everything to the OS; `finish_download` syncs it to disk before the rename
+            file.flush().await.map_err(write_error)?;
 
             debug!(
                 "Disk writer finished: wrote {} bytes to {}",
@@ -555,23 +668,20 @@ pub async fn stream_to_temp(
 
                     bytes_downloaded += chunk.len() as u64;
 
-                    // Send to disk writer (async, non-blocking if channel has space)
-                    tx.send(chunk).await.map_err(|_| {
-                        DownloadError::IoError(std::io::Error::new(
+                    // Send to disk writer (async, non-blocking if channel has space).
+                    // A closed channel means the writer failed; its own error is
+                    // read below, which says why (a full disk, say).
+                    if tx.send(chunk).await.is_err() {
+                        return Err(DownloadError::IoError(std::io::Error::new(
                             std::io::ErrorKind::BrokenPipe,
                             "Disk writer task failed",
-                        ))
-                    })?;
+                        )));
+                    }
 
                     // Use size-based progress logging for large files
                     if let Some(ref mut logger) = progress_logger {
                         if let Some(size) = expected_size {
-                            let total_downloaded = if let Some(resume_from) = resume_from_byte {
-                                resume_from + bytes_downloaded
-                            } else {
-                                bytes_downloaded
-                            };
-                            logger.maybe_log_progress(total_downloaded, size);
+                            logger.maybe_log_progress(from + bytes_downloaded, size);
                         }
                     } else if bytes_downloaded.is_multiple_of(10 * 1024 * 1024) {
                         // Fallback debug logging for files without expected_size
@@ -614,11 +724,20 @@ pub async fn stream_to_temp(
         )))
     })?;
 
+    // A disk error comes first: when the writer fails, the network loop only sees its
+    // channel close, and the writer's error is the real cause
+    let (_, crc32) = match disk_result {
+        Ok(done) => done,
+        Err(e) => {
+            if e.is_storage_full() {
+                error!("Disk full while writing {}", temp_path.display());
+            }
+            return Err(e);
+        }
+    };
+
     // Propagate any network errors
     network_result?;
-
-    // Propagate any disk errors
-    let (_, crc32) = disk_result?;
 
     debug!(
         "Downloaded {} bytes to {}",
@@ -628,20 +747,28 @@ pub async fn stream_to_temp(
 
     // Validate file size if expected size was provided
     if let Some(expected) = expected_size {
-        let total_bytes_written = if let Some(resume_from) = resume_from_byte {
-            // For resumed downloads, add the existing bytes to what we just downloaded
-            resume_from + bytes_downloaded
-        } else {
-            // For new downloads, just use what we downloaded
-            bytes_downloaded
-        };
+        // For resumed downloads, add the existing bytes to what we just downloaded
+        let total_bytes_written = from + bytes_downloaded;
 
+        let cut_short = body_length.is_none_or(|len| bytes_downloaded < len);
+        if total_bytes_written < expected && cut_short {
+            // The connection ended early without an error. What arrived is valid, so the
+            // partial file stays and the next attempt resumes it.
+            warn!(
+                "Download ended early: {} of {} bytes",
+                total_bytes_written, expected
+            );
+            return Err(DownloadError::ApiError(format!(
+                "Incomplete download: the connection ended after {} of {} bytes",
+                total_bytes_written, expected
+            )));
+        }
         if total_bytes_written != expected {
             warn!(
                 "Total file size ({}) doesn't match expected size ({})",
                 total_bytes_written, expected
             );
-            // Clean up incomplete file
+            // Clean up the file: it is not what Put.io described
             let _ = tokio::fs::remove_file(&temp_path).await;
             return Err(DownloadError::ApiError(format!(
                 "Size mismatch: total file size {} bytes, expected {} bytes",
@@ -662,6 +789,50 @@ pub async fn stream_to_temp(
         success: true,
         crc32,
     })
+}
+
+/// The first byte of a `Content-Range: bytes 100-199/200` header
+fn content_range_start(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    content_range(headers).map(|(start, _)| start)
+}
+
+/// The first and last byte of a `Content-Range: bytes a-b/total` header
+fn content_range(headers: &reqwest::header::HeaderMap) -> Option<(u64, u64)> {
+    let value = headers.get(reqwest::header::CONTENT_RANGE)?.to_str().ok()?;
+    let range = value.trim().strip_prefix("bytes")?.trim_start();
+    let (span, _total) = range.split_once('/')?;
+    let (start, end) = span.split_once('-')?;
+    Some((start.trim().parse().ok()?, end.trim().parse().ok()?))
+}
+
+/// Reserve disk blocks for the whole file where the OS can (Linux), so the file is
+/// not fragmented and a full disk shows up early. The length stays 0 until bytes are
+/// written (`FALLOC_FL_KEEP_SIZE`), so an interrupted download still looks like a
+/// partial file. Best effort: errors are ignored.
+#[cfg(target_os = "linux")]
+async fn preallocate(file: tokio::fs::File, len: u64) -> tokio::fs::File {
+    let std_file = file.into_std().await;
+    let std_file = tokio::task::spawn_blocking(move || {
+        use std::os::fd::AsRawFd;
+        // SAFETY: the descriptor belongs to `std_file`, which outlives the call
+        let _ = unsafe {
+            libc::fallocate(
+                std_file.as_raw_fd(),
+                libc::FALLOC_FL_KEEP_SIZE,
+                0,
+                len as libc::off_t,
+            )
+        };
+        std_file
+    })
+    .await
+    .expect("fallocate does not panic");
+    tokio::fs::File::from_std(std_file)
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn preallocate(file: tokio::fs::File, _len: u64) -> tokio::fs::File {
+    file
 }
 
 #[cfg(test)]
@@ -752,6 +923,247 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!target_path.exists()); // Should clean up on failure
+    }
+
+    /// A 10-byte file whose first 5 bytes are already in the partial file
+    async fn resume_setup(
+        server: &mut mockito::ServerGuard,
+        response: impl FnOnce(mockito::Mock) -> mockito::Mock,
+    ) -> (
+        TempDir,
+        PathBuf,
+        PathBuf,
+        PutioApiClient,
+        String,
+        mockito::Mock,
+    ) {
+        let mock = response(
+            server
+                .mock("GET", "/resume.bin")
+                .match_header("range", "bytes=5-9"),
+        )
+        .create_async()
+        .await;
+        let temp_dir = TempDir::new().unwrap();
+        let target_path = temp_dir.path().join("resume.bin");
+        let temp_path = create_temp_path(&target_path).unwrap();
+        tokio::fs::write(&temp_path, b"01234").await.unwrap();
+        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url());
+        let url = format!("{}/resume.bin", server.url());
+        (temp_dir, target_path, temp_path, client, url, mock)
+    }
+
+    async fn resume(
+        client: &PutioApiClient,
+        url: &str,
+        target_path: &Path,
+    ) -> DownloadResult<StreamDownloadResult> {
+        let mut digest = Crc32::new();
+        digest.update(b"01234");
+        stream_to_temp(
+            client,
+            url,
+            target_path,
+            "resume.bin",
+            Some(10),
+            1,
+            None,
+            Some(5),
+            None,
+            Some(digest),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn resume_appends_a_206_that_starts_where_asked() {
+        let mut server = Server::new_async().await;
+        let (_dir, target, temp, client, url, mock) = resume_setup(&mut server, |m| {
+            m.with_status(206)
+                .with_header("content-range", "bytes 5-9/10")
+                .with_body("56789")
+        })
+        .await;
+
+        let result = resume(&client, &url, &target).await.unwrap();
+
+        assert_eq!(result.bytes_downloaded, 5);
+        assert_eq!(tokio::fs::read(&temp).await.unwrap(), b"0123456789");
+        let mut whole = Crc32::new();
+        whole.update(b"0123456789");
+        assert_eq!(result.crc32, Some(whole.hex()));
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn resume_answered_with_200_replaces_the_partial_file() {
+        let mut server = Server::new_async().await;
+        // The server ignores Range and sends the whole file
+        let (_dir, target, temp, client, url, mock) =
+            resume_setup(&mut server, |m| m.with_status(200).with_body("0123456789")).await;
+
+        let result = resume(&client, &url, &target).await.unwrap();
+
+        assert_eq!(result.bytes_downloaded, 10);
+        assert_eq!(tokio::fs::read(&temp).await.unwrap(), b"0123456789");
+        // The CRC covers the new bytes only, not the old prefix twice
+        let mut whole = Crc32::new();
+        whole.update(b"0123456789");
+        assert_eq!(result.crc32, Some(whole.hex()));
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn resume_with_a_misplaced_range_discards_the_partial_file() {
+        let mut server = Server::new_async().await;
+        let (_dir, target, temp, client, url, mock) = resume_setup(&mut server, |m| {
+            m.with_status(206)
+                .with_header("content-range", "bytes 0-9/10")
+                .with_body("0123456789")
+        })
+        .await;
+
+        let err = resume(&client, &url, &target).await.unwrap_err();
+
+        assert!(err.is_transient(), "{err}");
+        assert!(!temp.exists());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn a_short_body_keeps_the_partial_file_for_resume() {
+        let mut server = Server::new_async().await;
+        let (_dir, target, temp, client, url, mock) = resume_setup(&mut server, |m| {
+            m.with_status(206)
+                .with_header("content-range", "bytes 5-9/10")
+                .with_body("56")
+        })
+        .await;
+
+        let err = resume(&client, &url, &target).await.unwrap_err();
+
+        assert!(err.to_string().contains("Incomplete download"), "{err}");
+        assert!(err.is_transient());
+        assert_eq!(tokio::fs::read(&temp).await.unwrap(), b"0123456");
+        assert!(!target.exists());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn a_whole_response_smaller_than_put_io_says_is_a_size_mismatch() {
+        let mut server = Server::new_async().await;
+        let (_dir, target, temp, client, url, mock) = resume_setup(&mut server, |m| {
+            m.with_status(206)
+                .with_header("content-range", "bytes 5-6/7")
+                .with_body("56")
+        })
+        .await;
+
+        let err = resume(&client, &url, &target).await.unwrap_err();
+
+        assert!(err.to_string().contains("Size mismatch"), "{err}");
+        assert!(!err.is_transient());
+        assert!(!temp.exists());
+        mock.assert_async().await;
+    }
+
+    #[test]
+    fn content_range_start_reads_the_first_byte() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        assert_eq!(content_range_start(&headers), None);
+        headers.insert("content-range", "bytes 100-199/200".parse().unwrap());
+        assert_eq!(content_range_start(&headers), Some(100));
+        headers.insert("content-range", "bytes */200".parse().unwrap());
+        assert_eq!(content_range_start(&headers), None);
+    }
+
+    #[tokio::test]
+    async fn finish_download_moves_the_file_into_place() {
+        let dir = TempDir::new().unwrap();
+        let temp = dir.path().join(".done.bin.downloading");
+        let target = dir.path().join("done.bin");
+        tokio::fs::write(&temp, b"payload").await.unwrap();
+
+        finish_download(&temp, &target).await.unwrap();
+
+        assert!(!temp.exists());
+        assert_eq!(tokio::fs::read(&target).await.unwrap(), b"payload");
+        // A missing temp file is an error, not a silent success
+        assert!(finish_download(&temp, &target).await.is_err());
+    }
+
+    /// `/dev/full` fails every write with ENOSPC, like a full disk
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_full_disk_is_reported_as_such_and_not_as_a_broken_pipe() {
+        let mut server = Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/big.bin")
+            .with_status(200)
+            .with_body("x".repeat(64 * 1024))
+            .create_async()
+            .await;
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("big.bin");
+        std::os::unix::fs::symlink("/dev/full", create_temp_path(&target).unwrap()).unwrap();
+        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url());
+        let url = format!("{}/big.bin", server.url());
+
+        let err = stream_to_temp(
+            &client,
+            &url,
+            &target,
+            "big.bin",
+            Some(64 * 1024),
+            1,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.is_storage_full(), "{err}");
+        assert!(!err.is_transient());
+        assert!(err.to_string().contains("disk is full"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_stop_ends_the_wait_for_a_server_that_never_answers() {
+        // Accepts the connection and never replies
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/hang.bin", listener.local_addr().unwrap());
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("hang.bin");
+        let client = PutioApiClient::with_base_url("test_token".to_string(), url.clone());
+        let stop = std::sync::Arc::new(StopSignal::default());
+        let stopper = stop.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            stopper.stop();
+        });
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            stream_to_temp(
+                &client,
+                &url,
+                &target,
+                "hang.bin",
+                None,
+                1,
+                None,
+                None,
+                Some(&stop),
+                None,
+            ),
+        )
+        .await
+        .expect("the stop must end the wait");
+
+        assert!(matches!(result, Err(DownloadError::Stopped)));
+        drop(listener);
     }
 
     #[tokio::test]

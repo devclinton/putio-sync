@@ -38,11 +38,17 @@ bytes = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
-# CRC32 of local files against Put.io's crc32 (feature 040, research R4); already in
-# Cargo.lock through sqlx
-crc = "3.4"
+# CRC32 of local files against Put.io's crc32 (feature 040, research R4); the
+# hardware-accelerated implementation, picked at run time. Already in Cargo.lock through flate2
+crc32fast = "1.4"
+
+# Reserve disk space for a download up front (Linux, best effort)
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
+# The tests check crc32fast against this table-driven implementation
+crc = "3.4"
 mockito = "1.2"
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.8"

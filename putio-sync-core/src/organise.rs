@@ -195,7 +195,12 @@ pub fn tv_target(root: &str, name: &str, folder: &str) -> Option<Target> {
     }
     let tail = format!("{lang}{ext}");
     let mut file = format!("{show} - {number}");
-    let title = sanitize_name(&episode.title);
+    let title = episode.title.trim();
+    let title = if title.is_empty() {
+        String::new()
+    } else {
+        sanitize_name(title)
+    };
     if !title.is_empty() && file.len() + title.len() + 3 + tail.len() <= MAX_NAME_BYTES {
         file.push_str(" - ");
         file.push_str(&title);

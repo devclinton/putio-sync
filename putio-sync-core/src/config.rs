@@ -16,6 +16,9 @@ use crate::logging::LevelSource;
 use putio_sync_telemetry::server::MetricsSettings;
 use putio_sync_telemetry::Detail;
 
+/// The largest `buffer_size_mb` accepted
+pub const MAX_BUFFER_SIZE_MB: usize = 1024;
+
 /// Default value for delete_empty_folders
 fn default_slow_limit() -> u64 {
     crate::bandwidth::DEFAULT_SLOW_LIMIT
@@ -1617,6 +1620,13 @@ impl Config {
             return Err(CoreError::ConfigError(
                 "buffer_size_mb must be at least 1".to_string(),
             ));
+        }
+        // A huge value would allocate that much memory per download
+        if self.download.buffer_size_mb > MAX_BUFFER_SIZE_MB {
+            return Err(CoreError::ConfigError(format!(
+                "buffer_size_mb must be at most {}",
+                MAX_BUFFER_SIZE_MB
+            )));
         }
 
         // Validate chunk_size_mb is reasonable if set

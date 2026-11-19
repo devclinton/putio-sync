@@ -19,6 +19,24 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- Put.io folders with more than 1000 entries are listed completely, so files past the first
+  page are no longer treated as missing.
+- A file is deleted from Put.io only after the download has been synced to disk and renamed
+  into place.
+- A file is dropped from the queue only when Put.io says it no longer exists; a network or
+  server error keeps it queued.
+- Downloads that failed on a dropped connection or a server error are queued again by the next
+  syncs, up to three times. A full disk is reported as such and not retried.
+- Resuming a partial download checks that the server returned the matching byte range, and a
+  download that ends early keeps what it received.
+- A crashed download worker puts its file back in the queue instead of leaving it stuck as
+  "downloading".
+- Changing settings no longer waits for running downloads.
+- Retry-After headers are capped and may be dates; POST requests are only retried when they
+  are safe to repeat.
+- File names made only of dots or with control characters, and folder paths that would leave
+  the download directory, are cleaned or refused. Two files whose names differ only in case
+  no longer write at the same time.
 - `[download]`, `[watch]` and `[sync]` tables load with only some of their keys set, and
   `[watch] refresh_cycle` accepts values above 127.
 - `putio-sync health` exits with an error naming the file when the config file exists but
@@ -31,6 +49,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - Watched .torrent and .magnet files stay in the folder after upload unless
   `delete_after_upload = true` or `archive_directory` is set, also when the config has no
   `[watch]` table.
+- Downloads checksum faster, use less memory, and reserve disk space up front on Linux.
+- `buffer_size_mb` above 1024 is rejected when the config is loaded.
 - Release builds use thin LTO, and static Linux builds use the mimalloc allocator.
 - The `daemon` flags `--filter`, `--delete-after`, `--delete-empty-folders`, `--watch-only`,
   `--download-only`, `--archive-dir` and `--delete-torrents`, and `download --chunk-size`, are
