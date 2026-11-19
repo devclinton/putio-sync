@@ -17,9 +17,29 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - Updated lettre (SMTP) and quick-xml (DLNA) to fix their published advisories, and login no
   longer pulls in a second, outdated HTTP and TLS stack.
 
+### Fixed
+
+- `[download]`, `[watch]` and `[sync]` tables load with only some of their keys set, and
+  `[watch] refresh_cycle` accepts values above 127.
+- `putio-sync health` exits with an error naming the file when the config file exists but
+  can't be read, instead of checking default settings.
+- README and the example configs match the code again: the subtitles settings, the database
+  location, the Docker healthcheck and the glob patterns.
+
 ### Changed
 
+- Watched .torrent and .magnet files stay in the folder after upload unless
+  `delete_after_upload = true` or `archive_directory` is set, also when the config has no
+  `[watch]` table.
 - Release builds use thin LTO, and static Linux builds use the mimalloc allocator.
+- The `daemon` flags `--filter`, `--delete-after`, `--delete-empty-folders`, `--watch-only`,
+  `--download-only`, `--archive-dir` and `--delete-torrents`, and `download --chunk-size`, are
+  hidden from help and warn that they are ignored, naming the config key to use instead.
+
+### Removed
+
+- The unused legacy notification service (it sent nothing for email and was never called).
+  Use `[notifications.smtp]`, hooks or plugins.
 
 ## [0.5.0] - 2026-11-17
 

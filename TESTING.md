@@ -250,7 +250,7 @@ putio-sync login
 putio-sync files list
 
 # List specific folder
-putio-sync files list --parent-id 0
+putio-sync files list
 
 # Test filtering
 putio-sync files list --filter "*.mkv"

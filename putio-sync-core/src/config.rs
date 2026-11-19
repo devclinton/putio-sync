@@ -914,6 +914,7 @@ impl AuthConfig {
 
 /// Sync configuration
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct SyncConfig {
     /// Local path where files will be synced
     pub local_path: PathBuf,
@@ -957,17 +958,18 @@ pub enum SortOrder {
 
 /// Download configuration
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct DownloadConfig {
     /// Number of concurrent download workers (default: 2)
     pub workers: usize,
     /// Target directory for downloads
     pub target_directory: PathBuf,
-    /// Maximum number of concurrent downloads (alias for workers, for backwards compatibility)
+    /// Ignored: kept so old configs parse; `workers` sets the concurrency
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_concurrent: Option<usize>,
     /// Buffer size in MB for streaming downloads (default: 16)
     pub buffer_size_mb: usize,
-    /// Chunk size in MB for chunked downloads (None to disable - Put.io doesn't support range requests)
+    /// Ignored: kept so old configs parse (Put.io downloads stream and resume, never chunked)
     pub chunk_size_mb: Option<usize>,
     /// Continue interrupted and partial downloads instead of starting over
     pub resume_enabled: bool,
@@ -1049,6 +1051,7 @@ pub struct DownloadConfig {
 
 /// Watch configuration
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct WatchConfig {
     /// Enable watch mode
     #[serde(default)]
@@ -1056,7 +1059,7 @@ pub struct WatchConfig {
     /// Paths to watch for changes
     pub paths: Vec<PathBuf>,
     /// How often to refresh in seconds (used when file system events aren't available)
-    pub refresh_cycle: i8,
+    pub refresh_cycle: u32,
     /// Parent folder ID for uploaded torrents (None or 0 for root)
     #[serde(default)]
     pub parent_folder_id: Option<i64>,
@@ -1075,14 +1078,15 @@ pub enum NotificationBackend {
     /// No notifications
     #[default]
     None,
-    /// Webhook notifications (HTTP POST)
+    /// Webhook notifications (ignored: use a hook)
     Webhook,
-    /// Email notifications (future)
+    /// Email notifications (ignored: use `[notifications.smtp]`)
     Email,
 }
 
 /// Notification configuration. Every field is optional, so `[notifications.smtp]` alone is
-/// enough.
+/// enough. `enabled`, `backend`, `webhook_url` and `email` are legacy: they still parse but
+/// nothing reads them (use `smtp`, hooks or plugins).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct NotificationConfig {
@@ -1345,7 +1349,7 @@ impl Default for WatchConfig {
             refresh_cycle: 60,         // 60 seconds
             parent_folder_id: Some(0), // Root folder
             archive_directory: None,
-            delete_after_upload: true,
+            delete_after_upload: false,
         }
     }
 }
@@ -1631,7 +1635,7 @@ impl Config {
         }
 
         // Validate refresh_cycle is positive
-        if self.watch.refresh_cycle <= 0 {
+        if self.watch.refresh_cycle == 0 {
             return Err(CoreError::ConfigError(
                 "refresh_cycle must be greater than 0".to_string(),
             ));
@@ -1915,7 +1919,7 @@ impl ConfigBuilder {
     }
 
     /// Set the refresh cycle in seconds
-    pub fn refresh_cycle(mut self, seconds: i8) -> Self {
+    pub fn refresh_cycle(mut self, seconds: u32) -> Self {
         self.watch.refresh_cycle = seconds;
         self
     }
@@ -3438,11 +3442,31 @@ mod tests {
     }
 
     #[test]
-    fn test_config_validate_negative_refresh_cycle() {
+    fn test_config_validate_zero_refresh_cycle() {
         let mut config = Config::default();
-        config.watch.refresh_cycle = -1;
+        config.watch.refresh_cycle = 0;
         let result = config.validate();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn partial_tables_load_with_defaults() {
+        let config: Config = toml::from_str(
+            "[download]\nworkers = 4\n\n[watch]\npaths = [\"/torrents\"]\n\n[sync]\nlocal_path = \"/data\"\n",
+        )
+        .expect("partial tables load");
+        assert_eq!(config.download.workers, 4);
+        assert_eq!(config.download.buffer_size_mb, 16);
+        assert_eq!(config.download.retry_initial_delay_secs, 1);
+        assert_eq!(config.watch.refresh_cycle, 60);
+        assert_eq!(config.sync.local_path, PathBuf::from("/data"));
+
+        // The daemon's refresh_cycle is wider than the old i8
+        let config: Config = toml::from_str("[watch]\nrefresh_cycle = 300\n").unwrap();
+        assert_eq!(config.watch.refresh_cycle, 300);
+
+        let config: Config = toml::from_str("[watch]\nenabled = true\n").unwrap();
+        assert!(config.watch.paths.is_empty());
     }
 
     #[test]

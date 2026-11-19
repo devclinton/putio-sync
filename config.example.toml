@@ -43,18 +43,22 @@ token = "YOUR_OAUTH_TOKEN_HERE"
 # ============================================================================
 # Sync Configuration
 # ============================================================================
+# Legacy table, kept so old config files still load. The daemon and `download` do not
+# read local_path or delete_after_download from here: use [download] target_directory
+# and [download] delete_after_download below. remote_parent_id does not limit what is
+# synced either; its only effect is that this folder is never removed by the empty-folder
+# cleanup ([cleanup] below). Everything in this table can be left out.
 [sync]
-# Local directory where files will be synced
-# Supports home directory expansion: ~/Downloads/putio
+# Ignored. Use [download] target_directory.
 # Default: "./putio-downloads"
 local_path = "~/Downloads/putio"
 
-# Remote parent folder ID to sync from (0 = root folder)
-# Set to a specific folder ID to only sync that folder
+# Only protects this Put.io folder from the empty-folder cleanup (0 = root). It does
+# NOT restrict what is synced.
 # Default: 0
 remote_parent_id = 0
 
-# Delete files from Put.io after successful download
+# Ignored. Use [download] delete_after_download.
 # Default: false
 delete_after_download = false
 
@@ -88,12 +92,13 @@ target_directory = "~/Downloads/putio"
 # Default: 16
 buffer_size_mb = 16
 
-# Chunk size in MB for chunked downloads (set to enable chunking)
-# When enabled, large files are split into chunks for parallel download
-# Example: 256 MB chunks for files larger than 256 MB
-# Set to null or omit to disable chunking
-# Default: null (disabled)
+# IGNORED. Put.io downloads stream and resume; they are never split into chunks.
+# The key (and `download --chunk-size`) is still accepted so old configs and scripts
+# load, but it has no effect. Leave it out.
 # chunk_size_mb = 256
+
+# IGNORED. Old alias for `workers`; nothing reads it. Use `workers` above.
+# max_concurrent = 4
 
 # Continue interrupted and partial downloads instead of starting over.
 # --no-resume turns it off for one `download` run.
@@ -111,10 +116,14 @@ resume_enabled = true
 # Default: "resume"
 on_existing = "resume"
 
-# Delete files from Put.io after successful download
-# Note: This is specific to the download command
+# Delete files from Put.io after successful download (the daemon and `download`
+# both read this)
 # Default: false
 delete_after_download = false
+
+# Delete a Put.io folder once everything in it has downloaded
+# Default: true
+delete_empty_folders = true
 
 # "download" fetches files; "stream" keeps them on Put.io and the media server
 # ([dlna] with the "putio" root) plays them from there. Folder rules can set
@@ -278,11 +287,15 @@ retry_initial_delay_secs = 1
 # Watch Configuration (for torrent file monitoring)
 # ============================================================================
 [watch]
-# How often to refresh in seconds (when filesystem events aren't available)
-# Lower values = more responsive but higher CPU usage
-# Recommended: 30-120 seconds
+# Seconds between scans. The daemon does not read this: it scans every
+# --watch-interval seconds (default 60). Only `server --watch` uses it.
 # Default: 60
 refresh_cycle = 60
+
+# Put.io folder ID that watched .torrent/.magnet files are uploaded into (0 = root).
+# That folder is also kept out of the empty-folder cleanup.
+# Default: 0
+# parent_folder_id = 0
 
 # Paths to watch for .torrent files
 # When a .torrent file is added to these directories, it will be
@@ -682,31 +695,13 @@ use_plugins = true
 # Notification Configuration
 # ============================================================================
 [notifications]
-# Enable/disable notifications
-# Default: false
+# IGNORED (legacy): enabled, backend, webhook_url and email still parse so old
+# configs load, but nothing sends anything for them. The doctor warns when they are
+# set. Use [notifications.smtp] below for email, [[hooks]] for a webhook or command,
+# or a notifier plugin (Settings > Notifications).
 enabled = false
-
-# Notification backend to use
-# Options: "none", "webhook", "email"
-# - none: No notifications (default)
-# - webhook: Send HTTP POST requests to a webhook URL
-# - email: Not used; email is sent from [notifications.smtp] below
-# Default: "none"
 backend = "none"
-
-# Webhook URL (required when backend = "webhook")
-# The webhook will receive a POST request with JSON payload containing:
-# - file_id: Put.io file ID
-# - filename: Name of the downloaded file
-# - file_size: Size in bytes
-# - local_path: Local path where file was saved
-# - duration_seconds: Download duration
-# - average_speed: Average download speed in bytes/sec
-# - completed_at: ISO 8601 timestamp
-# Example: "https://example.com/webhook/putio"
 # webhook_url = "https://your-webhook-url.com/notify"
-
-# Email address for notifications (when backend = "email", future)
 # email = "your.email@example.com"
 
 # Email notifications (feature 030): the chosen events as plain-text email. The first
@@ -1051,9 +1046,8 @@ caches = ["https://itorrents.net/torrent/{HASH}.torrent"]
 # ============================================================================
 # Database Configuration (Advanced)
 # ============================================================================
-# Database location (SQLite)
-# Default: ~/.putiosync/putio-sync.db
-# Note: This is automatically managed and usually doesn't need configuration
+# Database location (SQLite): see [database] near the top. Default: .putiosync.db
+# next to this config file (~/.putiosync/.putiosync.db, /config/.putiosync.db in Docker).
 
 # ============================================================================
 # Examples of Common Configurations

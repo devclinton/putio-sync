@@ -25,7 +25,7 @@
 - [X] T009 [US1] Implement `Organiser` (`plan`, `apply`, `dismiss`, `list`, `configure`) and `OrganiseStep` (`ArrivedStep`, name `organise`) in `putio-sync-download/src/organise.rs`; export from `lib.rs`; make `hook_file`/`hooks_for` crate-visible in `manager.rs`
 - [X] T010 [US1] Add `putio-sync-api/src/routes/system/organise.rs` (`GET /organise`, `POST /organise/apply|dismiss`, `GET/PUT /settings/organise`, preview), `AppState.organiser` + `with_organiser` in `lib.rs`, and the settings group in `settings.rs`
 - [X] T011 [US1] Build the organiser in `putio-sync-cli/src/commands/daemon.rs`, register `OrganiseStep` after `Mp4Step`, attach it to the API state
-- [ ] T012 [US1] Add `putio-sync-api/ui/organise.js` (settings form + moves list with tick boxes, Apply, Dismiss) registered in `putio-sync-api/src/ui.rs`, and an "Organise" button in `putio-sync-api/ui/pages/putio.js` that imports it on demand
+- [X] T012 [US1] Add `putio-sync-api/ui/organise.js` (settings form + moves list with tick boxes, Apply, Dismiss) registered in `putio-sync-api/src/ui.rs`, and an "Organise" button in `putio-sync-api/ui/pages/putio.js` that imports it on demand
 
 ## Phase 4: User Story 2 — undo (P1)
 

@@ -426,7 +426,7 @@ pub struct DownloadSettings {
 pub struct WatcherConfig {
     pub enabled: bool,
     pub paths: Vec<String>,
-    pub refresh_cycle: i8,
+    pub refresh_cycle: u32,
     pub parent_folder_id: Option<i64>,
     pub archive_directory: Option<String>,
     pub delete_after_upload: bool,

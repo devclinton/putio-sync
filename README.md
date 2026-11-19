@@ -181,10 +181,11 @@ cp config.example.toml ~/.putiosync/config.toml
 
 ```bash
 # List files in root folder
-putio-sync list
+putio-sync files list
 
-# List files in a specific folder
-putio-sync list --parent-id 123456
+# List files in a specific folder (by path or by ID)
+putio-sync files list Movies
+putio-sync files list --id 123456
 
 # Download all files
 putio-sync download --all
@@ -199,13 +200,13 @@ putio-sync download --all --filter "*.mkv"
 putio-sync download --all --workers 4 --skip-existing
 
 # Add torrent from magnet link
-putio-sync create "magnet:?xt=urn:btih:..."
+putio-sync transfers add "magnet:?xt=urn:btih:..."
 
 # Add torrent from file
-putio-sync create movie.torrent
+putio-sync transfers add movie.torrent
 
 # Watch directory for torrents
-putio-sync create --watch ~/Downloads/torrents
+putio-sync transfers add --watch ~/Downloads/torrents
 
 # View statistics
 putio-sync stat
@@ -214,7 +215,7 @@ putio-sync stat
 putio-sync history --limit 20
 
 # Delete files
-putio-sync delete 123456 --yes
+putio-sync files delete 123456 --yes
 ```
 
 <!-- ANCHOR_END: using-putio-sync -->
@@ -231,17 +232,29 @@ putio-sync login
 
 Opens your browser for authentication and saves the token to your config file.
 
-### `list`
+### `files list`
 
-List files and folders on Put.io.
+List files and folders on Put.io. (The old top-level `list`, `delete` and `create` still
+work but are hidden and deprecated: use `files list`, `files delete` and `transfers add`.)
 
 ```bash
-putio-sync list [OPTIONS]
+putio-sync files list [OPTIONS] [PATH]
+
+Arguments:
+  [PATH]                    Remote folder path or ID [default: root]
 
 Options:
-  -p, --parent-id <ID>      Parent folder ID (0 for root)
-  -f, --filter <PATTERN>    Filter by filename pattern
-  -o, --output <FORMAT>     Output format: table, json [default: table]
+  -i, --id <ID>             List a folder by ID instead of path
+  -r, --recursive           List files recursively
+  -l, --long                Long format (size, date, etc.)
+  -f, --filter <PATTERN>    Filter by name pattern, as in folder rules
+  -t, --type <TYPE>         file, folder, video, audio, image, archive
+      --min-size <SIZE>     Minimum size (e.g., 100MB)
+      --max-size <SIZE>     Maximum size
+      --sort <FIELD>        name, size, date
+      --reverse             Reverse sort order
+  -o, --output <FORMAT>     table, json, csv, tree [default: table]
+      --output-file <FILE>  Write the output to a file
 ```
 
 ### `download`
@@ -290,12 +303,12 @@ putio-sync download --all --buffer-size 32MB
 putio-sync download --all --daemon --interval 300
 ```
 
-### `delete`
+### `files delete`
 
 Delete files from Put.io.
 
 ```bash
-putio-sync delete [OPTIONS] [FILES]...
+putio-sync files delete [OPTIONS] [FILES]...
 
 Arguments:
   [FILES]...                Specific file IDs to delete
@@ -313,16 +326,16 @@ Examples:
 
 ```bash
 # Delete specific files
-putio-sync delete 123456 789012
+putio-sync files delete 123456 789012
 
 # Delete files matching pattern (with confirmation)
-putio-sync delete --filter "*.txt"
+putio-sync files delete --filter "*.txt"
 
 # Delete all files before a date
-putio-sync delete --all --before "2024-01-01" --yes
+putio-sync files delete --all --before "2024-01-01" --yes
 
 # Dry run to see what would be deleted
-putio-sync delete --all --filter "*.log" --dry-run
+putio-sync files delete --all --filter "*.log" --dry-run
 ```
 
 ### `files clean-empty`
@@ -390,12 +403,12 @@ putio-sync plugins check FOLDER [--json]
 
 It needs no config or token. Exit codes: 0 no problems, 1 problems, 2 not a folder.
 
-### `create`
+### `transfers add`
 
 Add torrents to Put.io from files or magnet links.
 
 ```bash
-putio-sync create [OPTIONS] [SOURCES]...
+putio-sync transfers add [OPTIONS] [SOURCES]...
 
 Arguments:
   [SOURCES]...              Torrent files or magnet links to add
@@ -411,22 +424,22 @@ Examples:
 
 ```bash
 # Add torrent from magnet link
-putio-sync create "magnet:?xt=urn:btih:..."
+putio-sync transfers add "magnet:?xt=urn:btih:..."
 
 # Add torrent from file
-putio-sync create movie.torrent
+putio-sync transfers add movie.torrent
 
 # Add magnet from .magnet file
-putio-sync create movie.magnet
+putio-sync transfers add movie.magnet
 
 # Add multiple torrents and magnet files
-putio-sync create file1.torrent file2.magnet file3.torrent
+putio-sync transfers add file1.torrent file2.magnet file3.torrent
 
 # Watch directory for torrents and magnet files
-putio-sync create --watch ~/Downloads/torrents
+putio-sync transfers add --watch ~/Downloads/torrents
 
 # Watch multiple directories in daemon mode
-putio-sync create --watch ~/Downloads --watch /media/torrents --daemon
+putio-sync transfers add --watch ~/Downloads --watch /media/torrents --daemon
 ```
 
 ### `stat`
@@ -1161,7 +1174,7 @@ daemon's download manager and watcher:
 | Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Release check | — | everything |
-| Notifications | `smtp` (email), at once | the legacy `enabled`, `backend`, `webhook_url`, `email` |
+| Notifications | `smtp` (email), at once | nothing: the legacy `enabled`, `backend`, `webhook_url`, `email` still parse but are ignored |
 | Network | — | everything (`api_bind`, `metrics_bind`); the UI asks first when the new list wouldn't reach the page you're on |
 | Event hooks | everything, at once | — |
 | Plugins | everything, at once (a new `plugins_dir` is read on save) | — |
@@ -1825,6 +1838,8 @@ It looks in this order and stops at the first source that has the language:
 [subtitles]
 languages = ["en", "es"]        # names or codes, most wanted first; empty turns it off
 excluded_categories = ["radarr"]  # categories left alone, such as ones Bazarr handles
+mode = "download_then_whisper"   # download_only, download_then_whisper, whisper_only, both
+min_confidence = 65              # 0 to 100: a match scoring less is not saved
 
 [subtitles.transcription]
 enabled = false                  # off by default
@@ -1832,9 +1847,6 @@ url = "http://nas:8000"          # an OpenAI-style server: speaches, faster-whis
 model = "Systran/faster-whisper-small"
 api_key = ""                     # or PUTIO_SYNC_TRANSCRIPTION_API_KEY; never logged
 chunk_secs = 600                 # audio goes in parts of this length
-
-mode = "download_then_whisper"   # download_only, download_then_whisper, whisper_only, both
-min_confidence = 65              # 0 to 100: a match scoring less is not saved
 
 [subtitles.category_modes]       # a category's mode beats the global one
 radarr = "download_only"
@@ -2256,29 +2268,26 @@ Use the `daemon` command, which runs download sync and torrent watching in a sin
 
 ```bash
 # Run both download sync and torrent watching together
-putio-sync daemon --download-interval 300 --watch-interval 60 --watch ~/Downloads/torrents --skip-existing --delete-after
+putio-sync daemon --download-interval 300 --watch-interval 60 --watch ~/Downloads/torrents --skip-existing
 
-# Download-only mode (no torrent watching)  
-putio-sync daemon --download-only --download-interval 300 --skip-existing --delete-after
+# Sync only: leave watch.paths empty in config.toml and pass no --watch
+putio-sync daemon --download-interval 300 --skip-existing
 
-# Watch-only mode (no download sync)
-putio-sync daemon --watch-only --watch-interval 60 --watch ~/Downloads/torrents ~/Watch/putio
-
-# With filtering for specific file types
-putio-sync daemon --filter "*.mkv,*.mp4,*.avi" --skip-existing --delete-after
-
-# Archive torrent/magnet files after processing (move to ~/processed)
-putio-sync daemon --watch-only --watch ~/Downloads/torrents --archive-dir ~/processed
-
-# Delete torrent/magnet files after processing 
-putio-sync daemon --watch-only --watch ~/Downloads/torrents --delete-torrents
+# Watch several folders for .torrent and .magnet files
+putio-sync daemon --watch-interval 60 --watch ~/Downloads/torrents ~/Watch/putio
 ```
+
+Everything else is set in `config.toml` (see Method 3): `download.delete_after_download`,
+`download.whitelist_patterns` / `download.blacklist_patterns` or `[[download.rules]]` for
+filtering, `watch.archive_directory` to move torrent/magnet files after processing, and
+`watch.delete_after_upload = true` to delete them.
 
 > **Daemon flag support:** `--download-interval` sets how often Put.io is synced (default
 > 300 s), and `--watch-interval` sets how often watch folders are scanned and the queue is
 > worked. `--on-existing` and `--skip-existing` apply. `--filter`, `--delete-after`, `--delete-empty-folders`,
-> `--watch-only`, `--download-only`, `--archive-dir` and `--delete-torrents` are currently
-> ignored in daemon mode, with a warning at startup; use `config.toml` instead
+> `--watch-only`, `--download-only`, `--archive-dir` and `--delete-torrents` are deprecated:
+> they are hidden from `--help`, still accepted so old scripts run, and ignored with a
+> warning at startup that names the `config.toml` key to use
 > (`watch.archive_directory`, `watch.delete_after_upload`, `download.delete_after_download`). The effective settings
 > are logged after the config loads, under `Daemon configuration:`.
 >
@@ -2326,9 +2335,10 @@ At startup, `daemon` and `server` (its API and its `--download` thread) give the
 manager every `[download]` setting it has: `target_directory`, `workers`,
 `buffer_size_mb`, `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`,
 `slow_limit_bytes_per_sec`, `max_retries`, `retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download` and
-`blocked_extensions`. The other `[download]` keys (`chunk_size_mb`,
-`progress_style`, sorting, glob patterns, `delete_empty_folders`) are read by the
-one-off `download` command only. Before this, `daemon` ignored the bandwidth limit and
+`blocked_extensions`. The glob `whitelist_patterns` and `blacklist_patterns` apply to the
+daemon too. `progress_style`, sorting and `delete_empty_folders` are read by the one-off
+`download` command only, and `chunk_size_mb` and `max_concurrent` are ignored everywhere
+(Put.io downloads are never chunked; `workers` sets the concurrency). Before this, `daemon` ignored the bandwidth limit and
 retry settings and always skipped files that already existed; it now follows
 `on_existing` (see [When a file already exists](#when-a-file-already-exists)).
 
@@ -2419,13 +2429,16 @@ The daemon includes advanced torrent processing features:
 
 ```bash
 # Enable database tracking (default when no archive/delete specified)
-putio-sync daemon --watch-only --watch ~/Downloads/torrents
+putio-sync daemon --watch ~/Downloads/torrents
+```
 
-# Archive files after processing
-putio-sync daemon --watch-only --watch ~/Downloads/torrents --archive-dir ~/processed
+```toml
+# Archive files after processing (config.toml)
+[watch]
+archive_directory = "~/processed"
 
-# Delete files after processing
-putio-sync daemon --watch-only --watch ~/Downloads/torrents --delete-torrents
+# ...or delete them instead (not both)
+# delete_after_upload = true
 ```
 
 ### Method 2: Multiple Terminal Sessions (Alternative)
@@ -2437,7 +2450,7 @@ Run each daemon in separate terminal sessions:
 putio-sync download --all --daemon --interval 300 --skip-existing --progress none
 
 # Terminal 2: Torrent watcher (checks every minute)
-putio-sync create --watch ~/Downloads/torrents --daemon --interval 60
+putio-sync transfers add --watch ~/Downloads/torrents --daemon --interval 60
 ```
 
 ### Method 3: Configuration File Setup
@@ -2464,10 +2477,7 @@ paths = ["~/Downloads/torrents", "~/Watch/putio", "/media/torrents"]
 # archive_directory = "~/processed"        # Move processed files here (optional)
 # delete_after_upload = true               # Delete files after upload (optional)
 
-[notifications]
-enabled = true
-backend = "webhook"
-webhook_url = "https://your-domain.com/webhook/putio"
+# Notifications: email in [notifications.smtp], or a webhook/command in [[hooks]]
 ```
 
 Then run the daemons with simplified commands:
@@ -2477,7 +2487,7 @@ Then run the daemons with simplified commands:
 putio-sync download --all --daemon --interval 300
 
 # Watch daemon (uses config.toml watch.paths)
-putio-sync create --daemon --interval 60 --watch ~/Downloads/torrents ~/Watch/putio
+putio-sync transfers add --daemon --interval 60 --watch ~/Downloads/torrents ~/Watch/putio
 ```
 ```
 docker run --env PUTIO_SYNC_CONFIG=/config/config.toml --volume "/path/to/config:/config" --volume "/path/to/downloads:/downloads" --volume /path/to/watch:/watches/torrents ghcr.io/devclinton/putio-sync:latest
@@ -2513,7 +2523,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/putio-sync create --daemon --interval 60 --watch %h/Downloads/torrents %h/Watch/putio
+ExecStart=/usr/local/bin/putio-sync transfers add --daemon --interval 60 --watch %h/Downloads/torrents %h/Watch/putio
 Restart=always
 RestartSec=30
 Environment=RUST_LOG=info
@@ -2560,11 +2570,13 @@ services:
       --download-interval 300 
       --watch-interval 60 
       --watch /torrents /watch
-      --skip-existing 
-      --delete-after
-      --filter "*.mkv,*.mp4,*.avi,*.mp3,*.flac"
+      --skip-existing
+    # Delete-after and file filters come from config.toml (download.delete_after_download,
+    # download.whitelist_patterns): the daemon ignores --delete-after and --filter.
     healthcheck:
-      test: ["CMD", "putio-sync", "--version"]
+      # `health` exits 0 when healthy and 1 on any warning or problem (it also fails
+      # on a config file that does not load)
+      test: ["CMD", "putio-sync", "health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -2596,7 +2608,7 @@ services:
     environment:
       - RUST_LOG=info
     command: >
-      putio-sync create --daemon --interval 60 
+      putio-sync transfers add --daemon --interval 60 
       --watch /torrents /watch
 ```
 
@@ -2954,7 +2966,7 @@ docker run -d \
   -v ~/Downloads/torrents:/watches \
   -e RUST_LOG=info \
   ghcr.io/devclinton/putio-sync:latest \
-  putio-sync create --watch /watches --daemon
+  putio-sync transfers add --watch /watches --daemon
 ```
 
 ### Docker Compose
@@ -2978,7 +2990,7 @@ Traditional BitTorrent files containing metadata and tracker information. These 
 
 ```bash
 # Process .torrent file
-putio-sync create movie.torrent
+putio-sync transfers add movie.torrent
 ```
 
 ### Magnet Files (.magnet) 
@@ -2992,7 +3004,7 @@ magnet:?xt=urn:btih:d9e4b7b8c8c8f8f8f8f8f8f8f8f8f8f8f8f8f8f8&dn=Movie-2024&tr=ud
 
 ```bash
 # Process .magnet file
-putio-sync create movie.magnet
+putio-sync transfers add movie.magnet
 ```
 
 ### Database & Deduplication

@@ -22,10 +22,14 @@ pub async fn execute_status(
     // Load configuration
     let config_file_path = config_path.or_else(|| Config::default_path().ok());
 
-    let config = if let Some(ref path) = config_file_path {
-        Config::load(path).ok()
-    } else {
-        None
+    // A config that exists but does not load is reported, then the status runs on defaults
+    // so the diagnostics can still show what is wrong
+    let config = match load_existing_config(config_file_path.as_deref()) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("Warning: {e}. Showing status with default settings.");
+            None
+        }
     };
 
     // Create diagnostics collector
@@ -83,16 +87,24 @@ pub async fn execute_status(
     Ok(())
 }
 
+/// Load the config file if there is one: `Ok(None)` when it does not exist (not set up yet),
+/// an error naming the file when it exists but cannot be read or parsed
+fn load_existing_config(path: Option<&std::path::Path>) -> Result<Option<Config>> {
+    match path {
+        Some(path) if path.exists() => Config::load(path)
+            .map(Some)
+            .map_err(|e| anyhow::anyhow!("Could not load config file {}: {e}", path.display())),
+        _ => Ok(None),
+    }
+}
+
 /// Execute the health command - basic health check
 pub async fn execute_health(config_path: Option<PathBuf>) -> Result<()> {
     debug!("Running health check...");
 
     let config_file_path = config_path.or_else(|| Config::default_path().ok());
-    let config = if let Some(ref path) = config_file_path {
-        Config::load(path).ok()
-    } else {
-        None
-    };
+    // Unlike `status`, a health check must not pass on defaults when the real config is broken
+    let config = load_existing_config(config_file_path.as_deref())?;
 
     let download_status = generate_download_status(&config).await?;
     let watch_status = generate_watch_status(&config).await?;

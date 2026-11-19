@@ -62,7 +62,7 @@ the same numbers and timestamps, in more than one request.
 - [x] T035 [US1] Implement the scan (uses `scan_videos`, sidecars, `insert_steps` per language) and the `translate` step runner for chat in `putio-sync-pipeline/src/translate.rs`; add the kind dispatch in `putio-sync-pipeline/src/runner.rs` through the shared attempt-finish code
 - [x] T036 [US1] Count failed `translate`/`translate_scan` steps as warnings in `finalize()`, add the kinds to `refresh_gate()` in `putio-sync-pipeline/src/gate.rs`, make `Settings::staging_on` (Auto) true when translation is configured, and re-key provenance rows after the staging rename in `putio-sync-pipeline/src/staging.rs`
 - [x] T037 [US1] Inject `Arc<Translator>` and live settings into `Pipeline`, with `configure_translation`, in `putio-sync-pipeline/src/lib.rs`
-- [ ] T038 [US1] Build the `Translator` and pass it to the pipeline in `putio-sync-daemon/src/daemon.rs`
+- [X] T038 [US1] Build the `Translator` and pass it to the pipeline in `putio-sync-daemon/src/daemon.rs`
 - [x] T039 [US1] Record metrics and structured logs (`translation done`, `translation chunk retry`, `translation failed`) in `putio-sync-translation/src/engine.rs` and `putio-sync-pipeline/src/translate.rs`; the key is registered with `log_redact::set_secrets` and never a field
 - [x] T040 [US1] Settings routes `GET`/`PUT /settings/translation`, `configure_translation`, group registration in `putio-sync-api/src/routes/system/translation.rs`, `settings.rs`, `assistant.rs`
 - [x] T041 [US1] Implement `POST /settings/translation/test` chat mode (sample, problem classes, `GET <base>/models` on model errors, 15 s limit) in `putio-sync-api/src/routes/system/translation.rs`
