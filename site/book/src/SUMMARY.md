@@ -19,6 +19,10 @@
   - [Play downloads on your TV](guides/media-server.md)
   - [Watch it with Prometheus and Grafana](guides/metrics-grafana.md)
   - [When something isn't working](guides/troubleshooting.md)
+  - [Switch from qBittorrent](guides/from-qbittorrent.md)
+  - [Switch from Transmission](guides/from-transmission.md)
+  - [Switch from Deluge](guides/from-deluge.md)
+  - [Use Put.io next to SABnzbd or NZBGet](guides/from-usenet.md)
 
 # Getting started
 

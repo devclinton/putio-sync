@@ -71,6 +71,8 @@ pub async fn session(State(state): State<SetupState>) -> Json<Value> {
         "app_id_source": app_id_with_source(base).map(|(_, source)| source),
         "app_register_url": APP_REGISTER_URL,
         "in_container": in_container(),
+        // `GET /update` isn't served in setup mode; the wizard's guide link needs this
+        "install_kind": putio_sync_update::channel::Channel::detect().kind(),
         "suggestions": {
             "download_dir": suggest_download_dir(Some(base)),
             "watch_dir": suggest_watch_dir(Some(base)),
