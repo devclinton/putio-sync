@@ -16,11 +16,13 @@
 
 # DHI has no ffmpeg image, so the -ffmpeg stages copy a static build (musl,
 # amd64 and arm64) that runs without a libc.
-ARG FFMPEG_IMAGE=mwader/static-ffmpeg:8.0.1
+# Tag 8.0.1, pinned by digest
+ARG FFMPEG_IMAGE=mwader/static-ffmpeg:8.0.1@sha256:252705ff88532fa338e7065c21792756552f8fe7c212f84bc503d3c340689594
 # The update checker names the right docker pull from this and each stage's variant (055)
 ARG PUTIO_SYNC_IMAGE=ghcr.io/devclinton/putio-sync
 
-FROM dhi.io/rust:1.96-alpine3.22-dev AS builder
+# Tag dhi.io/rust:1.96-alpine3.22-dev, pinned by digest (Dependabot bumps it)
+FROM dhi.io/rust:1.96-alpine3.22-dev@sha256:9e5ac5028439b824d7b65bcbfc814cb182d27efbc05a69ff37696153a26face4 AS builder
 WORKDIR /build
 COPY . .
 
@@ -55,7 +57,8 @@ COPY --from=builder /putio-sync /putio-sync
 
 FROM ${FFMPEG_IMAGE} AS ffmpeg
 
-FROM dhi.io/alpine-base:3.22-dev AS dev
+# Tag dhi.io/alpine-base:3.22-dev, pinned by digest
+FROM dhi.io/alpine-base:3.22-dev@sha256:c31f6bba0e0695b39c206e9b048fdec9e1ee4ea47bd15023d3aa8f934912ecea AS dev
 # The static base ships time zones; this one doesn't (bandwidth schedules use them)
 RUN apk add --no-cache tzdata
 COPY --from=builder --chown=99:100 /rootfs/ /
@@ -77,7 +80,8 @@ FROM dev AS dev-ffmpeg
 COPY --from=ffmpeg /ffmpeg /ffprobe /usr/local/bin/
 ENV PUTIO_SYNC_IMAGE_VARIANT=dev-ffmpeg
 
-FROM dhi.io/static:20250419-debian13 AS runtime
+# Tag dhi.io/static:20250419-debian13, pinned by digest
+FROM dhi.io/static:20250419-debian13@sha256:f3a87dc858c61b3f731ab2f86349ef10953b15918f167dbf9581543255364e32 AS runtime
 COPY --from=builder --chown=99:100 /rootfs/ /
 COPY --from=builder /putio-sync /usr/local/bin/putio-sync
 COPY CHANGELOG.md /usr/share/doc/putio-sync/CHANGELOG.md

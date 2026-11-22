@@ -51,6 +51,16 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   authentication.
 - Updated lettre (SMTP) and quick-xml (DLNA) to fix their published advisories, and login no
   longer pulls in a second, outdated HTTP and TLS stack.
+- The Docker image runs on Alpine 3.24 instead of the end-of-life 3.19, and the Dockerfiles pin base images by digest and build with `--locked` and a pinned cargo-chef.
+- Every GitHub Action is pinned to a commit SHA, and Dependabot updates actions, cargo, Docker and npm weekly.
+- Release workflows pass each reusable workflow only the secrets it uses instead of `secrets: inherit`.
+- Workflow scripts read versions and inputs from environment variables and check the version tag format, so a crafted tag or input can't inject shell commands.
+- CI, Homebrew, snap and winget workflows default to read-only `contents` permissions; only the flatpak release upload writes.
+- The Homebrew workflow no longer runs the `curl | bash` Homebrew installer, and the tap token is passed only to the push.
+- Updated `url` to 2.5.9 (stack overflow on nested `blob:` URLs) and `wasmi` to 2.0.2 (2.0.1 was yanked).
+- CI runs `cargo audit` on every change and weekly.
+- The Windows installer limits `%ProgramData%\putio-sync` (config with tokens, logs) to SYSTEM and Administrators.
+- The snap docs warn that `snap get` shows `snap set` values to any local user and point to the setup-code flow.
 
 ### Fixed
 

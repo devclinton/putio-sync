@@ -34,6 +34,10 @@ description: |
     sudo snap set putio-sync api-token="$(openssl rand -hex 24)"
     sudo snap start --enable putio-sync.daemon
 
+  Note: values set with snap set can be read by any local user through snap get.
+  On a shared machine, use the setup code from the daemon log (or sudo putio-sync
+  setup) instead of setting an api-token this way.
+
   Then open http://<host>:15432/ and sign in with the api-token. Settings live
   in /var/snap/putio-sync/common/config.toml, and downloads go to
   /var/snap/putio-sync/common/downloads unless you change target_directory. To

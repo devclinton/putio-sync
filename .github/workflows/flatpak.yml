@@ -1,5 +1,8 @@
 name: Build Flatpak
 
+permissions:
+  contents: read
+
 on:
   release:
     types: [published]
@@ -13,24 +16,36 @@ jobs:
   build-flatpak:
     name: Build Flatpak Bundle
     runs-on: ubuntu-latest
+    # Only the release upload writes
+    permissions:
+      contents: write
     container:
       image: bilelmoussaoui/flatpak-github-actions:freedesktop-23.08
       options: --privileged
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Get version
         id: get_version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            VERSION="${{ github.event.release.tag_name }}"
+          if [ "$EVENT_NAME" = "release" ]; then
+            VERSION="$RELEASE_TAG"
           else
-            VERSION="${{ github.event.inputs.version }}"
+            VERSION="$INPUT_VERSION"
           fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "version_no_v=${VERSION#v}" >> $GITHUB_OUTPUT
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Not a version tag like v1.2.3: $VERSION" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version_no_v=${VERSION#v}" >> "$GITHUB_OUTPUT"
 
       - name: Install Python dependencies
         run: |
@@ -61,7 +76,7 @@ jobs:
           grep -A2 "sources:" io.github.devclinton.putio-sync.yaml
 
       - name: Build Flatpak
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6
         with:
           bundle: putio-sync.flatpak
           manifest-path: io.github.devclinton.putio-sync.yaml
@@ -74,7 +89,7 @@ jobs:
 
       - name: Upload to release
         if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
+        uses: actions/upload-release-asset@e8f9f06c4b078e705bd2ea027f0926603fc9b4d5 # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -85,14 +100,16 @@ jobs:
 
       - name: Upload artifact (for manual runs)
         if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: flatpak-bundle
           path: putio-sync.flatpak
 
       - name: Create summary
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
           SIZE=$(du -h putio-sync.flatpak | cut -f1)
 
           echo "## Flatpak Package Built" >> $GITHUB_STEP_SUMMARY
@@ -102,7 +119,7 @@ jobs:
           echo "- **Size**: ${SIZE}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [ "${{ github.event_name }}" = "release" ]; then
+          if [ "$EVENT_NAME" = "release" ]; then
             echo "### Installation from Release" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
             echo "# Download the Flatpak bundle" >> $GITHUB_STEP_SUMMARY

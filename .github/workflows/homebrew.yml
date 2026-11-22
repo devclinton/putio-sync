@@ -7,34 +7,47 @@ on:
       version:
         type: string
         required: true
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       version:
         description: 'Version to update formula to (e.g., v0.1.1)'
         required: true
 
+permissions:
+  contents: read
+
 jobs:
   update-formula:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Get version
         id: get_version
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: bash
         run: |
-          VERSION="${{ inputs.version }}"
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Not a version tag like v1.2.3: $VERSION" >&2
+            exit 1
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "version_no_v=${VERSION#v}" >> "$GITHUB_OUTPUT"
 
       - name: Download release tarball and calculate SHA256
         id: get_sha
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
         run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
           URL="https://github.com/devclinton/putio-sync/archive/refs/tags/${VERSION}.tar.gz"
 
           echo "Downloading ${URL}..."
-          curl -L "${URL}" -o release.tar.gz
+          curl -fsSL "${URL}" -o release.tar.gz
 
           SHA256=$(sha256sum release.tar.gz | cut -d' ' -f1)
           echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
@@ -43,17 +56,20 @@ jobs:
           rm release.tar.gz
 
       - name: Checkout tap repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: devclinton/homebrew-putio-sync
+          # The token is not left in .git/config; the push step passes it explicitly
+          persist-credentials: false
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: homebrew-tap
 
       - name: Update formula
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+          VERSION_NO_V: ${{ steps.get_version.outputs.version_no_v }}
+          SHA256: ${{ steps.get_sha.outputs.sha256 }}
         run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
-          VERSION_NO_V="${{ steps.get_version.outputs.version_no_v }}"
-          SHA256="${{ steps.get_sha.outputs.sha256 }}"
 
           cd homebrew-tap
 
@@ -66,8 +82,10 @@ jobs:
           cat Formula/putio-sync.rb
 
       - name: Commit and push changes
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
 
           cd homebrew-tap
 
@@ -80,23 +98,18 @@ jobs:
             -m "Automated update by GitHub Actions" \
             -m "Release: https://github.com/devclinton/putio-sync/releases/tag/${VERSION}"
 
-          git push
+          git push "https://x-access-token:${TAP_TOKEN}@github.com/devclinton/homebrew-putio-sync.git" HEAD
 
-      - name: Verify formula
-        run: |
-          cd homebrew-tap
-
-          # Install Homebrew for verification
-          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-          # Verify formula syntax
-          brew audit --strict Formula/putio-sync.rb || echo "Audit completed with warnings"
+      # Syntax check only. Ruby ships on the runner, so no Homebrew installer is
+      # fetched (it used to run `curl | bash` in a job that holds the tap token).
+      - name: Verify formula syntax
+        run: ruby -c homebrew-tap/Formula/putio-sync.rb
 
       - name: Create update summary
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+          SHA256: ${{ steps.get_sha.outputs.sha256 }}
         run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
-          SHA256="${{ steps.get_sha.outputs.sha256 }}"
-
           {
             echo "## Homebrew Formula Updated"
             echo ""
