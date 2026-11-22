@@ -18,12 +18,18 @@ on:
       - '**.md'
       - 'specs/**'
       - 'Tasks/**'
+  # Weekly advisory scan: new RustSec advisories land without a code change
+  schedule:
+    - cron: '17 6 * * 1'
   workflow_dispatch:
     inputs:
       full:
         description: 'Also run the macOS/Windows matrix and the beta toolchain'
         type: boolean
         default: false
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -36,6 +42,7 @@ env:
 jobs:
   gate:
     name: Gate (Linux)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
     # Clippy, the debug test build and the release build together outgrow the
@@ -49,7 +56,7 @@ jobs:
         df -h /
 
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         # The changelog check compares a PR with its base branch
         fetch-depth: 0
@@ -59,7 +66,7 @@ jobs:
       run: rustup show active-toolchain || rustup toolchain install
 
     - name: Cache cargo
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
     - name: Run local CI gate
       env:
@@ -76,13 +83,13 @@ jobs:
         os: [macos-latest, windows-latest]
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Install pinned toolchain
       run: rustup show active-toolchain || rustup toolchain install
 
     - name: Cache cargo
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
     - name: Run tests
       # Report every failing test binary, not just the first
@@ -95,16 +102,41 @@ jobs:
     continue-on-error: true
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Install beta toolchain
       run: rustup toolchain install beta --profile minimal --component clippy
 
     - name: Cache cargo
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
     # Early warning for lints that will land in the next stable
     - name: Clippy and tests on beta
       run: |
         cargo +beta clippy --all-targets --all-features -- -D warnings
         cargo +beta test --all-features
+
+  # Known advisories with no fix we can take yet (keep in sync with scripts/ci-local.sh):
+  #   RUSTSEC-2026-0459  libsqlite3-sys via sqlx 0.8; fixed in 0.39, which needs sqlx 0.9
+  #   RUSTSEC-2023-0071  rsa, only reached through sqlx-mysql, which is not compiled
+  #   RUSTSEC-2026-0543  chrono is flagged unmaintained; no drop-in replacement yet
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+    - name: Cache cargo-audit
+      id: cache_audit
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ~/.cargo/bin/cargo-audit
+        key: cargo-audit-0.23.0
+
+    - name: Install cargo-audit
+      if: steps.cache_audit.outputs.cache-hit != 'true'
+      run: cargo install cargo-audit --locked --version 0.23.0
+
+    - name: Audit Cargo.lock
+      run: cargo audit --deny warnings --ignore RUSTSEC-2026-0459 --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0543

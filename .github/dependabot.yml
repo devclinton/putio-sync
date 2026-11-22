@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+
+  # Base image digests in Dockerfile and Dockerfile.dhi. dhi.io needs a `registries:`
+  # entry with Docker credentials before Dependabot can read its tags; until then
+  # the dhi.io digests are bumped by hand.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: npm
+    directory: /site/tools
+    schedule:
+      interval: weekly

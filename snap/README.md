@@ -30,6 +30,11 @@ terminal. Afterwards sign in with the api-token. Metrics are on port 9742.
 
 - **api-token**: the web UI and API token (`PUTIO_SYNC_API_TOKEN`). Setting it
   restarts a running daemon (`hooks/configure`).
+  Anything set with `snap set` is stored in snapd's state, and any local user
+  can read it with `snap get putio-sync api-token`. On a shared machine, prefer
+  the setup-code flow (run `sudo putio-sync setup`, or unlock the wizard with the
+  code in `sudo snap logs putio-sync.daemon`) and keep the token in the config
+  file, which is mode 600.
 - **Downloading to /media or /mnt**: `sudo snap connect putio-sync:removable-media`,
   then set `target_directory` in the config and `sudo snap restart putio-sync.daemon`.
 - **Logs**: `sudo snap logs -f putio-sync.daemon`.

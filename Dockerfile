@@ -1,5 +1,6 @@
 # Multi-stage build for putio-sync with musl support
-FROM rust:alpine AS builder
+# rust:1.96-alpine3.24 (matches rust-toolchain.toml); Dependabot bumps the digest
+FROM rust:1.96-alpine3.24@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479 AS builder
 
 # Install build dependencies for musl + OpenSSL
 RUN apk add --no-cache \
@@ -19,7 +20,7 @@ ENV PKG_CONFIG_ALLOW_CROSS=1
 WORKDIR /build
 
 # Install cargo-chef for better dependency caching
-RUN cargo install cargo-chef
+RUN cargo install cargo-chef --locked --version 0.1.78
 
 # Copy workspace files for dependency planning
 COPY Cargo.toml Cargo.lock ./
@@ -109,7 +110,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 # Build dependencies with cache mounts
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
-    cargo chef cook --release --recipe-path recipe.json
+    cargo chef cook --release --locked --recipe-path recipe.json
 
 # Copy real source code. Cook rewrites the workspace Cargo.toml with every
 # version masked to 0.0.1, so copy the real one back before building.
@@ -148,14 +149,15 @@ ENV PUTIO_SYNC_GIT_SHA=$PUTIO_SYNC_GIT_SHA
 ENV RUSTFLAGS="-C target-feature=-crt-static"
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
-    cargo build --release --bin putio-sync && \
+    cargo build --release --locked --bin putio-sync && \
     cp target/release/putio-sync /tmp/putio-sync
 
 # Verify the binary is statically linked
 RUN ldd /tmp/putio-sync || echo "Static binary confirmed"
 
 # Runtime stage
-FROM alpine:3.19
+# alpine:3.24 (3.19 is end of life); Dependabot bumps the digest
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
 # Install runtime dependencies
 RUN apk add --no-cache \
