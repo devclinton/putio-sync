@@ -1077,8 +1077,9 @@ impl PluginsService {
 
     /// Run settings action `id` of `name` (031) with `input`. `overrides` are unsaved
     /// form values that are not secret (`null` clears one) and count for this call only.
-    /// The plugin may call every host its settings need, approved or not: the person is
-    /// setting it up. One action or health check per plugin at a time.
+    /// The plugin gets the hosts and folders the person approved, plus the ones in the
+    /// unsaved form values of this call (the person is typing them in to set it up). A
+    /// fixed host or folder of the manifest needs its approval first. One action or health check per plugin at a time.
     pub async fn action(
         &self,
         name: &str,
@@ -1091,6 +1092,10 @@ impl PluginsService {
         if !manifest.has_action(id) {
             return Err(CallError::NoAction);
         }
+        let mut typed = overrides.clone();
+        typed.retain(|key, _| !manifest.config.iter().any(|f| &f.key == key && f.secret));
+        let typed_hosts: HashSet<String> = manifest.hosts_from_values(&typed).into_iter().collect();
+        let typed_paths: HashSet<String> = manifest.paths_from_values(&typed).into_iter().collect();
         let mut merged = saved.clone();
         for (key, value) in overrides {
             if manifest.config.iter().any(|f| f.key == key && f.secret) {
@@ -1105,8 +1110,16 @@ impl PluginsService {
         manifest.check_values(&merged).map_err(CallError::Broken)?;
         let _busy = self.begin(name)?;
         let spec = Spec {
-            allowed: manifest.hosts_needed(&merged).into_iter().collect(),
-            paths: manifest.paths_needed(&merged),
+            allowed: manifest
+                .hosts_needed(&merged)
+                .into_iter()
+                .filter(|h| saved.approved_hosts.contains(h) || typed_hosts.contains(h))
+                .collect(),
+            paths: manifest
+                .paths_needed(&merged)
+                .into_iter()
+                .filter(|p| saved.approved_paths.contains(p) || typed_paths.contains(p))
+                .collect(),
             manifest: manifest.clone(),
             script: found.script.clone(),
             wasm: found.wasm.clone(),

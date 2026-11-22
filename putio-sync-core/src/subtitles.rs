@@ -515,18 +515,41 @@ impl SubtitlesConfig {
         c
     }
 
-    /// Put the stored secrets back where `self` carries [`MASK`]
-    pub fn unmasked(mut self, current: &SubtitlesConfig) -> Self {
-        if self.transcription.api_key == MASK {
-            self.transcription.api_key = current.transcription.api_key.clone();
+    /// Put the stored secrets back where `self` carries [`MASK`]. The transcription key
+    /// comes back only for the stored server; otherwise the mask stays. Use
+    /// [`Self::try_unmasked`] to refuse instead.
+    pub fn unmasked(self, current: &SubtitlesConfig) -> Self {
+        match self.clone().try_unmasked(current) {
+            Ok(done) => done,
+            Err(_) => self,
         }
+    }
+
+    /// Like [`Self::unmasked`], but a masked transcription key with a changed server is
+    /// an error
+    pub fn try_unmasked(mut self, current: &SubtitlesConfig) -> Result<Self, String> {
+        self.transcription = self.transcription.try_unmasked(&current.transcription)?;
         if self.opensubtitles.api_key == MASK {
             self.opensubtitles.api_key = current.opensubtitles.api_key.clone();
         }
         if self.opensubtitles.password == MASK {
             self.opensubtitles.password = current.opensubtitles.password.clone();
         }
-        self
+        Ok(self)
+    }
+}
+
+impl TranscriptionConfig {
+    /// Put the stored key back where `self` carries [`MASK`], when the URL's scheme, host
+    /// and port are the stored ones
+    pub fn try_unmasked(mut self, current: &TranscriptionConfig) -> Result<Self, String> {
+        if self.api_key == MASK {
+            if !current.api_key.is_empty() && !crate::hooks::same_origin(&self.url, &current.url) {
+                return Err(crate::hooks::retype_message("API key"));
+            }
+            self.api_key = current.api_key.clone();
+        }
+        Ok(self)
     }
 }
 
@@ -873,5 +896,23 @@ mod tests {
         assert!(c.validate().unwrap_err().to_string().contains("username"));
         c.opensubtitles.username = "u".into();
         assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn a_masked_transcription_key_only_follows_the_same_server() {
+        let mut stored = SubtitlesConfig::default();
+        stored.transcription.url = "http://nas:8000".to_string();
+        stored.transcription.api_key = "whisper-key".to_string();
+        let mut moved = stored.masked();
+        moved.transcription.url = "http://evil.test:8000".to_string();
+        let e = moved.clone().try_unmasked(&stored).unwrap_err();
+        assert!(e.contains("Type the API key again"), "{e}");
+        assert_eq!(moved.unmasked(&stored).transcription.api_key, MASK);
+        let mut same = stored.masked();
+        same.transcription.url = "http://nas:8000/v1/audio/transcriptions".to_string();
+        assert_eq!(
+            same.try_unmasked(&stored).unwrap().transcription.api_key,
+            "whisper-key"
+        );
     }
 }
