@@ -19,7 +19,7 @@ use putio_sync_core::sign_in::{PasswordConfig, Provider, SignInConfig};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tracing::warn;
 
@@ -34,6 +34,10 @@ const BASIC_CACHE_TTL: Duration = Duration::from_secs(300);
 
 /// Basic credentials remembered at once
 const MAX_BASIC_CACHE: usize = 16;
+
+/// Password hashes that may run at once. Each argon2id check takes about 19 MiB and a
+/// lot of CPU, so a burst of sign-ins must not all start together.
+pub const HASH_PERMITS: usize = 2;
 
 /// The session key file, next to the config file
 pub const KEY_FILE: &str = "session.key";
@@ -113,6 +117,8 @@ pub struct SignIn {
     pub endpoints: RwLock<Option<String>>,
     /// HTTP client for the code exchange and user info
     pub http: reqwest::Client,
+    /// Bounds the password hashes running at once
+    hash_permits: Arc<tokio::sync::Semaphore>,
 }
 
 impl SignIn {
@@ -138,7 +144,14 @@ impl SignIn {
             basic_salt: random_bytes(),
             endpoints: RwLock::new(None),
             http,
+            hash_permits: Arc::new(tokio::sync::Semaphore::new(HASH_PERMITS)),
         }
+    }
+
+    /// A place to run one password hash, or `None` when [`HASH_PERMITS`] are running
+    /// already (answer 429 then)
+    pub fn try_hash_permit(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.hash_permits.clone().try_acquire_owned().ok()
     }
 
     /// The session key, read from its file the first time. `None` before any sign-in.
@@ -318,27 +331,76 @@ pub fn basic_credentials(header: &str) -> Option<(String, String)> {
     Some((user.to_string(), pass.to_string()))
 }
 
+/// The answer to a Basic credential
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BasicCheck {
+    /// The username and password are right
+    Match,
+    /// Wrong username or password
+    NoMatch,
+    /// Too many password hashes are running; nothing was checked
+    Busy,
+}
+
+/// Whether two strings are equal, compared in constant time
+fn same(a: &str, b: &str) -> bool {
+    crate::middleware::auth::token_matches(a, b)
+}
+
+/// A valid hash nobody has the password for, verified when the username is wrong so a
+/// wrong username takes as long as a wrong password. Made once, on first use.
+fn dummy_hash() -> &'static str {
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| hash_password(&random_token()).unwrap_or_else(|_| "not a hash".to_string()))
+}
+
+/// Verify `pass` against `hash` on the blocking pool, holding `permit` until done. With a
+/// wrong username the check runs against a dummy hash and never matches.
+pub async fn verify_blocking(
+    pass: String,
+    hash: String,
+    user_ok: bool,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> bool {
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let target = if user_ok { hash.as_str() } else { dummy_hash() };
+        verify_password(&pass, target) && user_ok
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// Compare a username in constant time
+pub fn username_matches(provided: &str, expected: &str) -> bool {
+    same(provided, expected)
+}
+
 /// Whether the Basic `header` carries the configured username and password. Verified
-/// credentials are remembered for a few minutes; the hash runs off the async runtime.
-pub async fn basic_matches(sign_in: &SignIn, header: &str, password: &PasswordConfig) -> bool {
+/// credentials are remembered for a few minutes; the hash runs off the async runtime, at
+/// most [`HASH_PERMITS`] at a time. A wrong username takes as long as a wrong password.
+pub async fn basic_matches(
+    sign_in: &SignIn,
+    header: &str,
+    password: &PasswordConfig,
+) -> BasicCheck {
     let Some((user, pass)) = basic_credentials(header) else {
-        return false;
+        return BasicCheck::NoMatch;
     };
-    if user != password.username {
-        return false;
-    }
+    let user_ok = username_matches(&user, &password.username);
     let hash = password.password_hash.clone();
-    if sign_in.basic_known(header, &hash) {
-        return true;
+    if user_ok && sign_in.basic_known(header, &hash) {
+        return BasicCheck::Match;
     }
-    let check = hash.clone();
-    let ok = tokio::task::spawn_blocking(move || verify_password(&pass, &check))
-        .await
-        .unwrap_or(false);
-    if ok {
+    let Some(permit) = sign_in.try_hash_permit() else {
+        return BasicCheck::Busy;
+    };
+    if verify_blocking(pass, hash.clone(), user_ok, permit).await {
         sign_in.remember_basic(header, &hash);
+        BasicCheck::Match
+    } else {
+        BasicCheck::NoMatch
     }
-    ok
 }
 
 /// Where this server is reached from a browser: `public_url`, else the scheme and host

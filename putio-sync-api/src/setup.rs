@@ -10,6 +10,7 @@
 
 use crate::error::ApiError;
 use crate::middleware::auth::token_matches;
+use crate::middleware::host::{require_allowed_host_fixed, HostPolicy};
 use crate::middleware::ratelimit::{
     client_ip, AuthLimiter, AUTH_FAILURE_LIMIT, AUTH_FAILURE_WINDOW,
 };
@@ -28,14 +29,18 @@ use putio_sync_core::setup::{SetupChoices, SetupReason};
 use serde::Serialize;
 use serde_json::json;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::{Duration, Instant};
 use tokio::sync::{watch, Mutex};
 use tower_http::trace::TraceLayer;
 use tracing::warn;
 
 /// Letters and digits that can't be mistaken for each other (no 0/O, 1/I/L)
 const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+/// How long a setup code works. After that it is replaced by a new one, which the
+/// daemon logs, so a code that leaked into a screenshot or a log stops working.
+pub const CODE_LIFETIME: Duration = Duration::from_secs(60 * 60);
 
 /// A new setup code: 12 random characters as `XXXX-XXXX-XXXX`
 pub fn new_setup_code() -> String {
@@ -99,7 +104,11 @@ pub(crate) struct Session {
 }
 
 pub(crate) struct Inner {
-    code: String,
+    /// The current setup code and when it was made
+    code: StdMutex<(String, Instant)>,
+    /// How long a code lasts, in milliseconds (atomic so tests can shorten it on a shared state)
+    code_lifetime_ms: std::sync::atomic::AtomicU64,
+    hosts: HostPolicy,
     api_token: Option<String>,
     pub(crate) config_path: PathBuf,
     pub(crate) putio_base_url: String,
@@ -130,10 +139,15 @@ impl SetupState {
                     .ok()
                     .filter(|t| !t.trim().is_empty())
             });
+        let hosts = HostPolicy::new(&base.api.allowed_hosts, base.sign_in.base_url());
         let (done, _) = watch::channel(false);
         Self {
             inner: Arc::new(Inner {
-                code: new_setup_code(),
+                code: StdMutex::new((new_setup_code(), Instant::now())),
+                code_lifetime_ms: std::sync::atomic::AtomicU64::new(
+                    CODE_LIFETIME.as_millis() as u64
+                ),
+                hosts,
                 api_token,
                 config_path,
                 putio_base_url: DEFAULT_BASE_URL.to_string(),
@@ -165,9 +179,41 @@ impl SetupState {
         self
     }
 
-    /// The one-time setup code, for the daemon to print
-    pub fn code(&self) -> &str {
-        &self.inner.code
+    /// Make the setup code last `lifetime` instead of [`CODE_LIFETIME`] (tests).
+    pub fn with_code_lifetime(self, lifetime: Duration) -> Self {
+        self.inner.code_lifetime_ms.store(
+            lifetime.as_millis() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self
+    }
+
+    /// The setup code, for the daemon to print. After [`CODE_LIFETIME`] a new one is made
+    /// and logged, so ask again rather than keeping this.
+    pub fn code(&self) -> String {
+        self.current_code().0
+    }
+
+    /// The current code and whether it was just replaced
+    fn current_code(&self) -> (String, bool) {
+        let mut code = self.inner.code.lock().unwrap_or_else(|e| e.into_inner());
+        let lifetime = Duration::from_millis(
+            self.inner
+                .code_lifetime_ms
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
+        if code.1.elapsed() < lifetime {
+            return (code.0.clone(), false);
+        }
+        *code = (new_setup_code(), Instant::now());
+        // Console only, like the first code: it never goes to the log
+        warn!("The setup code expired and was replaced; the new one is on the console");
+        eprintln!();
+        eprintln!("  The setup code expired. The new one is:");
+        eprintln!();
+        eprintln!("      {}", code.0);
+        eprintln!();
+        (code.0.clone(), true)
     }
 
     /// Whether an API token was already configured (it unlocks the wizard too)
@@ -192,7 +238,9 @@ impl SetupState {
 
     /// Whether `provided` is the setup code or the API token, compared in constant time
     fn unlocks(&self, provided: &str) -> bool {
-        let by_code = token_matches(&normalize_code(provided), &normalize_code(&self.inner.code));
+        let (code, replaced) = self.current_code();
+        // A code that just expired is gone, even if it was typed right
+        let by_code = !replaced && token_matches(&normalize_code(provided), &normalize_code(&code));
         let by_token = self
             .inner
             .api_token
@@ -237,8 +285,20 @@ pub fn setup_router(state: SetupState) -> Router {
         .route("/assets/*path", get(ui::asset))
         .merge(gated)
         .fallback(setup_needed)
-        .with_state(state)
+        .with_state(state.clone())
+        .layer(axum::middleware::from_fn_with_state(
+            state.inner.hosts.clone(),
+            require_allowed_host_fixed,
+        ))
+        .layer(axum::middleware::map_response(setup_security_headers))
         .layer(TraceLayer::new_for_http())
+}
+
+/// The same hardening headers as the normal router, without HSTS (setup mode has no
+/// settled address yet)
+async fn setup_security_headers(mut response: Response) -> Response {
+    crate::add_security_headers(response.headers_mut(), false);
+    response
 }
 
 /// Bearer setup code or API token; 429 while rate limited
@@ -317,9 +377,23 @@ mod tests {
     }
 
     #[test]
+    fn an_old_code_stops_working_and_is_replaced() {
+        let state = SetupState::new(PathBuf::from("/nonexistent"), None, vec![])
+            .with_code_lifetime(Duration::from_millis(30));
+        let old = state.code();
+        assert!(state.unlocks(&old));
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!state.unlocks(&old), "expired");
+        let fresh = state.code();
+        assert_ne!(fresh, old);
+        assert!(!state.unlocks(&old));
+        assert!(state.unlocks(&fresh));
+    }
+
+    #[test]
     fn codes_are_matched_as_typed() {
         let state = SetupState::new(PathBuf::from("/nonexistent"), None, vec![]);
-        let code = state.code().to_string();
+        let code = state.code();
         assert!(state.unlocks(&code));
         assert!(state.unlocks(&code.to_lowercase().replace('-', " ")));
         assert!(!state.unlocks("AAAA-AAAA-AAAA"));

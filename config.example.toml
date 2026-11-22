@@ -571,7 +571,9 @@ tailnet_only = false
 # Let in requests from allowed Tailscale users without the API token: through
 # `tailscale serve` (identity headers on a loopback connection), or directly
 # from a tailnet address that tailscaled says belongs to the user. Tagged
-# devices are never let in. The token keeps working.
+# devices are never let in. The token keeps working. The serve headers are
+# believed only while `tailscale serve` is set up to proxy to the port the
+# request came in on.
 # Default: false
 identity_sign_in = false
 
@@ -910,6 +912,15 @@ listen = true
 bind = "0.0.0.0:15432"
 # bind = ["127.0.0.1:15432", "tailnet:15432"]
 # bind = ["eth0:15432", "[::1]:15432"]
+
+# Host names the API answers to, besides IP addresses, localhost, names with no
+# dot (nas), *.local, *.lan, *.home, *.home.arpa, *.internal, *.ts.net and the host of [sign_in] public_url. A request
+# for any other name gets 421, which stops DNS rebinding (a web page pointing
+# its own name at this server). Add the name you open the UI with when it has a
+# dot, such as a reverse proxy's name that isn't in public_url. "*.example.org"
+# covers every name under it.
+# Default: []
+# allowed_hosts = ["sync.example.org", "*.lan.example.org"]
 
 # Unrelated to the listener: make the daemon hand downloads to a remote API
 # server at `url` instead of downloading itself. The daemon's own API and UI

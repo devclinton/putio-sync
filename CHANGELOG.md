@@ -14,6 +14,22 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Security
 
+- The API now refuses a request whose `Host` is not an IP address, `localhost`, a name with
+  no dot, `*.local`, `*.ts.net`, the `public_url` host, or listed in the new
+  `[api] allowed_hosts` (421), which stops DNS rebinding. Behind a reverse proxy that passes a
+  dotted `Host` on, set `public_url` or `allowed_hosts`.
+- `Tailscale-User-Login` from a loopback connection is believed only while `tailscale serve`
+  proxies to the port the request came in on.
+- Password and Basic sign-in attempts are counted before the slow hash runs, and at most two
+  hashes run at once (429 when busy), so a burst can't exhaust memory.
+- The Transmission API for Radarr and Sonarr has its own failure limiter, so wrong credentials
+  there no longer lock the UI out.
+- Setup mode sends the security headers and checks the Host name too, and the setup code
+  expires after an hour (a new one is printed on the console).
+- The Basic username is compared in constant time, and a wrong username takes as long as a
+  wrong password.
+- Responses add `Cache-Control: no-store`, `Cross-Origin-Opener-Policy: same-origin` and a
+  `Permissions-Policy`, and `Strict-Transport-Security` when `public_url` is `https://`.
 - A request that came through a reverse proxy on the same machine no longer counts as a
   Tailscale sign-in, so a forged `Tailscale-User-Login` header can't get in. Identity sign-in
   still works with `tailscale serve` or a direct tailnet connection.
