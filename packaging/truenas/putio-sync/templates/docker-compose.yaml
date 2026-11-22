@@ -9,6 +9,8 @@
 
 {# The image's user has /config as home; any other uid falls back to / and can't write its logs #}
 {% do c1.environment.add_env("HOME", values.consts.config_path) %}
+{# Tells the update card and the setup guide link this is the TrueNAS app #}
+{% do c1.environment.add_env("PUTIO_SYNC_INSTALL", "truenas") %}
 {% do c1.environment.add_env("PUTIO_SYNC_API_BIND", "0.0.0.0:%d"|format(values.network.web_port.port_number)) %}
 {% if values.putio_sync.api_token %}
   {% do c1.environment.add_env("PUTIO_SYNC_API_TOKEN", values.putio_sync.api_token) %}
