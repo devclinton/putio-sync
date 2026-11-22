@@ -105,6 +105,7 @@ async fn plugins_are_checked_for_their_state_and_last_run() {
         settings: config.plugins.clone(),
         clock: None,
         download_dir: None,
+        reach: None,
     }));
     service.start();
     service.test("fails").await.unwrap();
@@ -234,6 +235,7 @@ async fn a_withdrawn_or_delisted_registry_plugin_is_a_warning() {
         settings: Vec::new(),
         clock: None,
         download_dir: None,
+        reach: None,
     }));
     env.doctor = env.doctor.with_plugins(service);
     env.doctor.configure(&config);

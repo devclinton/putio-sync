@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use mlua::{Lua, LuaSerdeExt, SerializeOptions, Table, Value as LuaValue};
+use putio_sync_core::net_guard::{self, Reach};
 use putio_sync_core::plugins::MASK;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -80,6 +81,9 @@ pub struct Http {
     pub allowed: HashSet<String>,
     /// Shared client, redirects off (they are followed here, same host only)
     pub client: reqwest::Client,
+    /// How far requests may reach; the client's resolver enforces it for names, [`fetch`]
+    /// for literal addresses
+    pub reach: Reach,
     /// The runtime the requests run on
     pub handle: tokio::runtime::Handle,
     /// A workbench run's recorder (055): requests are recorded, and in a dry run not sent
@@ -430,6 +434,7 @@ fn http_error(host: &str, e: &reqwest::Error) -> String {
 async fn fetch(
     client: &reqwest::Client,
     allowed: &HashSet<String>,
+    reach: Reach,
     opts: RequestOptions,
 ) -> Result<Response, String> {
     let mut url = reqwest::Url::parse(&opts.url).map_err(|_| "invalid URL".to_string())?;
@@ -443,6 +448,11 @@ async fn fetch(
         let host = url_host(url.as_str()).ok_or("only http and https URLs")?;
         if !allowed.contains(&host) {
             return Err(format!("host not approved: {}", host));
+        }
+        // A literal address is connected to without resolving it; names are checked by the
+        // client's guarded resolver
+        if net_guard::check_url(url, reach).is_err() {
+            return Err(format!("address not allowed: {}", host));
         }
         Ok(host)
     };
@@ -547,7 +557,7 @@ pub(crate) fn request(
     let started = Instant::now();
     let summary = http.tap.as_ref().map(|_| Summary::of(&opts));
     let result = http.handle.block_on(async {
-        tokio::time::timeout(limit, fetch(&http.client, &http.allowed, opts)).await
+        tokio::time::timeout(limit, fetch(&http.client, &http.allowed, http.reach, opts)).await
     });
     let result = match result {
         Err(_) => Err(format!("{}: timed out", host)),
@@ -1012,8 +1022,12 @@ mod tests {
                 allowed: hosts.into_iter().map(String::from).collect(),
                 client: reqwest::Client::builder()
                     .redirect(reqwest::redirect::Policy::none())
+                    .dns_resolver(std::sync::Arc::new(
+                        putio_sync_core::net_guard::GuardedResolver::new(Reach::Local),
+                    ))
                     .build()
                     .unwrap(),
+                reach: Reach::Local,
                 handle,
                 tap: None,
             }),
@@ -1174,6 +1188,74 @@ mod tests {
             .unwrap();
         f.deadline.set(None);
         (status, err)
+    }
+
+    #[tokio::test]
+    async fn a_name_or_address_inside_is_refused() {
+        use putio_sync_core::net_guard::GuardedResolver;
+        let server = mockito::Server::new_async().await;
+        let port = server
+            .host_with_port()
+            .rsplit(':')
+            .next()
+            .unwrap()
+            .to_string();
+        let allowed: HashSet<String> = ["localhost", "127.0.0.1", "169.254.1.1"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let get = |url: String| RequestOptions {
+            url,
+            method: None,
+            headers: BTreeMap::new(),
+            body: None,
+            timeout: None,
+        };
+        for reach in [Reach::Public, Reach::Lan] {
+            let client = reqwest::Client::builder()
+                .dns_resolver(std::sync::Arc::new(GuardedResolver::new(reach)))
+                .build()
+                .unwrap();
+            // A name in the allow-list that resolves to loopback
+            let err = fetch(
+                &client,
+                &allowed,
+                reach,
+                get(format!("http://localhost:{}/", port)),
+            )
+            .await
+            .err()
+            .expect("localhost is refused");
+            assert!(err.starts_with("localhost:"), "{}", err);
+            // Literal addresses
+            for url in [
+                format!("http://127.0.0.1:{}/", port),
+                "http://169.254.1.1/".to_string(),
+            ] {
+                let err = fetch(&client, &allowed, reach, get(url))
+                    .await
+                    .err()
+                    .unwrap();
+                assert!(err.starts_with("address not allowed"), "{}", err);
+            }
+        }
+        // The explicit opt-in reaches it
+        let client = reqwest::Client::builder()
+            .dns_resolver(std::sync::Arc::new(GuardedResolver::new(Reach::Local)))
+            .build()
+            .unwrap();
+        let mut server = server;
+        let mock = server.mock("GET", "/").with_body("hi").create_async().await;
+        let r = fetch(
+            &client,
+            &allowed,
+            Reach::Local,
+            get(format!("http://127.0.0.1:{}/", port)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.status, 200);
+        mock.assert_async().await;
     }
 
     #[test]

@@ -16,7 +16,7 @@ use crate::wasm;
 /// The largest release file, and the most an archive may unpack to
 pub const MAX_ARCHIVE_BYTES: usize = 5 * 1024 * 1024;
 
-/// The most files an archive may hold
+/// The most entries (files and folders) an archive may hold
 pub const MAX_FILES: usize = 200;
 
 /// A release that passed every check
@@ -81,8 +81,14 @@ fn untar(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut files = Vec::new();
     let mut top: Option<String> = None;
     let mut total = 0usize;
+    let mut entries = 0usize;
     for item in archive.entries().map_err(bad)? {
         let mut item = item.map_err(bad)?;
+        // Folders count too: a tar of millions of empty folder headers costs time and memory
+        entries += 1;
+        if entries > MAX_FILES {
+            return Err(format!("the archive holds more than {} entries", MAX_FILES));
+        }
         let path = item.path().map_err(bad)?.into_owned();
         let shown = path.display().to_string();
         let kind = item.header().entry_type();
@@ -107,9 +113,6 @@ fn untar(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
             }
             None => top = Some(parts[0].clone()),
             _ => {}
-        }
-        if files.len() == MAX_FILES {
-            return Err(format!("the archive holds more than {} files", MAX_FILES));
         }
         let mut body = Vec::new();
         let limit = (MAX_ARCHIVE_BYTES - total) as u64 + 1;
@@ -282,7 +285,7 @@ pub(crate) mod tests {
             .map(|i| (format!("hook/{}", i), lua))
             .collect();
         let many: Vec<(&str, &[u8])> = many.iter().map(|(n, b)| (n.as_str(), *b)).collect();
-        assert!(refused(targz(&many)).contains("more than 200 files"));
+        assert!(refused(targz(&many)).contains("more than 200 entries"));
         let big = vec![b'x'; MAX_ARCHIVE_BYTES];
         assert!(refused(targz(&[("hook/a", &big), ("hook/b", lua)])).contains("5 MB"));
         assert!(refused(targz(&[("hook/plugin.toml", toml)])).contains("no main.lua"));
@@ -300,6 +303,25 @@ pub(crate) mod tests {
         builder.append(&header, std::io::empty()).unwrap();
         let link = builder.into_inner().unwrap().finish().unwrap();
         assert!(refused(link).contains("only plain files"));
+    }
+
+    #[test]
+    fn folder_entries_count_toward_the_limit() {
+        let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::fast(),
+        ));
+        for i in 0..=MAX_FILES {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_path(format!("hook/d{}/", i)).unwrap();
+            header.set_size(0);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder.append(&header, std::io::empty()).unwrap();
+        }
+        let dirs = builder.into_inner().unwrap().finish().unwrap();
+        assert!(refused(dirs).contains("more than 200 entries"));
     }
 
     #[test]

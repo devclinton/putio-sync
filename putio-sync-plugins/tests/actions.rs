@@ -127,6 +127,7 @@ fn service(dir: &Path, data: &Path, s: Vec<PluginSettings>) -> PluginsService {
         settings: s,
         clock: None,
         download_dir: Some("/downloads".into()),
+        reach: Some(putio_sync_core::net_guard::Reach::Local),
     })
 }
 
