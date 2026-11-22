@@ -11,6 +11,10 @@ const FIXTURE_NAMES: &[&str] = &["movie.mkv", "setup.exe", "ubuntu.torrent"];
 const BASIC_FAMILIES: &[&str] = &[
     "putio_sync_api_requests_total",
     "putio_sync_api_retries_total",
+    "putio_sync_api_rate_limit",
+    "putio_sync_api_rate_limit_remaining",
+    "putio_sync_sync_failures_total",
+    "putio_sync_download_retries_total",
     "putio_sync_api_request_duration_seconds",
     "putio_sync_sync_runs_total",
     "putio_sync_sync_duration_seconds",
@@ -172,6 +176,19 @@ fn record_everything(t: &Telemetry) {
         Duration::from_millis(5),
     );
     t.api_retry(RetryReason::ServerError);
+    t.api_attempt(
+        ApiOp::ListFiles,
+        ApiOutcome::RateLimited,
+        Duration::from_millis(5),
+    );
+    t.api_attempt(
+        ApiOp::ListFiles,
+        ApiOutcome::Unauthorized,
+        Duration::from_millis(5),
+    );
+    t.api_rate_limit(100, 90);
+    t.sync_failed(SyncFailReason::Network);
+    t.download_retry(DownloadRetryReason::Stall);
     t.sync_run(
         SyncResult::Success,
         Duration::from_secs(3),
@@ -282,6 +299,8 @@ fn closed_set(label: &str) -> Vec<&'static str> {
         "reason" => {
             let mut v = strs(RetryReason::ALL, RetryReason::as_str);
             v.extend(strs(FailReason::ALL, FailReason::as_str));
+            v.extend(strs(SyncFailReason::ALL, SyncFailReason::as_str));
+            v.extend(strs(DownloadRetryReason::ALL, DownloadRetryReason::as_str));
             v.extend(putio_sync_telemetry::logs::DROP_REASONS);
             v
         }
@@ -545,6 +564,54 @@ fn transfers_stalled_reads_the_last_count() {
     assert_eq!(t.sample("putio_sync_transfers_stalled", &[]), Some(3.0));
     t.set_transfers_stalled(0);
     assert_eq!(t.sample("putio_sync_transfers_stalled", &[]), Some(0.0));
+}
+
+#[test]
+fn failure_and_retry_counters_start_at_zero_for_every_reason() {
+    let t = Telemetry::new();
+    for r in SyncFailReason::ALL {
+        let labels = [("reason", r.as_str())];
+        assert_eq!(
+            t.sample("putio_sync_sync_failures_total", &labels),
+            Some(0.0)
+        );
+    }
+    for r in DownloadRetryReason::ALL {
+        let labels = [("reason", r.as_str())];
+        assert_eq!(
+            t.sample("putio_sync_download_retries_total", &labels),
+            Some(0.0)
+        );
+    }
+    t.sync_failed(SyncFailReason::Auth);
+    t.sync_failed(SyncFailReason::Auth);
+    t.download_retry(DownloadRetryReason::Stall);
+    assert_eq!(
+        t.sample("putio_sync_sync_failures_total", &[("reason", "auth")]),
+        Some(2.0)
+    );
+    assert_eq!(
+        t.sample("putio_sync_download_retries_total", &[("reason", "stall")]),
+        Some(1.0)
+    );
+}
+
+#[test]
+fn api_outcomes_include_rate_limited_and_unauthorized_and_quota_gauges_hold_last_values() {
+    let t = Telemetry::new();
+    for outcome in ["rate_limited", "unauthorized"] {
+        let labels = [("operation", "list_files"), ("outcome", outcome)];
+        assert_eq!(
+            t.sample("putio_sync_api_requests_total", &labels),
+            Some(0.0)
+        );
+    }
+    t.api_rate_limit(1000, 640);
+    assert_eq!(t.sample("putio_sync_api_rate_limit", &[]), Some(1000.0));
+    assert_eq!(
+        t.sample("putio_sync_api_rate_limit_remaining", &[]),
+        Some(640.0)
+    );
 }
 
 /// Feature 039: pipeline gauges start at zero for every stage and state, and hold the last

@@ -79,7 +79,7 @@ async fn server_errors_then_success() {
 }
 
 #[tokio::test]
-async fn rate_limited_counts_as_client_error() {
+async fn rate_limited_has_its_own_outcome() {
     let _serial = SERIAL.lock().await;
     let mut server = mockito::Server::new_async().await;
     let _limited = server
@@ -89,14 +89,69 @@ async fn rate_limited_counts_as_client_error() {
         .with_header("retry-after", "0")
         .create_async()
         .await;
-    let (client0, rate0) = (requests("client_error"), retries("rate_limited"));
+    let (limited0, client0, rate0) = (
+        requests("rate_limited"),
+        requests("client_error"),
+        retries("rate_limited"),
+    );
 
     let client = PutioApiClient::with_base_url("tok_SECRET".into(), format!("{}/v2", server.url()))
         .with_retry_policy(fast(2));
     assert!(client.list_files(0).await.is_err());
 
-    assert_eq!(requests("client_error") - client0, 2.0);
+    assert_eq!(requests("rate_limited") - limited0, 2.0);
+    assert_eq!(requests("client_error") - client0, 0.0);
     assert_eq!(retries("rate_limited") - rate0, 1.0);
+}
+
+#[tokio::test]
+async fn auth_failures_are_unauthorized_and_not_found_stays_client_error() {
+    let _serial = SERIAL.lock().await;
+    let mut server = mockito::Server::new_async().await;
+    let _status = server
+        .mock("GET", "/v2/files/list")
+        .match_query(mockito::Matcher::Any)
+        .with_status(401)
+        .expect(1)
+        .create_async()
+        .await;
+    let (auth0, client0) = (requests("unauthorized"), requests("client_error"));
+    let client = PutioApiClient::with_base_url("tok_SECRET".into(), format!("{}/v2", server.url()))
+        .with_retry_policy(fast(2));
+    assert!(client.list_files(0).await.is_err());
+    assert_eq!(requests("unauthorized") - auth0, 1.0);
+
+    server.reset();
+    let _gone = server
+        .mock("GET", "/v2/files/list")
+        .match_query(mockito::Matcher::Any)
+        .with_status(404)
+        .create_async()
+        .await;
+    assert!(client.list_files(0).await.is_err());
+    assert_eq!(requests("client_error") - client0, 1.0);
+    assert_eq!(requests("unauthorized") - auth0, 1.0);
+}
+
+#[tokio::test]
+async fn rate_limit_headers_feed_the_quota_gauges() {
+    let _serial = SERIAL.lock().await;
+    let mut server = mockito::Server::new_async().await;
+    let _ok = server
+        .mock("GET", "/v2/files/list")
+        .match_query(mockito::Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_header("x-ratelimit-limit", "1000")
+        .with_header("x-ratelimit-remaining", "640")
+        .with_body(LIST_BODY)
+        .create_async()
+        .await;
+    let client = PutioApiClient::with_base_url("tok_SECRET".into(), format!("{}/v2", server.url()))
+        .with_retry_policy(fast(1));
+    client.list_files(0).await.unwrap();
+    assert_eq!(value("putio_sync_api_rate_limit", &[]), 1000.0);
+    assert_eq!(value("putio_sync_api_rate_limit_remaining", &[]), 640.0);
 }
 
 #[tokio::test]

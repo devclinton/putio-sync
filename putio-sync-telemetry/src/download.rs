@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::{global, ExistingOutcome, FailReason, Telemetry};
+use crate::{global, DownloadRetryReason, ExistingOutcome, FailReason, Telemetry};
 
 /// Counts one active download for as long as it is held.
 #[must_use = "the download is only counted while the guard is held"]
@@ -52,6 +52,13 @@ impl Telemetry {
             .inc();
     }
 
+    /// Count one retry inside a download.
+    pub fn download_retry(&self, reason: DownloadRetryReason) {
+        self.download_retries
+            .with_label_values(&[reason.as_str()])
+            .inc();
+    }
+
     /// Count a file that already existed locally, by what was done with it.
     pub fn download_existing(&self, outcome: ExistingOutcome) {
         self.existing_files
@@ -95,6 +102,11 @@ pub fn completed(elapsed: Duration) {
 /// Count a failed download on the global instance.
 pub fn failed(reason: FailReason) {
     global().download_failed(reason);
+}
+
+/// Count one retry inside a download on the global instance.
+pub fn retried(reason: DownloadRetryReason) {
+    global().download_retry(reason);
 }
 
 /// Count a file that already existed locally on the global instance.
