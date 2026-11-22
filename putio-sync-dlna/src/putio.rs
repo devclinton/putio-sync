@@ -18,7 +18,10 @@ pub const LISTING_TTL: Duration = Duration::from_secs(60);
 const MAX_LISTINGS: usize = 200;
 /// Entries remembered for parent-chain checks
 const MAX_KNOWN: usize = 20_000;
-/// Longest parent chain followed
+/// How long a lookup that found nothing is remembered
+const MISSING_TTL: Duration = Duration::from_secs(60);
+/// Missing ids remembered
+const MAX_MISSING: usize = 1_000;
 /// The longest a player waits on one Put.io call (the client's own retries can take a minute)
 const CALL_LIMIT: Duration = Duration::from_secs(10);
 
@@ -73,6 +76,8 @@ pub struct PutioRoot {
     listings: Mutex<HashMap<i64, Listing>>,
     known: Mutex<HashMap<i64, PutioEntry>>,
     versions: Mutex<HashMap<i64, (Instant, Version)>>,
+    /// Ids Put.io said do not exist, so a flood of made-up ids costs one call each
+    missing: Mutex<HashMap<i64, Instant>>,
     last_error: Mutex<Option<String>>,
 }
 
@@ -106,6 +111,7 @@ impl PutioRoot {
             listings: Mutex::new(HashMap::new()),
             known: Mutex::new(HashMap::new()),
             versions: Mutex::new(HashMap::new()),
+            missing: Mutex::new(HashMap::new()),
             last_error: Mutex::new(None),
         }
     }
@@ -140,6 +146,17 @@ impl PutioRoot {
         for e in entries {
             known.insert(e.id, e.clone());
         }
+    }
+
+    fn remember_missing(&self, id: i64) {
+        let mut missing = self.missing.lock().unwrap_or_else(|e| e.into_inner());
+        if missing.len() >= MAX_MISSING {
+            missing.retain(|_, at| at.elapsed() < MISSING_TTL);
+            if missing.len() >= MAX_MISSING {
+                missing.clear();
+            }
+        }
+        missing.insert(id, Instant::now());
     }
 
     /// The entries of a folder, from the cache while it's fresh. Folders first, then by
@@ -193,10 +210,28 @@ impl PutioRoot {
         {
             return Ok(e.clone());
         }
+        if let Some(at) = self
+            .missing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&id)
+        {
+            if at.elapsed() < MISSING_TTL {
+                return Err(PutioError::Outside(format!("{id} was not found")));
+            }
+        }
         let response = tokio::time::timeout(CALL_LIMIT, self.client.get_file_details(id))
             .await
             .map_err(|_| self.fail("reading a file", &"timed out"))?
-            .map_err(|e| self.fail("reading a file", &e))?;
+            .map_err(|e| {
+                if e.is_not_found() {
+                    // Not a Put.io outage: don't flag the root unhealthy, and don't ask again soon
+                    self.remember_missing(id);
+                    PutioError::Outside(format!("{id} was not found"))
+                } else {
+                    self.fail("reading a file", &e)
+                }
+            })?;
         self.ok();
         let entry = entry_of(&response.file, 0);
         self.remember(std::slice::from_ref(&entry));

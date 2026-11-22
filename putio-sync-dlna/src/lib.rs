@@ -107,9 +107,15 @@ pub fn roots(config: &Config, dlna: &DlnaConfig) -> Vec<SharedRoot> {
         let text = path.to_string_lossy().into_owned();
         let key = format!("watch:{text}");
         if dlna.roots.contains(&key) {
+            // Players see the folder's name, not where it sits on the server
+            let title = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| "Watch folder".to_string());
             out.push(SharedRoot {
                 key,
-                title: text,
+                title,
                 source: RootSource::Local(path.clone()),
             });
         }
@@ -207,8 +213,13 @@ struct Inner {
     status: Mutex<(State, Option<String>, Vec<String>)>,
     running: tokio::sync::Mutex<Option<Running>>,
     active: Active,
+    /// Media streams that may run at once
+    stream_slots: Arc<tokio::sync::Semaphore>,
     players: Mutex<HashMap<IpAddr, Instant>>,
 }
+
+/// Most media streams at once (each Put.io stream also uses upstream bandwidth)
+const MAX_STREAMS: usize = 16;
 
 /// The media server handle
 #[derive(Clone)]
@@ -381,6 +392,7 @@ impl MediaServer {
                 status: Mutex::new((State::Off, None, Vec::new())),
                 running: tokio::sync::Mutex::new(None),
                 active: Arc::new(AtomicUsize::new(0)),
+                stream_slots: Arc::new(tokio::sync::Semaphore::new(MAX_STREAMS)),
                 players: Mutex::new(HashMap::new()),
             }),
         }
@@ -578,16 +590,15 @@ impl MediaServer {
             let app = Router::new().fallback(dispatch).with_state(state);
             let mut rx = rx.clone();
             servers.push(tokio::spawn(async move {
-                let serve = axum::serve(
+                putio_sync_telemetry::listener::serve_limited(
                     listener,
-                    app.into_make_service_with_connect_info::<SocketAddr>(),
+                    app,
+                    putio_sync_telemetry::listener::Limits::default(),
+                    async move {
+                        let _ = rx.wait_for(|stop| *stop).await;
+                    },
                 )
-                .with_graceful_shutdown(async move {
-                    let _ = rx.wait_for(|stop| *stop).await;
-                });
-                if let Err(e) = serve.await {
-                    tracing::warn!(error = %e, "DLNA HTTP server stopped");
-                }
+                .await;
             }));
         }
         let mut warning = None;
@@ -840,6 +851,48 @@ async fn media_route(
     headers: &HeaderMap,
     raw_path: &str,
 ) -> Response<Body> {
+    // One slot per open stream, held until the body is dropped. HEAD sends no body.
+    let slot = if *method == Method::GET {
+        match l.inner.stream_slots.clone().try_acquire_owned() {
+            Ok(p) => Some(p),
+            Err(_) => {
+                tracing::warn!(peer = %peer.ip(), "DLNA stream refused: too many streams open");
+                count(Kind::Stream, Outcome::Refused);
+                let mut r = stream_local::empty(StatusCode::SERVICE_UNAVAILABLE);
+                r.headers_mut()
+                    .insert(header::RETRY_AFTER, HeaderValue::from_static("5"));
+                return r;
+            }
+        }
+    } else {
+        None
+    };
+    let response = media_response(l, peer, method, headers, raw_path).await;
+    hold_slot(response, slot)
+}
+
+/// Keep `slot` until the response body is dropped
+fn hold_slot(
+    response: Response<Body>,
+    slot: Option<tokio::sync::OwnedSemaphorePermit>,
+) -> Response<Body> {
+    use futures_util::StreamExt;
+    let Some(slot) = slot else { return response };
+    let (parts, body) = response.into_parts();
+    let stream = body.into_data_stream().map(move |chunk| {
+        let _held = &slot;
+        chunk
+    });
+    Response::from_parts(parts, Body::from_stream(stream))
+}
+
+async fn media_response(
+    l: &Listener,
+    peer: SocketAddr,
+    method: &Method,
+    headers: &HeaderMap,
+    raw_path: &str,
+) -> Response<Body> {
     // The id was encoded once more to sit in the URL; decode that layer exactly once
     let Ok(id_text) = percent_decode_str(&raw_path["/media/".len()..]).decode_utf8() else {
         return refuse(peer, raw_path, "not valid text");
@@ -856,20 +909,19 @@ async fn media_route(
         RootSource::Local(dir) => {
             let dir = dir.clone();
             let rel_checked = rel.clone();
-            let checked =
-                tokio::task::spawn_blocking(move || -> Result<(PathBuf, String), String> {
-                    let real = content::local_path(&dir, &rel_checked)?;
-                    if !real.is_file() {
-                        return Err("not a file".to_string());
-                    }
-                    let name = real
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    let kind = media::classify(&name).ok_or_else(|| "not media".to_string())?;
-                    Ok((real, kind.mime))
-                })
-                .await;
+            let checked = content::blocking(move || -> Result<(PathBuf, String), String> {
+                let real = content::local_path(&dir, &rel_checked)?;
+                if !real.is_file() {
+                    return Err("not a file".to_string());
+                }
+                let name = real
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let kind = media::classify(&name).ok_or_else(|| "not media".to_string())?;
+                Ok((real, kind.mime))
+            })
+            .await;
             let (real, mime) = match checked {
                 Ok(Ok(v)) => v,
                 Ok(Err(reason)) => return refuse(peer, &id_text, &reason),
