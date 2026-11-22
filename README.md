@@ -723,7 +723,10 @@ detail = "basic"        # PUTIO_SYNC_METRICS_DETAIL: basic | detailed
 ```
 
 > **No auth.** Anything that can reach the port can read the metrics. They never contain
-> tokens, file names, ids, paths or URLs, but keep the port on a trusted network.
+> tokens, file names, ids, paths or URLs, but keep the port on a trusted network. When it
+> listens on a non-loopback address (the default `0.0.0.0` is one), the log says so with a
+> warning at start. To scrape from the same host only, set `bind = "127.0.0.1:9742"`; the
+> default stays `0.0.0.0` so Docker port publishing keeps working.
 
 `detailed` adds per-operation API latency and per-worker series. Counters reset when the
 process restarts, so query them with `increase()` or `rate()`. In Docker, publish the
@@ -1432,6 +1435,10 @@ roots = ["downloads", "cat:radarr"]  # downloads, cat:<folder>, watch:<path>, pu
   ```
 - **Who can see it**: anyone on your home network can browse and play what you share. There
   is no password in UPnP, so share only what the whole household may see.
+- **Limits**: discovery answers only players on a subnet the server is on (one reply set
+  per player every 2 seconds), at most 16 media streams play at once (the 17th gets a 503
+  and the player retries), and the shared folder names and server version are not
+  announced. Watch folders show their last path component as the title.
 - **Docker**: discovery uses multicast, which bridge networking hides. Run the container
   with `network_mode: host` (see [INSTALLATION.md](INSTALLATION.md#docker)); on a bridge the
   status says "No LAN interface".

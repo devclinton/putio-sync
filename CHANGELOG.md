@@ -14,6 +14,18 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Security
 
+- DLNA discovery answers only players on a subnet the server is on, requires `MAN:
+  "ssdp:discover"`, allows one reply set per player every 2 seconds and at most 64 pending
+  replies, so it can't be used to reflect traffic at a spoofed address.
+- The metrics listener now logs its no-authentication warning when it binds a non-loopback
+  address (the old warning was never reached). The default bind is unchanged.
+- The API, DLNA and metrics listeners cap open connections (512 each) and drop a client that
+  takes over 30 seconds to send request headers. Streams have no total time limit. At most 16
+  DLNA media streams play at once.
+- Made-up Put.io ids asked of the DLNA server are remembered as missing for 60 seconds, and
+  no longer mark Put.io unhealthy; at most 8 folder scans run at once.
+- DLNA shows a watch folder by its last path component, and discovery and the device
+  description no longer announce the exact putio-sync version.
 - A request that came through a reverse proxy on the same machine no longer counts as a
   Tailscale sign-in, so a forged `Tailscale-User-Login` header can't get in. Identity sign-in
   still works with `tailscale serve` or a direct tailnet connection.
