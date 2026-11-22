@@ -99,7 +99,7 @@ pub async fn execute_download(
 
     // Handle chunk size warning
     if chunk_size.is_some() {
-        warn!("Chunk size specified but chunked downloads not supported - using streaming with range request resume instead");
+        warn!("--chunk-size is deprecated and ignored: Put.io does not support chunked downloads, files stream and resume");
     }
 
     // Store settings that need to be handled separately

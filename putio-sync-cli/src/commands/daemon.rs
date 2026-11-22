@@ -86,27 +86,27 @@ pub async fn execute_daemon(
         watch_paths
     };
 
-    // Warn about unsupported CLI flags
+    // These flags were never wired into the daemon: it reads the config file for all of them
     if filter.is_some() {
-        warn!("--filter flag not yet supported in daemon mode, ignoring");
+        warn!("--filter is deprecated and ignored by the daemon; use [[download.rules]] or download.whitelist_patterns / blacklist_patterns in the config file");
     }
     if delete_after {
-        warn!("--delete-after flag not yet supported in daemon mode, ignoring");
+        warn!("--delete-after is deprecated and ignored by the daemon; set download.delete_after_download = true in the config file");
     }
     if delete_empty_folders.is_some() {
-        warn!("--delete-empty-folders flag not yet supported in daemon mode, ignoring");
+        warn!("--delete-empty-folders is deprecated and ignored by the daemon; set download.delete_empty_folders in the config file");
     }
     if watch_only {
-        warn!("--watch-only flag not yet supported in daemon mode, ignoring");
+        warn!("--watch-only is deprecated and ignored by the daemon; set watch.enabled and watch.paths in the config file");
     }
     if download_only {
-        warn!("--download-only flag not yet supported in daemon mode, ignoring");
+        warn!("--download-only is deprecated and ignored by the daemon; leave watch.paths empty in the config file");
     }
     if archive_dir.is_some() {
-        warn!("--archive-dir flag not yet supported in daemon mode, ignoring");
+        warn!("--archive-dir is deprecated and ignored by the daemon; set watch.archive_directory in the config file");
     }
     if delete_torrents {
-        warn!("--delete-torrents flag not yet supported in daemon mode, ignoring");
+        warn!("--delete-torrents is deprecated and ignored by the daemon; set watch.delete_after_upload = true in the config file");
     }
 
     // Moves a 0.2.x database out of the download folder on the first start
@@ -139,7 +139,7 @@ pub async fn execute_daemon(
     // Reload [logging] when the config file changes (FR-016)
     putio_sync_core::config::spawn_reload_poller(
         config_file_path.clone(),
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(30),
         |logging| {
             let _ = putio_sync_core::logging::apply_level(&logging);
             putio_sync_core::log_capture::set_capacity(logging.buffer_lines);
@@ -420,6 +420,13 @@ pub async fn execute_daemon(
     info!("Press Ctrl+C to stop");
 
     daemon.start().await.context("Daemon execution failed")?;
+    // Let hooks and plugins finish the events already on the bus; the daemon's own
+    // shutdown used most of Docker's 10 s grace, so this gets 2 s
+    let drain = std::time::Duration::from_secs(2);
+    let (hooks_done, plugins_done) = tokio::join!(hooks.drain(drain), plugins.drain(drain));
+    if !hooks_done || !plugins_done {
+        warn!("Stopped with hook or plugin events still running");
+    }
 
     if updates.restart_requested() {
         let e = putio_sync_update::swap::restart_self();

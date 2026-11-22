@@ -830,6 +830,16 @@ mod tests {
             Some("next-page"),
         )
         .await;
+        // The second page holds a file, so folder 110 is not empty
+        let _next = server
+            .mock("POST", "/files/list/continue")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({"status": "OK", "files": [file(112, 110)], "cursor": null}).to_string(),
+            )
+            .create_async()
+            .await;
         let _l = list(&mut server, 111, vec![]).await;
         let del = delete(&mut server, 111).await;
 

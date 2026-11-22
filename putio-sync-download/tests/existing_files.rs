@@ -127,6 +127,7 @@ async fn partial_file_at_the_real_name_resumes_from_where_it_stops() {
         .mock("GET", "/files/1/download")
         .match_header("range", "bytes=4096-8191")
         .with_status(206)
+        .with_header("content-range", "bytes 4096-8191/8192")
         .with_body(vec![9u8; SIZE / 2])
         .expect(1)
         .create_async()
@@ -159,6 +160,7 @@ async fn resumed_file_with_a_bad_checksum_is_downloaded_once_more() {
         .mock("GET", "/files/1/download")
         .match_header("range", "bytes=4096-8191")
         .with_status(206)
+        .with_header("content-range", "bytes 4096-8191/8192")
         .with_body(vec![9u8; SIZE / 2])
         .create_async()
         .await;
@@ -181,6 +183,7 @@ async fn a_second_bad_checksum_fails_the_file() {
         .mock("GET", "/files/1/download")
         .match_header("range", "bytes=4096-8191")
         .with_status(206)
+        .with_header("content-range", "bytes 4096-8191/8192")
         .with_body(vec![9u8; SIZE / 2])
         .create_async()
         .await;
@@ -270,7 +273,7 @@ async fn keep_both_takes_the_next_free_number_and_keeps_it_after_a_failure() {
 async fn failed_overwrite_leaves_the_old_file_as_it_was() {
     let mut s = setup(ExistingFile::Overwrite).await;
     let _file = file_details(&mut s.server, 1, None).await;
-    // Short body: a size mismatch, as if the connection dropped midway
+    // Short body: the whole response, but smaller than Put.io says: a size mismatch
     let _short = full_body(&mut s.server, 1, vec![9u8; SIZE / 4], 1).await;
     std::fs::write(s.path("movie.mkv"), b"the old file").unwrap();
     s.queue(1, false).await;
@@ -278,6 +281,7 @@ async fn failed_overwrite_leaves_the_old_file_as_it_was() {
     assert!(s.manager.process_queue().await.unwrap());
     assert_eq!(s.queue_status(1).await.as_deref(), Some("failed"));
     assert_eq!(read(&s.path("movie.mkv")), b"the old file");
+    // The server sent all it said it would, so the short file is not kept to resume
     assert!(!s.path(".movie.mkv.downloading").exists());
 }
 

@@ -450,6 +450,10 @@ async fn only_a_resumed_file_reads_back_its_prefix() {
         .mock("GET", "/files/3407/download")
         .match_header("range", format!("bytes={half}-{}", SIZE - 1).as_str())
         .with_status(206)
+        .with_header(
+            "content-range",
+            format!("bytes {half}-{}/{SIZE}", SIZE - 1).as_str(),
+        )
         .with_body(&whole[half..])
         .expect(1)
         .create_async()

@@ -75,7 +75,9 @@ async function checkUpdates() {
   try {
     await post("/update/check");
   } catch (e) {
-    if (e.status !== 401 && e.status !== 429) toastError(e);
+    // 409: checked less than a minute ago, so the card already has the answer
+    if (e.status === 409) toast("Checked for updates a moment ago");
+    else if (e.status !== 401 && e.status !== 429) toastError(e);
   }
   navigate("#/news");
 }

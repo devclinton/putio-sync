@@ -191,15 +191,23 @@ pub fn preset_label(name: &str) -> String {
     builtin(name).map_or_else(|| name.to_string(), |p| p.label.to_string())
 }
 
-/// A Put.io name as it appears in a download path: `/ \ : * ? " < > |` become `_`.
-/// The download manager builds `relative_path` with this, so rule paths match it.
+/// A Put.io name as it appears in a download path: `/ \ : * ? " < > |` and control
+/// characters become `_`, and a name that is only `.` or `..` (or empty) becomes `_`, so
+/// a name can never step out of its folder. The download manager builds `relative_path`
+/// with this, so rule paths match it.
 pub fn sanitize_name(name: &str) -> String {
-    name.chars()
+    let clean: String = name
+        .chars()
         .map(|c| match c {
             '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
             c => c,
         })
-        .collect()
+        .collect();
+    match clean.as_str() {
+        "" | "." | ".." => "_".to_string(),
+        _ => clean,
+    }
 }
 
 fn invalid(message: String) -> CoreError {
@@ -767,6 +775,17 @@ impl RuleSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_name_keeps_a_name_inside_its_folder() {
+        assert_eq!(sanitize_name("a/b\\c:d"), "a_b_c_d");
+        assert_eq!(sanitize_name("tab\there\u{7}"), "tab_here_");
+        assert_eq!(sanitize_name(".."), "_");
+        assert_eq!(sanitize_name("."), "_");
+        assert_eq!(sanitize_name(""), "_");
+        assert_eq!(sanitize_name("...x"), "...x");
+        assert_eq!(sanitize_name("Movie (2020).mkv"), "Movie (2020).mkv");
+    }
 
     fn config(rules: Vec<FolderRule>) -> DownloadConfig {
         DownloadConfig {

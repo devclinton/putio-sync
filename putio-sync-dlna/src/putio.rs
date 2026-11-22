@@ -116,21 +116,24 @@ impl PutioRoot {
 
     /// The last Put.io failure, until the next success
     pub fn last_error(&self) -> Option<String> {
-        self.last_error.lock().unwrap().clone()
+        self.last_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn fail(&self, what: &str, err: &dyn std::fmt::Display) -> PutioError {
         let reason = format!("{what}: {err}");
-        *self.last_error.lock().unwrap() = Some(reason.clone());
+        *self.last_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason.clone());
         PutioError::Upstream(reason)
     }
 
     fn ok(&self) {
-        *self.last_error.lock().unwrap() = None;
+        *self.last_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     fn remember(&self, entries: &[PutioEntry]) {
-        let mut known = self.known.lock().unwrap();
+        let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
         if known.len() + entries.len() > MAX_KNOWN {
             known.clear();
         }
@@ -142,7 +145,12 @@ impl PutioRoot {
     /// The entries of a folder, from the cache while it's fresh. Folders first, then by
     /// name, case-insensitive.
     pub async fn list(&self, folder: i64) -> Result<Arc<Vec<PutioEntry>>, PutioError> {
-        if let Some((at, list)) = self.listings.lock().unwrap().get(&folder) {
+        if let Some((at, list)) = self
+            .listings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&folder)
+        {
             if at.elapsed() < self.ttl {
                 return Ok(list.clone());
             }
@@ -161,7 +169,7 @@ impl PutioRoot {
         });
         self.remember(&entries);
         let list = Arc::new(entries);
-        let mut listings = self.listings.lock().unwrap();
+        let mut listings = self.listings.lock().unwrap_or_else(|e| e.into_inner());
         if listings.len() >= MAX_LISTINGS {
             if let Some(oldest) = listings
                 .iter()
@@ -177,7 +185,12 @@ impl PutioRoot {
 
     /// One entry, looked up when not already seen
     pub async fn entry(&self, id: i64) -> Result<PutioEntry, PutioError> {
-        if let Some(e) = self.known.lock().unwrap().get(&id) {
+        if let Some(e) = self
+            .known
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&id)
+        {
             return Ok(e.clone());
         }
         let response = tokio::time::timeout(CALL_LIMIT, self.client.get_file_details(id))
@@ -214,7 +227,12 @@ impl PutioRoot {
         if is_mp4_name(&entry.name) {
             return original;
         }
-        if let Some((at, v)) = self.versions.lock().unwrap().get(&entry.id) {
+        if let Some((at, v)) = self
+            .versions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&entry.id)
+        {
             if at.elapsed() < self.ttl {
                 return *v;
             }
@@ -227,7 +245,7 @@ impl PutioRoot {
             },
             _ => original,
         };
-        let mut versions = self.versions.lock().unwrap();
+        let mut versions = self.versions.lock().unwrap_or_else(|e| e.into_inner());
         if versions.len() > MAX_KNOWN {
             versions.clear();
         }

@@ -166,13 +166,17 @@ pub fn entries(didl: &str) -> Vec<(String, String, String)> {
     loop {
         match reader.read_event().unwrap() {
             Event::Start(e) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let name = e.name().as_ref().to_string();
                 if name == "container" || name == "item" {
                     let id = e
                         .attributes()
                         .flatten()
-                        .find(|a| a.key.as_ref() == b"id")
-                        .map(|a| a.unescape_value().unwrap().to_string())
+                        .find(|a| a.key.as_ref() == "id")
+                        .map(|a| {
+                            a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                                .unwrap()
+                                .to_string()
+                        })
                         .unwrap_or_default();
                     out.push((name, id, String::new()));
                 } else if name == "dc:title" {
@@ -180,9 +184,19 @@ pub fn entries(didl: &str) -> Vec<(String, String, String)> {
                 }
             }
             Event::Text(t) if in_title => {
-                out.last_mut().unwrap().2 = t.unescape().unwrap().to_string();
-                in_title = false;
+                out.last_mut().unwrap().2.push_str(&t.xml10_content());
             }
+            Event::GeneralRef(r) if in_title => {
+                out.last_mut().unwrap().2.push(match &*r {
+                    "lt" => '<',
+                    "gt" => '>',
+                    "amp" => '&',
+                    "apos" => '\'',
+                    "quot" => '"',
+                    other => panic!("unexpected entity {other}"),
+                });
+            }
+            Event::End(_) if in_title => in_title = false,
             Event::Eof => break,
             _ => {}
         }

@@ -132,6 +132,6 @@ async fn url_hooks_show_a_redacted_target() {
     .await;
     let response = app.get("/hooks").await;
     let text = body_text(response).await;
-    assert!(text.contains("https://ha.local:8123/api/…"), "{text}");
+    assert!(text.contains("https://ha.local:8123/…"), "{text}");
     assert!(!text.contains("s3cret") && !text.contains("hdr-secret") && !text.contains("abc"));
 }

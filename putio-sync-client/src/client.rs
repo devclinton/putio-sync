@@ -100,6 +100,55 @@ pub fn error_chain(err: &dyn std::error::Error) -> String {
     out
 }
 
+/// Longest wait honoured from a `Retry-After` header
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(120);
+
+/// How long a connection attempt for a download or upload may take
+const BULK_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long a download connection may sit silent (no response headers, no body bytes)
+/// before the request fails. There is deliberately no total timeout: a large file takes
+/// as long as it takes.
+const DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Parse a `Retry-After` value: delay-seconds or an HTTP-date, capped at
+/// [`MAX_RETRY_AFTER`]. `None` when it is neither.
+fn parse_retry_after(value: &str, now: chrono::DateTime<chrono::Utc>) -> Option<Duration> {
+    let value = value.trim();
+    let wait = if let Ok(seconds) = value.parse::<u64>() {
+        Duration::from_secs(seconds)
+    } else {
+        let date = chrono::DateTime::parse_from_rfc2822(value).ok()?;
+        (date.with_timezone(&chrono::Utc) - now)
+            .to_std()
+            .unwrap_or(Duration::ZERO)
+    };
+    Some(wait.min(MAX_RETRY_AFTER))
+}
+
+/// The client for file downloads, built once and reused: its connection pool survives
+/// between files. Connects and reads time out, but there is no total timeout.
+fn download_http_client() -> Client {
+    Client::builder()
+        .connect_timeout(BULK_CONNECT_TIMEOUT)
+        .read_timeout(DOWNLOAD_READ_TIMEOUT)
+        .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+        .tcp_keepalive(TCP_KEEPALIVE)
+        .build()
+        .expect("Failed to create download HTTP client")
+}
+
+/// The client for uploads: the 30 s total timeout of the API client would cut off a
+/// large body, so only connecting is bounded
+fn upload_http_client() -> Client {
+    Client::builder()
+        .connect_timeout(BULK_CONNECT_TIMEOUT)
+        .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+        .tcp_keepalive(TCP_KEEPALIVE)
+        .build()
+        .expect("Failed to create upload HTTP client")
+}
+
 fn http_client(pool_idle_timeout: Duration) -> Client {
     Client::builder()
         .timeout(Duration::from_secs(30))
@@ -118,6 +167,10 @@ fn http_client(pool_idle_timeout: Duration) -> Client {
 /// app-specific password authentication (HTTP Basic Auth).
 pub struct PutioApiClient {
     pub(crate) client: Client,
+    /// Shared by every download; see [`download_http_client`]
+    download_client: Client,
+    /// Shared by every upload; see [`upload_http_client`]
+    pub(crate) upload_client: Client,
     pub(crate) base_url: String,
     pub(crate) upload_url: String,
     auth_method: AuthMethod,
@@ -169,6 +222,8 @@ impl PutioApiClient {
 
         Self {
             client,
+            download_client: download_http_client(),
+            upload_client: upload_http_client(),
             upload_url: upload_url_for(&base_url),
             base_url,
             auth_method: auth_config.auth_method,
@@ -218,6 +273,8 @@ impl PutioApiClient {
 
         Self {
             client,
+            download_client: download_http_client(),
+            upload_client: upload_http_client(),
             upload_url: upload_url_for(&base_url),
             base_url,
             auth_method: AuthMethod::Token,
@@ -277,6 +334,8 @@ impl PutioApiClient {
 
         Self {
             client,
+            download_client: download_http_client(),
+            upload_client: upload_http_client(),
             upload_url: upload_url_for(&base_url),
             base_url,
             auth_method: AuthMethod::AppPassword,
@@ -333,9 +392,16 @@ impl PutioApiClient {
         Ok(self.client.get(url).header("Authorization", auth_header))
     }
 
-    /// Create an authenticated request builder for downloads with extended timeout
+    /// The HTTP client for file downloads: connect and read timeouts, no total timeout.
+    /// Execute requests from [`Self::authenticated_download_request`] on this client.
+    pub fn download_client(&self) -> &Client {
+        &self.download_client
+    }
+
+    /// Create an authenticated request builder for downloads
     ///
-    /// This creates a request with a much longer timeout suitable for file downloads.
+    /// The request is built on the shared download client (see [`Self::download_client`]),
+    /// which times out a connection that goes silent but not a long transfer.
     ///
     /// # Arguments
     ///
@@ -353,14 +419,8 @@ impl PutioApiClient {
         debug!("Auth method: {:?}", self.auth_method);
         // Note: Not logging auth header value for security
 
-        // Create a client with extended timeout for downloads (10 minutes)
-        let download_client = Client::builder()
-            .timeout(Duration::from_secs(600)) // 10 minutes
-            .tcp_keepalive(TCP_KEEPALIVE)
-            .build()
-            .map_err(ClientError::HttpError)?;
-
-        Ok(download_client
+        Ok(self
+            .download_client
             .get(url)
             .header("Authorization", auth_header))
     }
@@ -471,10 +531,38 @@ impl PutioApiClient {
         self.execute_with_retry(request).await
     }
 
+    /// Execute a POST that only reads (it has no effect to repeat), so it retries like a
+    /// GET: on network errors, 5xx and 429
+    pub(crate) async fn post_idempotent<T: DeserializeOwned, B: serde::Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> ClientResult<T> {
+        let url = format!("{}{}", self.base_url, path);
+        debug!("POST (read-only) request to: {}", url);
+
+        let auth_header = self.get_auth_header()?;
+
+        let request = self
+            .client
+            .post(&url)
+            .header(header::AUTHORIZATION, auth_header)
+            .header(header::CONTENT_TYPE, "application/json")
+            .json(body)
+            .build()
+            .map_err(ClientError::HttpError)?;
+
+        let response = self.send_attempts(request, true).await?;
+        self.handle_success_response(response).await
+    }
+
     /// Execute a request with exponential backoff retry logic
     ///
-    /// Retries on network errors, 5xx and 429 responses. A 429 with `Retry-After`
-    /// waits for that long instead of the backoff delay.
+    /// GETs and HEADs retry on network errors, 5xx and 429 responses. Other methods
+    /// change something on Put.io (delete, rename, move, create a folder, add a
+    /// transfer), so a lost reply must not repeat them: they retry only when the request
+    /// certainly never ran (a connect error, 429 or 503). A 429 or 503 with `Retry-After`
+    /// waits for that long (at most two minutes) instead of the backoff delay.
     pub(crate) async fn execute_with_retry<T: DeserializeOwned>(
         &self,
         request: Request,
@@ -487,6 +575,14 @@ impl PutioApiClient {
     /// unread, for bodies that are not JSON. A non-success status becomes the usual
     /// `ApiError`.
     pub(crate) async fn send_with_retry(&self, request: Request) -> ClientResult<Response> {
+        let idempotent = matches!(
+            *request.method(),
+            reqwest::Method::GET | reqwest::Method::HEAD
+        );
+        self.send_attempts(request, idempotent).await
+    }
+
+    async fn send_attempts(&self, request: Request, idempotent: bool) -> ClientResult<Response> {
         let max_attempts = self.retry_policy.max_attempts.max(1);
         let mut url = request.url().clone();
         url.set_query(None);
@@ -514,8 +610,12 @@ impl PutioApiClient {
                     if status.is_success() {
                         return Ok(response);
                     }
-                    let retryable =
-                        status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS;
+                    let retryable = if idempotent {
+                        status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS
+                    } else {
+                        status == StatusCode::TOO_MANY_REQUESTS
+                            || status == StatusCode::SERVICE_UNAVAILABLE
+                    };
                     if !retryable || attempt >= max_attempts {
                         return match self.handle_error_response::<()>(response).await {
                             Err(e) => Err(e),
@@ -528,10 +628,14 @@ impl PutioApiClient {
                         .headers()
                         .get(header::RETRY_AFTER)
                         .and_then(|v| v.to_str().ok())
-                        .and_then(|v| v.trim().parse::<u64>().ok())
-                        .map(Duration::from_secs);
+                        .and_then(|v| parse_retry_after(v, chrono::Utc::now()));
                     let delay = match retry_after {
-                        Some(d) if status == StatusCode::TOO_MANY_REQUESTS => d,
+                        Some(d)
+                            if status == StatusCode::TOO_MANY_REQUESTS
+                                || status == StatusCode::SERVICE_UNAVAILABLE =>
+                        {
+                            d
+                        }
                         _ => self.retry_policy.delay(attempt),
                     };
                     let reason = if status == StatusCode::TOO_MANY_REQUESTS {
@@ -541,7 +645,7 @@ impl PutioApiClient {
                     };
                     (delay, format!("HTTP {}", status), reason)
                 }
-                Err(e) if attempt < max_attempts => (
+                Err(e) if attempt < max_attempts && (idempotent || e.is_connect()) => (
                     self.retry_policy.delay(attempt),
                     error_chain(&e),
                     RetryReason::Network,
@@ -873,6 +977,80 @@ mod tests {
     #[allow(dead_code)]
     struct StatusResponse {
         status: String,
+    }
+
+    #[tokio::test]
+    async fn post_is_not_repeated_after_a_server_error() {
+        let mut server = setup_mock_server().await;
+        let mock = server
+            .mock("POST", "/files/delete")
+            .with_status(500)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url())
+            .with_retry_policy(fast_policy(3));
+
+        let response: ClientResult<StatusResponse> = client
+            .post("/files/delete", &serde_json::json!({"file_ids": "1"}))
+            .await;
+        assert!(response.is_err());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn post_is_repeated_after_503_and_429() {
+        let mut server = setup_mock_server().await;
+        let busy = server
+            .mock("POST", "/files/move")
+            .with_status(503)
+            .expect(1)
+            .create_async()
+            .await;
+        let limited = server
+            .mock("POST", "/files/move")
+            .with_status(429)
+            .expect(1)
+            .create_async()
+            .await;
+        let ok = server
+            .mock("POST", "/files/move")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status": "ok"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url())
+            .with_retry_policy(fast_policy(4));
+
+        let response: ClientResult<StatusResponse> =
+            client.post("/files/move", &serde_json::json!({})).await;
+        assert!(response.is_ok(), "{response:?}");
+        busy.assert_async().await;
+        limited.assert_async().await;
+        ok.assert_async().await;
+    }
+
+    #[test]
+    fn retry_after_takes_seconds_or_a_date_and_is_capped() {
+        let now = chrono::DateTime::parse_from_rfc2822("Wed, 21 Oct 2015 07:28:00 GMT")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert_eq!(parse_retry_after("7", now), Some(Duration::from_secs(7)));
+        assert_eq!(
+            parse_retry_after("Wed, 21 Oct 2015 07:28:30 GMT", now),
+            Some(Duration::from_secs(30))
+        );
+        // A date in the past is no wait at all
+        assert_eq!(
+            parse_retry_after("Wed, 21 Oct 2015 07:00:00 GMT", now),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(parse_retry_after("86400", now), Some(MAX_RETRY_AFTER));
+        assert_eq!(parse_retry_after("soon", now), None);
     }
 
     #[tokio::test]

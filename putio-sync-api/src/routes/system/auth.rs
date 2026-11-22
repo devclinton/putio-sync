@@ -123,7 +123,11 @@ pub async fn auth_status(
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|ConnectInfo(addr)| *addr);
-    let tailscale = tailscale_identity(&state, request.headers(), peer)
+    let listened_on = request
+        .extensions()
+        .get::<crate::listen::ListenedOn>()
+        .map(|l| l.0);
+    let tailscale = tailscale_identity(&state, request.headers(), peer, listened_on)
         .await
         .map(|id| TailscaleUser {
             login: id.login,
@@ -216,30 +220,44 @@ fn session_cookie(
 /// POST /auth/password
 pub async fn password(State(state): State<AppState>, request: Request) -> Response {
     let ip = client_ip(&request);
-    if let Some(limited) = rate_limited(&state, ip) {
-        return limited;
+    // Count the attempt before the slow hash, so a burst can't all start before the
+    // first failure is recorded. A success takes it back.
+    if let Err(secs) = state.limiter.reserve(ip) {
+        warn!(ip = %ip, retry_after_seconds = secs, "Authentication rate limited");
+        return ApiError::TooManyRequests {
+            retry_after_seconds: secs,
+        }
+        .into_response();
     }
     let headers = request.headers().clone();
     let Json(body) = match Json::<PasswordRequest>::from_request(request, &state).await {
         Ok(body) => body,
-        Err(rejection) => return rejection.into_response(),
+        Err(rejection) => {
+            state.limiter.forgive(ip);
+            return rejection.into_response();
+        }
     };
     let config = state.config.read().await.sign_in.clone();
     if !config.password.is_set() {
+        state.limiter.forgive(ip);
         return ApiError::NotFound("Password sign-in is not set up".to_string()).into_response();
     }
     let hash = config.password.password_hash.clone();
-    let user_ok = body.username == config.password.username;
-    let pass = body.password;
-    let check = hash.clone();
-    let pass_ok = tokio::task::spawn_blocking(move || signin::verify_password(&pass, &check))
-        .await
-        .unwrap_or(false);
-    if !(user_ok && pass_ok) {
-        let failures = state.limiter.record_failure(ip);
-        warn!(ip = %ip, failures, "Password sign-in failed");
+    let user_ok = signin::username_matches(&body.username, &config.password.username);
+    let Some(permit) = state.sign_in.try_hash_permit() else {
+        state.limiter.forgive(ip);
+        warn!(ip = %ip, "Too many password checks at once");
+        return ApiError::TooManyRequests {
+            retry_after_seconds: 1,
+        }
+        .into_response();
+    };
+    let ok = signin::verify_blocking(body.password, hash.clone(), user_ok, permit).await;
+    if !ok {
+        warn!(ip = %ip, "Password sign-in failed");
         return ApiError::Unauthorized("Wrong username or password".to_string()).into_response();
     }
+    state.limiter.forgive(ip);
     let found = session::Session::new(
         "password",
         &config.password.username,
@@ -260,6 +278,16 @@ pub async fn password(State(state): State<AppState>, request: Request) -> Respon
 ///
 /// POST /auth/logout
 pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    // Sessions are signed, not stored: remember this one as signed out, so a copy of
+    // the cookie stops working too
+    if let (Some(value), Some(key)) = (
+        session::cookie(&headers, session::COOKIE_NAME),
+        state.sign_in.key(),
+    ) {
+        if let Some(found) = session::verify(&key, value) {
+            state.sign_in.revoke(value, found.exp);
+        }
+    }
     let public = state
         .config
         .read()

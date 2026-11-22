@@ -15,6 +15,11 @@ use cli::{Cli, Commands, QueueCommands, TransfersCommands};
 use putio_sync_core::config::{Config, ExistingFile};
 use tracing::{debug, error, info};
 
+// musl's malloc serialises on one lock, which hurts under the multi-threaded runtime
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Get version string with git commit info
 fn get_version_with_commit() -> String {
     let version = env!("CARGO_PKG_VERSION");

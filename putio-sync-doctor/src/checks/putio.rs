@@ -318,40 +318,54 @@ pub(crate) async fn stuck_watch_files(ctx: &Ctx) -> Finding {
     let mut items = Vec::new();
     let mut unreadable = Vec::new();
     let now = SystemTime::now();
-    for dir in &watch.paths {
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(_) => {
-                unreadable.push(dir.display().to_string());
-                continue;
+    // Watch folders may sit on a slow disk: list them off the async threads
+    let dirs = watch.paths.clone();
+    let listed = tokio::task::spawn_blocking(move || {
+        let mut files = Vec::new();
+        let mut unreadable = Vec::new();
+        for dir in &dirs {
+            let entries = match std::fs::read_dir(dir) {
+                Ok(entries) => entries,
+                Err(_) => {
+                    unreadable.push(dir.display().to_string());
+                    continue;
+                }
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(str::to_ascii_lowercase);
+                if !matches!(ext.as_deref(), Some("torrent" | "magnet")) {
+                    continue;
+                }
+                let Ok(meta) = entry.metadata() else { continue };
+                files.push((path, meta.is_file(), meta.modified().ok()));
             }
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(str::to_ascii_lowercase);
-            if !matches!(ext.as_deref(), Some("torrent" | "magnet")) {
-                continue;
-            }
-            let Ok(meta) = entry.metadata() else { continue };
-            let waiting = meta
-                .modified()
-                .ok()
-                .and_then(|m| now.duration_since(m).ok())
-                .unwrap_or_default();
-            let path_str = path.display().to_string();
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !meta.is_file()
-                || waiting < STALE_AGE
-                || processed.contains(&path_str)
-                || processed_names.contains(name)
-            {
-                continue;
-            }
-            items.push(Item::new(&path_str, name).detail(format!("waiting {}", age(waiting))));
         }
+        (files, unreadable)
+    })
+    .await;
+    let (files, unreadable_dirs) = match listed {
+        Ok(listed) => listed,
+        Err(e) => return Finding::skipped(format!("Could not read the watch folders: {e}")),
+    };
+    unreadable.extend(unreadable_dirs);
+    for (path, is_file, modified) in files {
+        let waiting = modified
+            .and_then(|m| now.duration_since(m).ok())
+            .unwrap_or_default();
+        let path_str = path.display().to_string();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !is_file
+            || waiting < STALE_AGE
+            || processed.contains(&path_str)
+            || processed_names.contains(name)
+        {
+            continue;
+        }
+        items.push(Item::new(&path_str, name).detail(format!("waiting {}", age(waiting))));
     }
 
     let mut summary = if items.is_empty() {

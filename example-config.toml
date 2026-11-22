@@ -7,14 +7,14 @@ target_directory = "./downloads"
 # Number of concurrent download workers
 workers = 4
 
-# Buffer size per download stream in MB  
-buffer_size_mb = 64
+# Buffer size per download stream in MB (default 16)
+buffer_size_mb = 16
 
 # Enable resume of interrupted downloads
 resume_enabled = true
 
-# A file already at its local path: "resume", "overwrite" or "keep_both"
-on_existing = "overwrite"
+# A file already at its local path: "resume" (default), "overwrite" or "keep_both"
+on_existing = "resume"
 
 # Delete files from Put.io after successful download
 delete_after_download = false
@@ -34,6 +34,14 @@ reverse_sort = false
 # File filtering patterns (glob syntax)
 whitelist_patterns = "*.{mkv,mp4,avi,mov}"  # Only download video files
 # blacklist_patterns = "*sample* OR *.{exe,zip}"  # Never download samples, executables, archives
+
+# Per-folder rules (see config.example.toml). include / exclude use the same pattern
+# language as whitelist_patterns / blacklist_patterns above and override them per folder.
+# [[download.rules]]
+# path = "Shows"
+# preset = "video"
+# include = "*.mkv OR *.mp4"
+# exclude = "*sample* OR Sample/*"
 
 # Bandwidth limit in bytes per second (optional)
 # bandwidth_limit_bytes_per_sec = 10485760  # 10 MB/s limit, all downloads together
@@ -56,7 +64,7 @@ whitelist_patterns = "*.{mkv,mp4,avi,mov}"  # Only download video files
 max_retries = 3
 
 # Initial retry delay in seconds (doubles with each retry)
-retry_initial_delay_secs = 2
+retry_initial_delay_secs = 1
 
 [watch]
 # Enable torrent file watching
@@ -65,7 +73,8 @@ enabled = true
 # Directories to watch for .torrent and .magnet files
 paths = ["./watch", "./torrents"]
 
-# Check interval in seconds
+# Seconds between scans. The daemon ignores this and scans every --watch-interval
+# seconds (default 60); only `server --watch` reads it.
 refresh_cycle = 30
 
 # Parent folder ID on Put.io for uploads (0 = root)
@@ -97,3 +106,9 @@ delete_after_upload = true
 # [plugins.config]
 # server = "http://192.168.1.10:32400"
 # path_map = [{ from = "/downloads", to = "/data/media" }]
+
+# The plugin registry (feature 059): Settings > Plugins > More plugins lists its reviewed
+# plugins. Nothing is fetched while it is off.
+# [plugin_registry]
+# enabled = true
+# url = "https://raw.githubusercontent.com/devclinton/putio-sync-plugin-registry/main/index.json"

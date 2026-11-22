@@ -538,13 +538,27 @@ mod tests {
         let mut reader = quick_xml::Reader::from_str(&xml);
         let mut titles = Vec::new();
         let mut in_title = false;
+        let mut title = String::new();
         loop {
             match reader.read_event().unwrap() {
-                quick_xml::events::Event::Start(e) if e.name().as_ref() == b"dc:title" => {
+                quick_xml::events::Event::Start(e) if e.name().as_ref() == "dc:title" => {
                     in_title = true
                 }
                 quick_xml::events::Event::Text(t) if in_title => {
-                    titles.push(t.unescape().unwrap().to_string());
+                    title.push_str(&t.xml10_content());
+                }
+                quick_xml::events::Event::GeneralRef(r) if in_title => {
+                    title.push(match &*r {
+                        "lt" => '<',
+                        "gt" => '>',
+                        "amp" => '&',
+                        "apos" => '\'',
+                        "quot" => '"',
+                        other => panic!("unexpected entity {other}"),
+                    });
+                }
+                quick_xml::events::Event::End(_) if in_title => {
+                    titles.push(std::mem::take(&mut title));
                     in_title = false;
                 }
                 quick_xml::events::Event::Eof => break,

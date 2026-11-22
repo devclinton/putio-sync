@@ -216,9 +216,13 @@ impl Channel {
         {
             return Self::Deb;
         }
-        if exe
-            .to_ascii_lowercase()
-            .contains("/microsoft/winget/packages/putio.putio-sync_")
+        let lower_exe = exe.to_ascii_lowercase();
+        if [
+            "/microsoft/winget/packages/devclinton.putio-sync_",
+            "/microsoft/winget/packages/putio.putio-sync_",
+        ]
+        .iter()
+        .any(|id| lower_exe.contains(id))
         {
             return Self::Winget;
         }
@@ -325,9 +329,9 @@ impl Channel {
         };
         match self {
             Self::Snap => one("sudo snap refresh putio-sync"),
-            Self::Flatpak => one("flatpak update com.putio.PutioSync"),
+            Self::Flatpak => one("flatpak update io.github.devclinton.putio-sync"),
             Self::Homebrew => one("brew upgrade putio-sync"),
-            Self::Winget => one("winget upgrade putio.putio-sync"),
+            Self::Winget => one("winget upgrade devclinton.putio-sync"),
             Self::Deb => {
                 let file = format!("putio-sync_{to}_{arch}.deb");
                 Instruction {
@@ -448,7 +452,7 @@ mod tests {
     fn flatpak() {
         let p = with_env(
             probe("/app/bin/putio-sync"),
-            &[("FLATPAK_ID", "com.putio.PutioSync")],
+            &[("FLATPAK_ID", "io.github.devclinton.putio-sync")],
         );
         assert_eq!(Channel::detect_with(&p), Channel::Flatpak);
     }
@@ -555,6 +559,10 @@ mod tests {
     fn winget() {
         let p = probe(
             r"C:\Users\x\AppData\Local\Microsoft\WinGet\Packages\putio.putio-sync_Microsoft.Winget.Source_8wekyb3d8bbwe\putio-sync.exe",
+        );
+        assert_eq!(Channel::detect_with(&p), Channel::Winget);
+        let p = probe(
+            r"C:\Users\x\AppData\Local\Microsoft\WinGet\Packages\devclinton.putio-sync_Microsoft.Winget.Source_8wekyb3d8bbwe\putio-sync.exe",
         );
         assert_eq!(Channel::detect_with(&p), Channel::Winget);
     }
@@ -673,9 +681,12 @@ mod tests {
         let to = v("0.4.0");
         for (c, cmd) in [
             (Channel::Snap, "sudo snap refresh putio-sync"),
-            (Channel::Flatpak, "flatpak update com.putio.PutioSync"),
+            (
+                Channel::Flatpak,
+                "flatpak update io.github.devclinton.putio-sync",
+            ),
             (Channel::Homebrew, "brew upgrade putio-sync"),
-            (Channel::Winget, "winget upgrade putio.putio-sync"),
+            (Channel::Winget, "winget upgrade devclinton.putio-sync"),
         ] {
             assert_eq!(c.instruction(&to, "amd64").commands, vec![cmd.to_string()]);
         }

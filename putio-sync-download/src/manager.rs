@@ -13,6 +13,7 @@ use crate::stream::{finish_download, stream_to_temp, StopSignal};
 use crate::sync_status::{SyncOutcome, SyncRequestError, SyncStatus};
 use crate::transfer_events::{self, TransferChange, TransferClass, TransferEvents};
 use crate::utils::retry_with_stall_detection;
+use futures_util::FutureExt;
 use putio_sync_client::models::Transfer;
 use putio_sync_client::{error_chain, FileEntry, PutioApiClient};
 use putio_sync_core::bandwidth::{
@@ -151,8 +152,10 @@ impl Default for DownloadConfig {
 
 impl From<&putio_sync_core::config::DownloadConfig> for DownloadConfig {
     /// The one mapping from `[download]` to the manager, used by `daemon`, `server` and
-    /// the settings API. `[download]` fields with no manager counterpart (`chunk_size_mb`, `progress_style`, sorting, glob patterns, `delete_empty_folders`,
-    /// `max_concurrent`) are read by the one-off `download` command only.
+    /// the settings API. `chunk_size_mb` and `max_concurrent` have no manager counterpart
+    /// and are ignored everywhere. `progress_style`, sorting and `delete_empty_folders` are
+    /// read by the one-off `download` command only. The glob whitelist/blacklist patterns
+    /// are read by the daemon too, through `RuleSet::from_config` (core `rules.rs`).
     fn from(settings: &putio_sync_core::config::DownloadConfig) -> Self {
         Self {
             target_directory: settings.target_directory.clone(),
@@ -213,7 +216,7 @@ struct StopGuard {
 
 impl Drop for StopGuard {
     fn drop(&mut self) {
-        let mut signals = self.signals.lock().unwrap();
+        let mut signals = locked(&self.signals);
         // A later registration for the same file keeps its own signal
         if signals
             .get(&self.file_id)
@@ -224,18 +227,36 @@ impl Drop for StopGuard {
     }
 }
 
+/// How long an idle worker waits for a wakeup before looking at the queue anyway
+const IDLE_POLL: Duration = Duration::from_secs(30);
+
+/// How many times a sync queues a transiently failed file again before it stays failed
+const MAX_SYNC_REQUEUES: u32 = 3;
+
+/// Lock a std mutex, taking the data back if a panicking thread poisoned it. The maps
+/// behind these locks stay valid after a panic, and one panicked worker must not make
+/// every later call panic too.
+fn locked<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// [`locked`] for the read side of a std `RwLock`
+fn read_locked<T>(l: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    l.read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// [`locked`] for the write side of a std `RwLock`
+fn write_locked<T>(l: &std::sync::RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    l.write().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Note shown when a stopped file had to start again from 0 (feature 039, R8)
 const RESTARTED_NOTE: &str = "Started again: the partial download was gone";
 
-/// Sanitize a filename to remove invalid characters
+/// Sanitize a filename to remove invalid characters: the one rule `putio_sync_core::rules`
+/// uses for rule paths, so a path built here is the path a rule names
 pub(crate) fn sanitize_filename(filename: &str) -> String {
-    filename
-        .chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            c => c,
-        })
-        .collect()
+    putio_sync_core::rules::sanitize_name(filename)
 }
 
 /// Join a relative folder path and a name; an empty folder path is the root
@@ -299,6 +320,8 @@ pub struct DownloadOperationResult {
     pub bytes_downloaded: u64,
     /// Local file path
     pub file_path: Option<PathBuf>,
+    /// A failure that may pass: a later sync queues the file again
+    pub transient: bool,
 }
 
 /// Active download information (combines file info with progress)
@@ -492,6 +515,13 @@ struct WorkerInfo {
     stats: WorkerStats,
 }
 
+/// Two paths a worker could not write at once. Case-insensitive, so `A.mkv` and `a.mkv`
+/// do not race on a case-insensitive disk (macOS, Windows, a Samba share); on a
+/// case-sensitive one it only makes two such files take turns.
+fn same_target(a: &Path, b: &Path) -> bool {
+    a == b || a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+}
+
 /// Holds a target path for one worker (R7); released on drop
 pub struct PathClaim {
     set: Arc<Mutex<HashSet<PathBuf>>>,
@@ -596,6 +626,13 @@ pub struct DownloadManager {
     sync_status: Arc<RwLock<SyncStatus>>,
     /// Wakes `run_sync_loop` for "sync now"
     sync_notify: Arc<Notify>,
+    /// Wakes idle workers when rows are queued, resumed or retried; they also poll every
+    /// `IDLE_POLL` in case a row was changed straight in the database
+    work_notify: Arc<Notify>,
+    /// Transient failures per file id (retries used up on a flaky link): a later sync
+    /// queues the row again, at most `MAX_SYNC_REQUEUES` times. In memory, so a restart
+    /// starts the count again and the queue table needs no new column.
+    transient_failures: Arc<Mutex<HashMap<i64, u32>>>,
     /// Set by `request_sync`, so the next sync's `sync.completed` says `manual` (feature 027)
     manual_sync: Arc<std::sync::atomic::AtomicBool>,
     /// Target paths a worker is writing (R7)
@@ -728,6 +765,8 @@ impl DownloadManager {
             decided: Arc::new(Mutex::new(HashSet::new())),
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
+            work_notify: Arc::new(Notify::new()),
+            transient_failures: Arc::new(Mutex::new(HashMap::new())),
             manual_sync: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stop_signals: Arc::new(Mutex::new(HashMap::new())),
             stopped_partial: Arc::new(Mutex::new(HashSet::new())),
@@ -768,6 +807,8 @@ impl DownloadManager {
             decided: Arc::new(Mutex::new(HashSet::new())),
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
+            work_notify: Arc::new(Notify::new()),
+            transient_failures: Arc::new(Mutex::new(HashMap::new())),
             manual_sync: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stop_signals: Arc::new(Mutex::new(HashMap::new())),
             stopped_partial: Arc::new(Mutex::new(HashSet::new())),
@@ -975,6 +1016,7 @@ impl DownloadManager {
         let (shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
 
         let worker_dm = self.clone();
+        let work_notify = self.work_notify.clone();
         let handle = tokio::spawn(async move {
             debug!("Worker {} started", worker_id);
 
@@ -1001,8 +1043,15 @@ impl DownloadManager {
                         debug!("Worker {} processed an item", worker_id);
                     }
                     Ok(false) => {
-                        // Queue empty, sleep briefly and retry
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        // Nothing to do: wait for a wakeup, a shutdown or the fallback poll
+                        tokio::select! {
+                            _ = work_notify.notified() => {}
+                            _ = shutdown_rx.recv() => {
+                                info!("Worker {} received shutdown signal, exiting gracefully", worker_id);
+                                break;
+                            }
+                            _ = tokio::time::sleep(IDLE_POLL) => {}
+                        }
                     }
                     Err(e) => {
                         error!("Worker {} error: {}, sleeping before retry", worker_id, e);
@@ -1098,10 +1147,9 @@ impl DownloadManager {
 
     /// A worker is writing `path` (feature 034)
     pub(crate) fn path_in_use(&self, path: &Path) -> bool {
-        self.paths_in_use
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains(path)
+        locked(&self.paths_in_use)
+            .iter()
+            .any(|p| same_target(p, path))
     }
 
     /// The `.downloading` paths workers are writing now: one per claimed target (044)
@@ -1153,12 +1201,12 @@ impl DownloadManager {
 
     /// Let the processing pipeline stage watch-folder downloads (feature 038)
     pub fn set_redirect(&self, redirect: Arc<dyn PathRedirect>) {
-        *self.redirect.write().unwrap() = Some(redirect);
+        *write_locked(&self.redirect) = Some(redirect);
     }
 
     /// Let plugins filter, rename and place the files of a sync (feature 028)
     pub fn set_sync_hooks(&self, hooks: Arc<dyn SyncHooks>) {
-        *self.sync_hooks.write().unwrap() = Some(hooks);
+        *write_locked(&self.sync_hooks) = Some(hooks);
     }
 
     /// The sync hooks, when one provides `hook`
@@ -1199,13 +1247,13 @@ impl DownloadManager {
 
     /// Let the pipeline hold back deletes from Put.io (feature 025)
     pub fn set_delete_gate(&self, gate: Arc<dyn RemoteDeleteGate>) {
-        *self.delete_gate.write().unwrap() = Some(gate);
+        *write_locked(&self.delete_gate) = Some(gate);
     }
 
     /// The steps each newly streamed file gets, in order (feature 022). Files already
     /// recorded keep the steps they were given.
     pub fn set_arrived_steps(&self, steps: Vec<Arc<dyn ArrivedStep>>) {
-        *self.arrived_steps.write().unwrap() = steps;
+        *write_locked(&self.arrived_steps) = steps;
     }
 
     /// Delete files from Put.io that the pipeline held back and now released. Each id is
@@ -1291,12 +1339,35 @@ impl DownloadManager {
         // rename it (028), then the pipeline may stage it (038).
         let (placed, renamed) = self.placed(&file).await;
         let folder = placed.unwrap_or_else(|| file.relative_path.clone());
-        let redirect = self.redirect.read().unwrap().clone();
+        let redirect = read_locked(&self.redirect).clone();
         let relative_path = match redirect {
             Some(r) => r.redirect(file_id, &folder).await,
             None => None,
         }
         .unwrap_or(folder);
+        // Put.io names are sanitised, but a plugin or the redirect may hand back any path:
+        // nothing may leave the target directory
+        if Path::new(&relative_path)
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+        {
+            let e = DownloadError::InvalidInput(format!(
+                "folder path leaves the download directory: {}",
+                relative_path
+            ));
+            telemetry::download::failed(e.fail_reason());
+            if let Some(ref callback) = progress_callback {
+                callback.on_file_complete(file_id, &filename, false);
+            }
+            return Ok(DownloadOperationResult {
+                file_id,
+                success: false,
+                error: Some(e.to_string()),
+                bytes_downloaded: 0,
+                file_path: None,
+                transient: false,
+            });
+        }
         let dir = if relative_path.is_empty() {
             config.target_directory.clone()
         } else {
@@ -1373,6 +1444,7 @@ impl DownloadManager {
                     error: None,
                     bytes_downloaded: 0,
                     file_path: Some(target_path),
+                    transient: false,
                 });
             }
             ExistingAction::Refuse => {
@@ -1391,6 +1463,7 @@ impl DownloadManager {
                     error: Some(e.to_string()),
                     bytes_downloaded: 0,
                     file_path: None,
+                    transient: false,
                 });
             }
             ExistingAction::Resume { from } => {
@@ -1443,7 +1516,7 @@ impl DownloadManager {
             let _ = tokio::fs::remove_file(&temp_path).await;
             None
         };
-        if resumed_from.is_none() && self.stopped_partial.lock().unwrap().remove(&file_id) {
+        if resumed_from.is_none() && locked(&self.stopped_partial).remove(&file_id) {
             self.notes
                 .lock()
                 .unwrap()
@@ -1572,7 +1645,7 @@ impl DownloadManager {
                 let duration = started.elapsed();
                 // A successful result means the temp file was verified and renamed.
                 telemetry::download::completed(duration);
-                self.notes.lock().unwrap().remove(&file_id);
+                locked(&self.notes).remove(&file_id);
                 if let Some((kind, detail)) = &outcome {
                     existing.record(&target_path, *kind, detail.as_ref());
                 }
@@ -1651,6 +1724,7 @@ impl DownloadManager {
                     error: None,
                     bytes_downloaded: file.file_size,
                     file_path: Some(target_path),
+                    transient: false,
                 })
             }
             Err(DownloadError::Stopped) => {
@@ -1659,7 +1733,7 @@ impl DownloadManager {
                     .await
                     .is_ok_and(|m| m.len() > 0)
                 {
-                    self.stopped_partial.lock().unwrap().insert(file_id);
+                    locked(&self.stopped_partial).insert(file_id);
                 }
                 Err(DownloadError::Stopped)
             }
@@ -1690,6 +1764,7 @@ impl DownloadManager {
                     error: Some(e.to_string()),
                     bytes_downloaded: resumed_from.unwrap_or(0),
                     file_path: None,
+                    transient: e.is_transient(),
                 })
             }
         }
@@ -1697,10 +1772,12 @@ impl DownloadManager {
 
     /// Wait until no other worker writes `path`, then hold it until the claim drops
     pub async fn claim_path(&self, path: &std::path::Path) -> PathClaim {
+        // Names that differ only in case count as one path
         loop {
             {
                 let mut in_use = self.paths_in_use.lock().unwrap_or_else(|e| e.into_inner());
-                if in_use.insert(path.to_path_buf()) {
+                if !in_use.iter().any(|p| same_target(p, path)) {
+                    in_use.insert(path.to_path_buf());
                     return PathClaim {
                         set: self.paths_in_use.clone(),
                         path: path.to_path_buf(),
@@ -1825,6 +1902,7 @@ impl DownloadManager {
             config.max_retries,
             config.retry_initial_delay_secs,
             &format!("Download {}", filename),
+            stop.as_deref(),
         )
         .await;
         result.map(|r| Transferred {
@@ -2019,7 +2097,55 @@ impl DownloadManager {
 
     async fn sync_downloads_inner(&self) -> DownloadResult<SyncStats> {
         info!("Starting download sync...");
+        self.requeue_transient().await;
         Ok(self.enqueue_tree_inner(0, false, true).await?.stats)
+    }
+
+    /// Queue files again whose last attempt failed on something that may have passed (a
+    /// dropped link, a 5xx), at most `MAX_SYNC_REQUEUES` times each
+    async fn requeue_transient(&self) {
+        let Some(db) = self.database.as_ref() else {
+            return;
+        };
+        let tracked: Vec<(i64, u32)> = locked(&self.transient_failures)
+            .iter()
+            .map(|(id, n)| (*id, *n))
+            .collect();
+        if tracked.is_empty() {
+            return;
+        }
+        let failed: HashSet<i64> = match db.queue().failed().await {
+            Ok(rows) => rows.into_iter().map(|r| r.file_id).collect(),
+            Err(e) => {
+                warn!(error = %e, "Could not read the failed files to queue them again");
+                return;
+            }
+        };
+        let mut retry = Vec::new();
+        {
+            let mut map = locked(&self.transient_failures);
+            for (id, tries) in tracked {
+                if !failed.contains(&id) {
+                    // Gone, retried by hand or done: nothing to track
+                    map.remove(&id);
+                } else if tries < MAX_SYNC_REQUEUES {
+                    map.insert(id, tries + 1);
+                    retry.push(id);
+                } else {
+                    map.remove(&id);
+                }
+            }
+        }
+        if retry.is_empty() {
+            return;
+        }
+        match db.queue().retry_files(&retry).await {
+            Ok(_) => {
+                info!(files = retry.len(), "Queued transiently failed files again");
+                self.work_notify.notify_waiters();
+            }
+            Err(e) => warn!(error = %e, "Could not queue the failed files again"),
+        }
     }
 
     /// Queue every file under a Put.io folder, or a single file, through the same
@@ -2115,6 +2241,22 @@ impl DownloadManager {
         } else {
             HashSet::new()
         };
+        // What is already downloaded or queued, read once: a pass over thousands of files
+        // costs two queries, not two per file
+        let completed_ids: HashSet<i64> = match downloads_repo.completed().await {
+            Ok(rows) => rows.into_iter().map(|(id, _, _)| id).collect(),
+            Err(e) => {
+                warn!(error = %e, "Failed to read completed downloads");
+                HashSet::new()
+            }
+        };
+        let mut queued_ids: HashMap<i64, String> = match queue_repo.statuses().await {
+            Ok(rows) => rows.into_iter().collect(),
+            Err(e) => {
+                warn!(error = %e, "Failed to read the queue; queueing relies on the insert's conflict handling");
+                HashMap::new()
+            }
+        };
         // Transfers whose release check waits for Put.io (feature 042, research R8)
         let gated = self.gated_transfers(db).await;
         if !gated.is_empty() {
@@ -2163,7 +2305,7 @@ impl DownloadManager {
             if let Decision::Stream { rule } = &decision {
                 if honour_stream
                     && !known_streamed.contains(&file.id)
-                    && self.has_download(db, file.id).await
+                    && (queued_ids.contains_key(&file.id) || completed_ids.contains(&file.id))
                 {
                     // Queued or downloaded anyway (the *arr, or "Download" on the Put.io page)
                     stats.files_skipped += 1;
@@ -2221,47 +2363,25 @@ impl DownloadManager {
             }
 
             // Check if already downloaded
-            match downloads_repo.find_by_file_id(file.id).await {
-                Ok(Some(record)) if record.status == "completed" => {
-                    debug!(
-                        "Skipping already downloaded file: {} (ID: {})",
-                        file.name, file.id
-                    );
-                    stats.files_skipped += 1;
-                    decide(TreeDecision::Known);
-                    continue;
-                }
-                Ok(_) => {
-                    // Not downloaded or incomplete - continue to queue check
-                }
-                Err(e) => {
-                    warn!(
-                        "Database error checking downloads for file {}: {}",
-                        file.id, e
-                    );
-                    // Continue anyway - will try to add to queue
-                }
+            if completed_ids.contains(&file.id) {
+                debug!(
+                    "Skipping already downloaded file: {} (ID: {})",
+                    file.name, file.id
+                );
+                stats.files_skipped += 1;
+                decide(TreeDecision::Known);
+                continue;
             }
 
-            // Check if already in queue (pending or downloading)
-            match queue_repo.get_by_file_id(file.id).await {
-                Ok(Some(queue_item)) => {
-                    // File is already in queue - skip to avoid duplicates
-                    debug!(
-                        "Skipping file already in queue: {} (ID: {}, status: {})",
-                        file.name, file.id, queue_item.status
-                    );
-                    stats.files_skipped += 1;
-                    decide(TreeDecision::Known);
-                    continue;
-                }
-                Ok(None) => {
-                    // Not in queue - safe to add
-                }
-                Err(e) => {
-                    warn!("Database error checking queue for file {}: {}", file.id, e);
-                    // Continue anyway - queue.add has ON CONFLICT handling
-                }
+            // Check if already in queue (any status): skip to avoid duplicates
+            if let Some(status) = queued_ids.get(&file.id) {
+                debug!(
+                    "Skipping file already in queue: {} (ID: {}, status: {})",
+                    file.name, file.id, status
+                );
+                stats.files_skipped += 1;
+                decide(TreeDecision::Known);
+                continue;
             }
 
             // Add to queue
@@ -2304,6 +2424,7 @@ impl DownloadManager {
                 .await
             {
                 Ok(_) => {
+                    queued_ids.insert(file.id, "pending".to_string());
                     stats.files_downloaded += 1; // Renamed but means "added to queue"
                     decide(TreeDecision::Queued);
                     debug!("Added to queue: {}", file.name);
@@ -2321,6 +2442,9 @@ impl DownloadManager {
             }
         }
 
+        if stats.files_downloaded > 0 {
+            self.work_notify.notify_waiters();
+        }
         stats.files_deleted = self.delete_blocked(db, to_delete).await;
         if honour_stream {
             let steps: Vec<Arc<dyn ArrivedStep>> = self
@@ -2568,17 +2692,6 @@ impl DownloadManager {
         Ok(preview)
     }
 
-    /// The file is in the queue or its download completed
-    async fn has_download(&self, db: &Database, file_id: i64) -> bool {
-        if matches!(db.queue().get_by_file_id(file_id).await, Ok(Some(_))) {
-            return true;
-        }
-        matches!(
-            db.downloads().find_by_file_id(file_id).await,
-            Ok(Some(record)) if record.status == "completed"
-        )
-    }
-
     async fn is_queued(&self, file_id: i64) -> bool {
         match &self.database {
             Some(db) => matches!(db.queue().get_by_file_id(file_id).await, Ok(Some(_))),
@@ -2626,8 +2739,9 @@ impl DownloadManager {
             return Ok(false);
         }
 
-        // Get config snapshot
-        let config = self.config.read().await;
+        // A snapshot: no read lock is held while the file downloads, so a settings write
+        // never waits on (and, with tokio's fair lock, never blocks) the other workers
+        let config = self.config.read().await.clone();
 
         // Require database for queue-based downloads
         let db = self.database.as_ref().ok_or_else(|| {
@@ -2665,7 +2779,7 @@ impl DownloadManager {
         }
         // The switch went on between the check above and the claim
         if self.nas_paused().await {
-            let _ = queue_repo.unclaim_files(&[file_id]).await;
+            self.unclaim(&[file_id]).await;
             return Ok(false);
         }
 
@@ -2673,6 +2787,51 @@ impl DownloadManager {
             "Processing queue item: {} (ID: {})",
             queue_item.filename, file_id
         );
+
+        // A panic in the download must not leave the row stuck on "downloading" or end
+        // the worker: put the row back and report an error, the worker backs off
+        let ran = std::panic::AssertUnwindSafe(self.run_claimed(queue_item, &config))
+            .catch_unwind()
+            .await;
+        match ran {
+            Ok(done) => done,
+            Err(_) => {
+                error!(
+                    file_id,
+                    "Download task panicked; the file goes back in the queue"
+                );
+                self.unclaim(&[file_id]).await;
+                Err(DownloadError::InternalError(format!(
+                    "download of file {} panicked",
+                    file_id
+                )))
+            }
+        }
+    }
+
+    /// Put claimed rows back to pending, logging a failure: a row that stays on
+    /// "downloading" is only found again by the next restart
+    async fn unclaim(&self, file_ids: &[i64]) {
+        let Some(db) = self.database.as_ref() else {
+            return;
+        };
+        if let Err(e) = db.queue().unclaim_files(file_ids).await {
+            warn!(?file_ids, error = %e, "Could not put the claimed files back in the queue");
+        }
+        self.work_notify.notify_waiters();
+    }
+
+    /// Download a row `process_queue` claimed, and settle the row
+    async fn run_claimed(
+        &self,
+        queue_item: putio_sync_db::models::QueueItem,
+        config: &DownloadConfig,
+    ) -> DownloadResult<bool> {
+        let db = self.database.as_ref().ok_or_else(|| {
+            DownloadError::InternalError("Database required for queue processing".to_string())
+        })?;
+        let queue_repo = db.queue();
+        let file_id = queue_item.file_id;
 
         // Verify file still exists on Put.io and get current info
         match self.client.get_file_details(file_id).await {
@@ -2706,7 +2865,7 @@ impl DownloadManager {
                             .delete_after_download
                             .value
                         {
-                            let gate = self.delete_gate.read().unwrap().clone();
+                            let gate = read_locked(&self.delete_gate).clone();
                             let deferred = match gate {
                                 Some(g) => {
                                     g.defer(file_id, &queue_item.relative_path, &file_info.name)
@@ -2762,13 +2921,25 @@ impl DownloadManager {
                         if let Err(e) = queue_repo.remove(file_id).await {
                             warn!("Failed to remove completed item from queue: {}", e);
                         }
+                        locked(&self.transient_failures).remove(&file_id);
 
                         Ok(true)
                     }
                     // Stopped on request: keep the partial and the row as the caller set it
                     Err(DownloadError::Stopped) => Ok(true),
-                    Ok(_) | Err(_) => {
+                    outcome => {
                         error!("Failed to download: {}", file_info.name);
+                        // Retries used up on a failure that may pass (a dropped link,
+                        // a 5xx): the next syncs queue the row again, a few times
+                        let transient = match &outcome {
+                            Ok(result) => result.transient,
+                            Err(e) => e.is_transient(),
+                        };
+                        if transient {
+                            locked(&self.transient_failures).entry(file_id).or_insert(0);
+                        } else {
+                            locked(&self.transient_failures).remove(&file_id);
+                        }
 
                         // Update queue status to failed
                         if let Err(e) = queue_repo.update_status(file_id, QueueStatus::Failed).await
@@ -2780,18 +2951,25 @@ impl DownloadManager {
                     }
                 }
             }
-            Err(e) => {
-                warn!(
-                    "File {} no longer exists on Put.io or is inaccessible: {}",
-                    file_id, e
-                );
+            // Put.io says the file is gone: drop the row
+            Err(e) if e.is_not_found() => {
+                warn!("File {} no longer exists on Put.io: {}", file_id, e);
 
-                // Remove from queue since file doesn't exist
                 if let Err(e) = queue_repo.remove(file_id).await {
                     warn!("Failed to remove stale item from queue: {}", e);
                 }
 
                 Ok(true) // Processed (removed stale item)
+            }
+            // Anything else (a dropped link, a 5xx, a bad token) says nothing about the
+            // file: keep the row, and let the worker back off before it tries again
+            Err(e) => {
+                warn!(
+                    file_id,
+                    "Could not check file on Put.io, keeping it queued: {}", e
+                );
+                self.unclaim(&[file_id]).await;
+                Err(DownloadError::ClientError(e))
             }
         }
     }
@@ -3058,8 +3236,6 @@ impl DownloadManager {
         let mut all_files = Vec::new();
         // Track (folder_id, relative_path) for each folder to process
         let mut folders_to_process = vec![(parent_id, base_path)];
-        // Map folder_id -> folder_name for building paths
-        let mut folder_names = std::collections::HashMap::new();
 
         while let Some((current_folder, current_path)) = folders_to_process.pop() {
             debug!(
@@ -3078,7 +3254,6 @@ impl DownloadManager {
                     // Build the folder's relative path
                     let folder_path = join_path(&current_path, &sanitize_filename(&file.name));
 
-                    folder_names.insert(file.id, file.name.clone());
                     folders_to_process.push((file.id, folder_path));
                 }
                 // Store file with its relative path
@@ -3106,15 +3281,11 @@ impl DownloadManager {
 
         let queue_repo = db.queue();
 
-        // Get all items with 'downloading' status
-        let all_items = queue_repo.get_all().await.map_err(|e| {
+        // Only the rows being downloaded: the page polls this, and a queue of thousands
+        // must not be read each time
+        let downloading_items = queue_repo.get_downloading().await.map_err(|e| {
             DownloadError::InternalError(format!("Failed to get queue items: {}", e))
         })?;
-
-        let downloading_items: Vec<_> = all_items
-            .into_iter()
-            .filter(|item| item.status == "downloading")
-            .collect();
 
         let progress_trackers = self.progress_trackers.read().await;
         let mut active_downloads = Vec::new();
@@ -3233,7 +3404,7 @@ impl DownloadManager {
     /// stopped file keeps its partial and its row is left as it is. Returns the ids that
     /// were running.
     pub async fn stop_files(&self, file_ids: &[i64]) -> Vec<i64> {
-        let signals = self.stop_signals.lock().unwrap();
+        let signals = locked(&self.stop_signals);
         file_ids
             .iter()
             .filter_map(|id| {
@@ -3496,10 +3667,13 @@ impl DownloadManager {
         telemetry::pipeline::set_nas_paused(paused);
         let mut stopped = 0;
         if paused {
-            let running: Vec<i64> = self.stop_signals.lock().unwrap().keys().copied().collect();
+            let running: Vec<i64> = locked(&self.stop_signals).keys().copied().collect();
             // Rows first, so a stopped file is left `pending`
             let requeued = db.queue().unclaim_files(&running).await.map_err(internal)?;
             stopped = self.stop_files(&requeued).await.len();
+        }
+        if !paused {
+            self.work_notify.notify_waiters();
         }
         info!(paused, stopped, "Pause local downloads switched");
         Ok(())
@@ -3516,13 +3690,22 @@ impl DownloadManager {
         Ok(changed)
     }
 
+    /// Wake idle workers now, after queue rows were set to pending outside the manager
+    pub fn wake_workers(&self) {
+        self.work_notify.notify_waiters();
+    }
+
     /// Put paused queue rows back in the queue, in their old place. Returns the ids that
     /// were resumed.
     pub async fn resume_files(&self, file_ids: &[i64]) -> DownloadResult<Vec<i64>> {
         let db = self.database.as_ref().ok_or_else(|| {
             DownloadError::InternalError("Database required for resume".to_string())
         })?;
-        db.queue().resume_files(file_ids).await.map_err(internal)
+        let resumed = db.queue().resume_files(file_ids).await.map_err(internal)?;
+        if !resumed.is_empty() {
+            self.work_notify.notify_waiters();
+        }
+        Ok(resumed)
     }
 
     /// Pause items of the Active page by key (feature 039, FR-013, FR-014, FR-016). An item
@@ -3735,7 +3918,7 @@ impl DownloadManager {
 
     /// In-memory notes per file, such as "Started again: the partial download was gone"
     pub fn file_notes(&self) -> HashMap<i64, String> {
-        self.notes.lock().unwrap().clone()
+        locked(&self.notes).clone()
     }
 
     /// Register a stop signal for `file_id` until the guard is dropped
@@ -3754,7 +3937,7 @@ impl DownloadManager {
 
     /// The stop signal of a running `file_id`, if any
     fn stop_signal(&self, file_id: i64) -> Option<Arc<StopSignal>> {
-        self.stop_signals.lock().unwrap().get(&file_id).cloned()
+        locked(&self.stop_signals).get(&file_id).cloned()
     }
 
     /// Get statistics for all active workers
@@ -3938,6 +4121,7 @@ mod tests {
             error: None,
             bytes_downloaded: 1024,
             file_path: Some(PathBuf::from("/tmp/test.txt")),
+            transient: false,
         };
 
         assert_eq!(result.file_id, 123);

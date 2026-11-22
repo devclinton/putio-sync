@@ -5,13 +5,14 @@
 
 use reqwest::Url;
 
-/// A URL cut down to its scheme, host, port and first path segment, with `…` when the
-/// path goes on. The query string, fragment and user info are dropped.
+/// A URL cut down to its scheme, host and port, with `/…` when it has a path or query
+/// string. The path, query, fragment and user info are dropped, since any of them may
+/// hold a token.
 ///
 /// ```
 /// use putio_sync_core::redact;
 ///
-/// assert_eq!(redact::url("https://u:pw@h.lan/api/webhook/abc?token=x"), "https://h.lan/api/…");
+/// assert_eq!(redact::url("https://u:pw@h.lan/api/webhook/abc?token=x"), "https://h.lan/…");
 /// ```
 pub fn url(raw: &str) -> String {
     let Ok(parsed) = Url::parse(raw) else {
@@ -24,23 +25,15 @@ pub fn url(raw: &str) -> String {
     if let Some(port) = parsed.port() {
         out.push_str(&format!(":{}", port));
     }
-    let mut segments = parsed
+    // Any part of the path or query can be the secret (Telegram's `/bot<id>:<token>/…`,
+    // Home Assistant's `/api/webhook/<id>`), so none of it is kept
+    let has_path = parsed
         .path_segments()
         .into_iter()
         .flatten()
-        .filter(|segment| !segment.is_empty());
-    match segments.next() {
-        None => {}
-        Some(first) => {
-            out.push('/');
-            out.push_str(first);
-            if segments.next().is_some() {
-                out.push_str("/…");
-            }
-        }
-    }
-    if parsed.query().is_some() && !out.ends_with('…') {
-        out.push('…');
+        .any(|segment| !segment.is_empty());
+    if has_path || parsed.query().is_some() {
+        out.push_str("/…");
     }
     out
 }
@@ -75,22 +68,25 @@ mod tests {
     fn urls_inside_text_are_shortened() {
         assert_eq!(
             text("error sending request for url (https://cdn.put.io/a/b?sig=xyz): timed out"),
-            "error sending request for url (https://cdn.put.io/a/…): timed out"
+            "error sending request for url (https://cdn.put.io/…): timed out"
         );
         assert_eq!(text("no urls here"), "no urls here");
         assert_eq!(
             text("http://h/x?t=1 and https://g/y"),
-            "http://h/x… and https://g/y"
+            "http://h/… and https://g/…"
         );
     }
 
     #[test]
-    fn keeps_scheme_host_port_and_first_segment() {
+    fn keeps_scheme_host_and_port_only() {
         assert_eq!(
             url("https://ha.local:8123/api/webhook/abc"),
-            "https://ha.local:8123/api/…"
+            "https://ha.local:8123/…"
         );
-        assert_eq!(url("http://10.0.0.2/hook"), "http://10.0.0.2/hook");
+        assert_eq!(url("http://10.0.0.2/hook"), "http://10.0.0.2/…");
+        let telegram = url("https://api.telegram.org/bot123456:AAEsecretTOKEN/sendMessage");
+        assert_eq!(telegram, "https://api.telegram.org/…");
+        assert!(!telegram.contains("secret") && !telegram.contains("bot"));
         assert_eq!(url("https://example.com"), "https://example.com");
         assert_eq!(url("https://example.com/"), "https://example.com");
     }
@@ -98,9 +94,10 @@ mod tests {
     #[test]
     fn drops_user_info_query_and_fragment() {
         let out = url("https://user:pw@h/a/b?token=x#frag");
-        assert_eq!(out, "https://h/a/…");
+        assert_eq!(out, "https://h/…");
         assert!(!out.contains("pw") && !out.contains("token"));
-        assert_eq!(url("https://h/hook?token=secret"), "https://h/hook…");
+        assert_eq!(url("https://h/hook?token=secret"), "https://h/…");
+        assert_eq!(url("https://h?token=secret"), "https://h/…");
     }
 
     #[test]

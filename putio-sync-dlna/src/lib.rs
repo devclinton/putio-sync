@@ -393,9 +393,19 @@ impl MediaServer {
 
     /// The state for the Settings page
     pub fn status(&self) -> MediaServerStatus {
-        let (state, reason, addresses) = self.inner.status.lock().unwrap().clone();
+        let (state, reason, addresses) = self
+            .inner
+            .status
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let putio = {
-            let shared = self.inner.shared.read().unwrap().clone();
+            let shared = self
+                .inner
+                .shared
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
             if state == State::Off {
                 PutioHealth::Off
             } else if shared.root("putio").is_none() {
@@ -416,7 +426,7 @@ impl MediaServer {
             .inner
             .players
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .values()
             .filter(|at| at.elapsed() < hour)
             .count();
@@ -431,7 +441,7 @@ impl MediaServer {
     }
 
     fn set_status(&self, state: State, reason: Option<String>, addresses: Vec<String>) {
-        *self.inner.status.lock().unwrap() = (state, reason, addresses);
+        *self.inner.status.lock().unwrap_or_else(|e| e.into_inner()) = (state, reason, addresses);
     }
 
     fn build_shared(&self, config: &Config, dlna: &DlnaConfig) -> Shared {
@@ -443,7 +453,12 @@ impl MediaServer {
                 }
             }
         }
-        let previous = self.inner.shared.read().unwrap().clone();
+        let previous = self
+            .inner
+            .shared
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         // No folder chosen is the synced folder, where stream mode keeps files (022)
         let putio = match (roots.iter().any(|r| r.key == "putio"), dlna.putio_root()) {
             (true, folder) => match &self.inner.client {
@@ -486,7 +501,8 @@ impl MediaServer {
         };
         if !dlna.enabled {
             self.stop_locked(&mut running).await;
-            *self.inner.shared.write().unwrap() = Arc::new(self.build_shared(config, &dlna));
+            *self.inner.shared.write().unwrap_or_else(|e| e.into_inner()) =
+                Arc::new(self.build_shared(config, &dlna));
             self.set_status(State::Off, None, Vec::new());
             return;
         }
@@ -508,13 +524,19 @@ impl MediaServer {
         let shared = Arc::new(self.build_shared(config, &dlna));
         if running.as_ref().is_some_and(|r| r.key == key) {
             // Same sockets: what is shared and its name change in place
-            *self.inner.shared.write().unwrap() = shared;
-            let addresses = self.inner.status.lock().unwrap().2.clone();
+            *self.inner.shared.write().unwrap_or_else(|e| e.into_inner()) = shared;
+            let addresses = self
+                .inner
+                .status
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .2
+                .clone();
             self.set_status(State::Running, plan.warning, addresses);
             return;
         }
         self.stop_locked(&mut running).await;
-        *self.inner.shared.write().unwrap() = shared;
+        *self.inner.shared.write().unwrap_or_else(|e| e.into_inner()) = shared;
         self.set_status(State::Starting, None, Vec::new());
         match self.start_locked(&key).await {
             Ok((run, warning)) => {
@@ -624,11 +646,14 @@ impl MediaServer {
 
 impl Inner {
     fn shared(&self) -> Arc<Shared> {
-        self.shared.read().unwrap().clone()
+        self.shared
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn note_player(&self, ip: IpAddr) {
-        let mut players = self.players.lock().unwrap();
+        let mut players = self.players.lock().unwrap_or_else(|e| e.into_inner());
         let hour = Duration::from_secs(3600);
         players.retain(|_, at| at.elapsed() < hour);
         players.insert(ip, Instant::now());

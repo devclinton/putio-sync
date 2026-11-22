@@ -33,7 +33,6 @@ tracing = { workspace = true }
 sha2 = "0.10"
 
 # Signal handling
-ctrlc = "3.4"
 
 [dev-dependencies]
 putio-sync-core = { path = "../putio-sync-core" }

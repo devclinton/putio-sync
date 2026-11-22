@@ -619,7 +619,7 @@ mod tests {
     fn target_labels_hide_secrets() {
         let mut h = url_hook();
         h.url = Some("https://h/api/webhook/abc?token=x".to_string());
-        assert_eq!(h.target_label(), "https://h/api/…");
+        assert_eq!(h.target_label(), "https://h/…");
         let mut c = command_hook();
         c.command = Some(vec!["/bin/hook".to_string(), "--key=secret".to_string()]);
         assert_eq!(c.target_label(), "/bin/hook");
@@ -663,10 +663,7 @@ mod tests {
         secret.url = Some("https://ha.local:8123/api/webhook/abc?token=t".to_string());
         let current = vec![secret];
         let masked = mask(&current);
-        assert_eq!(
-            masked[0].url.as_deref(),
-            Some("https://ha.local:8123/api/…")
-        );
+        assert_eq!(masked[0].url.as_deref(), Some("https://ha.local:8123/…"));
         assert_eq!(unmask(&masked, &current).unwrap(), current);
         let mut edited = masked.clone();
         edited[0].url = Some("https://ha.local:8123/new".to_string());

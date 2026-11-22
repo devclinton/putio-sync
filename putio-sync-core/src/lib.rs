@@ -76,9 +76,6 @@ pub mod log_redact;
 /// Recent log lines kept for the web UI's Logs page (feature 047)
 pub mod log_capture;
 
-/// Notification system for download events
-pub mod notification;
-
 /// Path handling utilities
 pub mod path_utils;
 
@@ -117,7 +114,6 @@ pub mod prelude {
     pub use crate::error::{CoreError, CoreResult};
     pub use crate::filter::{parse_size, sort_files, FileFilter, FileTypeFilter, SortField};
     pub use crate::logging;
-    pub use crate::notification::{DownloadCompletionEvent, NotificationService};
     pub use crate::path_utils::{
         ensure_directory_exists, expand_path, normalize_path, validate_directory_path,
     };

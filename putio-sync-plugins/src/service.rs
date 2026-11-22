@@ -27,6 +27,8 @@ use crate::worker::{CallReply, Env, History, Job, PluginRun, RunResult, Slot, Sp
 pub const TICK: Duration = Duration::from_secs(60);
 /// How often the ticker looks for plugins whose tick is due
 pub const BASE_TICK: Duration = Duration::from_secs(5);
+/// How often the ticker looks again while no running plugin has `on_tick`
+pub const IDLE_TICK: Duration = Duration::from_secs(30);
 /// The message in a test event
 pub const TEST_MESSAGE: &str = "Test event from putio-sync";
 
@@ -257,7 +259,11 @@ pub(crate) struct BusyGuard<'a> {
 
 impl Drop for BusyGuard<'_> {
     fn drop(&mut self) {
-        self.inner.busy.lock().unwrap().remove(&self.name);
+        self.inner
+            .busy
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.name);
     }
 }
 
@@ -401,7 +407,7 @@ impl PluginsService {
 
     /// The workers' shared environment, or a new one before [`PluginsService::start`]
     pub(crate) fn current_env(&self) -> Env {
-        let state = self.inner.state.lock().unwrap();
+        let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
         match &state.env {
             Some(env) => env.clone(),
             None => self.env(tokio::runtime::Handle::current()),
@@ -410,7 +416,7 @@ impl PluginsService {
 
     /// `name` as found, broken or not, with its saved settings (disabled defaults when none)
     pub(crate) fn found_with_settings(&self, name: &str) -> Option<(Found, PluginSettings)> {
-        let state = self.inner.state.lock().unwrap();
+        let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
         let found = state.found.iter().find(|f| f.name == name)?.clone();
         let settings = state
             .settings
@@ -438,7 +444,7 @@ impl PluginsService {
     pub fn start(&self) {
         let handle = tokio::runtime::Handle::current();
         {
-            let mut state = self.inner.state.lock().unwrap();
+            let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
             if state.env.is_some() {
                 return;
             }
@@ -471,13 +477,19 @@ impl PluginsService {
         });
         let weak: Weak<Inner> = Arc::downgrade(&self.inner);
         handle.spawn(async move {
-            let mut every = tokio::time::interval(BASE_TICK);
-            every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            every.tick().await;
+            tokio::time::sleep(BASE_TICK).await;
             loop {
-                every.tick().await;
                 let Some(inner) = weak.upgrade() else { break };
-                PluginsService { inner }.tick_due();
+                let service = PluginsService { inner };
+                service.tick_due();
+                // With nothing to tick the loop only waits for a plugin that has `on_tick`
+                let delay = if service.any_tick() {
+                    BASE_TICK
+                } else {
+                    IDLE_TICK
+                };
+                drop(service);
+                tokio::time::sleep(delay).await;
             }
         });
     }
@@ -495,7 +507,7 @@ impl PluginsService {
                     .inner
                     .state
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .slots
                     .values()
                     .all(|s| s.idle())
@@ -511,17 +523,28 @@ impl PluginsService {
 
     /// Queue `on_tick` for each running plugin that has one
     pub fn tick(&self) {
-        let state = self.inner.state.lock().unwrap();
+        let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
         for slot in state.slots.values().filter(|s| s.has_tick()) {
             slot.push(Job::Tick);
         }
+    }
+
+    /// Whether any running plugin has `on_tick`
+    fn any_tick(&self) -> bool {
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .slots
+            .values()
+            .any(|s| s.has_tick())
     }
 
     /// Queue `on_tick` for each running plugin whose `tick_seconds` have passed (the
     /// ticker calls this every [`BASE_TICK`])
     pub fn tick_due(&self) {
         let now = Instant::now();
-        let state = self.inner.state.lock().unwrap();
+        let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
         for slot in state.slots.values().filter(|s| s.has_tick()) {
             if slot.tick_due(now) {
                 slot.push(Job::Tick);
@@ -531,19 +554,23 @@ impl PluginsService {
 
     /// Set `putio.download_dir`; running plugins see it after their next rebuild
     pub fn set_download_dir(&self, dir: Option<PathBuf>) {
-        *self.inner.download_dir.lock().unwrap() = dir;
+        *self
+            .inner
+            .download_dir
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = dir;
     }
 
     /// Use new settings now; running plugins rebuild their state
     pub fn configure(&self, settings: Vec<PluginSettings>) {
-        let mut state = self.inner.state.lock().unwrap();
+        let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
         state.settings = settings;
         apply(&mut state, Changed::All);
     }
 
     /// Find the plugins again; returns how many were found and how many are broken
     pub fn reload(&self) -> (usize, usize) {
-        let mut state = self.inner.state.lock().unwrap();
+        let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
         state.found = discover(state.dir.as_deref());
         apply(&mut state, Changed::All);
         let broken = state
@@ -557,7 +584,7 @@ impl PluginsService {
     /// Find the plugins again, rebuilding only `names`' workers; the others keep their
     /// state (055: a workbench save)
     pub fn reload_only(&self, names: &[String]) {
-        let mut state = self.inner.state.lock().unwrap();
+        let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
         state.found = discover(state.dir.as_deref());
         apply(&mut state, Changed::Only(names));
     }
@@ -743,7 +770,7 @@ impl PluginsService {
 
     /// The loaded manifest of `name`
     fn manifest_of(&self, name: &str) -> Option<crate::manifest::Manifest> {
-        let state = self.inner.state.lock().unwrap();
+        let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
         state
             .found
             .iter()
@@ -753,19 +780,28 @@ impl PluginsService {
 
     /// Use another plugins folder and reload
     pub fn set_dir(&self, dir: Option<PathBuf>) -> (usize, usize) {
-        self.inner.state.lock().unwrap().dir = dir;
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .dir = dir;
         self.reload()
     }
 
     /// The plugins folder
     pub fn dir(&self) -> Option<PathBuf> {
-        self.inner.state.lock().unwrap().dir.clone()
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .dir
+            .clone()
     }
 
     /// Every plugin found, sorted by name
     pub fn status(&self) -> Vec<PluginStatus> {
-        let state = self.inner.state.lock().unwrap();
-        let history = self.inner.history.lock().unwrap();
+        let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        let history = self.inner.history.lock().unwrap_or_else(|e| e.into_inner());
         state
             .found
             .iter()
@@ -831,7 +867,7 @@ impl PluginsService {
 
     /// Whether a running plugin handles `event_type`
     pub fn wants(&self, event_type: EventType) -> bool {
-        let state = self.inner.state.lock().unwrap();
+        let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
         state
             .slots
             .values()
@@ -847,7 +883,7 @@ impl PluginsService {
         })));
         let (reply, answer) = oneshot::channel();
         {
-            let state = self.inner.state.lock().unwrap();
+            let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
             let found = state
                 .found
                 .iter()
@@ -898,7 +934,7 @@ impl PluginsService {
         dir: Option<&Path>,
         settings: &[PluginSettings],
     ) -> Result<Vec<PluginSettings>, String> {
-        let state = self.inner.state.lock().unwrap();
+        let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
         let other;
         let found = if state.dir.as_deref() == dir {
             &state.found
@@ -946,7 +982,7 @@ impl PluginsService {
 
     /// The running plugins' hook workers
     pub(crate) fn hook_workers(&self) -> Vec<Arc<HookSlot>> {
-        let state = self.inner.state.lock().unwrap();
+        let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
         state.hook_slots.values().cloned().collect()
     }
 
@@ -958,7 +994,7 @@ impl PluginsService {
             run.result.as_str(),
             Duration::ZERO,
         );
-        let mut history = self.inner.history.lock().unwrap();
+        let mut history = self.inner.history.lock().unwrap_or_else(|e| e.into_inner());
         let runs = history.entry(name.to_string()).or_default();
         if runs.len() >= MAX_RUNS {
             runs.pop_front();
@@ -967,7 +1003,13 @@ impl PluginsService {
     }
 
     pub(crate) fn begin(&self, name: &str) -> Result<BusyGuard<'_>, CallError> {
-        if !self.inner.busy.lock().unwrap().insert(name.to_string()) {
+        if !self
+            .inner
+            .busy
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(name.to_string())
+        {
             return Err(CallError::Busy);
         }
         Ok(BusyGuard {
@@ -986,7 +1028,7 @@ impl PluginsService {
     ) -> Result<CallReply, CallError> {
         let (reply, answer) = oneshot::channel();
         let env = {
-            let state = self.inner.state.lock().unwrap();
+            let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
             match &state.env {
                 Some(env) => env.clone(),
                 None => self.env(tokio::runtime::Handle::current()),
@@ -1007,7 +1049,7 @@ impl PluginsService {
 
     /// The loadable plugin `name` and its saved settings (disabled defaults when none)
     fn lookup(&self, name: &str) -> Result<(Found, PluginSettings), CallError> {
-        let state = self.inner.state.lock().unwrap();
+        let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
         let found = state
             .found
             .iter()
@@ -1228,7 +1270,7 @@ fn dispatch(inner: &Inner, event: Arc<Event>) {
     if event_type.is_test() {
         return;
     }
-    let state = inner.state.lock().unwrap();
+    let state = inner.state.lock().unwrap_or_else(|e| e.into_inner());
     for slot in state.slots.values() {
         if slot.spec().manifest.wants(event_type) {
             slot.push(Job::Event(event.clone()));

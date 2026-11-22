@@ -67,20 +67,20 @@ impl HookSlot {
             && self
                 .failures
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .paused_until
                 .is_none_or(|until| now >= until)
     }
 
     fn succeeded(&self) {
-        let mut f = self.failures.lock().unwrap();
+        let mut f = self.failures.lock().unwrap_or_else(|e| e.into_inner());
         f.in_a_row = 0;
         f.paused_until = None;
     }
 
     /// Count a failure; true when it starts a pause
     fn failed(&self) -> bool {
-        let mut f = self.failures.lock().unwrap();
+        let mut f = self.failures.lock().unwrap_or_else(|e| e.into_inner());
         f.in_a_row += 1;
         if f.in_a_row >= MAX_FAILURES {
             f.in_a_row = 0;

@@ -260,20 +260,17 @@ pub fn next_free_name(dir: &Path, name: &str, reserved: &HashSet<PathBuf>) -> St
         .expect("an unbounded range always finds a free name")
 }
 
-static CRC: crc::Crc<u32, crc::Table<16>> =
-    crc::Crc::<u32, crc::Table<16>>::new(&crc::CRC_32_ISO_HDLC);
-
 /// Block size for reading a file back to hash it
 pub const HASH_BLOCK: usize = 1024 * 1024;
 
 /// A CRC32 (ISO-HDLC, as Put.io reports it) being computed, fed in order (feature 034)
 #[derive(Clone)]
-pub struct Crc32(crc::Digest<'static, u32, crc::Table<16>>);
+pub struct Crc32(crc32fast::Hasher);
 
 impl Crc32 {
     /// A digest of no bytes
     pub fn new() -> Self {
-        Self(CRC.digest())
+        Self(crc32fast::Hasher::new())
     }
 
     /// Add the next bytes

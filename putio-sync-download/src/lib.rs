@@ -1,7 +1,7 @@
 //! Download management for Put.io sync
 //!
 //! This crate provides download orchestration, streaming downloads,
-//! worker pools, and progress tracking for Put.io file synchronization.
+//! the download manager, and progress tracking for Put.io file synchronization.
 
 pub mod arrived;
 pub mod blocklist;
@@ -19,7 +19,6 @@ pub mod sync_status;
 pub mod transfer_events;
 pub mod utils;
 pub mod verify;
-pub mod worker;
 
 // Re-export commonly used types
 pub use arrived::{ArrivedFile, ArrivedStep, Mp4Step, StepResult, STEPS_PER_PASS};
@@ -45,4 +44,3 @@ pub use utils::{retry_with_stall_detection, RetryResult};
 pub use verify::{
     Verifier, VerifyControlError, VerifyRequest, VerifyRunner, VerifyStartError, VerifyStatus,
 };
-pub use worker::{DownloadJob, DownloadWorkerPool, WorkerResult};

@@ -96,7 +96,7 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "chunk_size_mb",
-                "Size of each request to Put.io; empty picks one",
+                "Ignored: downloads stream and resume, never in chunks",
             ),
             (
                 "progress_style",

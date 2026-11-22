@@ -105,7 +105,12 @@ impl Settings {
 impl PathRedirect for Pipeline {
     fn redirect<'a>(&'a self, file_id: i64, relative_path: &'a str) -> RedirectFuture<'a> {
         Box::pin(async move {
-            if !self.inner.settings.read().unwrap().staging_on()
+            if !self
+                .inner
+                .settings
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .staging_on()
                 || self
                     .inner
                     .staging_off
@@ -128,7 +133,13 @@ impl PathRedirect for Pipeline {
 impl Pipeline {
     /// Check the staging folders at startup; on a mismatch staging is turned off
     pub(crate) fn check_staging(&self) {
-        let target = self.inner.settings.read().unwrap().target.clone();
+        let target = self
+            .inner
+            .settings
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .target
+            .clone();
         if let Err(e) = check_same_device(&target) {
             warn!(error = %e, "Watch-folder staging is off");
             self.inner
@@ -147,7 +158,12 @@ impl Pipeline {
             return Ok(());
         }
         std::fs::rename(&staged, &to).map_err(|e| format!("rename failed: {e}"))?;
-        let retention = self.inner.settings.read().unwrap().retention_hours;
+        let retention = self
+            .inner
+            .settings
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .retention_hours;
         // Downloads still point into the staging folder
         for (file_id, path) in locate::local_paths(&self.inner.db, &item.key, retention).await {
             if let Ok(rest) = path.strip_prefix(&staged) {

@@ -309,6 +309,17 @@ async fn the_password_form_signs_in_with_a_session() {
     let (pair, full) = set_cookie(&response, "putio_sync_session").unwrap();
     assert_eq!(pair, "putio_sync_session=");
     assert!(full.contains("Max-Age=0"));
+
+    // ...and the old cookie, copied before, no longer works
+    let response = send(
+        &app,
+        Method::GET,
+        "/settings/sign-in",
+        &[("Cookie", &cookie)],
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

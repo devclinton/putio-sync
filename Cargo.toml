@@ -59,7 +59,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 
 # Metrics (no default features: no protobuf, no process collector)
 prometheus = { version = "0.14", default-features = false }
@@ -70,6 +70,12 @@ sysinfo = "0.31"
 
 # CLI
 clap = { version = "4.5", features = ["derive", "env"] }
+
+# thin LTO and one codegen unit for the shipped binaries. Task panics are caught, so
+# panic stays "unwind". Debug info is already stripped by cargo's release default.
+[profile.release]
+lto = "thin"
+codegen-units = 1
 
 # Proc macros and build scripts are never shipped, so don't strip them. On
 # macOS, Command Line Tools' ld-27106 (October 2026) leaves a stripped

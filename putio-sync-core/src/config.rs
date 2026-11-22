@@ -16,6 +16,9 @@ use crate::logging::LevelSource;
 use putio_sync_telemetry::server::MetricsSettings;
 use putio_sync_telemetry::Detail;
 
+/// The largest `buffer_size_mb` accepted
+pub const MAX_BUFFER_SIZE_MB: usize = 1024;
+
 /// Default value for delete_empty_folders
 fn default_slow_limit() -> u64 {
     crate::bandwidth::DEFAULT_SLOW_LIMIT
@@ -914,6 +917,7 @@ impl AuthConfig {
 
 /// Sync configuration
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct SyncConfig {
     /// Local path where files will be synced
     pub local_path: PathBuf,
@@ -957,17 +961,18 @@ pub enum SortOrder {
 
 /// Download configuration
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct DownloadConfig {
     /// Number of concurrent download workers (default: 2)
     pub workers: usize,
     /// Target directory for downloads
     pub target_directory: PathBuf,
-    /// Maximum number of concurrent downloads (alias for workers, for backwards compatibility)
+    /// Ignored: kept so old configs parse; `workers` sets the concurrency
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_concurrent: Option<usize>,
     /// Buffer size in MB for streaming downloads (default: 16)
     pub buffer_size_mb: usize,
-    /// Chunk size in MB for chunked downloads (None to disable - Put.io doesn't support range requests)
+    /// Ignored: kept so old configs parse (Put.io downloads stream and resume, never chunked)
     pub chunk_size_mb: Option<usize>,
     /// Continue interrupted and partial downloads instead of starting over
     pub resume_enabled: bool,
@@ -1049,6 +1054,7 @@ pub struct DownloadConfig {
 
 /// Watch configuration
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct WatchConfig {
     /// Enable watch mode
     #[serde(default)]
@@ -1056,7 +1062,7 @@ pub struct WatchConfig {
     /// Paths to watch for changes
     pub paths: Vec<PathBuf>,
     /// How often to refresh in seconds (used when file system events aren't available)
-    pub refresh_cycle: i8,
+    pub refresh_cycle: u32,
     /// Parent folder ID for uploaded torrents (None or 0 for root)
     #[serde(default)]
     pub parent_folder_id: Option<i64>,
@@ -1075,14 +1081,15 @@ pub enum NotificationBackend {
     /// No notifications
     #[default]
     None,
-    /// Webhook notifications (HTTP POST)
+    /// Webhook notifications (ignored: use a hook)
     Webhook,
-    /// Email notifications (future)
+    /// Email notifications (ignored: use `[notifications.smtp]`)
     Email,
 }
 
 /// Notification configuration. Every field is optional, so `[notifications.smtp]` alone is
-/// enough.
+/// enough. `enabled`, `backend`, `webhook_url` and `email` are legacy: they still parse but
+/// nothing reads them (use `smtp`, hooks or plugins).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct NotificationConfig {
@@ -1127,6 +1134,11 @@ pub struct ApiConfig {
     /// `0.0.0.0:15432`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bind: Option<BindList>,
+    /// Extra host names the API answers to (the `Host` header), besides IP addresses,
+    /// `localhost`, names without a dot, `*.local`, `*.ts.net` and the host of
+    /// `[sign_in] public_url`. Guards against DNS rebinding. Entries may start with `*.`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allowed_hosts: Vec<String>,
 }
 
 /// A boolean setting written either as a TOML bool or as a string, so a bad string
@@ -1345,7 +1357,7 @@ impl Default for WatchConfig {
             refresh_cycle: 60,         // 60 seconds
             parent_folder_id: Some(0), // Root folder
             archive_directory: None,
-            delete_after_upload: true,
+            delete_after_upload: false,
         }
     }
 }
@@ -1428,8 +1440,11 @@ impl Config {
         eprintln!("📝 Config file size: {} bytes", contents.len());
         eprintln!("🔧 Parsing TOML configuration...");
         let mut config: Config = toml::from_str(&contents).map_err(|e| {
-            eprintln!("❌ Failed to parse TOML: {}", e);
-            e
+            // Not the error's own text: it quotes the offending source line, which
+            // may hold a token or password
+            let summary = toml_error_summary(&contents, &e);
+            eprintln!("❌ Failed to parse TOML: {}", summary);
+            CoreError::ConfigError(summary)
         })?;
 
         eprintln!("✅ TOML parsing successful");
@@ -1614,6 +1629,13 @@ impl Config {
                 "buffer_size_mb must be at least 1".to_string(),
             ));
         }
+        // A huge value would allocate that much memory per download
+        if self.download.buffer_size_mb > MAX_BUFFER_SIZE_MB {
+            return Err(CoreError::ConfigError(format!(
+                "buffer_size_mb must be at most {}",
+                MAX_BUFFER_SIZE_MB
+            )));
+        }
 
         // Validate chunk_size_mb is reasonable if set
         if let Some(chunk_size) = self.download.chunk_size_mb {
@@ -1631,7 +1653,7 @@ impl Config {
         }
 
         // Validate refresh_cycle is positive
-        if self.watch.refresh_cycle <= 0 {
+        if self.watch.refresh_cycle == 0 {
             return Err(CoreError::ConfigError(
                 "refresh_cycle must be greater than 0".to_string(),
             ));
@@ -1915,7 +1937,7 @@ impl ConfigBuilder {
     }
 
     /// Set the refresh cycle in seconds
-    pub fn refresh_cycle(mut self, seconds: i8) -> Self {
+    pub fn refresh_cycle(mut self, seconds: u32) -> Self {
         self.watch.refresh_cycle = seconds;
         self
     }
@@ -3035,8 +3057,59 @@ fn write_atomically(
     })
 }
 
+/// A TOML parse error as its message and line:column, without the source snippet
+/// `toml` adds, and with quoted values in the message blanked
+fn toml_error_summary(contents: &str, error: &toml::de::Error) -> String {
+    let mut message = String::new();
+    let mut quoted = false;
+    for c in error.message().chars() {
+        match (c, quoted) {
+            ('"', false) => {
+                quoted = true;
+                message.push_str("\"…\"");
+            }
+            ('"', true) => quoted = false,
+            (_, false) => message.push(c),
+            _ => {}
+        }
+    }
+    match error.span() {
+        Some(span) => {
+            let before = &contents[..span.start.min(contents.len())];
+            let line = before.matches('\n').count() + 1;
+            let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+            format!("{message} (line {line}, column {column})")
+        }
+        None => message,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn buffer_size_is_capped() {
+        let mut config = super::Config::default();
+        config.download.buffer_size_mb = super::MAX_BUFFER_SIZE_MB;
+        assert!(config.validate().is_ok());
+        config.download.buffer_size_mb = super::MAX_BUFFER_SIZE_MB + 1;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn toml_errors_do_not_quote_the_source() {
+        let text = "[putio]\ntoken = \"super-secret-token\"\nbad = = 1\n";
+        let error = toml::from_str::<toml::Table>(text).unwrap_err();
+        let summary = super::toml_error_summary(text, &error);
+        assert!(!summary.contains("super-secret-token"), "{summary}");
+        assert!(summary.contains("line 3"), "{summary}");
+
+        let text = "[download]\nmax_concurrent = \"hunter2\"\n";
+        let error = toml::from_str::<super::Config>(text).unwrap_err();
+        let summary = super::toml_error_summary(text, &error);
+        assert!(!summary.contains("hunter2"), "{summary}");
+        assert!(summary.contains("line 2"), "{summary}");
+    }
+
     #[test]
     fn updates_section_defaults_and_round_trips() {
         // feature 055: a config without [updates] checks, and saves without the section
@@ -3438,11 +3511,31 @@ mod tests {
     }
 
     #[test]
-    fn test_config_validate_negative_refresh_cycle() {
+    fn test_config_validate_zero_refresh_cycle() {
         let mut config = Config::default();
-        config.watch.refresh_cycle = -1;
+        config.watch.refresh_cycle = 0;
         let result = config.validate();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn partial_tables_load_with_defaults() {
+        let config: Config = toml::from_str(
+            "[download]\nworkers = 4\n\n[watch]\npaths = [\"/torrents\"]\n\n[sync]\nlocal_path = \"/data\"\n",
+        )
+        .expect("partial tables load");
+        assert_eq!(config.download.workers, 4);
+        assert_eq!(config.download.buffer_size_mb, 16);
+        assert_eq!(config.download.retry_initial_delay_secs, 1);
+        assert_eq!(config.watch.refresh_cycle, 60);
+        assert_eq!(config.sync.local_path, PathBuf::from("/data"));
+
+        // The daemon's refresh_cycle is wider than the old i8
+        let config: Config = toml::from_str("[watch]\nrefresh_cycle = 300\n").unwrap();
+        assert_eq!(config.watch.refresh_cycle, 300);
+
+        let config: Config = toml::from_str("[watch]\nenabled = true\n").unwrap();
+        assert!(config.watch.paths.is_empty());
     }
 
     #[test]

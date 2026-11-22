@@ -7,7 +7,7 @@ use putio_sync_telemetry::DbOp;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Repository for managing processed torrents
 pub struct ProcessedTorrentsRepository<'a> {
@@ -122,7 +122,7 @@ impl<'a> ProcessedTorrentsRepository<'a> {
             ))?;
 
         let rows_deleted = result.rows_affected();
-        info!("Cleaned up {} old processed torrent records", rows_deleted);
+        debug!("Cleaned up {} old processed torrent records", rows_deleted);
 
         Ok(rows_deleted)
     }

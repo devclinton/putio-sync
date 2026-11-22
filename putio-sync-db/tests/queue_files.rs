@@ -123,3 +123,31 @@ async fn no_ids_changes_nothing() {
     assert!(db.queue().retry_files(&[]).await.unwrap().is_empty());
     assert!(db.queue().unclaim_files(&[]).await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn get_downloading_returns_only_downloading_rows() {
+    let (_dir, db) = db().await;
+    one_of_each(&db).await;
+    let downloading = db.queue().get_downloading().await.unwrap();
+    let ids: Vec<i64> = downloading.iter().map(|r| r.file_id).collect();
+    assert_eq!(ids, vec![2]);
+}
+
+#[tokio::test]
+async fn statuses_lists_every_row_once() {
+    let (_dir, db) = db().await;
+    one_of_each(&db).await;
+    let mut statuses = db.queue().statuses().await.unwrap();
+    statuses.sort();
+    let want: Vec<(i64, String)> = [
+        (1, "pending"),
+        (2, "downloading"),
+        (3, "paused"),
+        (4, "failed"),
+        (5, "completed"),
+    ]
+    .into_iter()
+    .map(|(id, s)| (id, s.to_string()))
+    .collect();
+    assert_eq!(statuses, want);
+}

@@ -68,6 +68,28 @@ pub enum ProcessOutcome {
     Held,
 }
 
+/// How long a watch file must have gone unchanged before it is read. A slow writer (an
+/// SMB copy, a download) leaves a half-written file that would parse as invalid.
+#[cfg(not(test))]
+const SETTLE: Duration = Duration::from_secs(3);
+#[cfg(test)]
+const SETTLE: Duration = Duration::from_millis(200);
+
+/// A watch file's size and modification time
+fn stamp(path: &Path) -> Option<(u64, Option<std::time::SystemTime>)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()))
+}
+
+/// Whether the file was written to within [`SETTLE`]
+fn recently_written(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < SETTLE)
+}
+
 /// A watch file's check before upload
 enum FileCheck {
     /// Checked now; boxed, as it is far bigger than `Held`
@@ -391,7 +413,10 @@ impl TorrentWatchCore {
                         path.display()
                     );
                     // Also add to in-memory set for consistency
-                    let mut processed = self.processed_files.lock().unwrap();
+                    let mut processed = self
+                        .processed_files
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
                     processed.insert(path.to_path_buf());
                     return Ok(ProcessOutcome::AlreadyUploaded);
                 }
@@ -400,7 +425,10 @@ impl TorrentWatchCore {
 
         // Check if already processed (in-memory fallback)
         {
-            let processed = self.processed_files.lock().unwrap();
+            let processed = self
+                .processed_files
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if processed.contains(path) {
                 debug!("File already processed: {}", path.display());
                 return Ok(ProcessOutcome::AlreadyUploaded);
@@ -423,6 +451,16 @@ impl TorrentWatchCore {
         } else {
             "torrent"
         };
+        // Still being written (size or modification time moving)? Leave it for the next
+        // scan instead of reading half a file
+        let seen = stamp(path);
+        if recently_written(path) {
+            tokio::time::sleep(SETTLE).await;
+            if stamp(path) != seen || recently_written(path) {
+                debug!(path = %path.display(), "Watch file is still changing; trying again next scan");
+                return Ok(ProcessOutcome::Held);
+            }
+        }
         info!("🔼 Processing new .{} file: {}", file_type, path.display());
 
         let check = match self
@@ -432,6 +470,14 @@ impl TorrentWatchCore {
             Some(FileCheck::Held) => return Ok(ProcessOutcome::Held),
             Some(FileCheck::Done(done)) => match *done {
                 (check, Outcome::Rejected(meta, reason)) => {
+                    // An unreadable .torrent that is still changing is a copy in
+                    // progress, not a bad file: don't reject (and remember) it
+                    if matches!(reason, Reason::Invalid)
+                        && (stamp(path) != seen || recently_written(path))
+                    {
+                        debug!(path = %path.display(), "Unreadable watch file changed while read; trying again next scan");
+                        return Ok(ProcessOutcome::Held);
+                    }
                     return Ok(self.reject_file(path, &check, meta, reason, database).await);
                 }
                 done => Some(done),
@@ -486,7 +532,10 @@ impl TorrentWatchCore {
 
                 // Mark as processed
                 {
-                    let mut processed = self.processed_files.lock().unwrap();
+                    let mut processed = self
+                        .processed_files
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
                     processed.insert(path.to_path_buf());
                 }
 
@@ -571,7 +620,10 @@ impl TorrentWatchCore {
 
                     // Mark as processed
                     {
-                        let mut processed = self.processed_files.lock().unwrap();
+                        let mut processed = self
+                            .processed_files
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
                         processed.insert(path.to_path_buf());
                     }
 
@@ -885,7 +937,7 @@ impl TorrentWatchCore {
             // Keep it from being checked again this run
             self.processed_files
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .insert(path.to_path_buf());
         }
         ProcessOutcome::Rejected(message)
@@ -911,7 +963,12 @@ impl TorrentWatchCore {
         let Some(id) = parent_id.filter(|id| *id > 0) else {
             return Ok(String::new());
         };
-        if let Some(path) = self.folder_paths.lock().unwrap().get(&id) {
+        if let Some(path) = self
+            .folder_paths
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&id)
+        {
             return Ok(path.clone());
         }
         let mut names = Vec::new();
@@ -930,7 +987,10 @@ impl TorrentWatchCore {
         }
         names.reverse();
         let path = names.join("/");
-        self.folder_paths.lock().unwrap().insert(id, path.clone());
+        self.folder_paths
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, path.clone());
         Ok(path)
     }
 
@@ -1111,12 +1171,20 @@ impl TorrentWatchCore {
 
     /// Check if a path is a .torrent file
     pub fn is_torrent_file(&self, path: &Path) -> bool {
-        path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("torrent")
+        path.is_file()
+            && path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("torrent"))
     }
 
     /// Check if a path is a .magnet file
     pub fn is_magnet_file(&self, path: &Path) -> bool {
-        path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("magnet")
+        path.is_file()
+            && path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("magnet"))
     }
 
     /// Get access to processed files set
@@ -1126,13 +1194,19 @@ impl TorrentWatchCore {
 
     /// Clear the processed files set
     pub fn clear_processed_files(&self) {
-        let mut processed = self.processed_files.lock().unwrap();
+        let mut processed = self
+            .processed_files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         processed.clear()
     }
 
     /// Get count of processed files
     pub fn processed_files_count(&self) -> usize {
-        let processed = self.processed_files.lock().unwrap();
+        let processed = self
+            .processed_files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         processed.len()
     }
 
@@ -1183,16 +1257,46 @@ impl TorrentWatchCore {
             let filename = file_path
                 .file_name()
                 .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?;
-            let archive_file_path = archive_path.join(filename);
+            let mut archive_file_path = archive_path.join(filename);
 
             if let Some(parent) = archive_file_path.parent() {
                 tokio::fs::create_dir_all(parent)
                     .await
                     .with_context(|| format!("create {}", parent.display()))?;
             }
-            tokio::fs::rename(file_path, &archive_file_path)
+            // A file of the same name already archived is kept, not overwritten
+            let mut n = 1;
+            while tokio::fs::try_exists(&archive_file_path)
                 .await
-                .with_context(|| format!("move to {}", archive_file_path.display()))?;
+                .unwrap_or(false)
+            {
+                archive_file_path =
+                    archive_path.join(format!("{}.{n}", filename.to_string_lossy()));
+                n += 1;
+            }
+            if let Err(e) = tokio::fs::rename(file_path, &archive_file_path).await {
+                // Another filesystem (a share mounted as the archive): copy, flush, then
+                // remove. EXDEV is 18 on Unix, ERROR_NOT_SAME_DEVICE 17 on Windows.
+                if !matches!(e.raw_os_error(), Some(18) | Some(17)) {
+                    return Err(e)
+                        .with_context(|| format!("move to {}", archive_file_path.display()));
+                }
+                tokio::fs::copy(file_path, &archive_file_path)
+                    .await
+                    .with_context(|| format!("copy to {}", archive_file_path.display()))?;
+                // Make sure the copy is on disk before the original goes
+                tokio::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&archive_file_path)
+                    .await
+                    .with_context(|| format!("open {}", archive_file_path.display()))?
+                    .sync_all()
+                    .await
+                    .with_context(|| format!("flush {}", archive_file_path.display()))?;
+                tokio::fs::remove_file(file_path)
+                    .await
+                    .context("remove after copy")?;
+            }
             Ok(Some(PostUploadAction::Archived(archive_file_path)))
         } else if delete_after_upload {
             tokio::fs::remove_file(file_path).await.context("delete")?;
@@ -1209,15 +1313,46 @@ impl Default for TorrentWatchCore {
     }
 }
 
-/// Calculate SHA-256 checksum of file content
+/// Wait for Ctrl+C, or SIGTERM on Unix
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+            }
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+/// Calculate SHA-256 checksum of file content, read in chunks so a large file is not held
+/// in memory
 pub async fn calculate_file_checksum(path: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
+    use tokio::io::AsyncReadExt;
 
-    let content = tokio::fs::read(path).await?;
+    let mut file = tokio::fs::File::open(path).await?;
     let mut hasher = Sha256::new();
-    hasher.update(&content);
-    let result = hasher.finalize();
-    Ok(format!("{:x}", result))
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// Calculate SHA-256 checksum of a string
@@ -1429,7 +1564,7 @@ impl TorrentWatcher {
     ///
     /// * `new_config` - New configuration to apply
     pub fn update_config(&self, new_config: WatcherConfig) {
-        let mut config = self.config.write().unwrap();
+        let mut config = self.config.write().unwrap_or_else(|e| e.into_inner());
         *config = new_config;
         info!("File watcher configuration updated via hot reload");
         info!("  Watch directories: {:?}", config.watch_dirs);
@@ -1441,7 +1576,10 @@ impl TorrentWatcher {
 
     /// Get current configuration (read-only snapshot)
     pub fn get_config(&self) -> WatcherConfig {
-        self.config.read().unwrap().clone()
+        self.config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Forget `path` as processed, so the next scan checks it again (044 re-queue)
@@ -1450,7 +1588,7 @@ impl TorrentWatcher {
         let processed = self.core.processed_files();
         processed
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .retain(|p| p != path && p.canonicalize().ok() != canonical);
     }
 
@@ -1459,7 +1597,7 @@ impl TorrentWatcher {
     /// Returns current watcher statistics including processed files count
     /// and current configuration.
     pub fn get_stats(&self) -> WatcherRuntimeStats {
-        let config = self.config.read().unwrap();
+        let config = self.config.read().unwrap_or_else(|e| e.into_inner());
 
         WatcherRuntimeStats {
             total_processed: self.core.processed_files_count(),
@@ -1482,7 +1620,11 @@ impl TorrentWatcher {
         database: Option<&Database>,
     ) -> Result<WatchStats> {
         // Snapshot config for consistency during scan
-        let config = self.config.read().unwrap().clone();
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
 
         self.core
             .scan_directories(
@@ -1502,7 +1644,11 @@ impl TorrentWatcher {
     /// Runs until interrupted with Ctrl+C.
     pub async fn run_daemon(&self, client: &PutioApiClient) -> Result<()> {
         // Read initial config for logging
-        let initial_config = self.config.read().unwrap().clone();
+        let initial_config = self
+            .config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
 
         info!("Starting torrent watcher daemon");
         info!("Watching directories: {:?}", initial_config.watch_dirs);
@@ -1519,15 +1665,10 @@ impl TorrentWatcher {
             }
         }
 
-        // Set up Ctrl+C handler
-        let running = Arc::new(Mutex::new(true));
-        let r = running.clone();
-
-        ctrlc::set_handler(move || {
-            info!("Received Ctrl+C, shutting down gracefully...");
-            *r.lock().unwrap() = false;
-        })
-        .context("Failed to set Ctrl+C handler")?;
+        // Stop on Ctrl+C or SIGTERM through the runtime's own signal handling (no
+        // process-wide handler to clash with the daemon's)
+        let shutdown = shutdown_signal();
+        tokio::pin!(shutdown);
 
         // Create filesystem watcher
         let (tx, rx) = channel();
@@ -1549,7 +1690,7 @@ impl TorrentWatcher {
 
         // Main watch loop
         let mut cycle = 0;
-        while *running.lock().unwrap() {
+        loop {
             cycle += 1;
             debug!("Daemon cycle {}", cycle);
 
@@ -1557,14 +1698,19 @@ impl TorrentWatcher {
             self.process_events(&rx, client).await?;
 
             // Re-read config each cycle to pick up hot reload changes (especially interval)
-            let current_config = self.config.read().unwrap().clone();
+            let current_config = self
+                .config
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
 
-            // Sleep for the interval, but check running flag every second
-            for _ in 0..current_config.interval.as_secs() {
-                if !*running.lock().unwrap() {
+            // Sleep for the interval, waking early to stop
+            tokio::select! {
+                () = tokio::time::sleep(current_config.interval) => {}
+                () = &mut shutdown => {
+                    info!("Received shutdown signal, stopping gracefully...");
                     break;
                 }
-                std::thread::sleep(Duration::from_secs(1));
             }
         }
 
@@ -1628,7 +1774,11 @@ impl TorrentWatcher {
     /// Process existing .torrent and .magnet files in watch directories
     async fn process_existing_files(&self, client: &PutioApiClient) -> Result<()> {
         // Snapshot config for consistency during initial scan
-        let config = self.config.read().unwrap().clone();
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
 
         let stats = self
             .core
@@ -1653,7 +1803,11 @@ impl TorrentWatcher {
     /// Process a single .torrent or .magnet file
     async fn process_file(&self, path: &Path, client: &PutioApiClient) -> Result<()> {
         // Snapshot config for parent_id
-        let config = self.config.read().unwrap().clone();
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
 
         match self
             .core
@@ -1665,6 +1819,35 @@ impl TorrentWatcher {
                     watch_metrics::invalid();
                     warn!(path = %p.display(), reason = %reason, "Invalid watch file");
                 });
+                Ok(())
+            }
+            Ok(ProcessOutcome::Uploaded | ProcessOutcome::AlreadyUploaded) => {
+                // The same archive or delete step a scan does
+                match self
+                    .core
+                    .handle_post_upload_action(
+                        path,
+                        config.archive_dir.as_ref(),
+                        config.delete_after_upload,
+                    )
+                    .await
+                {
+                    Ok(Some(PostUploadAction::Archived(to))) => {
+                        watch_metrics::cleaned_up();
+                        info!(path = %path.display(), to = %to.display(), "Archived uploaded watch file");
+                    }
+                    Ok(Some(PostUploadAction::Deleted)) => {
+                        watch_metrics::cleaned_up();
+                        info!(path = %path.display(), "Deleted uploaded watch file");
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        watch_metrics::cleanup_failed();
+                        self.core.warn_once(path, |p| {
+                            warn!(path = %p.display(), error = %format!("{:#}", e), "Post-upload action failed");
+                        });
+                    }
+                }
                 Ok(())
             }
             Ok(_) => Ok(()),
@@ -1680,5 +1863,96 @@ impl TorrentWatcher {
     /// Check if a path is a .magnet file
     fn is_magnet_file(&self, path: &Path) -> bool {
         self.core.is_magnet_file(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn streamed_checksum_matches_a_whole_file_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.torrent");
+        // More than one 64 KiB chunk, and not a multiple of it
+        let content: String = (0..200_000)
+            .map(|i| char::from(b'a' + (i % 26) as u8))
+            .collect();
+        std::fs::write(&path, &content).unwrap();
+        assert_eq!(
+            calculate_file_checksum(&path).await.unwrap(),
+            calculate_string_checksum(&content)
+        );
+    }
+
+    #[tokio::test]
+    async fn archiving_never_overwrites_an_archived_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("archive");
+        std::fs::create_dir(&archive).unwrap();
+        std::fs::write(archive.join("a.torrent"), b"old").unwrap();
+        let file = dir.path().join("a.torrent");
+        std::fs::write(&file, b"new").unwrap();
+        let core = TorrentWatchCore::new();
+        let action = core
+            .handle_post_upload_action(&file, Some(&archive), false)
+            .await
+            .unwrap();
+        assert!(matches!(action, Some(PostUploadAction::Archived(_))));
+        assert_eq!(std::fs::read(archive.join("a.torrent")).unwrap(), b"old");
+        assert_eq!(std::fs::read(archive.join("a.torrent.1")).unwrap(), b"new");
+    }
+
+    #[test]
+    fn extensions_match_in_any_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = TorrentWatchCore::new();
+        for (name, torrent, magnet) in [
+            ("a.torrent", true, false),
+            ("b.TORRENT", true, false),
+            ("c.Magnet", false, true),
+            ("d.txt", false, false),
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"x").unwrap();
+            assert_eq!(core.is_torrent_file(&path), torrent, "{name}");
+            assert_eq!(core.is_magnet_file(&path), magnet, "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_file_is_settled_only_after_it_stops_changing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.torrent");
+        std::fs::write(&path, b"d8:announce").unwrap();
+        assert!(recently_written(&path));
+        let seen = stamp(&path);
+        tokio::time::sleep(SETTLE + Duration::from_millis(100)).await;
+        assert!(!recently_written(&path));
+        assert_eq!(stamp(&path), seen);
+        std::fs::write(&path, b"d8:announce3:abce").unwrap();
+        assert_ne!(stamp(&path), seen);
+    }
+
+    #[tokio::test]
+    async fn archiving_keeps_a_file_with_the_same_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("archive");
+        let core = TorrentWatchCore::new();
+        for body in ["one", "two"] {
+            let path = dir.path().join("a.torrent");
+            std::fs::write(&path, body).unwrap();
+            core.handle_post_upload_action(&path, Some(&archive), false)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            std::fs::read_to_string(archive.join("a.torrent")).unwrap(),
+            "one"
+        );
+        assert_eq!(
+            std::fs::read_to_string(archive.join("a.torrent.1")).unwrap(),
+            "two"
+        );
     }
 }

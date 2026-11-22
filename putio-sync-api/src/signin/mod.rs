@@ -19,7 +19,7 @@ use putio_sync_core::sign_in::{PasswordConfig, Provider, SignInConfig};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tracing::warn;
 
@@ -35,8 +35,17 @@ const BASIC_CACHE_TTL: Duration = Duration::from_secs(300);
 /// Basic credentials remembered at once
 const MAX_BASIC_CACHE: usize = 16;
 
+/// Password hashes that may run at once. Each argon2id check takes about 19 MiB and a
+/// lot of CPU, so a burst of sign-ins must not all start together.
+pub const HASH_PERMITS: usize = 2;
+
 /// The session key file, next to the config file
 pub const KEY_FILE: &str = "session.key";
+
+/// Next to the key: the signatures of sessions that signed out, with their expiry, one
+/// `signature expiry` pair per line. Sessions are stateless, so this is what makes
+/// signing out end the cookie on the server too.
+pub const REVOKED_FILE: &str = "session.revoked";
 
 /// `n` random bytes from the OS
 pub fn random_bytes<const N: usize>() -> [u8; N] {
@@ -96,6 +105,9 @@ pub struct Flow {
 pub struct SignIn {
     key_path: Option<PathBuf>,
     key: RwLock<Option<[u8; 32]>>,
+    revoked_path: Option<PathBuf>,
+    /// `(signature, expiry in Unix seconds)` of signed-out sessions
+    revoked: Mutex<Vec<(String, u64)>>,
     flows: Mutex<HashMap<String, Flow>>,
     basic: Mutex<Vec<([u8; 32], Instant)>>,
     /// Per-process salt for remembered Basic credentials
@@ -105,6 +117,8 @@ pub struct SignIn {
     pub endpoints: RwLock<Option<String>>,
     /// HTTP client for the code exchange and user info
     pub http: reqwest::Client,
+    /// Bounds the password hashes running at once
+    hash_permits: Arc<tokio::sync::Semaphore>,
 }
 
 impl SignIn {
@@ -116,6 +130,13 @@ impl SignIn {
             .build()
             .unwrap_or_default();
         SignIn {
+            revoked_path: config_dir.as_ref().map(|dir| dir.join(REVOKED_FILE)),
+            revoked: Mutex::new(
+                config_dir
+                    .as_ref()
+                    .map(|dir| read_revoked(&dir.join(REVOKED_FILE)))
+                    .unwrap_or_default(),
+            ),
             key_path: config_dir.map(|dir| dir.join(KEY_FILE)),
             key: RwLock::new(None),
             flows: Mutex::new(HashMap::new()),
@@ -123,7 +144,14 @@ impl SignIn {
             basic_salt: random_bytes(),
             endpoints: RwLock::new(None),
             http,
+            hash_permits: Arc::new(tokio::sync::Semaphore::new(HASH_PERMITS)),
         }
+    }
+
+    /// A place to run one password hash, or `None` when [`HASH_PERMITS`] are running
+    /// already (answer 429 then)
+    pub fn try_hash_permit(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.hash_permits.clone().try_acquire_owned().ok()
     }
 
     /// The session key, read from its file the first time. `None` before any sign-in.
@@ -154,7 +182,44 @@ impl SignIn {
         }
         *self.key.write().unwrap_or_else(|e| e.into_inner()) = Some(key);
         self.basic.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        // The old key's sessions are dead already
+        self.revoked
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        if let Some(path) = &self.revoked_path {
+            let _ = std::fs::remove_file(path);
+        }
         key
+    }
+
+    /// End the session whose cookie value is `cookie` (its signature is refused from
+    /// now on, until it would have expired anyway)
+    pub fn revoke(&self, cookie: &str, expires: u64) {
+        let Some((_, tag)) = cookie.split_once('.') else {
+            return;
+        };
+        let mut revoked = self.revoked.lock().unwrap_or_else(|e| e.into_inner());
+        let now = unix_now();
+        revoked.retain(|(_, exp)| *exp > now);
+        revoked.push((tag.to_string(), expires));
+        if let Some(path) = &self.revoked_path {
+            if let Err(e) = write_revoked(path, &revoked) {
+                warn!(path = %path.display(), error = %e, "Can't save the signed-out sessions; they stay signed out until putio-sync stops");
+            }
+        }
+    }
+
+    /// Whether the session with this cookie value has signed out
+    pub fn is_revoked(&self, cookie: &str) -> bool {
+        let Some((_, tag)) = cookie.split_once('.') else {
+            return false;
+        };
+        self.revoked
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|(t, _)| t == tag)
     }
 
     /// Keep a new OAuth sign-in under `state`
@@ -242,6 +307,9 @@ pub fn current_session(
     let value = session::cookie(headers, session::COOKIE_NAME)?;
     let key = sign_in.key()?;
     let found = session::verify(&key, value)?;
+    if sign_in.is_revoked(value) {
+        return None;
+    }
     let still_allowed = if found.how == "password" {
         config.password.is_set()
             && found.login == config.password.username
@@ -263,27 +331,76 @@ pub fn basic_credentials(header: &str) -> Option<(String, String)> {
     Some((user.to_string(), pass.to_string()))
 }
 
+/// The answer to a Basic credential
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BasicCheck {
+    /// The username and password are right
+    Match,
+    /// Wrong username or password
+    NoMatch,
+    /// Too many password hashes are running; nothing was checked
+    Busy,
+}
+
+/// Whether two strings are equal, compared in constant time
+fn same(a: &str, b: &str) -> bool {
+    crate::middleware::auth::token_matches(a, b)
+}
+
+/// A valid hash nobody has the password for, verified when the username is wrong so a
+/// wrong username takes as long as a wrong password. Made once, on first use.
+fn dummy_hash() -> &'static str {
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| hash_password(&random_token()).unwrap_or_else(|_| "not a hash".to_string()))
+}
+
+/// Verify `pass` against `hash` on the blocking pool, holding `permit` until done. With a
+/// wrong username the check runs against a dummy hash and never matches.
+pub async fn verify_blocking(
+    pass: String,
+    hash: String,
+    user_ok: bool,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> bool {
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let target = if user_ok { hash.as_str() } else { dummy_hash() };
+        verify_password(&pass, target) && user_ok
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// Compare a username in constant time
+pub fn username_matches(provided: &str, expected: &str) -> bool {
+    same(provided, expected)
+}
+
 /// Whether the Basic `header` carries the configured username and password. Verified
-/// credentials are remembered for a few minutes; the hash runs off the async runtime.
-pub async fn basic_matches(sign_in: &SignIn, header: &str, password: &PasswordConfig) -> bool {
+/// credentials are remembered for a few minutes; the hash runs off the async runtime, at
+/// most [`HASH_PERMITS`] at a time. A wrong username takes as long as a wrong password.
+pub async fn basic_matches(
+    sign_in: &SignIn,
+    header: &str,
+    password: &PasswordConfig,
+) -> BasicCheck {
     let Some((user, pass)) = basic_credentials(header) else {
-        return false;
+        return BasicCheck::NoMatch;
     };
-    if user != password.username {
-        return false;
-    }
+    let user_ok = username_matches(&user, &password.username);
     let hash = password.password_hash.clone();
-    if sign_in.basic_known(header, &hash) {
-        return true;
+    if user_ok && sign_in.basic_known(header, &hash) {
+        return BasicCheck::Match;
     }
-    let check = hash.clone();
-    let ok = tokio::task::spawn_blocking(move || verify_password(&pass, &check))
-        .await
-        .unwrap_or(false);
-    if ok {
+    let Some(permit) = sign_in.try_hash_permit() else {
+        return BasicCheck::Busy;
+    };
+    if verify_blocking(pass, hash.clone(), user_ok, permit).await {
         sign_in.remember_basic(header, &hash);
+        BasicCheck::Match
+    } else {
+        BasicCheck::NoMatch
     }
-    ok
 }
 
 /// Where this server is reached from a browser: `public_url`, else the scheme and host
@@ -313,6 +430,44 @@ pub fn redirect_url(config: &SignInConfig, headers: &HeaderMap, provider: Provid
         external_base(config, headers),
         provider.as_str()
     )
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn read_revoked(path: &PathBuf) -> Vec<(String, u64)> {
+    let now = unix_now();
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let (tag, exp) = line.split_once(' ')?;
+            Some((tag.to_string(), exp.trim().parse::<u64>().ok()?))
+        })
+        .filter(|(_, exp)| *exp > now)
+        .collect()
+}
+
+fn write_revoked(path: &PathBuf, revoked: &[(String, u64)]) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = path.with_extension("revoked.tmp");
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&tmp)?;
+    for (tag, exp) in revoked {
+        writeln!(file, "{tag} {exp}")?;
+    }
+    file.sync_all()?;
+    std::fs::rename(&tmp, path)
 }
 
 fn read_key(path: &PathBuf) -> Option<[u8; 32]> {
@@ -370,6 +525,24 @@ mod tests {
             assert_eq!(mode & 0o777, 0o600);
         }
         assert_ne!(again.new_key(), key);
+    }
+
+    #[test]
+    fn a_signed_out_session_stays_out_across_restarts() {
+        let dir = tempfile::tempdir().unwrap();
+        let sign_in = SignIn::new(Some(dir.path().to_path_buf()));
+        let key = sign_in.key_or_create();
+        let session = session::Session::new("password", "admin", "", 1, "s".into());
+        let other = session::Session::new("password", "admin", "", 2, "s".into());
+        let cookie = session::sign(&key, &session);
+        let other_cookie = session::sign(&key, &other);
+        assert!(!sign_in.is_revoked(&cookie));
+        sign_in.revoke(&cookie, session.exp);
+        assert!(sign_in.is_revoked(&cookie));
+        assert!(!sign_in.is_revoked(&other_cookie));
+        let again = SignIn::new(Some(dir.path().to_path_buf()));
+        assert!(again.is_revoked(&cookie));
+        assert!(!again.is_revoked(&other_cookie));
     }
 
     #[test]

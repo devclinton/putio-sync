@@ -134,6 +134,11 @@ impl Files {
                 if name == ".." {
                     return Err(format!("{}: not allowed", path));
                 }
+                // Not found, yet something is there: a link to nowhere. A write would
+                // follow it out of the folder, so it is refused
+                if std::fs::symlink_metadata(wanted).is_ok() {
+                    return Err(format!("{}: not allowed (a link to a missing path)", path));
+                }
                 std::fs::canonicalize(parent)
                     .map_err(|_| format!("{}: not found", path))?
                     .join(name)
@@ -954,6 +959,30 @@ fn dispatch(host: &Host, function: &str, args: &[Value]) -> Result<Value, String
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_link_cannot_carry_a_write_out_of_the_folder() {
+        let allowed = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("planted");
+        let link = allowed.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let files = Files {
+            read: vec![],
+            write: vec![allowed.path().to_path_buf()],
+            tap: None,
+        };
+        let err = files
+            .write(link.to_str().unwrap(), "x")
+            .expect_err("refused");
+        assert!(err.contains("not allowed"), "{err}");
+        assert!(!target.exists());
+        // A plain new file in the folder is still fine
+        let fresh = allowed.path().join("new.txt");
+        files.write(fresh.to_str().unwrap(), "ok").unwrap();
+        assert_eq!(std::fs::read_to_string(fresh).unwrap(), "ok");
+    }
 
     use super::*;
 

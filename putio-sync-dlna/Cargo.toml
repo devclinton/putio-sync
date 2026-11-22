@@ -33,7 +33,7 @@ uuid = { version = "1.6", features = ["v4"] }
 mime_guess = "2.0"
 percent-encoding = "2.3"
 rand = "0.8"
-quick-xml = "0.37"
+quick-xml = "0.42"
 
 # Logging
 tracing = { workspace = true }

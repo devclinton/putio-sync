@@ -26,12 +26,18 @@ jobs:
       version: ${{ steps.get_version.outputs.version }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Get version
         id: get_version
+        env:
+          VERSION: ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}
+        shell: bash
         run: |
-          VERSION="${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}"
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Not a version tag like v1.2.3: $VERSION" >&2
+            exit 1
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Create the draft
@@ -55,7 +61,14 @@ jobs:
     with:
       version: ${{ needs.create-release.outputs.version }}
       upload: true
-    secrets: inherit
+    secrets:
+      DHI_USERNAME: ${{ secrets.DHI_USERNAME }}
+      DHI_TOKEN: ${{ secrets.DHI_TOKEN }}
+      MACOS_INSTALLER_IDENTITY: ${{ secrets.MACOS_INSTALLER_IDENTITY }}
+      MACOS_INSTALLER_P12: ${{ secrets.MACOS_INSTALLER_P12 }}
+      MACOS_INSTALLER_P12_PASSWORD: ${{ secrets.MACOS_INSTALLER_P12_PASSWORD }}
+      MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+      MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
 
   build-debian:
     name: Debian packages
@@ -64,7 +77,6 @@ jobs:
     with:
       version: ${{ needs.create-release.outputs.version }}
       upload: true
-    secrets: inherit
 
   build-snap:
     name: Snap (amd64, arm64)
@@ -73,7 +85,8 @@ jobs:
     with:
       version: ${{ needs.create-release.outputs.version }}
       channel: stable
-    secrets: inherit
+    secrets:
+      SNAPCRAFT_TOKEN: ${{ secrets.SNAPCRAFT_TOKEN }}
 
   publish-release:
     name: Publish release
@@ -84,7 +97,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: gh release edit "${{ needs.create-release.outputs.version }}" --draft=false --latest
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: gh release edit "$VERSION" --draft=false --latest
 
   update-homebrew:
     name: Homebrew formula
@@ -92,7 +106,8 @@ jobs:
     uses: ./.github/workflows/homebrew.yml
     with:
       version: ${{ needs.create-release.outputs.version }}
-    secrets: inherit
+    secrets:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
   publish-winget:
     name: winget
@@ -100,7 +115,8 @@ jobs:
     uses: ./.github/workflows/winget.yml
     with:
       version: ${{ needs.create-release.outputs.version }}
-    secrets: inherit
+    secrets:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
 
   release-summary:
     name: Release summary
@@ -118,19 +134,26 @@ jobs:
       - name: Summary
         env:
           VERSION: ${{ needs.create-release.outputs.version }}
+          R_BINARIES: ${{ needs.build-binaries.result }}
+          R_DEBIAN: ${{ needs.build-debian.result }}
+          R_SNAP: ${{ needs.build-snap.result }}
+          R_PUBLISH: ${{ needs.publish-release.result }}
+          R_HOMEBREW: ${{ needs.update-homebrew.result }}
+          R_WINGET: ${{ needs.publish-winget.result }}
+          REPO: ${{ github.repository }}
         run: |
           status() { [ "$2" = success ] && echo "- ✅ $1" || echo "- ❌ $1 ($2)"; }
           {
             echo "# Release $VERSION"
             echo ""
-            status "Binaries and installers (Linux, macOS, Windows) with SHA256SUMS" "${{ needs.build-binaries.result }}"
-            status "Debian packages (amd64, arm64)" "${{ needs.build-debian.result }}"
-            status "Snap (amd64, arm64)" "${{ needs.build-snap.result }}"
-            status "Release published" "${{ needs.publish-release.result }}"
-            status "Homebrew formula" "${{ needs.update-homebrew.result }}"
-            status "winget submission" "${{ needs.publish-winget.result }}"
+            status "Binaries and installers (Linux, macOS, Windows) with SHA256SUMS" "$R_BINARIES"
+            status "Debian packages (amd64, arm64)" "$R_DEBIAN"
+            status "Snap (amd64, arm64)" "$R_SNAP"
+            status "Release published" "$R_PUBLISH"
+            status "Homebrew formula" "$R_HOMEBREW"
+            status "winget submission" "$R_WINGET"
             echo ""
-            echo "Assets: https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
+            echo "Assets: https://github.com/${REPO}/releases/tag/${VERSION}"
             echo ""
             echo "Container images build from the same tag in docker.yml and docker-dhi.yml."
           } >> "$GITHUB_STEP_SUMMARY"

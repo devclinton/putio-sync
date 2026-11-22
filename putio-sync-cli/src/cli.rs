@@ -230,11 +230,12 @@ pub enum Commands {
         )]
         workers: Option<usize>,
 
-        /// Chunk size for large files
+        /// Ignored: Put.io does not support chunked downloads (kept so old scripts still run)
         #[arg(
             long = "chunk-size",
             value_name = "SIZE",
-            help = "Chunk size for large files (e.g., 256MB) [default: from config]"
+            hide = true,
+            help = "Ignored: chunked downloads are not supported"
         )]
         chunk_size: Option<String>,
 
@@ -540,6 +541,7 @@ pub enum Commands {
         #[arg(
             short = 'f',
             long = "filter",
+            hide = true,
             value_name = "PATTERN",
             help = "Filter files for download by name pattern, as in folder rules (e.g., \"*.mkv\")"
         )]
@@ -556,6 +558,7 @@ pub enum Commands {
         /// Delete from Put.io after successful download
         #[arg(
             long = "delete-after",
+            hide = true,
             help = "Delete from Put.io after successful download"
         )]
         delete_after: bool,
@@ -563,6 +566,7 @@ pub enum Commands {
         /// Delete empty folders after downloading files from them
         #[arg(
             long = "delete-empty-folders",
+            hide = true,
             help = "Delete empty folders after downloading all files from them (default: true)"
         )]
         delete_empty_folders: Option<bool>,
@@ -578,6 +582,7 @@ pub enum Commands {
         /// Disable download sync (watch only)
         #[arg(
             long = "watch-only",
+            hide = true,
             help = "Only watch for torrents, disable download sync"
         )]
         watch_only: bool,
@@ -585,6 +590,7 @@ pub enum Commands {
         /// Disable torrent watching (download only)
         #[arg(
             long = "download-only",
+            hide = true,
             help = "Only sync downloads, disable torrent watching",
             conflicts_with = "watch_only"
         )]
@@ -592,6 +598,7 @@ pub enum Commands {
         /// Archive directory for processed torrents
         #[arg(
             long = "archive-dir",
+            hide = true,
             value_name = "PATH",
             help = "Move torrent files to this directory after upload (cannot use with --delete-torrents)",
             conflicts_with = "delete_torrents"
@@ -600,6 +607,7 @@ pub enum Commands {
         /// Delete torrent files after upload
         #[arg(
             long = "delete-torrents",
+            hide = true,
             help = "Delete torrent files after successful upload (cannot use with --archive-dir)",
             conflicts_with = "archive_dir"
         )]

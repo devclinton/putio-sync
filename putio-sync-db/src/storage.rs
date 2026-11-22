@@ -98,6 +98,33 @@ impl<'a> StorageRepository<'a> {
         Ok(id)
     }
 
+    /// Delete runs finished more than `days` days ago with the files they deleted; the
+    /// rows deleted
+    pub async fn prune(&self, days: i64) -> DbResult<u64> {
+        const CONTEXT: &str = "Failed to prune storage runs";
+        let cutoff = format!("-{days} days");
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(tracked(DbOp::Other, CONTEXT))?;
+        let files = sqlx::query(
+            "DELETE FROM storage_run_files WHERE run_id IN \
+             (SELECT id FROM storage_runs WHERE finished_at < datetime('now', ?))",
+        )
+        .bind(&cutoff)
+        .execute(&mut *tx)
+        .await
+        .map_err(tracked(DbOp::Other, CONTEXT))?;
+        let runs = sqlx::query("DELETE FROM storage_runs WHERE finished_at < datetime('now', ?)")
+            .bind(&cutoff)
+            .execute(&mut *tx)
+            .await
+            .map_err(tracked(DbOp::Other, CONTEXT))?;
+        tx.commit().await.map_err(tracked(DbOp::Other, CONTEXT))?;
+        Ok(files.rows_affected() + runs.rows_affected())
+    }
+
     /// The latest `limit` runs, newest first, each with its files in deletion order
     pub async fn recent_runs(&self, limit: i64) -> DbResult<Vec<StorageRun>> {
         const CONTEXT: &str = "Failed to read storage runs";

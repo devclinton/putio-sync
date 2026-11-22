@@ -1,7 +1,7 @@
 //! The daily empty-folder cleanup, and the Put.io storage loop (feature 033)
 //!
-//! A loop checks the local clock every [`TICK`] and runs the cleanup when the configured
-//! time of day falls between the previous check and now. Missed runs (the daemon was down)
+//! A loop sleeps until the configured time of day (at most [`TICK`], so a changed setting
+//! is seen) and runs the cleanup when that time falls between the previous check and now. Missed runs (the daemon was down)
 //! are not caught up, and the settings are read again at every check, so a change from the
 //! Settings page applies from the next crossing.
 
@@ -12,8 +12,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
-/// How often the loop looks at the clock
-pub const TICK: Duration = Duration::from_secs(30);
+/// The longest the loops sleep: how soon a setting changed from the Settings page is seen.
+/// A due run wakes the loop at its time, so this does not delay runs.
+pub const TICK: Duration = Duration::from_secs(5 * 60);
 /// How often the storage gauges are read from Put.io
 pub const STORAGE_REFRESH: Duration = Duration::from_secs(15 * 60);
 
@@ -33,15 +34,36 @@ pub fn due_date(
     })
 }
 
+/// How long to sleep from `now`: until the next `run_at` when one is given, at most
+/// [`TICK`], at least a second
+pub fn sleep_until_due(now: NaiveDateTime, run_at: Option<NaiveTime>) -> Duration {
+    let until_run = run_at.and_then(|run_at| {
+        let today = now.date().and_time(run_at);
+        let next = if today > now {
+            today
+        } else {
+            today + chrono::Duration::days(1)
+        };
+        (next - now).to_std().ok()
+    });
+    until_run
+        .map_or(TICK, |d| d.min(TICK))
+        .max(Duration::from_secs(1))
+}
+
 /// Run the cleanup once a day while `[cleanup] enabled`; never returns
 pub async fn run_daily(cleanup: Arc<EmptyFolderCleanup>) {
-    let mut ticker = tokio::time::interval(TICK);
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    // The first tick fires at once; starting from now means no catch-up run
+    // Starting from now means no catch-up run
     let mut prev = Local::now().naive_local();
     let mut last_run = None;
     loop {
-        ticker.tick().await;
+        let config = cleanup.config();
+        let run_at = if config.enabled {
+            config.run_time().ok()
+        } else {
+            None
+        };
+        tokio::time::sleep(sleep_until_due(Local::now().naive_local(), run_at)).await;
         let now = Local::now().naive_local();
         let config = cleanup.config();
         if config.enabled {
@@ -74,19 +96,23 @@ async fn run_once(cleanup: &EmptyFolderCleanup) {
 /// Refresh the Put.io storage gauges every [`STORAGE_REFRESH`], and run the automatic
 /// free-up at `[storage] run_at` while `auto_free` is on; never returns
 pub async fn run_storage(storage: Arc<StorageService>) {
-    let mut ticker = tokio::time::interval(TICK);
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut prev = Local::now().naive_local();
     let mut last_run = None;
     let mut refreshed: Option<tokio::time::Instant> = None;
     loop {
-        ticker.tick().await;
         if refreshed.is_none_or(|at| at.elapsed() >= STORAGE_REFRESH) {
             refreshed = Some(tokio::time::Instant::now());
             if let Err(e) = storage.refresh().await {
                 debug!("Could not read Put.io storage: {}", e);
             }
         }
+        let config = storage.config();
+        let run_at = if config.auto_free {
+            config.run_time().ok()
+        } else {
+            None
+        };
+        tokio::time::sleep(sleep_until_due(Local::now().naive_local(), run_at)).await;
         let now = Local::now().naive_local();
         let config = storage.config();
         if config.auto_free {
@@ -129,6 +155,24 @@ mod tests {
 
     fn day(d: &str) -> NaiveDate {
         d.parse().unwrap()
+    }
+
+    #[test]
+    fn sleeps_until_the_run_time_but_never_past_the_tick() {
+        let now = at("2026-10-26", "02:59:30");
+        assert_eq!(
+            sleep_until_due(now, Some(time("03:00"))),
+            Duration::from_secs(30)
+        );
+        // Tomorrow's run is far off: wake after one tick to see setting changes
+        assert_eq!(sleep_until_due(now, Some(time("02:00"))), TICK);
+        // Disabled
+        assert_eq!(sleep_until_due(now, None), TICK);
+        // Right on the run time: the next one is tomorrow
+        assert_eq!(
+            sleep_until_due(at("2026-10-26", "03:00:00"), Some(time("03:00"))),
+            TICK
+        );
     }
 
     #[test]

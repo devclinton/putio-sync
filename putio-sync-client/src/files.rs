@@ -23,6 +23,22 @@ struct SearchResponse {
     files: Vec<FileEntry>,
 }
 
+/// `POST /files/list/continue` reply: the next page of a listing, without the parent
+#[derive(Debug, Deserialize)]
+struct ListContinueResponse {
+    #[serde(default)]
+    files: Vec<FileEntry>,
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
+/// Entries per page asked of `/files/list/continue` (Put.io's maximum)
+const LIST_PAGE_SIZE: u32 = 1000;
+
+/// Stop following cursors after this many pages (1000 per page), so a server that keeps
+/// returning a cursor cannot loop forever
+const LIST_MAX_PAGES: usize = 1000;
+
 /// A file's MP4 version on Put.io (feature 022)
 #[derive(Debug, Clone, Deserialize)]
 pub struct Mp4Status {
@@ -133,7 +149,26 @@ impl PutioApiClient {
     pub async fn list_files(&self, parent_id: i64) -> ClientResult<FilesListResponse> {
         let path = format!("/files/list?parent_id={}", parent_id);
         let response: ApiResponse<FilesListResponse> = self.get(&path).await?;
-        Ok(response.data)
+        let mut listing = response.data;
+
+        // Put.io returns the first page (up to 1000 entries) and a cursor for the rest. A
+        // partial listing would read as "the other files are gone", so follow the cursor
+        // and return everything; `cursor` is `None` on the merged result.
+        let mut pages = 1;
+        while let Some(cursor) = listing.cursor.take() {
+            if pages >= LIST_MAX_PAGES {
+                return Err(crate::error::ClientError::ApiError(format!(
+                    "Folder {parent_id} has more than {LIST_MAX_PAGES} pages of files"
+                )));
+            }
+            pages += 1;
+            let body = serde_json::json!({ "cursor": cursor, "per_page": LIST_PAGE_SIZE });
+            let next: ApiResponse<ListContinueResponse> =
+                self.post_idempotent("/files/list/continue", &body).await?;
+            listing.files.extend(next.data.files);
+            listing.cursor = next.data.cursor;
+        }
+        Ok(listing)
     }
 
     /// Search the account's files by name (feature 061): put.io's own search, first page
@@ -250,18 +285,19 @@ impl PutioApiClient {
         file_path: &Path,
         parent_id: Option<i64>,
     ) -> ClientResult<UploadResponse> {
+        use futures_util::stream;
+        use reqwest::multipart::Part;
         use tokio::fs::File as TokioFile;
         use tokio::io::AsyncReadExt;
 
-        // Read the file
-        let mut file = TokioFile::open(file_path)
+        let file = TokioFile::open(file_path)
             .await
             .map_err(crate::error::ClientError::IoError)?;
-
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)
+        let length = file
+            .metadata()
             .await
-            .map_err(crate::error::ClientError::IoError)?;
+            .map_err(crate::error::ClientError::IoError)?
+            .len();
 
         // Get the filename
         let filename = file_path
@@ -270,7 +306,19 @@ impl PutioApiClient {
             .unwrap_or("file")
             .to_string();
 
-        self.upload_bytes(&filename, buffer, parent_id).await
+        // Stream the file in 256 KiB reads instead of loading it into memory
+        let body = reqwest::Body::wrap_stream(stream::try_unfold(file, |mut file| async move {
+            let mut buf = vec![0u8; 256 * 1024];
+            let n = file.read(&mut buf).await?;
+            if n == 0 {
+                return Ok::<_, std::io::Error>(None);
+            }
+            buf.truncate(n);
+            Ok(Some((buf, file)))
+        }));
+        let part = Part::stream_with_length(body, length);
+
+        self.send_upload(&filename, part, parent_id).await
     }
 
     /// Upload `bytes` as a file named `filename`. A `.torrent` name makes Put.io start a
@@ -281,10 +329,19 @@ impl PutioApiClient {
         bytes: Vec<u8>,
         parent_id: Option<i64>,
     ) -> ClientResult<UploadResponse> {
-        use reqwest::multipart::{Form, Part};
+        self.send_upload(filename, reqwest::multipart::Part::bytes(bytes), parent_id)
+            .await
+    }
+
+    async fn send_upload(
+        &self,
+        filename: &str,
+        part: reqwest::multipart::Part,
+        parent_id: Option<i64>,
+    ) -> ClientResult<UploadResponse> {
+        use reqwest::multipart::Form;
 
         let filename = filename.to_string();
-        let buffer = bytes;
 
         // Determine MIME type based on file extension
         let mime_type = if filename.ends_with(".torrent") {
@@ -294,12 +351,9 @@ impl PutioApiClient {
         };
 
         // Create multipart form
-        let file_part = Part::bytes(buffer)
-            .file_name(filename)
-            .mime_str(mime_type)
-            .map_err(|e| {
-                crate::error::ClientError::InternalError(format!("Failed to set MIME type: {}", e))
-            })?;
+        let file_part = part.file_name(filename).mime_str(mime_type).map_err(|e| {
+            crate::error::ClientError::InternalError(format!("Failed to set MIME type: {}", e))
+        })?;
 
         let mut form = Form::new().part("file", file_part);
 
@@ -314,7 +368,7 @@ impl PutioApiClient {
 
         let started = std::time::Instant::now();
         let result = self
-            .client
+            .upload_client
             .post(url)
             .header(reqwest::header::AUTHORIZATION, auth_header)
             .multipart(form)
@@ -550,6 +604,56 @@ mod tests {
         assert_eq!(files.total, 1);
 
         mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn list_files_follows_the_cursor_to_the_last_page() {
+        let mut server = Server::new_async().await;
+        let entry = |id: i64| {
+            serde_json::json!({
+                "id": id, "name": format!("f{id}.mkv"), "size": 1, "file_type": "VIDEO",
+                "parent_id": 0, "is_shared": false
+            })
+        };
+        let parent = serde_json::json!({
+            "id": 0, "name": "Root", "size": 0, "file_type": "FOLDER", "parent_id": 0,
+            "is_shared": false
+        });
+        let first = server
+            .mock("GET", "/files/list?parent_id=0")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "status": "OK", "files": [entry(1), entry(2)], "parent": parent,
+                    "total": 3, "cursor": "c1"
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+        let next = server
+            .mock("POST", "/files/list/continue")
+            .match_body(mockito::Matcher::Json(
+                serde_json::json!({"cursor": "c1", "per_page": 1000}),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({"status": "OK", "files": [entry(3)], "cursor": null})
+                    .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let client = ApiClient::with_base_url("test_token".to_string(), server.url());
+        let listing = client.list_files(0).await.unwrap();
+
+        let ids: Vec<i64> = listing.files.iter().map(|f| f.id).collect();
+        assert_eq!(ids, vec![1, 2, 3]);
+        assert!(listing.cursor.is_none());
+        first.assert_async().await;
+        next.assert_async().await;
     }
 
     #[tokio::test]

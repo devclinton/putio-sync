@@ -157,15 +157,13 @@ async fn run_command(hook: &HookConfig, item: &ItemPayload) -> StepRun {
     };
 
     // The JSON goes to a file the hook can read at any size; it is removed on the way out
-    let file = std::env::temp_dir().join(format!(
-        "putio-sync-item-{}-{}.json",
-        std::process::id(),
-        uuid_like()
-    ));
-    if let Err(e) = tokio::fs::write(&file, item.json.as_bytes()).await {
-        run.error = Some(format!("could not write the item file: {}", e));
-        return run;
-    }
+    let file = match write_item_file(item.json.as_bytes()).await {
+        Ok(file) => file,
+        Err(e) => {
+            run.error = Some(format!("could not write the item file: {}", e));
+            return run;
+        }
+    };
 
     let mut cmd = Command::new(program);
     cmd.args(args)
@@ -257,15 +255,43 @@ async fn run_command(hook: &HookConfig, item: &ItemPayload) -> StepRun {
     run
 }
 
-/// A short unique suffix for the temp file name
-fn uuid_like() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    format!("{:x}{:x}", nanos, NEXT.fetch_add(1, Ordering::Relaxed))
+/// Write `json` to a new file in the temp directory that only this user can read. The
+/// name is random and the file is created exclusively, so a name planted beforehand (a
+/// symlink, say) is never written through.
+async fn write_item_file(json: &[u8]) -> std::io::Result<std::path::PathBuf> {
+    use std::hash::{BuildHasher, Hasher};
+    use tokio::io::AsyncWriteExt;
+    let mut last = None;
+    for _ in 0..8 {
+        // `RandomState` is seeded by the OS, and each one differently
+        let random = std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish();
+        let file = std::env::temp_dir().join(format!(
+            "putio-sync-item-{}-{:016x}.json",
+            std::process::id(),
+            random
+        ));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match tokio::fs::OpenOptions::from(options).open(&file).await {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(json).await {
+                    let _ = tokio::fs::remove_file(&file).await;
+                    return Err(e);
+                }
+                return Ok(file);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = Some(e),
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| std::io::Error::other("no free temp name")))
 }
 
 async fn run_url(client: &Client, hook: &HookConfig, item: &ItemPayload) -> StepRun {
@@ -329,6 +355,22 @@ fn wants_skip(body: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn item_files_are_private_random_and_never_reused() {
+        let a = write_item_file(b"{\"a\":1}").await.unwrap();
+        let b = write_item_file(b"{\"b\":2}").await.unwrap();
+        assert_ne!(a, b);
+        assert_eq!(std::fs::read(&a).unwrap(), b"{\"a\":1}");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&a).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        let _ = std::fs::remove_file(a);
+        let _ = std::fs::remove_file(b);
+    }
 
     #[test]
     fn tail_keeps_the_end() {

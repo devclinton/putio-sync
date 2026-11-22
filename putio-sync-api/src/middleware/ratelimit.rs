@@ -7,7 +7,7 @@
 
 use axum::extract::{ConnectInfo, Request};
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -16,6 +16,19 @@ pub const AUTH_FAILURE_LIMIT: u32 = 5;
 
 /// Length of the failure window
 pub const AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(60);
+
+/// The key an address is counted under: IPv4 as is, IPv6 by its /64, since one host
+/// usually holds a whole /64 and could otherwise rotate addresses past the limit
+fn bucket(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => {
+            let mut octets = v6.octets();
+            octets[8..].fill(0);
+            IpAddr::V6(Ipv6Addr::from(octets))
+        }
+        v4 => v4,
+    }
+}
 
 /// Failed-authentication counter keyed by client IP
 pub struct AuthLimiter {
@@ -36,6 +49,7 @@ impl AuthLimiter {
 
     /// `Err(seconds left in the window)` when `ip` has used up its failures
     pub fn check(&self, ip: IpAddr) -> Result<(), u64> {
+        let ip = bucket(ip);
         let map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         match map.get(&ip) {
             Some((start, failures)) if *failures >= self.limit => {
@@ -53,8 +67,40 @@ impl AuthLimiter {
         }
     }
 
+    /// Count an attempt for `ip` before it is checked, so a burst of slow checks can't all
+    /// start before the first failure is recorded. `Err(seconds left)` when the IP is
+    /// already out of failures. Call [`AuthLimiter::forgive`] when the attempt succeeds.
+    pub fn reserve(&self, ip: IpAddr) -> Result<u32, u64> {
+        let ip = bucket(ip);
+        let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        let window = self.window;
+        map.retain(|_, (start, _)| now.duration_since(*start) < window);
+        let entry = map.entry(ip).or_insert((now, 0));
+        if entry.1 >= self.limit {
+            let left = window.saturating_sub(now.duration_since(entry.0));
+            let secs = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+            return Err(secs.max(1));
+        }
+        entry.1 += 1;
+        Ok(entry.1)
+    }
+
+    /// Take back one counted attempt for `ip` (it succeeded, or never reached a check)
+    pub fn forgive(&self, ip: IpAddr) {
+        let ip = bucket(ip);
+        let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = map.get_mut(&ip) {
+            entry.1 = entry.1.saturating_sub(1);
+            if entry.1 == 0 {
+                map.remove(&ip);
+            }
+        }
+    }
+
     /// Count a failure for `ip` and return its failures in the current window
     pub fn record_failure(&self, ip: IpAddr) -> u32 {
+        let ip = bucket(ip);
         let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         let window = self.window;
@@ -108,6 +154,19 @@ mod tests {
     }
 
     #[test]
+    fn ipv6_clients_share_their_64() {
+        let limiter = AuthLimiter::new(AUTH_FAILURE_LIMIT, AUTH_FAILURE_WINDOW);
+        for n in 1..=5u16 {
+            let addr: IpAddr = format!("2001:db8:1:2::{n:x}").parse().unwrap();
+            limiter.record_failure(addr);
+        }
+        let same_64: IpAddr = "2001:db8:1:2:aaaa::1".parse().unwrap();
+        assert!(limiter.check(same_64).is_err());
+        let other_64: IpAddr = "2001:db8:1:3::1".parse().unwrap();
+        assert!(limiter.check(other_64).is_ok());
+    }
+
+    #[test]
     fn ips_are_independent() {
         let limiter = AuthLimiter::new(AUTH_FAILURE_LIMIT, AUTH_FAILURE_WINDOW);
         for _ in 0..5 {
@@ -116,6 +175,24 @@ mod tests {
         assert!(limiter.check(ip(1)).is_err());
         assert!(limiter.check(ip(2)).is_ok());
         assert_eq!(limiter.record_failure(ip(2)), 1);
+    }
+
+    #[test]
+    fn reserve_counts_before_the_check_and_forgive_takes_it_back() {
+        let limiter = AuthLimiter::new(2, AUTH_FAILURE_WINDOW);
+        assert_eq!(limiter.reserve(ip(1)), Ok(1));
+        assert_eq!(limiter.reserve(ip(1)), Ok(2));
+        assert!(limiter.reserve(ip(1)).is_err(), "third attempt in flight");
+        limiter.forgive(ip(1));
+        assert_eq!(limiter.reserve(ip(1)), Ok(2));
+        limiter.forgive(ip(1));
+        limiter.forgive(ip(1));
+        limiter.forgive(ip(1));
+        assert_eq!(
+            limiter.record_failure(ip(1)),
+            1,
+            "forgive never goes below 0"
+        );
     }
 
     #[test]

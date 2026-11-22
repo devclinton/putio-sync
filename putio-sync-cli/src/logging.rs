@@ -2,6 +2,7 @@
 //!
 //! Maps CLI verbosity flags to tracing log levels with colored output support.
 
+use std::io::IsTerminal;
 use tracing::Level;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -70,7 +71,7 @@ pub fn init_stderr(level: &str) {
             fmt::layer()
                 .with_writer(std::io::stderr)
                 .with_target(false)
-                .with_ansi(atty::is(atty::Stream::Stderr) && std::env::var("NO_COLOR").is_err()),
+                .with_ansi(std::io::stderr().is_terminal() && std::env::var("NO_COLOR").is_err()),
         )
         .init();
 }
@@ -78,7 +79,7 @@ pub fn init_stderr(level: &str) {
 /// Check if the terminal supports colored output
 fn supports_color() -> bool {
     // Check if we're in a TTY and not in certain CI environments
-    atty::is(atty::Stream::Stdout)
+    std::io::stdout().is_terminal()
         && std::env::var("NO_COLOR").is_err()
         && std::env::var("TERM").as_deref() != Ok("dumb")
 }

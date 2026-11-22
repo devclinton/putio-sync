@@ -12,6 +12,123 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Security
+
+- The API now refuses a request whose `Host` is not an IP address, `localhost`, a name with
+  no dot, `*.local`, `*.ts.net`, the `public_url` host, or listed in the new
+  `[api] allowed_hosts` (421), which stops DNS rebinding. Behind a reverse proxy that passes a
+  dotted `Host` on, set `public_url` or `allowed_hosts`.
+- `Tailscale-User-Login` from a loopback connection is believed only while `tailscale serve`
+  proxies to the port the request came in on.
+- Password and Basic sign-in attempts are counted before the slow hash runs, and at most two
+  hashes run at once (429 when busy), so a burst can't exhaust memory.
+- The Transmission API for Radarr and Sonarr has its own failure limiter, so wrong credentials
+  there no longer lock the UI out.
+- Setup mode sends the security headers and checks the Host name too, and the setup code
+  expires after an hour (a new one is printed on the console).
+- The Basic username is compared in constant time, and a wrong username takes as long as a
+  wrong password.
+- Responses add `Cache-Control: no-store`, `Cross-Origin-Opener-Policy: same-origin` and a
+  `Permissions-Policy`, and `Strict-Transport-Security` when `public_url` is `https://`.
+- A request that came through a reverse proxy on the same machine no longer counts as a
+  Tailscale sign-in, so a forged `Tailscale-User-Login` header can't get in. Identity sign-in
+  still works with `tailscale serve` or a direct tailnet connection.
+- Writes made with a Tailscale identity or Basic credentials are refused when the browser says
+  they come from another site, or when the Origin doesn't match the address used.
+- Signing out now ends that session on the server too, so a copied cookie stops working.
+- Webhook, hook and settings views no longer show any part of a URL's path, so tokens in paths
+  (Telegram bots, for example) are not exposed. Only the scheme, host and port are shown.
+- A config file with a syntax error no longer prints the offending line, which could hold a
+  password or token.
+- The web UI and API send nosniff, no-referrer, frame-denial and Content-Security-Policy
+  headers.
+- IPv6 clients are rate-limited by /64.
+- Update downloads are capped: 512 KiB for the checksum list and signature, and the listed
+  size for the binary.
+- Plugins can no longer write through a symlink to a missing path outside their folders.
+- Hook item files are created with a random name, private permissions and exclusive creation.
+- A warning is logged when the metrics port is open on a non-loopback address; it has no
+  authentication.
+- Updated lettre (SMTP) and quick-xml (DLNA) to fix their published advisories, and login no
+  longer pulls in a second, outdated HTTP and TLS stack.
+- The Docker image runs on Alpine 3.24 instead of the end-of-life 3.19, and the Dockerfiles pin base images by digest and build with `--locked` and a pinned cargo-chef.
+- Every GitHub Action is pinned to a commit SHA, and Dependabot updates actions, cargo, Docker and npm weekly.
+- Release workflows pass each reusable workflow only the secrets it uses instead of `secrets: inherit`.
+- Workflow scripts read versions and inputs from environment variables and check the version tag format, so a crafted tag or input can't inject shell commands.
+- CI, Homebrew, snap and winget workflows default to read-only `contents` permissions; only the flatpak release upload writes.
+- The Homebrew workflow no longer runs the `curl | bash` Homebrew installer, and the tap token is passed only to the push.
+- Updated `url` to 2.5.9 (stack overflow on nested `blob:` URLs) and `wasmi` to 2.0.2 (2.0.1 was yanked).
+- CI runs `cargo audit` on every change and weekly.
+- The Windows installer limits `%ProgramData%\putio-sync` (config with tokens, logs) to SYSTEM and Administrators.
+- The snap docs warn that `snap get` shows `snap set` values to any local user and point to the setup-code flow.
+
+### Fixed
+
+- Put.io folders with more than 1000 entries are listed completely, so files past the first
+  page are no longer treated as missing.
+- A file is deleted from Put.io only after the download has been synced to disk and renamed
+  into place.
+- A file is dropped from the queue only when Put.io says it no longer exists; a network or
+  server error keeps it queued.
+- Downloads that failed on a dropped connection or a server error are queued again by the next
+  syncs, up to three times. A full disk is reported as such and not retried.
+- Resuming a partial download checks that the server returned the matching byte range, and a
+  download that ends early keeps what it received.
+- A crashed download worker puts its file back in the queue instead of leaving it stuck as
+  "downloading".
+- Changing settings no longer waits for running downloads.
+- Retry-After headers are capped and may be dates; POST requests are only retried when they
+  are safe to repeat.
+- File names made only of dots or with control characters, and folder paths that would leave
+  the download directory, are cleaned or refused. Two files whose names differ only in case
+  no longer write at the same time.
+- The daemon stops cleanly on `docker stop` (SIGTERM): running downloads are paused with their
+  partial files kept, hooks and plugins finish their events, and the database is checkpointed
+  and closed before exit.
+- `[logging] max_backups` now deletes old daily log files.
+- Old processed torrents (90 days), Put.io free-up run records (90 days) and download history
+  (2 years) are pruned daily.
+- A .torrent file still being copied into the watch folder is no longer read half-written and
+  rejected; the watcher waits until it stops changing. Upper-case `.TORRENT` and `.MAGNET`
+  files are picked up.
+- The watch daemon's file events now archive or delete uploaded files like a scan does.
+  Archiving onto another filesystem works, and an existing archived file with the same name
+  is no longer overwritten.
+- `[download]`, `[watch]` and `[sync]` tables load with only some of their keys set, and
+  `[watch] refresh_cycle` accepts values above 127.
+- `putio-sync health` exits with an error naming the file when the config file exists but
+  can't be read, instead of checking default settings.
+- The legacy `server` command no longer restarts the same completed transfer download every
+  minute.
+- A panic in one hook, plugin or pipeline task no longer breaks every later one.
+- Database files with `?` or `#` in their path now open.
+- Update instructions use the right Flatpak ID (`io.github.devclinton.putio-sync`) and winget
+  ID (`devclinton.putio-sync`).
+- "Check for updates" in the command palette no longer shows an error when a check ran under a
+  minute ago, and a corrupt stored release list no longer keeps the update list empty.
+- README and the example configs match the code again: the subtitles settings, the database
+  location, the Docker healthcheck and the glob patterns.
+
+### Changed
+
+- Watched .torrent and .magnet files stay in the folder after upload unless
+  `delete_after_upload = true` or `archive_directory` is set, also when the config has no
+  `[watch]` table.
+- Lower idle CPU and wakeups: download workers wait for new work instead of polling every
+  second, and the pipeline, plugin, email, cleanup, storage, update and held-magnet loops back
+  off or sleep until due.
+- Downloads checksum faster, use less memory, and reserve disk space up front on Linux.
+- `buffer_size_mb` above 1024 is rejected when the config is loaded.
+- The doctor stops scanning for partial files after 30 s.
+- Release builds use thin LTO, and static Linux builds use the mimalloc allocator.
+- The `daemon` flags `--filter`, `--delete-after`, `--delete-empty-folders`, `--watch-only`,
+  `--download-only`, `--archive-dir` and `--delete-torrents`, and `download --chunk-size`, are
+  hidden from help and warn that they are ignored, naming the config key to use instead.
+
+### Removed
+
+- The unused legacy notification service (it sent nothing for email and was never called).
+  Use `[notifications.smtp]`, hooks or plugins.
 ### Added
 
 - Setup guides in the docs, one per platform: Unraid, TrueNAS SCALE, Raspberry Pi, Docker

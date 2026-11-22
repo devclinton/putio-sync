@@ -56,16 +56,31 @@ impl Pipeline {
             .into_iter()
             .filter(|i| i.state == ItemState::Running && i.stage != Stage::Downloading)
         {
-            if !self.inner.busy.lock().unwrap().insert(item.key.clone()) {
+            if !self
+                .inner
+                .busy
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(item.key.clone())
+            {
                 continue;
             }
             let me = self.clone();
-            let permits = self.inner.permits.read().unwrap().clone();
+            let permits = self
+                .inner
+                .permits
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
             handles.push(tokio::spawn(async move {
                 if let Ok(_permit) = permits.acquire_owned().await {
                     me.advance(&item.key).await;
                 }
-                me.inner.busy.lock().unwrap().remove(&item.key);
+                me.inner
+                    .busy
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&item.key);
             }));
         }
         handles
@@ -96,7 +111,9 @@ impl Pipeline {
                 // The pre-download steps are done: let the transfer go
                 if item.stage == Stage::PreDownload {
                     if let Some(id) = item.transfer_id {
-                        let _ = self.inner.db.holds().remove(id).await;
+                        if let Err(e) = self.inner.db.holds().remove(id).await {
+                            tracing::warn!(transfer_id = id, error = %e, "Could not release the hold on the transfer");
+                        }
                     }
                     let _ = store
                         .set_item(key, Stage::Downloading, ItemState::Running)
@@ -269,7 +286,7 @@ impl Pipeline {
             return Outcome::Stopped;
         };
         let cancel = {
-            let mut cancels = self.inner.cancels.lock().unwrap();
+            let mut cancels = self.inner.cancels.lock().unwrap_or_else(|e| e.into_inner());
             cancels
                 .entry(item.key.clone())
                 .or_insert_with(|| Arc::new(Notify::new()))
@@ -329,7 +346,7 @@ impl Pipeline {
         self.inner
             .cancels
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .entry(key.to_string())
             .or_insert_with(|| Arc::new(Notify::new()))
             .clone()
@@ -447,7 +464,9 @@ impl Pipeline {
         if let Some(id) = item.transfer_id {
             if let Ok(queued) = self.inner.db.queue().get_for_transfer(id).await {
                 for q in queued {
-                    let _ = self.inner.db.queue().remove(q.file_id).await;
+                    if let Err(e) = self.inner.db.queue().remove(q.file_id).await {
+                        tracing::warn!(file_id = q.file_id, error = %e, "Could not remove the file from the queue");
+                    }
                 }
             }
         }

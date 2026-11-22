@@ -299,3 +299,46 @@ async fn theme_contrast_meets_aa() {
         failures.join("\n")
     );
 }
+
+#[tokio::test]
+async fn responses_carry_security_headers() {
+    let app = test_app().await;
+    for path in ["/", "/assets/app.js", "/health", "/status"] {
+        let response = public_get(&app, path).await;
+        let h = response.headers();
+        assert_eq!(h["x-content-type-options"], "nosniff", "{path}");
+        assert_eq!(h["referrer-policy"], "no-referrer", "{path}");
+        assert_eq!(h["x-frame-options"], "DENY", "{path}");
+        let csp = h["content-security-policy"].to_str().unwrap();
+        assert!(csp.contains("frame-ancestors 'none'"), "{path}");
+        assert!(csp.contains("script-src 'self'"), "{path}");
+    }
+}
+
+/// The UI must keep satisfying its Content-Security-Policy: no inline script or style,
+/// no inline style attributes, no eval
+#[tokio::test]
+async fn the_ui_satisfies_its_csp() {
+    let app = test_app().await;
+    let index = body_text(public_get(&app, "/").await).await;
+    assert!(!index.contains("<style"), "inline style block");
+    assert!(!index.contains(" style="), "inline style attribute");
+    for script in index.split("<script").skip(1) {
+        let tag = script.split('>').next().unwrap();
+        assert!(tag.contains("src="), "inline script: <script{tag}>");
+    }
+    for path in all_assets(&app).await {
+        if !path.ends_with(".js") {
+            continue;
+        }
+        let text = body_text(public_get(&app, &path).await).await;
+        for banned in [
+            "eval(",
+            "new Function(",
+            "innerHTML",
+            "setAttribute(\"style\"",
+        ] {
+            assert!(!text.contains(banned), "{path} uses {banned}");
+        }
+    }
+}
