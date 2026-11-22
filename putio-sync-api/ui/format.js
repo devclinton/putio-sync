@@ -3,6 +3,11 @@
 const DASH = "—";
 const UNITS = ["B", "KB", "MB", "GB", "TB", "PB"];
 
+/** The URL when it is an https link, else null (update links come from release metadata). */
+export function httpsUrl(url) {
+  return typeof url === "string" && /^https:\/\/[^\s/]/i.test(url) ? url : null;
+}
+
 /** 1536 → "1.5 KB" (binary units, one decimal). */
 export function bytes(n) {
   if (n == null || !Number.isFinite(Number(n))) return DASH;

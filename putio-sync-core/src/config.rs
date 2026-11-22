@@ -1482,10 +1482,10 @@ impl Config {
     pub fn save<P: AsRef<Path>>(&self, path: P) -> CoreResult<()> {
         let path = path.as_ref();
 
-        // Create parent directory if it doesn't exist
+        // Create parent directory if it doesn't exist (0700 on Unix)
         if let Some(parent) = path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent).map_err(|e| {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                create_private_dir(parent).map_err(|e| {
                     CoreError::ConfigError(format!("Failed to create config directory: {}", e))
                 })?;
             }
@@ -1495,19 +1495,8 @@ impl Config {
         let contents = toml::to_string_pretty(self)
             .map_err(|e| CoreError::ConfigError(format!("Failed to serialize config: {}", e)))?;
 
-        // Write to file
-        fs::write(path, contents)
-            .map_err(|e| CoreError::ConfigError(format!("Failed to write config file: {}", e)))?;
-
-        // Set file permissions to 0600 on Unix systems
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let permissions = fs::Permissions::from_mode(0o600);
-            fs::set_permissions(path, permissions).map_err(|e| {
-                CoreError::ConfigError(format!("Failed to set config file permissions: {}", e))
-            })?;
-        }
+        // Temp file created 0600, then renamed: never readable by others, no symlink follow
+        write_atomically(path, &contents, None)?;
 
         Ok(())
     }
@@ -2998,6 +2987,18 @@ fn edit_value(value: &toml::Value) -> toml_edit::Value {
 
 /// Write `contents` to a temp file next to `path` and rename it over `path`, so a reader
 /// never sees half a file. The file gets `permissions`, or 0600 on Unix when `None`.
+/// Create `dir` and any missing parents, mode 0700 on Unix
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir)
+}
+
 fn write_atomically(
     path: &Path,
     contents: &str,
@@ -4359,6 +4360,31 @@ mod save_keeping_file_credentials_tests {
         memory.save_keeping_file_credentials(&fresh).unwrap();
         let mode = fs::metadata(&fresh).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    /// `save` creates the file 0600 and a new config directory 0700, and does not write
+    /// through a symlink at the target
+    #[cfg(unix)]
+    #[test]
+    fn save_is_private_and_ignores_symlink() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("newdir").join("config.toml");
+        Config::default().save(&path).unwrap();
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(path.parent().unwrap()), 0o700);
+
+        let victim = dir.path().join("victim");
+        fs::write(&victim, "keep").unwrap();
+        let link = dir.path().join("link.toml");
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+        Config::default().save(&link).unwrap();
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "keep");
+        assert!(!fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     /// A file that no longer parses is not overwritten, and the error shows no content

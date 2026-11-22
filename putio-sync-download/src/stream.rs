@@ -238,6 +238,14 @@ const STALL_TIMEOUT: Duration = if cfg!(test) {
     Duration::from_secs(60)
 };
 
+/// Never open a partial file through a symlink: someone with write access to the
+/// download folder could plant one (Unix; Windows has no O_NOFOLLOW)
+fn no_follow(options: &mut OpenOptions) -> &mut OpenOptions {
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    options
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn stream_download(
     client: &PutioApiClient,
@@ -521,8 +529,7 @@ pub async fn stream_to_temp(
 
     // Open file for writing
     let file = if from > 0 {
-        let mut file = OpenOptions::new()
-            .write(true)
+        let mut file = no_follow(OpenOptions::new().write(true))
             .open(&temp_path)
             .await
             .map_err(|e| {
@@ -547,10 +554,7 @@ pub async fn stream_to_temp(
         file
     } else {
         // For new downloads, truncate the file
-        let file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
+        let file = no_follow(OpenOptions::new().create(true).write(true).truncate(true))
             .open(&temp_path)
             .await
             .map_err(|e| {
@@ -841,6 +845,41 @@ mod tests {
     use mockito::Server;
     use std::time::Instant;
     use tempfile::TempDir;
+
+    /// A symlink planted at the partial file's name is not written through
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_planted_symlink_is_not_written_through() {
+        let mut server = Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/f")
+            .with_status(200)
+            .with_body("Hello, World!")
+            .create_async()
+            .await;
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("f.txt");
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, "keep").unwrap();
+        std::os::unix::fs::symlink(&victim, create_temp_path(&target).unwrap()).unwrap();
+
+        let client = PutioApiClient::with_base_url("t".to_string(), server.url());
+        let url = format!("{}/f", server.url());
+        let result = stream_download(
+            &client,
+            &url,
+            &target,
+            "f.txt",
+            Some(13),
+            1,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+    }
 
     #[tokio::test]
     async fn test_stream_download_mock() {

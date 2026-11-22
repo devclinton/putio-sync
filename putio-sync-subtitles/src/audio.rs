@@ -106,18 +106,40 @@ pub async fn version(ffmpeg: &Path) -> Option<String> {
     (!v.is_empty()).then(|| v.to_string())
 }
 
+/// `file:` plus the absolute path, so the media is read as a plain file and a name
+/// that starts with `-` or looks like a URL is never parsed as one
+fn file_arg(video: &Path) -> std::ffi::OsString {
+    let abs = std::path::absolute(video).unwrap_or_else(|_| video.to_path_buf());
+    let mut arg = std::ffi::OsString::from("file:");
+    arg.push(abs);
+    arg
+}
+
+/// The ffprobe arguments. Only the `file` protocol is allowed, so a playlist that is
+/// really a download cannot make it open other files or network addresses.
+pub fn probe_args(video: &Path) -> Vec<std::ffi::OsString> {
+    let mut a: Vec<std::ffi::OsString> = Vec::new();
+    for s in [
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "csv=p=0",
+        "-i",
+    ] {
+        a.push(s.into());
+    }
+    a.push(file_arg(video));
+    a
+}
+
 /// The length of the first audio-bearing container, in seconds
 pub async fn duration_secs(ffprobe: &Path, video: &Path) -> Result<f64, AudioError> {
     let out = Command::new(ffprobe)
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "csv=p=0",
-        ])
-        .arg(video)
+        .args(probe_args(video))
         .stdin(Stdio::null())
         .kill_on_drop(true)
         .output()
@@ -199,8 +221,10 @@ pub fn chunk_args(video: &Path, chunk: &Chunk, out: &Path) -> Vec<std::ffi::OsSt
     a.push(format!("{:.3}", chunk.start_secs).into());
     a.push("-t".into());
     a.push(format!("{:.3}", chunk.len_secs).into());
-    a.push("-i".into());
-    a.push(video.into());
+    for s in ["-protocol_whitelist", "file", "-i"] {
+        a.push(s.into());
+    }
+    a.push(file_arg(video));
     for s in [
         "-map",
         "0:a:0",
@@ -316,6 +340,19 @@ mod tests {
     }
 
     #[test]
+    fn ffprobe_is_limited_to_the_file_protocol() {
+        let a: Vec<String> = probe_args(Path::new("/m/-evil.mkv"))
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        let wl = a.iter().position(|s| s == "-protocol_whitelist").unwrap();
+        let input = a.iter().position(|s| s == "-i").unwrap();
+        assert!(wl < input);
+        assert_eq!(a[wl + 1], "file");
+        assert_eq!(a.last().unwrap(), "file:/m/-evil.mkv");
+    }
+
+    #[test]
     fn args_are_argv_with_no_shell() {
         let chunk = Chunk {
             index: 1,
@@ -329,7 +366,12 @@ mod tests {
         assert_eq!(a[0], "-nostdin");
         assert!(a.windows(2).any(|w| w == ["-ss", "600.000"]));
         assert!(a.windows(2).any(|w| w == ["-t", "300.500"]));
-        assert!(a.windows(2).any(|w| w == ["-i", "/m/a b.mkv"]));
+        assert!(a.windows(2).any(|w| w == ["-i", "file:/m/a b.mkv"]));
+        // The whitelist comes before the input
+        let wl = a.iter().position(|s| s == "-protocol_whitelist").unwrap();
+        let input = a.iter().position(|s| s == "-i").unwrap();
+        assert!(wl < input);
+        assert_eq!(a[wl + 1], "file");
         assert!(a.windows(2).any(|w| w == ["-ar", "16000"]));
         assert_eq!(a.last().unwrap(), "/t/o.wav");
     }

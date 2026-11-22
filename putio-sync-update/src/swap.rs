@@ -79,7 +79,7 @@ pub(crate) fn install_with(
     check_writable(exe)?;
     let old = old_path(exe);
     let new = new_path(exe);
-    let _ = std::fs::remove_file(&new);
+    clear_stale(&new);
     let _ = std::fs::remove_file(&old);
     let result = imp::install(bytes, exe, &new, &old, step);
     if result.is_err() {
@@ -88,13 +88,25 @@ pub(crate) fn install_with(
     result
 }
 
+/// Remove a leftover `.new` (a file, or a planted link, which is removed and not followed)
+fn clear_stale(new: &Path) {
+    if std::fs::symlink_metadata(new).is_ok() {
+        let _ = std::fs::remove_file(new);
+    }
+}
+
 fn write_new(bytes: &[u8], exe: &Path, new: &Path) -> Result<(), SwapError> {
-    let mut file = std::fs::File::create(new).map_err(|e| match e.kind() {
-        std::io::ErrorKind::PermissionDenied => {
-            SwapError::NotWritable(exe.parent().unwrap_or(Path::new(".")).to_path_buf())
-        }
-        _ => io(e),
-    })?;
+    // create_new fails if anything, a symlink included, is already at `.new`
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(new)
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::PermissionDenied => {
+                SwapError::NotWritable(exe.parent().unwrap_or(Path::new(".")).to_path_buf())
+            }
+            _ => io(e),
+        })?;
     file.write_all(bytes).map_err(io)?;
     if let Ok(meta) = std::fs::metadata(exe) {
         file.set_permissions(meta.permissions()).map_err(io)?;
@@ -233,6 +245,24 @@ mod tests {
             old_path(Path::new("C:/p/putio-sync.exe")),
             Path::new("C:/p/putio-sync.old.exe")
         );
+    }
+
+    /// A link planted at `.new` is replaced, and its target is not written
+    #[cfg(unix)]
+    #[test]
+    fn install_does_not_follow_a_planted_new_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("putio-sync");
+        std::fs::write(&exe, b"old").unwrap();
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, b"keep").unwrap();
+        std::os::unix::fs::symlink(&victim, new_path(&exe)).unwrap();
+        install(b"new", &exe).unwrap();
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        assert_eq!(std::fs::read(&exe).unwrap(), b"new");
+        // And write_new itself refuses an existing `.new`
+        std::fs::write(new_path(&exe), b"x").unwrap();
+        assert!(write_new(b"y", &exe, &new_path(&exe)).is_err());
     }
 
     #[cfg(unix)]

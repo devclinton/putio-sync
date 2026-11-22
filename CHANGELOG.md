@@ -14,6 +14,22 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Security
 
+- "Delete local data" from Sonarr or Radarr no longer removes a category folder, the download
+  folder, the staging folder, or another item's folder when a torrent has the same name.
+- Saving the config no longer leaves a moment where the Put.io token is readable by other users,
+  and a new config folder is created private (0700).
+- The database, its journal files and the database copies made by `archive db` are readable only
+  by their owner (Unix).
+- ffmpeg and ffprobe read downloaded media as plain files only, so a crafted playlist can't make
+  them open other files or network addresses.
+- The updater refuses a release whose signed checksum list was signed for another version, and a
+  release that is not newer than the running one.
+- The updater writes the new binary with `create_new`, so a planted link next to the binary is
+  not followed.
+- Update links from release data are shown only when they are https.
+- The translation callback checks the token before reading the body, and a failed torrent
+  upload no longer reports the temp file path.
+- Partial downloads are not written through a symlink placed in the download folder (Unix).
 - A request that came through a reverse proxy on the same machine no longer counts as a
   Tailscale sign-in, so a forged `Tailscale-User-Login` header can't get in. Identity sign-in
   still works with `tailscale serve` or a direct tailnet connection.
