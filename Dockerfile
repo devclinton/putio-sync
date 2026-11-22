@@ -1,6 +1,6 @@
 # Multi-stage build for putio-sync with musl support
 # rust:1.96-alpine3.24 (matches rust-toolchain.toml); Dependabot bumps the digest
-FROM rust:1.96-alpine3.24@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479 AS builder
+FROM rust:1.100-alpine3.24@sha256:8d0e82abfdf9a38071e07cabc5afba4ddbe077631a80e4e742a760c38beadc33 AS builder
 
 # Install build dependencies for musl + OpenSSL
 RUN apk add --no-cache \
