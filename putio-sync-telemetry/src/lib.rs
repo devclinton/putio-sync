@@ -25,6 +25,7 @@ pub mod download;
 pub mod gauges;
 pub mod hooks;
 pub mod labels;
+pub mod listener;
 pub mod logs;
 pub mod pipeline;
 pub mod plugins;

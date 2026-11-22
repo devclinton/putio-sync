@@ -312,3 +312,28 @@ async fn without_a_folder_the_putio_root_is_the_synced_account_root() {
     assert_eq!(f.children("0").await.titles(), ["Downloads", "Put.io"]);
     assert_eq!(f.children("putio/").await.titles(), ["film.mkv"]);
 }
+
+#[tokio::test]
+async fn a_missing_id_is_asked_of_put_io_once_a_minute() {
+    let mut server = Server::new_async().await;
+    let _a = list_mock(&mut server, 100, &[]).await;
+    let missing = server
+        .mock("GET", "/files/12345")
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"ERROR","error_type":"NotFound"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let f = start(&server, Duration::from_secs(60)).await;
+    for _ in 0..5 {
+        let (status, _) = common::raw_get(f.port, "/media/putio/12345").await;
+        assert_eq!(status, 404);
+    }
+    missing.assert_async().await;
+    // A made-up id does not make Put.io look unhealthy
+    assert!(matches!(
+        f.server.status().putio,
+        putio_sync_dlna::PutioHealth::Ok
+    ));
+}
