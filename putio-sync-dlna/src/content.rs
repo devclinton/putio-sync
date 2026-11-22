@@ -333,6 +333,18 @@ fn browse_root(
     }
 }
 
+/// Blocking directory work that may run at once (a huge folder pins a thread each)
+const MAX_BLOCKING: usize = 8;
+static BLOCKING_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_BLOCKING);
+
+/// Run blocking filesystem work, at most [`MAX_BLOCKING`] at a time; the rest wait
+pub(crate) async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, tokio::task::JoinError> {
+    let _slot = BLOCKING_SLOTS.acquire().await;
+    tokio::task::spawn_blocking(work).await
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn browse_local(
     key: &str,
@@ -345,7 +357,7 @@ async fn browse_local(
     count: usize,
 ) -> Result<BrowseOut, Fault> {
     let rel_owned = rel.clone();
-    let listed = tokio::task::spawn_blocking(move || -> Result<Listed, String> {
+    let listed = blocking(move || -> Result<Listed, String> {
         // A shared folder that isn't there is an empty container
         if rel_owned.is_empty() && !root.is_dir() {
             return Ok(Listed::Dir(Vec::new()));

@@ -7,10 +7,12 @@
 use crate::metrics::{self, Kind, Outcome};
 use rand::Rng;
 use socket2::{Domain, Protocol, Socket, Type};
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
+use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 
 /// The SSDP multicast group and port
@@ -24,6 +26,55 @@ const ALIVE_EVERY: Duration = Duration::from_secs(900);
 const START_BURST: usize = 3;
 /// Longest wait before answering a search
 const MAX_REPLY_DELAY: u64 = 5;
+/// Search replies that may be waiting to go out at once; more searches are dropped
+const MAX_PENDING_REPLIES: usize = 64;
+/// One reply set per source address in this long
+const REPLY_INTERVAL: Duration = Duration::from_secs(2);
+/// Source addresses remembered by the rate limit
+const MAX_TRACKED_SOURCES: usize = 1024;
+
+type Senders = Vec<(Ipv4Addr, Ipv4Addr, UdpSocket)>;
+
+/// At most one reply set per source address per interval
+struct RateLimit {
+    interval: Duration,
+    last: HashMap<Ipv4Addr, Instant>,
+}
+
+impl RateLimit {
+    fn new(interval: Duration) -> Self {
+        RateLimit {
+            interval,
+            last: HashMap::new(),
+        }
+    }
+
+    fn allow(&mut self, ip: Ipv4Addr, now: Instant) -> bool {
+        if let Some(at) = self.last.get(&ip) {
+            if now.saturating_duration_since(*at) < self.interval {
+                return false;
+            }
+        }
+        if self.last.len() >= MAX_TRACKED_SOURCES {
+            let interval = self.interval;
+            self.last
+                .retain(|_, at| now.saturating_duration_since(*at) < interval);
+            if self.last.len() >= MAX_TRACKED_SOURCES {
+                return false;
+            }
+        }
+        self.last.insert(ip, now);
+        true
+    }
+}
+
+/// The send socket of the interface whose subnet holds `ip`; `None` for an off-link
+/// sender, so a spoofed or routed source gets no answer
+fn link_for(senders: &[(Ipv4Addr, Ipv4Addr, UdpSocket)], ip: Ipv4Addr) -> Option<usize> {
+    senders
+        .iter()
+        .position(|(iface, mask, _)| same_net(*iface, ip, *mask))
+}
 
 /// What an SSDP responder announces
 #[derive(Debug, Clone)]
@@ -39,16 +90,12 @@ pub struct SsdpConfig {
 /// A running responder
 pub struct Ssdp {
     cfg: Arc<SsdpConfig>,
-    senders: Arc<Vec<(Ipv4Addr, Ipv4Addr, UdpSocket)>>,
+    senders: Arc<Senders>,
     tasks: Vec<JoinHandle<()>>,
 }
 
 fn server_header() -> String {
-    format!(
-        "{}/1.0 UPnP/1.0 putio-sync/{}",
-        std::env::consts::OS,
-        env!("CARGO_PKG_VERSION")
-    )
+    format!("{}/1.0 UPnP/1.0 putio-sync", std::env::consts::OS)
 }
 
 /// The notification types a MediaServer announces
@@ -162,17 +209,33 @@ impl Ssdp {
         let (c, s) = (cfg.clone(), senders.clone());
         tasks.push(tokio::spawn(async move {
             let mut buf = vec![0u8; 2048];
+            let slots = Arc::new(Semaphore::new(MAX_PENDING_REPLIES));
+            let mut limit = RateLimit::new(REPLY_INTERVAL);
             loop {
                 let Ok((n, from)) = receiver.recv_from(&mut buf).await else {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
                 };
                 let SocketAddr::V4(from) = from else { continue };
+                // Only players on a connected subnet get an answer (no reflection to
+                // spoofed or routed sources)
+                let Some(link) = link_for(&s, *from.ip()) else {
+                    continue;
+                };
                 let Some(st) = parse_search(&String::from_utf8_lossy(&buf[..n])) else {
                     continue;
                 };
+                if !limit.allow(*from.ip(), Instant::now()) {
+                    continue;
+                }
+                let Ok(slot) = slots.clone().try_acquire_owned() else {
+                    continue;
+                };
                 let (c, s) = (c.clone(), s.clone());
-                tokio::spawn(async move { reply(&c, &s, from, st).await });
+                tokio::spawn(async move {
+                    reply(&c, &s, link, from, st).await;
+                    drop(slot);
+                });
             }
         }));
         Ok(Ssdp {
@@ -216,14 +279,15 @@ async fn announce(cfg: &SsdpConfig, senders: &[(Ipv4Addr, Ipv4Addr, UdpSocket)],
     }
 }
 
-/// The ST of an M-SEARCH and its MX, or `None` for anything else
+/// The ST of an M-SEARCH and its MX, or `None` for anything else (including a search
+/// without `MAN: "ssdp:discover"`)
 fn parse_search(text: &str) -> Option<(String, u64)> {
     let mut lines = text.lines();
     let first = lines.next()?;
     if !first.to_ascii_uppercase().starts_with("M-SEARCH") {
         return None;
     }
-    let (mut st, mut mx) = (None, 1u64);
+    let (mut st, mut mx, mut discover) = (None, 1u64, false);
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             continue;
@@ -231,8 +295,12 @@ fn parse_search(text: &str) -> Option<(String, u64)> {
         match name.trim().to_ascii_uppercase().as_str() {
             "ST" => st = Some(value.trim().to_string()),
             "MX" => mx = value.trim().parse().unwrap_or(1),
+            "MAN" => discover = value.trim().trim_matches('"') == "ssdp:discover",
             _ => {}
         }
+    }
+    if !discover {
+        return None;
     }
     Some((st?, mx))
 }
@@ -240,6 +308,7 @@ fn parse_search(text: &str) -> Option<(String, u64)> {
 async fn reply(
     cfg: &SsdpConfig,
     senders: &[(Ipv4Addr, Ipv4Addr, UdpSocket)],
+    link: usize,
     to: SocketAddrV4,
     (st, mx): (String, u64),
 ) {
@@ -253,10 +322,7 @@ async fn reply(
         return;
     }
     // The interface the player is on
-    let (iface, _, socket) = senders
-        .iter()
-        .find(|(ip, mask, _)| same_net(*ip, *to.ip(), *mask))
-        .unwrap_or(&senders[0]);
+    let (iface, _, socket) = &senders[link];
     let delay = rand::thread_rng().gen_range(0..=(mx.clamp(1, MAX_REPLY_DELAY) * 1000));
     tokio::time::sleep(Duration::from_millis(delay)).await;
     for nt in wanted {
@@ -285,11 +351,64 @@ mod tests {
         assert_eq!(parse_search(q), Some(("ssdp:all".to_string(), 3)));
         assert_eq!(parse_search("NOTIFY * HTTP/1.1\r\nST: x\r\n\r\n"), None);
         assert_eq!(parse_search("M-SEARCH * HTTP/1.1\r\nMX: 2\r\n\r\n"), None);
-        let lower = "M-SEARCH * HTTP/1.1\r\nst: upnp:rootdevice\r\n\r\n";
+        let lower = "M-SEARCH * HTTP/1.1\r\nman: \"ssdp:discover\"\r\nst: upnp:rootdevice\r\n\r\n";
         assert_eq!(
             parse_search(lower),
             Some(("upnp:rootdevice".to_string(), 1))
         );
+    }
+
+    #[test]
+    fn a_search_needs_man_discover() {
+        assert_eq!(
+            parse_search("M-SEARCH * HTTP/1.1\r\nMX: 1\r\nST: ssdp:all\r\n\r\n"),
+            None
+        );
+        assert_eq!(
+            parse_search("M-SEARCH * HTTP/1.1\r\nMAN: \"ssdp:other\"\r\nST: ssdp:all\r\n\r\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn one_reply_set_per_source_per_interval() {
+        let mut limit = RateLimit::new(Duration::from_secs(2));
+        let a = Ipv4Addr::new(10, 0, 0, 5);
+        let b = Ipv4Addr::new(10, 0, 0, 6);
+        let t = Instant::now();
+        assert!(limit.allow(a, t));
+        assert!(!limit.allow(a, t + Duration::from_secs(1)));
+        assert!(limit.allow(b, t + Duration::from_secs(1)));
+        assert!(limit.allow(a, t + Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn the_rate_limit_table_is_bounded() {
+        let mut limit = RateLimit::new(Duration::from_secs(2));
+        let t = Instant::now();
+        for i in 0..MAX_TRACKED_SOURCES as u32 {
+            assert!(limit.allow(Ipv4Addr::from(0x0a00_0000 + i), t));
+        }
+        // Full of fresh entries: a new source is dropped instead of growing the table
+        assert!(!limit.allow(Ipv4Addr::new(192, 168, 0, 1), t));
+        assert_eq!(limit.last.len(), MAX_TRACKED_SOURCES);
+        // Once the old ones expire there is room again
+        assert!(limit.allow(Ipv4Addr::new(192, 168, 0, 1), t + Duration::from_secs(3)));
+    }
+
+    #[tokio::test]
+    async fn only_on_link_senders_have_an_interface() {
+        let lo = Ipv4Addr::LOCALHOST;
+        let socket = send_socket(lo).unwrap();
+        let senders = vec![(lo, Ipv4Addr::new(255, 255, 255, 0), socket)];
+        assert_eq!(link_for(&senders, Ipv4Addr::new(127, 0, 0, 9)), Some(0));
+        assert_eq!(link_for(&senders, Ipv4Addr::new(203, 0, 113, 7)), None);
+    }
+
+    #[test]
+    fn the_server_header_has_no_version() {
+        assert!(!server_header().contains(env!("CARGO_PKG_VERSION")));
+        assert!(server_header().contains("putio-sync"));
     }
 
     #[test]
