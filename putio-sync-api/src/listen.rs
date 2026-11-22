@@ -350,19 +350,20 @@ async fn stop_asked(stopped: &mut watch::Receiver<bool>) {
 /// Serve `router` on `listener`, telling handlers which listener it is, until stopped
 fn serve(listener: TcpListener, local: SocketAddr, router: Router) -> Serving {
     let (stop, mut stopped) = watch::channel(false);
-    let app = router
-        .layer(Extension(ListenedOn(local)))
-        .into_make_service_with_connect_info::<SocketAddr>();
+    let app = router.layer(Extension(ListenedOn(local)));
     let task = tokio::spawn(async move {
         let shutdown = async move {
             let _ = stopped.wait_for(|s| *s).await;
         };
-        if let Err(e) = axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown)
-            .await
-        {
-            error!(addr = %local, error = %e, "Listener on {local} stopped");
-        }
+        // Connection cap and header-read timeout; no limit on the whole request, so
+        // downloads and event streams run as long as they need
+        putio_sync_telemetry::listener::serve_limited(
+            listener,
+            app,
+            putio_sync_telemetry::listener::Limits::default(),
+            shutdown,
+        )
+        .await;
     });
     Serving { local, stop, task }
 }
