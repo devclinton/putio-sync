@@ -2666,6 +2666,7 @@ name = "putio-sync-telemetry"
 version = "0.5.0"
 dependencies = [
  "axum",
+ "hyper-util",
  "prometheus",
  "reqwest",
  "rustix",
