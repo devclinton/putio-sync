@@ -207,13 +207,72 @@ async fn listen_port(state: &AppState) -> u16 {
     state.api_port().await
 }
 
-/// The host the browser used to reach putio-sync, without its port
+/// Longest `Host` header value that is used as a candidate
+const MAX_HOST_LEN: usize = 255;
+
+/// Whether a `Host` header value looks like a host name or an address with an optional
+/// port: `^[A-Za-z0-9.\-:\[\]]+$`, at most [`MAX_HOST_LEN`] characters
+fn plausible_host(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_HOST_LEN
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'))
+}
+
+/// The host the browser used to reach putio-sync, without its port. A value that is not
+/// a plain host name or address is ignored.
 pub(crate) fn browser_host(headers: &HeaderMap) -> Option<String> {
     headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|h| plausible_host(h))
         .map(|h| setup::strip_port(h).to_string())
         .filter(|h| !h.is_empty())
+}
+
+/// Whether two server URLs are the same destination: scheme, host, port and URL base
+fn same_destination(a: &str, b: &str) -> bool {
+    putio_sync_core::hooks::same_origin(a, b)
+        && putio_sync_arr::service::url_key(
+            reqwest::Url::parse(a)
+                .map(|u| u.path().to_string())
+                .unwrap_or_default()
+                .as_str(),
+        ) == putio_sync_arr::service::url_key(
+            reqwest::Url::parse(b)
+                .map(|u| u.path().to_string())
+                .unwrap_or_default()
+                .as_str(),
+        )
+}
+
+/// What a failed connection test shows: a fixed sentence, never text from the remote
+/// answer. The remote's words go to the debug log.
+fn test_failure_detail(e: &putio_sync_arr::arr_api::ArrApiError) -> String {
+    use putio_sync_arr::arr_api::ArrApiError;
+    tracing::debug!(error = %e, "Application test failed");
+    match e {
+        ArrApiError::Unreachable(_) => "The server could not be reached".to_string(),
+        ArrApiError::Unauthorized => {
+            "The server answered HTTP 401 or 403: check the API key".to_string()
+        }
+        ArrApiError::NotArr { detail, .. } => match detail.strip_prefix("HTTP ") {
+            Some(status) if status.len() == 3 && status.bytes().all(|b| b.is_ascii_digit()) => {
+                format!("The server answered HTTP {status}")
+            }
+            _ => "The server did not answer like Radarr or Sonarr".to_string(),
+        },
+        ArrApiError::TimedOut => "The server did not answer in time".to_string(),
+        ArrApiError::UntrustedCertificate => "The certificate is not trusted".to_string(),
+        ArrApiError::UnsupportedVersion { .. } => {
+            "The server is older than the v3 API; version 3 or later is needed".to_string()
+        }
+        ArrApiError::TestFailed { .. } | ArrApiError::Refused { .. } => {
+            "The server refused the request".to_string()
+        }
+    }
 }
 
 /// Change `[arr]`, then save it and apply it. Nothing changes in memory or on disk unless
@@ -438,6 +497,8 @@ impl ApplicationForm {
     }
 }
 
+const RETYPE_KEY: &str = "Type the API key again to use it with a different server.";
+
 fn no_application(index: usize) -> ApiError {
     ApiError::NotFound(format!("No application at index {}", index))
 }
@@ -552,7 +613,9 @@ async fn test_application(
     let api = ArrApi::new(server.kind, &server.url, key, http);
     let status = match api.system_status().await {
         Ok(status) => status,
-        Err(e) => return json!({ "ok": false, "reason": e.kind(), "detail": e.to_string() }),
+        Err(e) => {
+            return json!({ "ok": false, "reason": e.kind(), "detail": test_failure_detail(&e) })
+        }
     };
     let port = listen_port(state).await;
     let hosts = tailnet_first_hosts(state, browser_host(headers).as_deref(), None).await;
@@ -589,13 +652,17 @@ pub async fn test_form(
     let url = form.url()?;
     let api_key = match (form.key(), form.index) {
         (Some(key), _) => Some(key),
-        (None, Some(index)) => current_settings(&state)
-            .await?
-            .servers
-            .get(index)
-            .ok_or_else(|| no_application(index))?
-            .api_key
-            .clone(),
+        (None, Some(index)) => {
+            let settings = current_settings(&state).await?;
+            let saved = settings
+                .servers
+                .get(index)
+                .ok_or_else(|| no_application(index))?;
+            if saved.api_key.is_some() && !same_destination(&url, &saved.url) {
+                return Err(ApiError::BadRequest(RETYPE_KEY.into()));
+            }
+            saved.api_key.clone()
+        }
         (None, None) => None,
     };
     let server = ArrServer {
@@ -691,10 +758,15 @@ pub async fn edit_application(
             .servers
             .get_mut(index)
             .ok_or_else(|| no_application(index))?;
+        let key = form.key();
+        // The saved key stays with the server it was saved for
+        if key.is_none() && server.api_key.is_some() && !same_destination(&url, &server.url) {
+            return Err(ApiError::BadRequest(RETYPE_KEY.into()));
+        }
         server.kind = form.kind;
         server.name = form.name();
         server.url = url.clone();
-        if let Some(key) = form.key() {
+        if let Some(key) = key {
             server.api_key = Some(key);
         }
         Ok(())
@@ -1236,4 +1308,60 @@ pub async fn setup_recommendation(
         Ok(r) => json!({ "ok": true, "recommendations": r }),
         Err(e) => step_failure(e.kind(), &e.to_string(), &target.key),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    fn host(value: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(header::HOST, HeaderValue::from_str(value).unwrap());
+        h
+    }
+
+    #[test]
+    fn a_plain_host_is_used_without_its_port() {
+        assert_eq!(
+            browser_host(&host("nas.lan:8080")).as_deref(),
+            Some("nas.lan")
+        );
+        assert_eq!(
+            browser_host(&host("192.168.1.5")).as_deref(),
+            Some("192.168.1.5")
+        );
+        assert_eq!(
+            browser_host(&host("[fe80::1]:8080")).as_deref(),
+            Some("fe80::1")
+        );
+    }
+
+    #[test]
+    fn an_odd_host_is_ignored() {
+        for bad in [
+            "evil.test/path",
+            "user@evil.test",
+            "evil.test?x=1",
+            "a b",
+            "evil.test#x",
+            "",
+        ] {
+            assert_eq!(browser_host(&host(bad)), None, "{bad}");
+        }
+        assert_eq!(browser_host(&host(&"a".repeat(300))), None);
+        assert_eq!(browser_host(&HeaderMap::new()), None);
+    }
+
+    #[test]
+    fn destinations_compare_scheme_host_port_and_base() {
+        assert!(same_destination(
+            "http://a:7878/radarr",
+            "http://A:7878/radarr/"
+        ));
+        assert!(!same_destination("http://a:7878/radarr", "http://a:7878"));
+        assert!(!same_destination("http://a:7878", "https://a:7878"));
+        assert!(!same_destination("http://a:7878", "http://b:7878"));
+        assert!(!same_destination("http://a:7878", "http://a:7879"));
+    }
 }

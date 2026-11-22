@@ -1278,3 +1278,63 @@ async fn a_new_plugins_folder_is_read_at_once() {
         .unwrap();
     assert_eq!(mine.state, putio_sync_plugins::PluginState::Enabled);
 }
+
+/// The saved SMTP password is only used for the saved server
+#[tokio::test]
+async fn email_test_and_save_keep_the_password_with_its_server() {
+    let app = test_daemon_app(true).await;
+    let path = "/settings/notifications";
+    let mut body = get_ok(&app, path).await;
+    body["smtp"] = json!({
+        "enabled": true, "host": "smtp.example.com", "username": "nas",
+        "password": "smtp-pass-1", "from": "nas@example.com", "to": ["me@example.com"],
+    });
+    let (status, response) = put(&app, path, body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+
+    let moved = json!({
+        "enabled": true, "host": "mail.evil.test", "username": "nas",
+        "password": "********", "security": "starttls",
+        "from": "nas@example.com", "to": ["me@example.com"],
+    });
+    let response = app
+        .post_json("/settings/notifications/test", moved.clone())
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let text = body_json(response).await.to_string();
+    assert!(text.contains("Type the password again"), "{text}");
+    assert!(!text.contains("smtp-pass-1"));
+
+    // Saving the new host with the mask is refused too, and keeps what was saved
+    let mut body = get_ok(&app, path).await;
+    body["smtp"]["host"] = json!("mail.evil.test");
+    let (status, _) = put(&app, path, body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(saved(&app).notifications.smtp.host, "smtp.example.com");
+
+    // Typing the password again is allowed for the new host
+    let mut body = get_ok(&app, path).await;
+    body["smtp"]["host"] = json!("mail.other.test");
+    body["smtp"]["password"] = json!("typed-again");
+    let (status, response) = put(&app, path, body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(saved(&app).notifications.smtp.password, "typed-again");
+}
+
+/// A hook's masked headers are not restored when its URL points at another server
+#[tokio::test]
+async fn hook_secrets_do_not_follow_a_new_url() {
+    let app = test_app().await;
+    let (status, _) = put(&app, "/settings/hooks", json!({ "hooks": [url_hook()] })).await;
+    assert_eq!(status, StatusCode::OK);
+    let view = get_ok(&app, "/settings/hooks").await;
+    let mut hook = view["hooks"][0].clone();
+    hook["url"] = json!("https://evil.test/hook");
+    let (status, body) = put(&app, "/settings/hooks", json!({ "hooks": [hook] })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.to_string().contains("Type the value again"), "{body}");
+    assert_eq!(
+        saved(&app).hooks[0].url.as_deref(),
+        Some("https://ha.lan/api/webhook/abc")
+    );
+}

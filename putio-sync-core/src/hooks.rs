@@ -354,9 +354,29 @@ pub fn mask(hooks: &[HookConfig]) -> Vec<HookConfig> {
         .collect()
 }
 
+/// Whether two URLs reach the same server: the same text (empty included), or the same
+/// scheme, host and port
+pub fn same_origin(a: &str, b: &str) -> bool {
+    if a.trim() == b.trim() {
+        return true;
+    }
+    let (Ok(a), Ok(b)) = (reqwest::Url::parse(a.trim()), reqwest::Url::parse(b.trim())) else {
+        return false;
+    };
+    a.scheme() == b.scheme()
+        && a.host_str().map(str::to_ascii_lowercase) == b.host_str().map(str::to_ascii_lowercase)
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
+/// The message for a secret that cannot follow a changed destination
+pub fn retype_message(what: &str) -> String {
+    format!("Type the {what} again to use it with a different server.")
+}
+
 /// Put the stored value back wherever `new` sends [`MASK`] for a hook name and key that
 /// `current` has, and the stored URL where `new` sends its shortened form. A mask with
-/// nothing to resolve is refused.
+/// nothing to resolve is refused, and so is one on a URL hook whose URL now points at
+/// another server than the stored one (the stored secret never follows a new destination).
 pub fn unmask(new: &[HookConfig], current: &[HookConfig]) -> CoreResult<Vec<HookConfig>> {
     let mut out = new.to_vec();
     for hook in &mut out {
@@ -373,6 +393,10 @@ pub fn unmask(new: &[HookConfig], current: &[HookConfig]) -> CoreResult<Vec<Hook
                 hook.name
             )));
         }
+        let moved = match (hook.url.as_deref(), stored_url) {
+            (Some(new_url), Some(old_url)) => !same_origin(new_url, old_url),
+            _ => false,
+        };
         for (field, values, stored) in [
             ("headers", &mut hook.headers, old.map(|o| &o.headers)),
             ("env", &mut hook.env, old.map(|o| &o.env)),
@@ -380,6 +404,15 @@ pub fn unmask(new: &[HookConfig], current: &[HookConfig]) -> CoreResult<Vec<Hook
             for (key, value) in values.iter_mut() {
                 if value != MASK {
                     continue;
+                }
+                if moved && stored.is_some_and(|s| s.contains_key(key)) {
+                    return Err(CoreError::ConfigError(format!(
+                        "hooks \"{}\".{}.{}: {}",
+                        hook.name,
+                        field,
+                        key,
+                        retype_message("value")
+                    )));
                 }
                 match stored.and_then(|s| s.get(key)) {
                     Some(v) => *value = v.clone(),
@@ -675,5 +708,42 @@ mod tests {
         renamed[0].name = "other".to_string();
         let e = unmask(&renamed, &current).unwrap_err().to_string();
         assert!(e.contains("url: still shortened"), "{}", e);
+    }
+
+    #[test]
+    fn same_origin_needs_scheme_host_and_port() {
+        assert!(same_origin("https://Ha.local/a", "https://ha.local:443/b"));
+        assert!(!same_origin("http://ha.local", "https://ha.local"));
+        assert!(!same_origin("https://ha.local", "https://evil.test"));
+        assert!(!same_origin("https://ha.local:8123", "https://ha.local"));
+        // Unchanged text is the same destination, even when it is not a URL
+        assert!(same_origin("", ""));
+        assert!(!same_origin("", "https://evil.test"));
+    }
+
+    #[test]
+    fn a_mask_does_not_follow_a_new_host() {
+        let current = vec![url_hook()];
+        let mut moved = mask(&current);
+        moved[0].url = Some("https://evil.test/api/webhook/abc".to_string());
+        let e = unmask(&moved, &current).unwrap_err().to_string();
+        assert!(e.contains("Type the value again"), "{e}");
+        // Typing the value again is fine
+        moved[0]
+            .headers
+            .insert("Authorization".to_string(), "Bearer mine".to_string());
+        let out = unmask(&moved, &current).unwrap();
+        assert_eq!(out[0].headers["Authorization"], "Bearer mine");
+        // A new port is a new server too
+        let mut moved = mask(&current);
+        moved[0].url = Some("https://ha.local:9999/api/webhook/abc".to_string());
+        assert!(unmask(&moved, &current).is_err());
+        // A new path on the same server keeps the secrets
+        let mut same = mask(&current);
+        same[0].url = Some("https://ha.local:8123/other".to_string());
+        assert_eq!(
+            unmask(&same, &current).unwrap()[0].headers["Authorization"],
+            "Bearer abc"
+        );
     }
 }

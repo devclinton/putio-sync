@@ -356,19 +356,39 @@ impl TranslationConfig {
     }
 
     /// Put stored secrets back where `self` carries [`MASK`]. A masked header with nothing
-    /// stored under its name stays masked, which [`Self::validate`] then refuses.
-    pub fn unmasked(mut self, current: &TranslationConfig) -> Self {
+    /// stored under its name stays masked, which [`Self::validate`] then refuses. The chat
+    /// key and the headers come back only for the stored server (scheme, host and port);
+    /// otherwise they stay masked. Use [`Self::try_unmasked`] to refuse instead.
+    pub fn unmasked(self, current: &TranslationConfig) -> Self {
+        match self.clone().try_unmasked(current) {
+            Ok(done) => done,
+            Err(_) => self,
+        }
+    }
+
+    /// Like [`Self::unmasked`], but a masked secret with a changed server is an error
+    pub fn try_unmasked(mut self, current: &TranslationConfig) -> Result<Self, String> {
+        let same = crate::hooks::same_origin;
         if self.chat.api_key == MASK {
+            if !current.chat.api_key.is_empty()
+                && !same(&self.chat.base_url, &current.chat.base_url)
+            {
+                return Err(crate::hooks::retype_message("API key"));
+            }
             self.chat.api_key = current.chat.api_key.clone();
         }
+        let callback_same = same(&self.callback.url, &current.callback.url);
         for (name, value) in self.callback.headers.iter_mut() {
             if value == MASK {
                 if let Some(stored) = current.callback.headers.get(name) {
+                    if !callback_same {
+                        return Err(crate::hooks::retype_message("header value"));
+                    }
                     *value = stored.clone();
                 }
             }
         }
-        self
+        Ok(self)
     }
 
     /// Every secret value, for the log redactor
@@ -602,5 +622,41 @@ mod tests {
         c.callback.headers.insert("X-A".into(), "v1".into());
         let v = c.secret_values();
         assert!(v.contains(&"k1".to_string()) && v.contains(&"v1".to_string()));
+    }
+
+    #[test]
+    fn secrets_stay_with_the_server_they_were_saved_for() {
+        let mut stored = callback();
+        stored.chat.base_url = "http://ollama.lan:11434/v1".to_string();
+        stored.chat.api_key = "sk-secret".to_string();
+        stored.callback.url = "https://svc.lan/translate".to_string();
+        stored
+            .callback
+            .headers
+            .insert("Authorization".into(), "Bearer abc".into());
+        let mut moved = stored.masked();
+        moved.chat.base_url = "http://evil.test/v1".to_string();
+        let e = moved.clone().try_unmasked(&stored).unwrap_err();
+        assert!(e.contains("Type the API key again"), "{e}");
+        assert_eq!(moved.unmasked(&stored).chat.api_key, MASK);
+        // Same host, another path: still the same server
+        let mut path = stored.masked();
+        path.chat.base_url = "http://ollama.lan:11434/other".to_string();
+        assert_eq!(
+            path.try_unmasked(&stored).unwrap().chat.api_key,
+            "sk-secret"
+        );
+        // Callback headers follow the callback URL
+        let mut moved = stored.masked();
+        moved.callback.url = "https://evil.test/translate".to_string();
+        let e = moved.try_unmasked(&stored).unwrap_err();
+        assert!(e.contains("Type the header value again"), "{e}");
+        let mut typed = stored.masked();
+        typed.callback.url = "https://evil.test/translate".to_string();
+        typed
+            .callback
+            .headers
+            .insert("Authorization".into(), "Bearer mine".into());
+        assert!(typed.try_unmasked(&stored).is_ok());
     }
 }
