@@ -14,6 +14,22 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Security
 
+- The API now refuses a request whose `Host` is not an IP address, `localhost`, a name with
+  no dot, `*.local`, `*.ts.net`, the `public_url` host, or listed in the new
+  `[api] allowed_hosts` (421), which stops DNS rebinding. Behind a reverse proxy that passes a
+  dotted `Host` on, set `public_url` or `allowed_hosts`.
+- `Tailscale-User-Login` from a loopback connection is believed only while `tailscale serve`
+  proxies to the port the request came in on.
+- Password and Basic sign-in attempts are counted before the slow hash runs, and at most two
+  hashes run at once (429 when busy), so a burst can't exhaust memory.
+- The Transmission API for Radarr and Sonarr has its own failure limiter, so wrong credentials
+  there no longer lock the UI out.
+- Setup mode sends the security headers and checks the Host name too, and the setup code
+  expires after an hour (a new one is printed on the console).
+- The Basic username is compared in constant time, and a wrong username takes as long as a
+  wrong password.
+- Responses add `Cache-Control: no-store`, `Cross-Origin-Opener-Policy: same-origin` and a
+  `Permissions-Policy`, and `Strict-Transport-Security` when `public_url` is `https://`.
 - "Delete local data" from Sonarr or Radarr no longer removes a category folder, the download
   folder, the staging folder, or another item's folder when a torrent has the same name.
 - Saving the config no longer leaves a moment where the Put.io token is readable by other users,
@@ -51,6 +67,16 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   authentication.
 - Updated lettre (SMTP) and quick-xml (DLNA) to fix their published advisories, and login no
   longer pulls in a second, outdated HTTP and TLS stack.
+- The Docker image runs on Alpine 3.24 instead of the end-of-life 3.19, and the Dockerfiles pin base images by digest and build with `--locked` and a pinned cargo-chef.
+- Every GitHub Action is pinned to a commit SHA, and Dependabot updates actions, cargo, Docker and npm weekly.
+- Release workflows pass each reusable workflow only the secrets it uses instead of `secrets: inherit`.
+- Workflow scripts read versions and inputs from environment variables and check the version tag format, so a crafted tag or input can't inject shell commands.
+- CI, Homebrew, snap and winget workflows default to read-only `contents` permissions; only the flatpak release upload writes.
+- The Homebrew workflow no longer runs the `curl | bash` Homebrew installer, and the tap token is passed only to the push.
+- Updated `url` to 2.5.9 (stack overflow on nested `blob:` URLs) and `wasmi` to 2.0.2 (2.0.1 was yanked).
+- CI runs `cargo audit` on every change and weekly.
+- The Windows installer limits `%ProgramData%\putio-sync` (config with tokens, logs) to SYSTEM and Administrators.
+- The snap docs warn that `snap get` shows `snap set` values to any local user and point to the setup-code flow.
 
 ### Fixed
 
