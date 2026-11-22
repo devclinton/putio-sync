@@ -1003,6 +1003,16 @@ The pages:
 The UI is built into the binary and the Docker image; there is nothing else to install
 or mount.
 
+### Guides
+
+The docs have a [Guides](https://devclinton.github.io/putio-sync/docs/guides/index.html)
+part: setup for each platform, adding Radarr, folder rules or metrics to a running setup,
+and switching from another download client. The web UI links to them where you need them: a
+**Setup guide** link in the setup wizard (for your install: Unraid, TrueNAS, Docker, and so
+on), a **Guide** link on the Radarr / Sonarr, Folder rules, Torrent watcher and Media server
+cards, a **Metrics guide** link on the Network card, and a **Troubleshooting guide** link on
+the Doctor and Logs pages.
+
 ### Command palette
 
 **Cmd+K** (macOS) or **Ctrl+K** opens one search box from any page; on a phone, tap the
@@ -1015,7 +1025,10 @@ magnifier in the top bar. Type to find:
 - **Queue**: items in the download queue;
 - **Put.io files**: Put.io's own search, opening the folder with the file marked;
 - **Local files**: names under the download folder and watch folders, at most 50 hits or
-  2 seconds of searching, opening the folder with the file marked.
+  2 seconds of searching, opening the folder with the file marked;
+- **Guides**: the [guides](https://devclinton.github.io/putio-sync/docs/guides/index.html) in
+  the docs, found by title or topic ("grafana" finds the metrics guide). Choosing one opens it
+  in a new tab. Guides show only once you type something.
 
 Matching is loose, so "subt" finds Subtitles. Arrow keys move, Enter opens, Esc closes.
 

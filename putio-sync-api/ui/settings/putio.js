@@ -44,6 +44,7 @@ const GROUPS = [
     id: "watcher",
     key: "watcher",
     title: "Torrent watcher",
+    guide: "guides/watch-folders",
     fields: [
       ["paths", "Watched folders", "One per line; .torrent files found here are uploaded", "l"],
       ["refresh_cycle", "Scan interval (s)", "1 to 127", "n", 1, 127],

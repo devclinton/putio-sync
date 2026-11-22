@@ -26,6 +26,8 @@ const NETWORK = {
   id: "network",
   key: "network",
   title: "Network",
+  guide: "guides/metrics-grafana",
+  guideText: "Metrics guide",
   fields: [
     ["api_bind", "API addresses", "One per line: ip:port, [ipv6]:port, interface:port or tailnet:port (after a restart)", "l"],
     ["metrics_bind", "Metrics addresses", "One per line, same forms; must not share an address with the API (after a restart)", "l"],
