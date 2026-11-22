@@ -70,6 +70,22 @@ else
 fi
 echo ""
 
+# Dependency advisories. Skipped when cargo-audit is not installed
+# (cargo install cargo-audit --locked); CI always runs it. Keep the ignore list in
+# sync with the audit job in .github/workflows/ci.yml.
+if command -v cargo-audit &> /dev/null; then
+    print_step "Auditing dependencies..."
+    if cargo audit --deny warnings --ignore RUSTSEC-2026-0459 --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0543; then
+        print_success "Dependency audit passed"
+    else
+        print_error "Dependency audit failed"
+        exit 1
+    fi
+else
+    print_warning "cargo-audit not installed; skipping the dependency audit"
+fi
+echo ""
+
 # Check formatting
 print_step "Checking code formatting..."
 if cargo fmt --all -- --check; then

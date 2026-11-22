@@ -34,14 +34,20 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Get version
         id: get_version
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: bash
         run: |
-          VERSION="${{ inputs.version }}"
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "version_no_v=${VERSION#v}" >> $GITHUB_OUTPUT
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Not a version tag like v1.2.3: $VERSION" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version_no_v=${VERSION#v}" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: |
@@ -49,7 +55,7 @@ jobs:
           sudo apt-get install -y dpkg-dev build-essential lintian
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           targets: ${{ matrix.rust_target }}
 
@@ -60,8 +66,11 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build .deb package
+        env:
+          VERSION_NO_V: ${{ steps.get_version.outputs.version_no_v }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          bash packaging/debian/build-deb.sh ${{ steps.get_version.outputs.version_no_v }} ${{ matrix.arch }}
+          bash packaging/debian/build-deb.sh "$VERSION_NO_V" "$ARCH"
 
       - name: List built packages
         run: |
@@ -74,10 +83,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload "${{ steps.get_version.outputs.version }}" build/*.deb build/*.sha256 --clobber
+          VERSION: ${{ steps.get_version.outputs.version }}
+        run: gh release upload "$VERSION" build/*.deb build/*.sha256 --clobber
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: debian-${{ matrix.arch }}
           path: |
@@ -92,11 +102,15 @@ jobs:
 
     steps:
       - name: Create summary
+        env:
+          BUILD_RESULT: ${{ needs.build-deb.result }}
+          UPLOAD: ${{ inputs.upload }}
+          VERSION: ${{ inputs.version }}
         run: |
           echo "## Debian Package Builds" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [ "${{ needs.build-deb.result }}" == "success" ]; then
+          if [ "$BUILD_RESULT" == "success" ]; then
             echo "✅ All Debian builds completed successfully" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Built Architectures" >> $GITHUB_STEP_SUMMARY
@@ -115,8 +129,8 @@ jobs:
             echo "❌ Some builds failed" >> $GITHUB_STEP_SUMMARY
           fi
 
-          if [ "${{ inputs.upload }}" == "true" ]; then
+          if [ "$UPLOAD" == "true" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Release Assets" >> $GITHUB_STEP_SUMMARY
-            echo "Packages uploaded to release ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "Packages uploaded to release ${VERSION}" >> $GITHUB_STEP_SUMMARY
           fi

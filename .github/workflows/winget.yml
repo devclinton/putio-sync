@@ -7,11 +7,17 @@ on:
       version:
         type: string
         required: true
+    secrets:
+      WINGET_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       version:
         description: 'Version to publish (e.g., v0.1.1)'
         required: true
+
+permissions:
+  contents: read
 
 jobs:
   winget-publish:
@@ -21,13 +27,19 @@ jobs:
       - name: Get version
         id: get_version
         shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          $version = "${{ inputs.version }}"
+          $version = $env:INPUT_VERSION
+          if ($version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$') {
+            Write-Error "Not a version tag like v1.2.3: $version"
+            exit 1
+          }
           echo "version=$version" >> $env:GITHUB_OUTPUT
           echo "version_no_v=$($version -replace '^v', '')" >> $env:GITHUB_OUTPUT
 
       - name: Publish to winget-pkgs using winget-releaser
-        uses: vedantmgoyal2009/winget-releaser@v2
+        uses: vedantmgoyal2009/winget-releaser@b7370d4d152efdce803a26cc6ca9eee58cb2ad54 # v2
         with:
           identifier: devclinton.putio-sync
           version: ${{ steps.get_version.outputs.version }}
@@ -39,8 +51,10 @@ jobs:
 
       - name: Create submission summary
         shell: pwsh
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
         run: |
-          $version = "${{ steps.get_version.outputs.version }}"
+          $version = $env:VERSION
 
           echo "## Winget Submission Created" >> $env:GITHUB_STEP_SUMMARY
           echo "" >> $env:GITHUB_STEP_SUMMARY
