@@ -53,6 +53,8 @@ let setupMode = false;
 // What's new (feature 017) is checked once per page load, on the first signed-in page;
 // a failed check (an expired token, say) is tried again on the next one
 let newsChecked = false;
+// The crash notice (feature 058) is checked once per page load the same way
+let crashChecked = false;
 
 // DOM helper
 
@@ -148,6 +150,10 @@ function route() {
   // A page with `update` shows another address of itself in place (Settings sections, 046)
   if (current === PAGES[name] && current.update) return void current.update({ path, query });
   mount(name, { path, query });
+  if (!crashChecked) {
+    crashChecked = true;
+    import("./crash.js").then((m) => m.checkCrash()).then((ok) => (crashChecked = ok), () => (crashChecked = false));
+  }
   if (!newsChecked) {
     newsChecked = true;
     news.checkNews().then((ok) => {

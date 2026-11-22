@@ -43,6 +43,12 @@ pub async fn execute_daemon(
         .or_else(|| Config::default_path().ok())
         .ok_or_else(|| anyhow!("Could not determine config file path"))?;
 
+    // Panic hook and the unclean-stop marker (feature 058); dropped on a clean stop
+    let crash_session = putio_sync_core::crash::start(
+        Some(&config_file_path),
+        putio_sync_update::channel::Channel::detect().kind(),
+    );
+
     // The first start after "Update now" is a trial: it rolls back unless it gets as far as
     // a running API (feature 055 US3). The old version ran with this config, so
     // landing in setup mode counts as a failed start too.
@@ -429,6 +435,8 @@ pub async fn execute_daemon(
     }
 
     if updates.restart_requested() {
+        // The exec below skips destructors: this stop is clean
+        drop(crash_session);
         let e = putio_sync_update::swap::restart_self();
         return Err(anyhow!("Could not restart into the new version: {e}"));
     }

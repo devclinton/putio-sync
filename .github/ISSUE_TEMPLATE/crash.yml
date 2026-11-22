@@ -1,0 +1,24 @@
+name: Crash report
+description: putio-sync stopped unexpectedly. The web UI's "Report on GitHub" button fills this in.
+title: "Crash: "
+labels: ["crash"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. Search the existing crash issues first: a repeat can go on the same issue.
+
+        The report below was made on your machine and sent nowhere until you submit this form. Secrets are masked, but check it for names and paths you would rather not share, and remove them.
+  - type: textarea
+    id: report
+    attributes:
+      label: Crash report
+      description: Filled in by putio-sync. If it ends with "Cut to fit the link", paste the full report from Copy report (or `putio-sync crash-report show ID`) after it.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: doing
+    attributes:
+      label: What was putio-sync doing?
+      description: Optional. A sync, a download, a plugin or hook, a settings change, nothing in particular?

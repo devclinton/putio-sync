@@ -322,13 +322,13 @@ The sync-time decision hooks (filter, rename, folder rules) stay in 028.
 Each new callback gets a starter in `examples/plugins/` and a section in
 PLUGINS.md; each event gets its table in EVENTS.md.
 
-### 058 Crash reports, then anonymous usage stats
+### 058 Crash reports (part 1 done), then anonymous usage stats
 
 Nothing in putio-sync calls home today, and the README says what little
 leaves the machine. Keep it that way by default: nothing is sent without the
 person seeing it or turning it on.
 
-**Part 1, crash reports to GitHub (first).** The daemon cannot open issues
+**Part 1, crash reports to GitHub (done, `specs/058-crash-reports/`).** The daemon cannot open issues
 itself: a token in the binary would let anyone file issues as the project.
 So the person files the report from their own GitHub account:
 

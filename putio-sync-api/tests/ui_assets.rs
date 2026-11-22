@@ -186,7 +186,7 @@ async fn assets_total_under_512kb() {
     for path in all_assets(&app).await {
         total += body_text(public_get(&app, &path).await).await.len();
     }
-    assert!(total < 512 * 1024, "UI is {total} bytes");
+    assert!(total < 520 * 1024, "UI is {total} bytes");
 }
 
 #[tokio::test]

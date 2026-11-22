@@ -181,6 +181,15 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   Use `[notifications.smtp]`, hooks or plugins.
 ### Added
 
+- Crash reports (058): when putio-sync panics it writes a masked report (version, install kind,
+  OS, uptime, thread, message, backtrace and the last 50 log lines) to `crash-reports/` next to
+  the config, 10 kept. The web UI then says "putio-sync stopped unexpectedly" and shows the
+  whole report, with **Report on GitHub** (a prefilled issue you submit yourself), **Copy report**
+  and **Dismiss**. A run that was killed with no report is noted as "stopped without a report".
+  `putio-sync crash-report list|show|open` does the same from a terminal, `GET /crash-reports`
+  serves it, and the doctor warns about an undismissed crash from the last 7 days. Nothing is
+  sent by putio-sync. See "What leaves your machine" in the README.
+- Release builds keep symbol names (the snap now strips only debug info) so backtraces are readable.
 - Setup guides in the docs, one per platform: Unraid, TrueNAS SCALE, Raspberry Pi, Docker
   and Compose, macOS, Windows and Linux. Each ends with the same walk-through of the setup
   wizard and the first sync.

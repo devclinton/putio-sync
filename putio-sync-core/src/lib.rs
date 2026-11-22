@@ -73,6 +73,9 @@ pub mod logging;
 /// Masking secrets in captured log lines (feature 047)
 pub mod log_redact;
 
+/// Crash reports: panic hook, crash files and the GitHub issue link (feature 058)
+pub mod crash;
+
 /// Recent log lines kept for the web UI's Logs page (feature 047)
 pub mod log_capture;
 

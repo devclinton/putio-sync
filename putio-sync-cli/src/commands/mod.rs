@@ -3,6 +3,7 @@
 #[cfg(feature = "server")]
 pub mod archive;
 pub mod clean_empty;
+pub mod crash_report;
 pub mod create;
 #[cfg(feature = "server")]
 pub mod daemon;

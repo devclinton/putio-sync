@@ -1,5 +1,6 @@
 //! The checks: shared data for one run, and dispatch by [`CheckId`]
 
+pub(crate) mod crashes;
 #[cfg(feature = "hooks")]
 pub(crate) mod hooks;
 pub(crate) mod local;
@@ -178,6 +179,7 @@ async fn detect(ctx: &Ctx, id: CheckId) -> Finding {
         #[cfg(not(feature = "plugins"))]
         Plugins => Finding::skipped("Skipped: this putio-sync build has no plugins."),
         SignIn => sign_in::sign_in(ctx).await,
+        Crashes => crashes::crashes(ctx).await,
     }
 }
 

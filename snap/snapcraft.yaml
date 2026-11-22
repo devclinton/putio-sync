@@ -154,7 +154,8 @@ parts:
 
       mkdir -p $CRAFT_PART_INSTALL/bin $CRAFT_PART_INSTALL/share
       cp target/release/putio-sync $CRAFT_PART_INSTALL/bin/
-      strip $CRAFT_PART_INSTALL/bin/putio-sync
+      # Keep symbol names: crash reports (058) need readable backtraces
+      strip --strip-debug $CRAFT_PART_INSTALL/bin/putio-sync
       cp config.example.toml $CRAFT_PART_INSTALL/share/
       cp CHANGELOG.md $CRAFT_PART_INSTALL/share/
 

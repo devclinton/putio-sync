@@ -736,6 +736,18 @@ pub enum Commands {
     #[command(subcommand, about = "Check a plugin folder")]
     Plugins(PluginsCommands),
 
+    /// Crash reports kept next to the config file (feature 058)
+    #[command(
+        subcommand,
+        name = "crash-report",
+        about = "List, show and open crash reports",
+        long_about = "Crash reports are written next to the config file when putio-sync \
+                      panics, and when it stopped without a chance to write one. Nothing is \
+                      sent anywhere: `open` prints a prefilled GitHub issue link (and opens it \
+                      in your browser) for you to review and submit."
+    )]
+    CrashReport(CrashReportCommands),
+
     /// First-run setup in the terminal (feature 013)
     #[cfg(feature = "server")]
     #[command(
@@ -845,6 +857,35 @@ pub struct ArchivePrometheus {
         help = "Prometheus instance label [default: the only putio-sync instance]"
     )]
     pub instance: Option<String>,
+}
+
+/// Crash report subcommands (feature 058)
+#[derive(Subcommand, Debug)]
+pub enum CrashReportCommands {
+    /// List the reports, newest first
+    #[command(about = "List crash reports")]
+    List {
+        /// Print JSON instead of a table
+        #[arg(long = "json")]
+        json: bool,
+    },
+    /// Print one report in full
+    #[command(about = "Print a crash report in full, to check it before reporting")]
+    Show {
+        /// The report's id, from `crash-report list`
+        #[arg(value_name = "ID")]
+        id: String,
+    },
+    /// Print the GitHub issue link for a report and open it in the browser
+    #[command(about = "Open a prefilled GitHub issue for a crash report")]
+    Open {
+        /// The report's id, from `crash-report list`
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Only print the links
+        #[arg(long = "no-browser")]
+        no_browser: bool,
+    },
 }
 
 /// Plugin subcommands (feature 059)

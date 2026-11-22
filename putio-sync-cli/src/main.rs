@@ -102,6 +102,25 @@ async fn run() {
         std::process::exit(code);
     }
 
+    // Crash reports are files next to the config: no config load, token or logging (058)
+    if let Commands::CrashReport(command) = &args.command {
+        use commands::crash_report::CrashReportCommands as Run;
+        let run = match command {
+            cli::CrashReportCommands::List { json } => Run::List { json: *json },
+            cli::CrashReportCommands::Show { id } => Run::Show { id: id.clone() },
+            cli::CrashReportCommands::Open { id, no_browser } => Run::Open {
+                id: id.clone(),
+                no_browser: *no_browser,
+            },
+        };
+        let code = commands::crash_report::execute(
+            &run,
+            args.config.as_deref(),
+            &mut std::io::stdout().lock(),
+        );
+        std::process::exit(code);
+    }
+
     eprintln!("🔧 Loading configuration...");
     // Load config early for logging configuration
     let mut config = if let Some(config_path) = args.config.as_ref() {
@@ -488,6 +507,7 @@ async fn run() {
         }
         #[cfg(feature = "plugins")]
         Commands::Plugins(_) => unreachable!("handled before the config loads"),
+        Commands::CrashReport(_) => unreachable!("handled before the config loads"),
         #[cfg(feature = "server")]
         Commands::Archive(job) => {
             let job = match job {
