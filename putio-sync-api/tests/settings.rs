@@ -832,6 +832,60 @@ async fn hooks_save_masks_values_and_applies_now() {
     assert_eq!(saved(&app).hooks[0].headers["Authorization"], "Bearer new");
 }
 
+/// A command hook runs a program as the app's user, so adding or changing one needs
+/// `confirm_exec`; anything else about hooks saves as before
+#[tokio::test]
+async fn a_new_or_changed_hook_command_needs_confirm_exec() {
+    let app = test_app().await;
+    let program = if cfg!(windows) {
+        r"C:\Windows\System32\whoami.exe"
+    } else {
+        "/bin/true"
+    };
+    let command = |args: &[&str]| {
+        let mut c = vec![json!(program)];
+        c.extend(args.iter().map(|a| json!(a)));
+        json!({"name": "run", "events": ["download.finished"], "command": c, "timeout_secs": 10})
+    };
+
+    let (status, body) = put(&app, "/settings/hooks", json!({"hooks": [command(&[])]})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("confirm_exec"),
+        "{body}"
+    );
+    assert!(saved(&app).hooks.is_empty());
+
+    let (status, body) = put(
+        &app,
+        "/settings/hooks",
+        json!({"hooks": [command(&[])], "confirm_exec": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // The same command with another timeout, and a URL hook, need nothing
+    let mut same = command(&[]);
+    same["timeout_secs"] = json!(20);
+    let (status, body) = put(
+        &app,
+        "/settings/hooks",
+        json!({"hooks": [same, url_hook()]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // New arguments are a change
+    let (status, _) = put(
+        &app,
+        "/settings/hooks",
+        json!({"hooks": [command(&["-c", "id"]), url_hook()]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(saved(&app).hooks[0].command.as_ref().unwrap().len(), 1);
+}
+
 /// Feature 038: a hook that is a pipeline step keeps its stage, order and flags, and a bad
 /// step is refused naming the hook
 #[tokio::test]
@@ -849,7 +903,7 @@ async fn pipeline_step_hooks_save_in_order_and_bad_ones_are_refused() {
             "stage": stage, "required": false, "categories": ["radarr"]
         })
     };
-    let hooks = json!({ "hooks": [step("b", "post_processing"), step("a", "post_processing"), step("c", "pre_download")] });
+    let hooks = json!({ "hooks": [step("b", "post_processing"), step("a", "post_processing"), step("c", "pre_download")], "confirm_exec": true });
     let (status, body) = put(&app, "/settings/hooks", hooks).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let view = get_ok(&app, "/settings/hooks").await;
@@ -871,7 +925,12 @@ async fn pipeline_step_hooks_save_in_order_and_bad_ones_are_refused() {
     // A step takes no events
     let mut bad = step("x", "post_processing");
     bad["events"] = json!(["download.finished"]);
-    let (status, body) = put(&app, "/settings/hooks", json!({ "hooks": [bad] })).await;
+    let (status, body) = put(
+        &app,
+        "/settings/hooks",
+        json!({ "hooks": [bad], "confirm_exec": true }),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(body["error"].as_str().unwrap().contains("\"x\""), "{body}");
     assert_eq!(saved(&app).hooks.len(), 3, "a refused save changes nothing");

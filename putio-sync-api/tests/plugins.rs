@@ -389,6 +389,41 @@ async fn install_a_module_uploaded_or_from_a_url() {
         .with_header("location", "http://example.invalid/clean.wasm")
         .create_async()
         .await;
+    // A URL that points at this machine, the LAN or a metadata address is refused unless the
+    // opt-in is set (E-03). Same test, so the variable is set once and for the rest of it.
+    for refused in [
+        format!("{}/moved", server.url()),
+        "http://169.254.169.254/latest/meta-data/".to_string(),
+        "http://[::1]:9/x".to_string(),
+        "http://192.168.1.1/x".to_string(),
+    ] {
+        let response = app
+            .post_json(
+                "/plugins/install",
+                json!({ "url": refused, "replace": true }),
+            )
+            .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{refused}"
+        );
+        let text = body_text(response).await;
+        assert!(text.contains("not allowed"), "{text}");
+    }
+    std::env::set_var("PUTIO_SYNC_ALLOW_LOCAL_FETCH", "1");
+    let response = app
+        .post_json(
+            "/plugins/install",
+            json!({ "url": "http://169.254.169.254/x" }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        body_text(response).await.contains("not allowed"),
+        "metadata stays refused"
+    );
+
     let response = app
         .post_json(
             "/plugins/install",

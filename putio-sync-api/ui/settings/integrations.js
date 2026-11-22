@@ -3,13 +3,25 @@
 // Send test event button; header and env values are shown only as set, with a Replace button.
 
 import { get, post } from "../api.js";
-import { RUNS_AS, blankHook, eventChoices, fromSettings, moveRow, runLabel, stagePosition, targetLabel, toSettings } from "../hooks.js";
-import { docs, h, toast } from "../app.js";
+import { RUNS_AS, blankHook, changedCommands, eventChoices, fromSettings, moveRow, runLabel, stagePosition, targetLabel, toSettings } from "../hooks.js";
+import { confirm, docs, h, toast } from "../app.js";
 import { relative } from "../format.js";
 import { arrCard } from "./arr.js";
 import { groupCard, reason } from "./form.js";
 
-const HOOKS = { id: "hooks", key: "hooks", title: "Event hooks", fields: [], extra: hooksExtra };
+// A command hook runs a program as the daemon's user, so a new or changed one is confirmed
+const hooksBeforeSave = async (body, data) => {
+  const names = changedCommands(data.hooks, body.hooks);
+  if (!names.length) return true;
+  const ok = await confirm({
+    title: "Run a program on this machine?",
+    text: `${names.join(", ")} will run a program as the user putio-sync runs as, each time its events happen. Anyone who can save settings can do this; only continue if you set this up.`,
+    verb: "Save",
+  });
+  if (ok) body.confirm_exec = true;
+  return ok;
+};
+const HOOKS = { id: "hooks", key: "hooks", title: "Event hooks", fields: [], extra: hooksExtra, beforeSave: hooksBeforeSave };
 
 // Feature 038: how the hooks that are pipeline steps run
 const PIPELINE = {

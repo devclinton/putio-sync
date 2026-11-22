@@ -1259,6 +1259,21 @@ All routes except `/health`, `/`, `/assets/*`, `/auth/*` and
 `/transmission/rpc` (Basic auth, see [Radarr and Sonarr](#radarr-and-sonarr)) need the token,
 or one of the [sign-in options](#sign-in-options). Errors are `{"error": "...", "details": "..."}`.
 
+**Anyone with API access can run commands as the app's user.** A command hook, the
+`transcription.ffmpeg_path` setting and a plugins folder all make the daemon run programs or
+load code, and the settings routes can change them. Treat the API token, a sign-in password and
+the Tailscale allow-list as shell access to the machine (in Docker, the container). Saving a
+command hook (`PUT /settings/hooks`) or importing a file that adds or changes a hook command, an
+ffmpeg path or `plugins_dir` is refused unless the request carries `"confirm_exec": true`; the
+web page asks you first. That is a guard against mistakes, not a boundary against someone who
+already holds the token.
+
+Two fetches that follow a URL someone else supplies refuse addresses inside the machine: a
+plugin installed by URL (public addresses only) and the `.torrent` URL of a Radarr or Sonarr
+`torrent-add` (loopback and link-local refused; the private LAN stays open). Cloud metadata
+addresses are always refused. Set `PUTIO_SYNC_ALLOW_LOCAL_FETCH=1` to let both reach local
+addresses, for a plugin server or an indexer on the same machine.
+
 | Route | Purpose |
 |---|---|
 | `GET /health` | Liveness, no token |
@@ -1303,7 +1318,7 @@ or one of the [sign-in options](#sign-in-options). Errors are `{"error": "...", 
 | `POST /settings/notifications/test` | Body: the `smtp` object from `GET /settings/notifications` (a masked password means the saved one). Sends a test email now, on or off, and answers `{"ok": true}` or `{"ok": false, "error": "..."}`; 422 for settings that do not validate. The `notifications` GET adds a read-only `smtp_status`: sent and failed counts since start and the last email |
 | `GET /settings/assistant` | Per group: what each field affects, the fields that apply live, the defaults; and the risks of the running config |
 | `GET /settings/export` | The settings as a TOML file, without `[auth]`, `api.auth_token` and `[arr]` |
-| `POST /settings/import` | `{"toml": "...", "apply": false}` → a preview with `changes` (dotted keys), `risks`, `unknown` and `ignored`; with `true`, saves it and adds `message`. 400 for invalid TOML (line number only), a refused config or a file over 1 MB |
+| `POST /settings/import` | `{"toml": "...", "apply": false, "confirm_exec"?}` → a preview with `changes` (dotted keys), `risks`, `unknown` and `ignored`; with `true`, saves it and adds `message`. A file that adds or changes a hook command, `subtitles.transcription.ffmpeg_path` or `plugins_dir` shows a danger risk and `needs_confirm_exec`, and applying it needs `"confirm_exec": true`. 400 for invalid TOML (line number only), a refused config, a file over 1 MB or a missing `confirm_exec` |
 | `GET /stats/releases?range=` | Rejected releases and bytes kept off the NAS, by stage and reason; magnet lookups by cache; fallbacks to Put.io; report counts with the top file types and trackers |
 | `GET /releases/reports?range=&format=json\|csv` | The rejection and flag reports as a download: file types, sizes and tracker hosts, never a link, magnet or passkey |
 | `GET /releases/flags?file_id=&history_id=&arr_hash=&report_id=` | The flags on up to 200 releases, and which of the `file_id`s a Radarr/Sonarr item holds |
@@ -1322,7 +1337,7 @@ or one of the [sign-in options](#sign-in-options). Errors are `{"error": "...", 
 | `POST /plugins/test` | `{"name": "..."}`: send a `plugin.test` event to that plugin, even when it is off, and answer with the run and its logged lines; 404 for an unknown plugin, 409 while a test of it runs, 422 when it cannot load |
 | `POST /plugins/reload` | Read the plugins folder again → `{"message": "Reloaded 7 plugins"}` |
 | `POST /plugins/action` | `{"name", "action", "input"?, "config"?}`: run a plugin's settings action (Sign in with Plex, Load libraries) with unsaved non-secret `config` values for this call; answers `{message, code, open_url, choices, next, done, run}`, plus `saved` (key names) and `config` when it saved values. Saved secrets are never returned. 404 unknown plugin or action, 409 while one runs, 422 when it fails |
-| `POST /plugins/install` | `{"url"}`, `{"wasm"}` (base64) or `{"manifest", "entry"}` (base64), plus `"replace"?`: install a plugin into the plugins folder, turned off → `{"name", "message"}`. A URL must be http or https, at most 16 MiB, with redirects only on the same host. 400 bad body, 409 a plugin of that name exists (send `"replace": true`), 422 not a plugin or the download failed |
+| `POST /plugins/install` | `{"url"}`, `{"wasm"}` (base64) or `{"manifest", "entry"}` (base64), plus `"replace"?`: install a plugin into the plugins folder, turned off → `{"name", "message"}`. A URL must be http or https and name a public address (see `PUTIO_SYNC_ALLOW_LOCAL_FETCH` above), at most 16 MiB, with redirects only on the same host and never from https to http. 400 bad body, 409 a plugin of that name exists (send `"replace": true`), 422 not a plugin or the download failed |
 | `GET /plugins/registry` | The plugin registry's list (059) → `{"enabled", "url", "fetched_at", "error", "skipped", "plugins"}`; each plugin has its links, events, sync rules, hosts, the release offered and a `state`: `available`, `installed`, `update`, `needs_newer` or `name_in_use`. Kept for 6 hours; `?refresh=true` fetches now. A failed fetch keeps the kept list and sets `error` |
 | `POST /plugins/registry/install` | `{"name"}`: install a plugin from the registry's list; the release's SHA-256 and manifest are checked first, and it starts off → `{"name", "message"}`. 404 not listed, 409 its state does not allow it (already installed: use update), 422 the download or a check failed (nothing written) |
 | `POST /plugins/registry/preview` | `{"name"}`: what updating a registry plugin would change, from the release checked but not written → `{"name", "from", "version", "sha256", "notes", "diff", "changed"}`; `diff` has `hosts`, `settings`, `events` and `hooks`, each `{"added", "removed"}`; `changed` lists files edited since install. 404 not from the registry, 409 no newer release |
