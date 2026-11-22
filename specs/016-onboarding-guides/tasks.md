@@ -109,26 +109,26 @@ walk-through is recorded as a checklist in its PR body.
 
 **Independent Test**: from a Sonarr plus old-client setup, follow the guide; new grabs go to putio-sync and land in the same library folders.
 
-- [ ] T026 [US3] Write a shared "What changes when put.io does the downloading" section:
+- [x] T026 [US3] Write a shared "What changes when put.io does the downloading" section:
   - no local seeding or ratio; put.io handles that;
   - storage on put.io;
   - finished files are brought home by putio-sync.
 
   It lives at the top of `site/book/src/guides/from-qbittorrent.md`, and the other switching guides link to it.
-- [ ] T027 [P] [US3] Finish `site/book/src/guides/from-qbittorrent.md`:
+- [x] T027 [P] [US3] Finish `site/book/src/guides/from-qbittorrent.md`:
   - map qBittorrent categories to putio-sync categories and folders;
   - move watch folders;
   - in Radarr/Sonarr, add putio-sync, then disable qBittorrent (don't delete it until queues drain);
   - what happens to in-progress torrents.
-- [ ] T028 [P] [US3] Write `site/book/src/guides/from-transmission.md`: the same flow, noting that putio-sync speaks the Transmission protocol (so the *arr client type stays Transmission and only host, port and credentials change), plus the default port clash if both run on one box
-- [ ] T029 [P] [US3] Write `site/book/src/guides/from-deluge.md`: the same flow, with Deluge labels mapped to categories and the Label plugin's role
-- [ ] T030 [P] [US3] Write `site/book/src/guides/from-usenet.md`:
+- [x] T028 [P] [US3] Write `site/book/src/guides/from-transmission.md`: the same flow, noting that putio-sync speaks the Transmission protocol (so the *arr client type stays Transmission and only host, port and credentials change), plus the default port clash if both run on one box
+- [x] T029 [P] [US3] Write `site/book/src/guides/from-deluge.md`: the same flow, with Deluge labels mapped to categories and the Label plugin's role
+- [x] T030 [P] [US3] Write `site/book/src/guides/from-usenet.md`:
   - put.io doesn't take NZBs (research R2, with the put.io help link);
   - keep SABnzbd/NZBGet for usenet and add putio-sync for torrents;
   - give the clients separate categories, and set the protocol priority in Radarr/Sonarr's delay profiles.
-- [ ] T031 [US3] Add the switching guides to `SUMMARY.md` and the index; build, lychee and a11y
+- [x] T031 [US3] Add the switching guides to `SUMMARY.md` and the index; build, lychee and a11y
 - [ ] T032 [US3] Walk through the qBittorrent guide against a throwaway qBittorrent container and Sonarr on this Mac (Docker), and check the other three for consistency with it
-- [ ] T033 [US3] Refresh translations, add a CHANGELOG line, and open draft PR C with the walk-through checklist
+- [x] T033 [US3] Refresh translations, add a CHANGELOG line, and open draft PR C with the walk-through checklist
 
 ## Phase 6: User Story 4, guides from inside the web UI (Priority: P4)
 

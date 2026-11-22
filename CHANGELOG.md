@@ -20,6 +20,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - Task guides in the docs for a running setup: connecting Radarr and Sonarr, choosing what
   downloads, watch folders, playing downloads on a TV, Prometheus and Grafana, and
   troubleshooting.
+- Switching guides in the docs, from qBittorrent, Transmission and Deluge, and for using
+  Put.io next to SABnzbd or NZBGet.
 
 ## [0.5.0] - 2026-11-17
 

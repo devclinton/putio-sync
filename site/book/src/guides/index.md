@@ -42,3 +42,14 @@ Add one piece to a running setup:
 - [Play downloads on your TV](media-server.md): the built-in DLNA media server.
 - [Watch it with Prometheus and Grafana](metrics-grafana.md): metrics and a dashboard.
 - [When something isn't working](troubleshooting.md): the doctor, the logs and common causes.
+
+## I'm switching
+
+Move from a local torrent client to Put.io, without losing what's already downloading:
+
+- [Switch from qBittorrent](from-qbittorrent.md): starts with what changes when Put.io does
+  the downloading.
+- [Switch from Transmission](from-transmission.md): the client type in Radarr and Sonarr
+  stays the same.
+- [Switch from Deluge](from-deluge.md): Deluge labels become putio-sync categories.
+- [Use Put.io next to SABnzbd or NZBGet](from-usenet.md): keep usenet, add torrents.
