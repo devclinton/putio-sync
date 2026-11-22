@@ -32,6 +32,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{watch, Mutex};
+use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
 use tracing::warn;
 
@@ -281,8 +282,14 @@ pub fn setup_router(state: SetupState) -> Router {
         .route("/health", get(health))
         .route("/auth/status", get(auth_status))
         .route("/setup/status", get(handlers::status))
-        .route("/", get(ui::index))
-        .route("/assets/*path", get(ui::asset))
+        .route(
+            "/",
+            get(ui::index).layer(CompressionLayer::new().gzip(true)),
+        )
+        .route(
+            "/assets/*path",
+            get(ui::asset).layer(CompressionLayer::new().gzip(true)),
+        )
         .merge(gated)
         .fallback(setup_needed)
         .with_state(state.clone())

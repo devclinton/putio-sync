@@ -1,6 +1,6 @@
 // Queue page: active downloads and the queue, polled every 3 s, with every queue action
-// and "sync now". Reordering, skip, pause and resume are reversible, so only clearing
-// completed rows and cancelling a download ask first. Queue rows can be flagged as fake
+// and "sync now". Reordering, pause and resume are reversible, so they do not ask;
+// removing a row, clearing completed rows and cancelling a download do ask first. Queue rows can be flagged as fake
 // (feature 042); flags reload when the rows or a flag change, not on every poll. One
 // switch pauses or resumes all local downloads (feature 039); a file can also be paused,
 // resumed or retried on its own, and `?transfer=`, `?folder=` or `?file=` show only the
@@ -193,11 +193,25 @@ async function onClear() {
   if (ok) await act(els && els.clear, "clear completed items", () => post("/local/queue/clear"));
 }
 
+async function onRemove(button, item) {
+  const ok = await confirm({
+    title: "Remove from the queue",
+    text: `Remove ${item.filename} from the queue? It stays on Put.io and is added again by the next sync unless a folder rule skips it.`,
+    verb: "Remove",
+  });
+  if (!ok) return;
+  await act(button, `remove ${item.filename}`, async () => {
+    await post(`/local/queue/${item.file_id}/skip`);
+    return { message: `Removed ${item.filename} from the queue` };
+  });
+}
+
 async function onCancel(button, d) {
   const ok = await confirm({
-    title: "Cancel download",
-    text: `Cancel download of ${d.filename}?`,
-    verb: "Cancel download",
+    title: `Stop downloading ${d.filename}?`,
+    text: "The partial file is deleted and the file leaves the queue. Put.io keeps its copy.",
+    verb: "Stop and remove",
+    dismiss: "Keep downloading",
   });
   if (ok) await act(button, `cancel ${d.filename}`, () => del(`/local/downloads/${d.file_id}`));
 }
@@ -360,11 +374,11 @@ function queueRow(item, index, last) {
       {
         type: "button",
         class: "btn btn-small",
-        "aria-label": `Skip ${item.filename}`,
+        "aria-label": `Remove ${item.filename} from the queue`,
         dataset: { key: `${id}:skip` },
-        onclick: (ev) => act(ev.currentTarget, `skip ${item.filename}`, () => post(`/local/queue/${id}/skip`)),
+        onclick: (ev) => onRemove(ev.currentTarget, item),
       },
-      "Skip",
+      "Remove",
     ),
   );
   buttons.unshift(flagControl(flags, { target: { file_id: id }, name: item.filename, onChange: reflag }));

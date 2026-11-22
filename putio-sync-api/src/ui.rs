@@ -314,6 +314,7 @@ fn serve(
     let cache = [
         (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
         (header::ETAG, etag.clone()),
+        (header::VARY, HeaderValue::from_static("accept-encoding")),
     ];
     let tag = etag.to_str().unwrap_or_default();
     let fresh = headers

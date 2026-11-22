@@ -2,7 +2,7 @@
 // deletes previews first and asks; the others apply to what the preview lists.
 
 import { get, post } from "../api.js";
-import { confirm, h, poll, toast, toastError } from "../app.js";
+import { confirm, h, poll, refill, toast, toastError } from "../app.js";
 import { dateTime, relative } from "../format.js";
 import { linkParts } from "../settings/sections.js";
 
@@ -145,7 +145,8 @@ function render(report) {
     ` ${plural(c.problem, "problem")} · ${plural(c.warning, "warning")} · ${c.ok} OK · ${c.skipped} skipped · ran `,
     h("time", { datetime: report.started_at, title: dateTime(report.started_at), text: relative(report.started_at) }),
   );
-  els.body.replaceChildren(
+  refill(
+    els.body,
     ...AREAS.map(([area, title]) => {
       const checks = report.checks.filter((k) => k.area === area);
       return checks.length ? h("section", { class: "card" }, h("h2", { text: title }), checks.map(check)) : null;

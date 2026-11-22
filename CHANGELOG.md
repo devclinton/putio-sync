@@ -111,6 +111,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- The web UI's pages and language catalogs are sent gzip-compressed to browsers that accept it (ETag revalidation unchanged), so the first load over a remote link is several times smaller.
+- The Logs page adds incoming lines once per frame instead of one at a time, and a paused tab keeps at most 2000 waiting lines (older ones are counted as dropped), so a debug-level burst no longer freezes the page.
+- The Queue page's "Skip" is now "Remove": it asks first, and the message names the file instead of its ID. The cancel-download dialog now offers "Keep downloading" / "Stop and remove".
+- Status, Active, Transfers and Doctor keep keyboard focus and open details when they refresh. Success messages stay for 6 seconds instead of 3.
 - Watched .torrent and .magnet files stay in the folder after upload unless
   `delete_after_upload = true` or `archive_directory` is set, also when the config has no
   `[watch]` table.
