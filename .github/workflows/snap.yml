@@ -14,6 +14,9 @@ on:
       version:
         type: string
         required: false
+    secrets:
+      SNAPCRAFT_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       channel:
@@ -23,6 +26,9 @@ on:
       version:
         description: 'Version to build (e.g., v0.1.1); default is the Cargo version plus the commit'
         required: false
+
+permissions:
+  contents: read
 
 jobs:
   build-snap:
@@ -40,48 +46,65 @@ jobs:
       HAS_STORE_TOKEN: ${{ secrets.SNAPCRAFT_TOKEN != '' }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Get version
         id: get_version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_CHANNEL: ${{ inputs.channel || 'edge' }}
+        shell: bash
         run: |
           CARGO_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
-          VERSION="${{ inputs.version }}"
-          CHANNEL="${{ inputs.channel || 'edge' }}"
+          VERSION="$INPUT_VERSION"
+          CHANNEL="$INPUT_CHANNEL"
+          case "$CHANNEL" in
+            edge|beta|candidate|stable) ;;
+            *) echo "Unknown channel: $CHANNEL" >&2; exit 1 ;;
+          esac
+          if [ -n "$VERSION" ]; then
+            if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Not a version tag like v1.2.3: $VERSION" >&2
+              exit 1
+            fi
+          fi
           # Snap versions allow 32 characters: 0.1.1+git1a2b3c4 for untagged builds
           if [ -z "$VERSION" ]; then
             VERSION="${CARGO_VERSION}+git$(git rev-parse --short=7 HEAD)"
           fi
           VERSION_NO_V=${VERSION#v}
-          echo "version=${VERSION_NO_V}" >> $GITHUB_OUTPUT
-          echo "channel=${CHANNEL}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION_NO_V}" >> "$GITHUB_OUTPUT"
+          echo "channel=${CHANNEL}" >> "$GITHUB_OUTPUT"
 
       - name: Update snap version
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
         run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
           sed -i "s/^version: .*/version: '${VERSION}'/" snap/snapcraft.yaml
           grep "^version:" snap/snapcraft.yaml
 
       - name: Build snap
-        uses: snapcore/action-build@v1
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
         id: build
 
       - name: Get snap filename
         id: snap_file
+        env:
+          SNAP_PATH: ${{ steps.build.outputs.snap }}
         run: |
-          SNAP_FILE=$(basename "${{ steps.build.outputs.snap }}")
+          SNAP_FILE=$(basename "$SNAP_PATH")
           echo "snap_file=${SNAP_FILE}" >> $GITHUB_OUTPUT
           echo "Built snap: ${SNAP_FILE}"
 
       - name: Upload snap artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: snap-package-${{ matrix.arch }}
           path: ${{ steps.build.outputs.snap }}
 
       - name: Publish to Snap Store
         if: env.HAS_STORE_TOKEN == 'true'
-        uses: snapcore/action-publish@v1
+        uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40 # v1
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
         with:
@@ -89,14 +112,18 @@ jobs:
           release: ${{ steps.get_version.outputs.channel }}
 
       - name: Create summary
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+          CHANNEL: ${{ steps.get_version.outputs.channel }}
+          ARCH: ${{ matrix.arch }}
+          SNAP_FILE: ${{ steps.snap_file.outputs.snap_file }}
+          NOTES_VERSION: ${{ inputs.version && steps.get_version.outputs.version || '' }}
         run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
-          CHANNEL="${{ steps.get_version.outputs.channel }}"
           {
-            echo "## Snap Package Built (${{ matrix.arch }})"
+            echo "## Snap Package Built (${ARCH})"
             echo ""
             echo "- **Version**: ${VERSION}"
-            echo "- **File**: ${{ steps.snap_file.outputs.snap_file }}"
+            echo "- **File**: ${SNAP_FILE}"
             echo "- **Channel**: ${CHANNEL}"
             echo ""
             if [ "$HAS_STORE_TOKEN" = "true" ]; then
@@ -113,7 +140,7 @@ jobs:
               echo "Not published: the SNAPCRAFT_TOKEN secret is not set. The snap is attached as an artifact."
             fi
             echo ""
-            bash scripts/build-notes.sh "${{ inputs.version && steps.get_version.outputs.version || '' }}"
+            bash scripts/build-notes.sh "$NOTES_VERSION"
           } >> $GITHUB_STEP_SUMMARY
 
   test-snap:
@@ -130,7 +157,7 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - name: Download snap artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: snap-package-${{ matrix.arch }}
 

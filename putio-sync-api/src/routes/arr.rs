@@ -86,7 +86,7 @@ pub async fn transmission_rpc(State(state): State<AppState>, request: Request) -
     };
 
     let ip = client_ip(&request);
-    if let Err(secs) = state.limiter.check(ip) {
+    if let Err(secs) = state.rpc_limiter.check(ip) {
         warn!(ip = %ip, retry_after_seconds = secs, "Download client rate limited");
         return ApiError::TooManyRequests {
             retry_after_seconds: secs,
@@ -100,7 +100,7 @@ pub async fn transmission_rpc(State(state): State<AppState>, request: Request) -
         provided => {
             // A request without credentials is not a guess, as in `require_auth`
             if provided.is_some() {
-                let failures = state.limiter.record_failure(ip);
+                let failures = state.rpc_limiter.record_failure(ip);
                 warn!(ip = %ip, failures, "Download client authentication failed");
             }
             metrics::rpc_request(ArrMethod::Other, ArrOutcome::AuthFailed);

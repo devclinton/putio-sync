@@ -1134,6 +1134,11 @@ pub struct ApiConfig {
     /// `0.0.0.0:15432`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bind: Option<BindList>,
+    /// Extra host names the API answers to (the `Host` header), besides IP addresses,
+    /// `localhost`, names without a dot, `*.local`, `*.ts.net` and the host of
+    /// `[sign_in] public_url`. Guards against DNS rebinding. Entries may start with `*.`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allowed_hosts: Vec<String>,
 }
 
 /// A boolean setting written either as a TOML bool or as a string, so a bad string

@@ -85,6 +85,8 @@ pub async fn require_auth(
     // 019). `Some(None)` is a header that isn't valid text, which counts as wrong. `None`
     // is no credential at all
     let mut wrong_token = false;
+    // Already counted by the reservation above
+    let mut counted = false;
     match request
         .headers()
         .get(AUTHORIZATION)
@@ -95,18 +97,39 @@ pub async fn require_auth(
         Some(Some(value))
             if sign_in.password.is_set() && signin::basic_credentials(&value).is_some() =>
         {
-            if signin::basic_matches(&state.sign_in, &value, &sign_in.password).await {
-                if is_write(request.method())
-                    && (cross_site(request.headers())
-                        || origin_mismatch(request.headers(), sign_in.base_url()))
-                {
-                    return Err(ApiError::Forbidden(
-                        "Cross-site writes with Basic credentials are refused".to_string(),
-                    ));
-                }
-                return Ok(next.run(request).await);
+            // The attempt is counted before the slow hash, so a burst can't all start
+            // before the first failure is recorded; a match takes it back
+            if let Err(secs) = state.limiter.reserve(ip) {
+                warn!(ip = %ip, retry_after_seconds = secs, "Authentication rate limited");
+                return Err(ApiError::TooManyRequests {
+                    retry_after_seconds: secs,
+                });
             }
-            wrong_token = true;
+            match signin::basic_matches(&state.sign_in, &value, &sign_in.password).await {
+                signin::BasicCheck::Match => {
+                    state.limiter.forgive(ip);
+                    if is_write(request.method())
+                        && (cross_site(request.headers())
+                            || origin_mismatch(request.headers(), sign_in.base_url()))
+                    {
+                        return Err(ApiError::Forbidden(
+                            "Cross-site writes with Basic credentials are refused".to_string(),
+                        ));
+                    }
+                    return Ok(next.run(request).await);
+                }
+                signin::BasicCheck::Busy => {
+                    state.limiter.forgive(ip);
+                    warn!(ip = %ip, "Too many password checks at once");
+                    return Err(ApiError::TooManyRequests {
+                        retry_after_seconds: 1,
+                    });
+                }
+                signin::BasicCheck::NoMatch => {
+                    counted = true;
+                    wrong_token = true;
+                }
+            }
         }
         Some(Some(value)) => match (extract_token(&value), &expected_token) {
             ("", _) => {}
@@ -141,7 +164,11 @@ pub async fn require_auth(
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|ConnectInfo(addr)| *addr);
-    if let Some(identity) = tailscale_identity(&state, request.headers(), peer).await {
+    let listened_on = request
+        .extensions()
+        .get::<crate::listen::ListenedOn>()
+        .map(|l| l.0);
+    if let Some(identity) = tailscale_identity(&state, request.headers(), peer, listened_on).await {
         // Like Basic, the identity is ambient: a browser on the tailnet sends it for
         // any site that asks, so a write must not come from another origin
         if is_write(request.method())
@@ -160,8 +187,12 @@ pub async fn require_auth(
     // No token at all is not a failed authentication: browsers ask for paths nobody
     // links to (robots.txt, touch icons) and must not lock their operator out
     if wrong_token {
-        let failures = state.limiter.record_failure(ip);
-        warn!(ip = %ip, failures, "Authentication failed");
+        if counted {
+            warn!(ip = %ip, "Authentication failed");
+        } else {
+            let failures = state.limiter.record_failure(ip);
+            warn!(ip = %ip, failures, "Authentication failed");
+        }
     }
     Err(ApiError::Unauthorized("Unauthorized".to_string()))
 }
@@ -170,11 +201,17 @@ pub async fn require_auth(
 /// the user is on the allow-list. Counted on the metrics; refusals are logged.
 ///
 /// `peer` is the TCP peer from `ConnectInfo`. Without it there is no identity; it is
-/// never assumed to be loopback.
+/// never assumed to be loopback. `listened_on` is the local address the request came in
+/// on, when known.
+///
+/// `Tailscale-User-Login` from a loopback peer is believed only while tailscaled's serve
+/// config proxies to this listener's port: a request on a port `tailscale serve` doesn't
+/// front can't have come through it.
 pub async fn tailscale_identity(
     state: &AppState,
     headers: &HeaderMap,
     peer: Option<SocketAddr>,
+    listened_on: Option<SocketAddr>,
 ) -> Option<Identity> {
     let ts = state.config.read().await.tailscale.clone();
     if !ts.identity_sign_in {
@@ -188,6 +225,13 @@ pub async fn tailscale_identity(
         if header(TAILSCALE_USER_LOGIN).is_some() {
             warn_proxied_once();
         }
+        return None;
+    }
+    if peer.is_some_and(|p| p.ip().to_canonical().is_loopback())
+        && header(TAILSCALE_USER_LOGIN).is_some()
+        && !serve_fronts_this_listener(state, listened_on).await
+    {
+        warn_not_served_once();
         return None;
     }
     let lookup = state
@@ -219,6 +263,37 @@ pub async fn tailscale_identity(
             None
         }
     }
+}
+
+/// Whether `tailscale serve` is set up to proxy to the port this request arrived on.
+/// Without the listener's address, the bound ports (then the configured one) stand in.
+async fn serve_fronts_this_listener(state: &AppState, listened_on: Option<SocketAddr>) -> bool {
+    let mut ports: Vec<u16> = match listened_on {
+        Some(addr) => vec![addr.port()],
+        None => state.listening.get().iter().map(SocketAddr::port).collect(),
+    };
+    if ports.is_empty() {
+        let config = state.config.read().await;
+        if let Ok(resolved) = config.resolve_api() {
+            ports.push(resolved.value.port());
+        }
+    }
+    let status = state.tailscale.status().await;
+    ports
+        .iter()
+        .any(|port| !status.serve_for_port(*port).is_empty())
+}
+
+fn warn_not_served_once() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        warn!(
+            "Ignoring Tailscale-User-Login on a loopback connection: tailscaled's serve \
+             config does not proxy to this port, so the header could come from anything on \
+             this machine. Run `tailscale serve` for this port to use identity sign-in \
+             through serve."
+        );
+    });
 }
 
 /// Whether a request carries reverse-proxy forwarding headers that `tailscale serve`

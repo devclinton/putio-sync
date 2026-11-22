@@ -201,6 +201,26 @@ async fn serve_headers_from_loopback_sign_in() {
     assert_eq!(body["tailscale_sign_in"], true);
 }
 
+/// A local proxy that is not `tailscale serve` could pass `Tailscale-User-Login` on. The
+/// header counts only while tailscaled's serve config proxies to the port in use.
+#[tokio::test]
+async fn serve_headers_need_serve_to_front_this_port() {
+    use putio_sync_core::listen::BindList;
+    // The fake's serve config proxies to 15432, not to 18002
+    let (_dir, app) = running_app(|c| {
+        sign_in_for(&["alice@example.com"])(c);
+        c.api.bind = Some(BindList::from_entries(vec!["127.0.0.1:18002".into()]));
+    })
+    .await;
+    let response = from_peer(&app, "/status", loopback(), SERVE_ALICE).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let response = from_peer(&app, "/auth/status", loopback(), SERVE_ALICE).await;
+    assert!(body_json(response).await["tailscale"].is_null());
+    // whois from a tailnet peer is unaffected
+    let response = from_peer(&app, "/status", peer(ALICE_IP), &[]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
 #[tokio::test]
 async fn refusals() {
     let (_dir, app) = running_app(sign_in_for(&["alice@example.com"])).await;

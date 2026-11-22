@@ -67,6 +67,37 @@ impl AuthLimiter {
         }
     }
 
+    /// Count an attempt for `ip` before it is checked, so a burst of slow checks can't all
+    /// start before the first failure is recorded. `Err(seconds left)` when the IP is
+    /// already out of failures. Call [`AuthLimiter::forgive`] when the attempt succeeds.
+    pub fn reserve(&self, ip: IpAddr) -> Result<u32, u64> {
+        let ip = bucket(ip);
+        let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        let window = self.window;
+        map.retain(|_, (start, _)| now.duration_since(*start) < window);
+        let entry = map.entry(ip).or_insert((now, 0));
+        if entry.1 >= self.limit {
+            let left = window.saturating_sub(now.duration_since(entry.0));
+            let secs = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+            return Err(secs.max(1));
+        }
+        entry.1 += 1;
+        Ok(entry.1)
+    }
+
+    /// Take back one counted attempt for `ip` (it succeeded, or never reached a check)
+    pub fn forgive(&self, ip: IpAddr) {
+        let ip = bucket(ip);
+        let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = map.get_mut(&ip) {
+            entry.1 = entry.1.saturating_sub(1);
+            if entry.1 == 0 {
+                map.remove(&ip);
+            }
+        }
+    }
+
     /// Count a failure for `ip` and return its failures in the current window
     pub fn record_failure(&self, ip: IpAddr) -> u32 {
         let ip = bucket(ip);
@@ -144,6 +175,24 @@ mod tests {
         assert!(limiter.check(ip(1)).is_err());
         assert!(limiter.check(ip(2)).is_ok());
         assert_eq!(limiter.record_failure(ip(2)), 1);
+    }
+
+    #[test]
+    fn reserve_counts_before_the_check_and_forgive_takes_it_back() {
+        let limiter = AuthLimiter::new(2, AUTH_FAILURE_WINDOW);
+        assert_eq!(limiter.reserve(ip(1)), Ok(1));
+        assert_eq!(limiter.reserve(ip(1)), Ok(2));
+        assert!(limiter.reserve(ip(1)).is_err(), "third attempt in flight");
+        limiter.forgive(ip(1));
+        assert_eq!(limiter.reserve(ip(1)), Ok(2));
+        limiter.forgive(ip(1));
+        limiter.forgive(ip(1));
+        limiter.forgive(ip(1));
+        assert_eq!(
+            limiter.record_failure(ip(1)),
+            1,
+            "forgive never goes below 0"
+        );
     }
 
     #[test]

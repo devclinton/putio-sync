@@ -92,6 +92,9 @@ pub struct AppState {
     pub started_at: Instant,
     /// Failed-authentication limiter shared by the middleware and `/auth/login`
     pub limiter: Arc<middleware::ratelimit::AuthLimiter>,
+    /// Failed-authentication limiter of the Transmission RPC alone, so a mis-set Radarr or
+    /// Sonarr password can't lock the UI out of the same host
+    pub rpc_limiter: Arc<middleware::ratelimit::AuthLimiter>,
     /// Password and OAuth sign-in: the session key, Basic cache and OAuth sign-ins in
     /// progress (feature 019)
     pub sign_in: Arc<signin::SignIn>,
@@ -232,6 +235,10 @@ impl AppState {
             started_at: Instant::now(),
             stall_tracker: Arc::new(StallTracker::default()),
             limiter: Arc::new(middleware::ratelimit::AuthLimiter::new(
+                middleware::ratelimit::AUTH_FAILURE_LIMIT,
+                middleware::ratelimit::AUTH_FAILURE_WINDOW,
+            )),
+            rpc_limiter: Arc::new(middleware::ratelimit::AuthLimiter::new(
                 middleware::ratelimit::AUTH_FAILURE_LIMIT,
                 middleware::ratelimit::AUTH_FAILURE_WINDOW,
             )),
@@ -513,9 +520,18 @@ pub fn router(state: AppState) -> Router {
         ))
         .with_state(state.clone());
 
-    public_routes(state)
+    public_routes(state.clone())
         .merge(protected)
-        .layer(axum::middleware::map_response(security_headers))
+        // The Host check sits outside the routes and inside the header layer, so its 421
+        // carries the security headers too
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::host::require_allowed_host,
+        ))
+        .layer(axum::middleware::map_response_with_state(
+            state.clone(),
+            security_headers,
+        ))
         .layer(
             TraceLayer::new_for_http().make_span_with(|req: &axum::http::Request<_>| {
                 // The callback token is a credential: it never reaches a log line
@@ -532,20 +548,51 @@ pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'
      style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; \
      base-uri 'none'; form-action 'self'; object-src 'none'; frame-ancestors 'none'";
 
-/// Add the browser hardening headers to every response, unless a handler set its own
-async fn security_headers(mut response: axum::response::Response) -> axum::response::Response {
+/// `Permissions-Policy` of every response: nothing here needs a sensor
+pub const PERMISSIONS_POLICY: &str = "camera=(), microphone=(), geolocation=()";
+
+/// `Strict-Transport-Security` sent when `public_url` is https
+pub const HSTS: &str = "max-age=31536000";
+
+/// Add the hardening headers to `headers`, unless a handler set its own. API responses
+/// get `Cache-Control: no-store`; the UI assets set their own caching.
+pub(crate) fn add_security_headers(headers: &mut axum::http::HeaderMap, hsts: bool) {
     use axum::http::{header::HeaderName, HeaderValue};
-    let headers = response.headers_mut();
     for (name, value) in [
         ("x-content-type-options", "nosniff"),
         ("referrer-policy", "no-referrer"),
         ("x-frame-options", "DENY"),
         ("content-security-policy", CONTENT_SECURITY_POLICY),
+        ("cross-origin-opener-policy", "same-origin"),
+        ("permissions-policy", PERMISSIONS_POLICY),
+        ("cache-control", "no-store"),
     ] {
         headers
             .entry(HeaderName::from_static(name))
             .or_insert(HeaderValue::from_static(value));
     }
+    if hsts {
+        headers
+            .entry(HeaderName::from_static("strict-transport-security"))
+            .or_insert(HeaderValue::from_static(HSTS));
+    }
+}
+
+/// Add the browser hardening headers to every response. HSTS only when `public_url` is
+/// https: on plain HTTP it would do nothing, and a browser that saw it from a name like
+/// `nas.local` would refuse HTTP there afterwards.
+async fn security_headers(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    mut response: axum::response::Response,
+) -> axum::response::Response {
+    let hsts = state
+        .config
+        .read()
+        .await
+        .sign_in
+        .base_url()
+        .is_some_and(|u| u.to_ascii_lowercase().starts_with("https://"));
+    add_security_headers(response.headers_mut(), hsts);
     response
 }
 
