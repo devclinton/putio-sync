@@ -77,31 +77,31 @@ walk-through is recorded as a checklist in its PR body.
 
 **Independent Test**: on a running install, follow one guide; the piece works at the end.
 
-- [ ] T017 [P] [US2] Write `site/book/src/guides/radarr-sonarr.md`:
+- [x] T017 [P] [US2] Write `site/book/src/guides/radarr-sonarr.md`:
   - Settings › Radarr and Sonarr, with Add Radarr/Add Sonarr and Test and Save;
   - categories and folders, and path mapping when the apps run in other containers;
   - Prowlarr: indexers are added in Prowlarr and synced to the apps, and putio-sync needs no Prowlarr setup;
   - check with a manual search and import.
-- [ ] T018 [P] [US2] Write `site/book/src/guides/folder-rules.md`: the video, audio and ebook presets, blocked file types, skip folders and per-folder rules, with one worked example (TV only, no samples)
-- [ ] T019 [P] [US2] Write `site/book/src/guides/watch-folders.md`: what a watch folder does (uploads .torrent and .magnet files to put.io), setting one up in the UI and in config, and the cleanup of uploaded files
-- [ ] T020 [P] [US2] Write `site/book/src/guides/media-server.md`: turning on the DLNA media server, finding it from a TV, and the multicast/switch caveat for when it isn't found
-- [ ] T021 [P] [US2] Write `site/book/src/guides/metrics-grafana.md`:
+- [x] T018 [P] [US2] Write `site/book/src/guides/folder-rules.md`: the video, audio and ebook presets, blocked file types, skip folders and per-folder rules, with one worked example (TV only, no samples)
+- [x] T019 [P] [US2] Write `site/book/src/guides/watch-folders.md`: what a watch folder does (uploads .torrent and .magnet files to put.io), setting one up in the UI and in config, and the cleanup of uploaded files
+- [x] T020 [P] [US2] Write `site/book/src/guides/media-server.md`: turning on the DLNA media server, finding it from a TV, and the multicast/switch caveat for when it isn't found
+- [x] T021 [P] [US2] Write `site/book/src/guides/metrics-grafana.md`:
   - turn on metrics (`:9742/metrics`);
   - a Prometheus scrape config;
   - import the dashboard from `packaging/grafana`;
   - a few useful queries, linked to `metrics.md`.
-- [ ] T022 [P] [US2] Write `site/book/src/guides/troubleshooting.md`:
+- [x] T022 [P] [US2] Write `site/book/src/guides/troubleshooting.md`:
   - run the doctor from the UI and from the CLI (`putio-sync doctor`);
   - read the Logs page and change verbosity;
   - common causes: token, disk space, paths, permissions, and put.io limits;
   - how to report a bug with logs, with secrets removed.
-- [ ] T023 [US2] Add the task guides to `SUMMARY.md` and the index; build, lychee and a11y
+- [x] T023 [US2] Add the task guides to `SUMMARY.md` and the index; build, lychee and a11y
 - [ ] T024 [US2] Walk through:
   - Radarr/Sonarr, the media server and metrics on Mnemosyne, using a test category and removing it afterwards;
   - folder rules, watch folders and troubleshooting on the Mac.
 
   Correct steps that differ.
-- [ ] T025 [US2] Refresh translations, add a CHANGELOG line, and open draft PR B with the walk-through checklist
+- [x] T025 [US2] Refresh translations, add a CHANGELOG line, and open draft PR B with the walk-through checklist
 
 ## Phase 5: User Story 3, switch from a local client (Priority: P3)
 
@@ -109,26 +109,26 @@ walk-through is recorded as a checklist in its PR body.
 
 **Independent Test**: from a Sonarr plus old-client setup, follow the guide; new grabs go to putio-sync and land in the same library folders.
 
-- [ ] T026 [US3] Write a shared "What changes when put.io does the downloading" section:
+- [x] T026 [US3] Write a shared "What changes when put.io does the downloading" section:
   - no local seeding or ratio; put.io handles that;
   - storage on put.io;
   - finished files are brought home by putio-sync.
 
   It lives at the top of `site/book/src/guides/from-qbittorrent.md`, and the other switching guides link to it.
-- [ ] T027 [P] [US3] Finish `site/book/src/guides/from-qbittorrent.md`:
+- [x] T027 [P] [US3] Finish `site/book/src/guides/from-qbittorrent.md`:
   - map qBittorrent categories to putio-sync categories and folders;
   - move watch folders;
   - in Radarr/Sonarr, add putio-sync, then disable qBittorrent (don't delete it until queues drain);
   - what happens to in-progress torrents.
-- [ ] T028 [P] [US3] Write `site/book/src/guides/from-transmission.md`: the same flow, noting that putio-sync speaks the Transmission protocol (so the *arr client type stays Transmission and only host, port and credentials change), plus the default port clash if both run on one box
-- [ ] T029 [P] [US3] Write `site/book/src/guides/from-deluge.md`: the same flow, with Deluge labels mapped to categories and the Label plugin's role
-- [ ] T030 [P] [US3] Write `site/book/src/guides/from-usenet.md`:
+- [x] T028 [P] [US3] Write `site/book/src/guides/from-transmission.md`: the same flow, noting that putio-sync speaks the Transmission protocol (so the *arr client type stays Transmission and only host, port and credentials change), plus the default port clash if both run on one box
+- [x] T029 [P] [US3] Write `site/book/src/guides/from-deluge.md`: the same flow, with Deluge labels mapped to categories and the Label plugin's role
+- [x] T030 [P] [US3] Write `site/book/src/guides/from-usenet.md`:
   - put.io doesn't take NZBs (research R2, with the put.io help link);
   - keep SABnzbd/NZBGet for usenet and add putio-sync for torrents;
   - give the clients separate categories, and set the protocol priority in Radarr/Sonarr's delay profiles.
-- [ ] T031 [US3] Add the switching guides to `SUMMARY.md` and the index; build, lychee and a11y
+- [x] T031 [US3] Add the switching guides to `SUMMARY.md` and the index; build, lychee and a11y
 - [ ] T032 [US3] Walk through the qBittorrent guide against a throwaway qBittorrent container and Sonarr on this Mac (Docker), and check the other three for consistency with it
-- [ ] T033 [US3] Refresh translations, add a CHANGELOG line, and open draft PR C with the walk-through checklist
+- [x] T033 [US3] Refresh translations, add a CHANGELOG line, and open draft PR C with the walk-through checklist
 
 ## Phase 6: User Story 4, guides from inside the web UI (Priority: P4)
 
@@ -136,38 +136,38 @@ walk-through is recorded as a checklist in its PR body.
 
 **Independent Test**: quickstart.md, "UI links (PR D)".
 
-- [ ] T034 [US4] Write the failing test `putio-sync-api/tests/ui/guides.test.mjs` (research R5). It checks that:
+- [x] T034 [US4] Write the failing test `putio-sync-api/tests/ui/guides.test.mjs` (research R5). It checks that:
   - every `slug` in `ui/guides.js` matches `site/book/src/guides/<name>.md` and appears in `site/book/src/SUMMARY.md`;
   - every guide in SUMMARY is in the list;
   - every `docs("guides/…")` call in `putio-sync-api/ui/**/*.js` names a listed slug;
   - `guideFor(kind)` follows the table in contracts/ui-links.md.
 
   Register it where `tests/ui_js.rs` lists the node tests.
-- [ ] T035 [US4] Create `putio-sync-api/ui/guides.js`. It exports:
+- [x] T035 [US4] Create `putio-sync-api/ui/guides.js`. It exports:
   - `GUIDES`, a list of `{ slug, title, kind, words }`, where `kind` is "`setup`, `task` or `switch`" plus `index`, and `title` matches the chapter's H1 (data-model.md);
   - `guideFor(kind)`, implementing the contracts/ui-links.md table.
 
   Add `guides.js` to `ASSETS` in `putio-sync-api/src/ui.rs`.
-- [ ] T036 [P] [US4] Add `Channel::Truenas` (kind `truenas`, label "TrueNAS", mode `Instructions`, with update steps "Update the app from TrueNAS Apps") to `putio-sync-update/src/channel.rs`, including `from_kind`, `kind`, `label`, `mode` and the instructions. Add unit tests for `PUTIO_SYNC_INSTALL=truenas`.
-- [ ] T037 [P] [US4] Set `PUTIO_SYNC_INSTALL` to `truenas` in `packaging/truenas/putio-sync/templates/docker-compose.yaml` (`c1.environment.add_env`), and bump the app version in `packaging/truenas/putio-sync/app.yaml` if the template's version rules need it
-- [ ] T038 [US4] In `putio-sync-api/ui/pages/setup.js`, add a "Setup guide" link on the wizard's first screen. It reads `GET /update` and uses `guideFor(channel.kind)`, or `guides/index` on failure.
-- [ ] T039 [P] [US4] Add "Guide" links next to the existing docs links in the settings sections for Radarr and Sonarr (`ui/settings/arr.js`), folder rules, watch folders, the media server and metrics. Find each section's module with `grep -rn` on its heading.
-- [ ] T040 [P] [US4] Add a "Troubleshooting guide" link to `putio-sync-api/ui/pages/doctor.js` and `putio-sync-api/ui/pages/logs.js`
-- [ ] T041 [US4] Add a "Guides" group, after Settings, to `putio-sync-api/ui/palette.js`:
+- [x] T036 [P] [US4] Add `Channel::Truenas` (kind `truenas`, label "TrueNAS", mode `Instructions`, with update steps "Update the app from TrueNAS Apps") to `putio-sync-update/src/channel.rs`, including `from_kind`, `kind`, `label`, `mode` and the instructions. Add unit tests for `PUTIO_SYNC_INSTALL=truenas`.
+- [x] T037 [P] [US4] Set `PUTIO_SYNC_INSTALL` to `truenas` in `packaging/truenas/putio-sync/templates/docker-compose.yaml` (`c1.environment.add_env`), and bump the app version in `packaging/truenas/putio-sync/app.yaml` if the template's version rules need it
+- [x] T038 [US4] In `putio-sync-api/ui/pages/setup.js`, add a "Setup guide" link on the wizard's first screen. It reads `GET /update` and uses `guideFor(channel.kind)`, or `guides/index` on failure.
+- [x] T039 [P] [US4] Add "Guide" links next to the existing docs links in the settings sections for Radarr and Sonarr (`ui/settings/arr.js`), folder rules, watch folders, the media server and metrics. Find each section's module with `grep -rn` on its heading.
+- [x] T040 [P] [US4] Add a "Troubleshooting guide" link to `putio-sync-api/ui/pages/doctor.js` and `putio-sync-api/ui/pages/logs.js`
+- [x] T041 [US4] Add a "Guides" group, after Settings, to `putio-sync-api/ui/palette.js`:
   - add it to `GROUPS`;
   - in `results()`, rank `GUIDES` on `words(title, words)` with the kind label as detail;
   - shown only for a non-empty query;
   - `run` opens the guide with `window.open(url, "_blank", "noopener")`.
 
   Extend `tests/ui/fuzzy.test.mjs` or a palette test only if a helper is pure.
-- [ ] T042 [US4] Run `node scripts/i18n-extract.mjs`, then `scripts/i18n-translate.mjs` (with ATRANSLATE_URL and the atranslate-cli PATH from earlier runs), for the new UI strings in `putio-sync-api/ui/i18n/*.json`
-- [ ] T043 [US4] Check in the browser against a local build (quickstart.md, steps 1–3), including with `PUTIO_SYNC_INSTALL=unraid`, at phone width and in the light theme
-- [ ] T044 [US4] Run `make ci`; update the README web-UI section (guide links and the palette's Guides group), add a CHANGELOG line, mark "### 016 Onboarding guides (done)" in `ROADMAP.md`, and open draft PR D
+- [x] T042 [US4] Run `node scripts/i18n-extract.mjs`, then `scripts/i18n-translate.mjs` (with ATRANSLATE_URL and the atranslate-cli PATH from earlier runs), for the new UI strings in `putio-sync-api/ui/i18n/*.json`
+- [x] T043 [US4] Check in the browser against a local build (quickstart.md, steps 1–3), including with `PUTIO_SYNC_INSTALL=unraid`, at phone width and in the light theme
+- [x] T044 [US4] Run `make ci`; update the README web-UI section (guide links and the palette's Guides group), add a CHANGELOG line, mark "### 016 Onboarding guides (done)" in `ROADMAP.md`, and open draft PR D
 
 ## Phase 7: Polish
 
 - [ ] T045 Once the maintainer has walked through a guide that was untested, remove its R9 note in a follow-up commit (Raspberry Pi stays until tested)
-- [ ] T046 Point INSTALLATION.md's "Next Steps" at `guides/index` (the site version), so the install reference leads to the walkthroughs
+- [x] T046 Point INSTALLATION.md's "Next Steps" at `guides/index` (the site version), so the install reference leads to the walkthroughs
 
 ## Dependencies
 
