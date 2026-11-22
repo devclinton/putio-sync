@@ -46,6 +46,30 @@ pub use setup::execute_setup;
 pub use stat::execute_stat;
 pub use status::{execute_debug, execute_health, execute_status};
 
+/// The error for a missing OAuth token, with the next step (the same for every command)
+pub(crate) fn missing_token() -> anyhow::Error {
+    anyhow::anyhow!(
+        "No Put.io token is configured. Run 'putio-sync login' to sign in, or run 'putio-sync setup' \
+         (it reads PUTIO_SYNC_PUTIO_TOKEN), or set [auth] token in the config file"
+    )
+}
+
+/// The error for a missing app-password username
+pub(crate) fn missing_username() -> anyhow::Error {
+    anyhow::anyhow!(
+        "No Put.io username is configured for app-password sign-in. Set [auth] username in the \
+         config file, or run 'putio-sync login' to use an OAuth token instead"
+    )
+}
+
+/// The error for a missing app password
+pub(crate) fn missing_password() -> anyhow::Error {
+    anyhow::anyhow!(
+        "No Put.io app password is configured. Set [auth] password in the config file, or run \
+         'putio-sync login' to use an OAuth token instead"
+    )
+}
+
 /// Check a `--filter` value like a saved folder-rule pattern (feature 020): text that
 /// can't mean what was typed stops the command, and warnings go to stderr
 pub(crate) fn check_filter(text: &str) -> anyhow::Result<()> {
