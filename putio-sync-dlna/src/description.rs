@@ -15,7 +15,6 @@ pub fn device(name: &str, uuid: &str) -> String {
 <manufacturer>putio-sync</manufacturer>\
 <modelName>putio-sync</modelName>\
 <modelDescription>putio-sync media server</modelDescription>\
-<modelNumber>{version}</modelNumber>\
 <UDN>uuid:{uuid}</UDN>\
 <serviceList>\
 <service><serviceType>{CDS}</serviceType><serviceId>urn:upnp-org:serviceId:ContentDirectory</serviceId>\
@@ -26,7 +25,6 @@ pub fn device(name: &str, uuid: &str) -> String {
 </device></root>",
         name = escape(name),
         uuid = escape(uuid),
-        version = env!("CARGO_PKG_VERSION"),
     )
 }
 
