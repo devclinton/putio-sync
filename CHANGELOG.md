@@ -17,6 +17,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - Setup guides in the docs, one per platform: Unraid, TrueNAS SCALE, Raspberry Pi, Docker
   and Compose, macOS, Windows and Linux. Each ends with the same walk-through of the setup
   wizard and the first sync.
+- Task guides in the docs for a running setup: connecting Radarr and Sonarr, choosing what
+  downloads, watch folders, playing downloads on a TV, Prometheus and Grafana, and
+  troubleshooting.
 
 ## [0.5.0] - 2026-11-17
 

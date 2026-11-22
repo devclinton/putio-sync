@@ -13,6 +13,12 @@
   - [Windows](guides/windows.md)
   - [Linux](guides/linux.md)
   - [Your first sync](guides/first-sync.md)
+  - [Connect Radarr and Sonarr](guides/radarr-sonarr.md)
+  - [Choose what downloads](guides/folder-rules.md)
+  - [Send torrents from a watch folder](guides/watch-folders.md)
+  - [Play downloads on your TV](guides/media-server.md)
+  - [Watch it with Prometheus and Grafana](guides/metrics-grafana.md)
+  - [When something isn't working](guides/troubleshooting.md)
 
 # Getting started
 

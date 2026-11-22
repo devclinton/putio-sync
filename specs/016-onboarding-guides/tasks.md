@@ -77,31 +77,31 @@ walk-through is recorded as a checklist in its PR body.
 
 **Independent Test**: on a running install, follow one guide; the piece works at the end.
 
-- [ ] T017 [P] [US2] Write `site/book/src/guides/radarr-sonarr.md`:
+- [x] T017 [P] [US2] Write `site/book/src/guides/radarr-sonarr.md`:
   - Settings › Radarr and Sonarr, with Add Radarr/Add Sonarr and Test and Save;
   - categories and folders, and path mapping when the apps run in other containers;
   - Prowlarr: indexers are added in Prowlarr and synced to the apps, and putio-sync needs no Prowlarr setup;
   - check with a manual search and import.
-- [ ] T018 [P] [US2] Write `site/book/src/guides/folder-rules.md`: the video, audio and ebook presets, blocked file types, skip folders and per-folder rules, with one worked example (TV only, no samples)
-- [ ] T019 [P] [US2] Write `site/book/src/guides/watch-folders.md`: what a watch folder does (uploads .torrent and .magnet files to put.io), setting one up in the UI and in config, and the cleanup of uploaded files
-- [ ] T020 [P] [US2] Write `site/book/src/guides/media-server.md`: turning on the DLNA media server, finding it from a TV, and the multicast/switch caveat for when it isn't found
-- [ ] T021 [P] [US2] Write `site/book/src/guides/metrics-grafana.md`:
+- [x] T018 [P] [US2] Write `site/book/src/guides/folder-rules.md`: the video, audio and ebook presets, blocked file types, skip folders and per-folder rules, with one worked example (TV only, no samples)
+- [x] T019 [P] [US2] Write `site/book/src/guides/watch-folders.md`: what a watch folder does (uploads .torrent and .magnet files to put.io), setting one up in the UI and in config, and the cleanup of uploaded files
+- [x] T020 [P] [US2] Write `site/book/src/guides/media-server.md`: turning on the DLNA media server, finding it from a TV, and the multicast/switch caveat for when it isn't found
+- [x] T021 [P] [US2] Write `site/book/src/guides/metrics-grafana.md`:
   - turn on metrics (`:9742/metrics`);
   - a Prometheus scrape config;
   - import the dashboard from `packaging/grafana`;
   - a few useful queries, linked to `metrics.md`.
-- [ ] T022 [P] [US2] Write `site/book/src/guides/troubleshooting.md`:
+- [x] T022 [P] [US2] Write `site/book/src/guides/troubleshooting.md`:
   - run the doctor from the UI and from the CLI (`putio-sync doctor`);
   - read the Logs page and change verbosity;
   - common causes: token, disk space, paths, permissions, and put.io limits;
   - how to report a bug with logs, with secrets removed.
-- [ ] T023 [US2] Add the task guides to `SUMMARY.md` and the index; build, lychee and a11y
+- [x] T023 [US2] Add the task guides to `SUMMARY.md` and the index; build, lychee and a11y
 - [ ] T024 [US2] Walk through:
   - Radarr/Sonarr, the media server and metrics on Mnemosyne, using a test category and removing it afterwards;
   - folder rules, watch folders and troubleshooting on the Mac.
 
   Correct steps that differ.
-- [ ] T025 [US2] Refresh translations, add a CHANGELOG line, and open draft PR B with the walk-through checklist
+- [x] T025 [US2] Refresh translations, add a CHANGELOG line, and open draft PR B with the walk-through checklist
 
 ## Phase 5: User Story 3, switch from a local client (Priority: P3)
 

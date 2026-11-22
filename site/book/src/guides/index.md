@@ -30,3 +30,15 @@ your first files downloaded from Put.io.
 - [Linux](linux.md): snap, .deb or the standalone binary.
 
 All of them finish with [your first sync](first-sync.md), the setup wizard in the web UI.
+
+## I already use it
+
+Add one piece to a running setup:
+
+- [Connect Radarr and Sonarr](radarr-sonarr.md): putio-sync as their download client.
+- [Choose what downloads](folder-rules.md): presets and folder rules.
+- [Send torrents from a watch folder](watch-folders.md): drop .torrent and .magnet files in a
+  folder.
+- [Play downloads on your TV](media-server.md): the built-in DLNA media server.
+- [Watch it with Prometheus and Grafana](metrics-grafana.md): metrics and a dashboard.
+- [When something isn't working](troubleshooting.md): the doctor, the logs and common causes.
