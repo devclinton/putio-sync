@@ -172,6 +172,11 @@ async fn checkpoint(path: &Path) -> io::Result<()> {
 fn copy_into_place(from: &Path, to: &Path) -> io::Result<()> {
     let tmp = sidecar(to, ".migrating");
     fs::copy(from, &tmp)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))?;
+    }
     // Windows can only flush a handle opened for writing
     fs::OpenOptions::new().write(true).open(&tmp)?.sync_all()?;
     fs::rename(&tmp, to)

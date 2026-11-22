@@ -39,11 +39,13 @@ pub enum Outcome {
 pub async fn download(
     client: &reqwest::Client,
     release: &ReleaseInfo,
+    running: Version,
     name: &str,
     dir: &Path,
     pubkey: &str,
     progress: &Progress,
 ) -> Result<PathBuf, PrepareError> {
+    fetch::require_newer(release, running)?;
     let sums = fetch::signed_sums(client, release, pubkey).await?;
     let asset = release
         .asset(name)
@@ -208,6 +210,7 @@ mod tests {
         let path = download(
             &crate::github::client(),
             &rel,
+            v("0.3.0"),
             name,
             &updates,
             TEST_PUBKEY,
@@ -228,6 +231,7 @@ mod tests {
         let err = download(
             &crate::github::client(),
             &rel,
+            v("0.3.0"),
             name,
             dir.path(),
             TEST_PUBKEY,

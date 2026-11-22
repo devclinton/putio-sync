@@ -7,7 +7,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use putio_sync_db::Database;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::info;
 
 /// Options of `archive db`
@@ -18,6 +18,17 @@ pub struct DbOptions {
     pub keep_days: Option<u32>,
     pub require_manifest: bool,
     pub now: DateTime<Utc>,
+}
+
+/// Make a database copy readable by the owner only (Unix; best effort)
+fn private(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// Save today's copy unless it exists, writing one line to `out`
@@ -37,6 +48,7 @@ pub async fn run(opts: &DbOptions, out: &mut dyn Write) -> ArchiveResult<()> {
         })?;
         let copy = folder.join(format!(".tmp-{}.sqlite", uuid::Uuid::new_v4()));
         let rows = db.snapshot_to(&copy).await;
+        private(&copy);
         let _ = db.close().await;
         let saved = rows
             .map_err(|e| ArchiveError::database("cannot copy the database", e))
@@ -46,7 +58,10 @@ pub async fn run(opts: &DbOptions, out: &mut dyn Write) -> ArchiveResult<()> {
                     std::io::copy(&mut std::fs::File::open(&copy)?, &mut gz)?;
                     gz.finish().map(|_| ())
                 })
-                .map(|()| rows)
+                .map(|()| {
+                    private(&target);
+                    rows
+                })
             });
         let _ = std::fs::remove_file(&copy);
         let rows = saved?;
@@ -151,6 +166,19 @@ mod tests {
                 rows: 5,
             }]
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_saved_copy_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let db = live_db(dir.path(), 1).await;
+        let o = opts(dir.path(), db.path());
+        run(&o, &mut Vec::new()).await.unwrap();
+        let file = o.dir.join("db/putio-sync-db-2026-11-02.sqlite.gz");
+        let mode = std::fs::metadata(file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[tokio::test]
