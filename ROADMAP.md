@@ -13,7 +13,7 @@ A short, skippable tour of each page on first visit, re-runnable from
 Settings. Help panels and tooltips explain each setting in plain words, with
 links to the guides from 016.
 
-### 016 Onboarding guides
+### 016 Onboarding guides (done)
 
 Setup guides for each platform (Unraid, TrueNAS SCALE, Raspberry Pi, Docker,
 macOS, Windows, Linux). Task guides for Radarr/Sonarr, folder rules, watch

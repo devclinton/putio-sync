@@ -12,6 +12,7 @@ import { rank } from "./fuzzy.js";
 import { tr } from "./i18n.js";
 import { entryText } from "./settings/catalog.js";
 import { settingsCatalog } from "./settings/groups.js";
+import { GUIDES, KIND_LABELS } from "./guides.js";
 
 const LIMIT = 8;
 const WAIT_MS = 250;
@@ -20,6 +21,7 @@ const GROUPS = [
   ["actions", "Actions"],
   ["pages", "Pages"],
   ["settings", "Settings"],
+  ["guides", "Guides"],
   ["queue", "Queue"],
   ["putio", "Put.io files"],
   ["local", "Local files"],
@@ -100,6 +102,11 @@ function results(q) {
   out.actions = rank(q, actions, (a) => words(a.label, a.detail), LIMIT);
   out.pages = rank(q, nav, (p) => words(p.label), LIMIT);
   out.settings = rank(q, settingsCatalog(), (e) => `${tr(e.label)} ${entryText(e)}`, LIMIT).map((e) => ({ label: e.label, detail: e.detail, run: () => navigate(e.href) }));
+  out.guides = rank(q, GUIDES, (g) => `${words(g.title)} ${g.words}`, LIMIT).map((g) => ({
+    label: g.title,
+    detail: KIND_LABELS[g.kind],
+    run: () => window.open(`https://devclinton.github.io/putio-sync/docs/${g.slug}.html`, "_blank", "noopener"),
+  }));
   if (queue) {
     out.queue = rank(q, queue, (i) => i.filename, LIMIT).map((i) => ({ label: i.filename, detail: i.status, run: () => navigate(`#/queue?file=${i.file_id}`) }));
   }

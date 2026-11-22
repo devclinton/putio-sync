@@ -136,38 +136,38 @@ walk-through is recorded as a checklist in its PR body.
 
 **Independent Test**: quickstart.md, "UI links (PR D)".
 
-- [ ] T034 [US4] Write the failing test `putio-sync-api/tests/ui/guides.test.mjs` (research R5). It checks that:
+- [x] T034 [US4] Write the failing test `putio-sync-api/tests/ui/guides.test.mjs` (research R5). It checks that:
   - every `slug` in `ui/guides.js` matches `site/book/src/guides/<name>.md` and appears in `site/book/src/SUMMARY.md`;
   - every guide in SUMMARY is in the list;
   - every `docs("guides/…")` call in `putio-sync-api/ui/**/*.js` names a listed slug;
   - `guideFor(kind)` follows the table in contracts/ui-links.md.
 
   Register it where `tests/ui_js.rs` lists the node tests.
-- [ ] T035 [US4] Create `putio-sync-api/ui/guides.js`. It exports:
+- [x] T035 [US4] Create `putio-sync-api/ui/guides.js`. It exports:
   - `GUIDES`, a list of `{ slug, title, kind, words }`, where `kind` is "`setup`, `task` or `switch`" plus `index`, and `title` matches the chapter's H1 (data-model.md);
   - `guideFor(kind)`, implementing the contracts/ui-links.md table.
 
   Add `guides.js` to `ASSETS` in `putio-sync-api/src/ui.rs`.
-- [ ] T036 [P] [US4] Add `Channel::Truenas` (kind `truenas`, label "TrueNAS", mode `Instructions`, with update steps "Update the app from TrueNAS Apps") to `putio-sync-update/src/channel.rs`, including `from_kind`, `kind`, `label`, `mode` and the instructions. Add unit tests for `PUTIO_SYNC_INSTALL=truenas`.
-- [ ] T037 [P] [US4] Set `PUTIO_SYNC_INSTALL` to `truenas` in `packaging/truenas/putio-sync/templates/docker-compose.yaml` (`c1.environment.add_env`), and bump the app version in `packaging/truenas/putio-sync/app.yaml` if the template's version rules need it
-- [ ] T038 [US4] In `putio-sync-api/ui/pages/setup.js`, add a "Setup guide" link on the wizard's first screen. It reads `GET /update` and uses `guideFor(channel.kind)`, or `guides/index` on failure.
-- [ ] T039 [P] [US4] Add "Guide" links next to the existing docs links in the settings sections for Radarr and Sonarr (`ui/settings/arr.js`), folder rules, watch folders, the media server and metrics. Find each section's module with `grep -rn` on its heading.
-- [ ] T040 [P] [US4] Add a "Troubleshooting guide" link to `putio-sync-api/ui/pages/doctor.js` and `putio-sync-api/ui/pages/logs.js`
-- [ ] T041 [US4] Add a "Guides" group, after Settings, to `putio-sync-api/ui/palette.js`:
+- [x] T036 [P] [US4] Add `Channel::Truenas` (kind `truenas`, label "TrueNAS", mode `Instructions`, with update steps "Update the app from TrueNAS Apps") to `putio-sync-update/src/channel.rs`, including `from_kind`, `kind`, `label`, `mode` and the instructions. Add unit tests for `PUTIO_SYNC_INSTALL=truenas`.
+- [x] T037 [P] [US4] Set `PUTIO_SYNC_INSTALL` to `truenas` in `packaging/truenas/putio-sync/templates/docker-compose.yaml` (`c1.environment.add_env`), and bump the app version in `packaging/truenas/putio-sync/app.yaml` if the template's version rules need it
+- [x] T038 [US4] In `putio-sync-api/ui/pages/setup.js`, add a "Setup guide" link on the wizard's first screen. It reads `GET /update` and uses `guideFor(channel.kind)`, or `guides/index` on failure.
+- [x] T039 [P] [US4] Add "Guide" links next to the existing docs links in the settings sections for Radarr and Sonarr (`ui/settings/arr.js`), folder rules, watch folders, the media server and metrics. Find each section's module with `grep -rn` on its heading.
+- [x] T040 [P] [US4] Add a "Troubleshooting guide" link to `putio-sync-api/ui/pages/doctor.js` and `putio-sync-api/ui/pages/logs.js`
+- [x] T041 [US4] Add a "Guides" group, after Settings, to `putio-sync-api/ui/palette.js`:
   - add it to `GROUPS`;
   - in `results()`, rank `GUIDES` on `words(title, words)` with the kind label as detail;
   - shown only for a non-empty query;
   - `run` opens the guide with `window.open(url, "_blank", "noopener")`.
 
   Extend `tests/ui/fuzzy.test.mjs` or a palette test only if a helper is pure.
-- [ ] T042 [US4] Run `node scripts/i18n-extract.mjs`, then `scripts/i18n-translate.mjs` (with ATRANSLATE_URL and the atranslate-cli PATH from earlier runs), for the new UI strings in `putio-sync-api/ui/i18n/*.json`
-- [ ] T043 [US4] Check in the browser against a local build (quickstart.md, steps 1–3), including with `PUTIO_SYNC_INSTALL=unraid`, at phone width and in the light theme
-- [ ] T044 [US4] Run `make ci`; update the README web-UI section (guide links and the palette's Guides group), add a CHANGELOG line, mark "### 016 Onboarding guides (done)" in `ROADMAP.md`, and open draft PR D
+- [x] T042 [US4] Run `node scripts/i18n-extract.mjs`, then `scripts/i18n-translate.mjs` (with ATRANSLATE_URL and the atranslate-cli PATH from earlier runs), for the new UI strings in `putio-sync-api/ui/i18n/*.json`
+- [x] T043 [US4] Check in the browser against a local build (quickstart.md, steps 1–3), including with `PUTIO_SYNC_INSTALL=unraid`, at phone width and in the light theme
+- [x] T044 [US4] Run `make ci`; update the README web-UI section (guide links and the palette's Guides group), add a CHANGELOG line, mark "### 016 Onboarding guides (done)" in `ROADMAP.md`, and open draft PR D
 
 ## Phase 7: Polish
 
 - [ ] T045 Once the maintainer has walked through a guide that was untested, remove its R9 note in a follow-up commit (Raspberry Pi stays until tested)
-- [ ] T046 Point INSTALLATION.md's "Next Steps" at `guides/index` (the site version), so the install reference leads to the walkthroughs
+- [x] T046 Point INSTALLATION.md's "Next Steps" at `guides/index` (the site version), so the install reference leads to the walkthroughs
 
 ## Dependencies
 
