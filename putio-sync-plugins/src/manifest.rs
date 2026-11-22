@@ -161,7 +161,18 @@ pub fn valid_folder(folder: &str) -> bool {
         None if std::path::Path::new(folder).is_absolute() => folder,
         None => return false,
     };
-    !folder.chars().any(char::is_control) && !rest.split(['/', '\\']).any(|part| part == "..")
+    !folder.chars().any(char::is_control)
+        && !rest.split(['/', '\\']).any(|part| part == "..")
+        && !is_root(folder)
+}
+
+/// Whether `folder` is a filesystem root (`/`, `C:\`), which no plugin may ask for
+fn is_root(folder: &str) -> bool {
+    let trimmed = folder.trim_end_matches(['/', '\\']);
+    trimmed.is_empty() && !folder.is_empty()
+        || (trimmed.len() == 2
+            && trimmed.ends_with(':')
+            && trimmed.as_bytes()[0].is_ascii_alphabetic())
 }
 
 /// `[permissions.http]`: the hosts a plugin may call
@@ -539,6 +550,39 @@ impl Manifest {
         hosts.sort();
         hosts.dedup();
         hosts
+    }
+
+    /// The hosts that come from `host_from_config` fields set in `values` (unsaved form
+    /// values), not the fixed ones
+    pub fn hosts_from_values(&self, values: &serde_json::Map<String, Value>) -> Vec<String> {
+        self.permissions
+            .http
+            .host_from_config
+            .iter()
+            .filter_map(|key| values.get(key)?.as_str().and_then(url_host))
+            .collect()
+    }
+
+    /// The `r:`/`w:` folders that come from `*_from_config` fields set in `values`
+    pub fn paths_from_values(&self, values: &serde_json::Map<String, Value>) -> Vec<String> {
+        let files = &self.permissions.files;
+        let mut paths = Vec::new();
+        for (mode, keys) in [
+            ("r", &files.read_from_config),
+            ("w", &files.write_from_config),
+        ] {
+            for key in keys {
+                if let Some(folder) = values
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| valid_folder(s))
+                {
+                    paths.push(format!("{}:{}", mode, folder));
+                }
+            }
+        }
+        paths
     }
 
     /// The folders the plugin would use with these settings, as `r:<folder>` and
@@ -1017,6 +1061,10 @@ default = 5
             "/a/../b",
             "{download_dir}x",
             "{download_dir}/../etc",
+            "/",
+            "//",
+            "C:\\",
+            "c:",
         ] {
             assert!(!valid_folder(bad), "{bad}");
         }

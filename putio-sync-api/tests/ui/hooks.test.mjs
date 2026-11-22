@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MASK, blankHook, eventChoices, fromSettings, moveRow, runLabel, stagePosition, targetLabel, toSettings } from "../../ui/hooks.js";
+import { MASK, blankHook, changedCommands, eventChoices, fromSettings, moveRow, runLabel, stagePosition, targetLabel, toSettings } from "../../ui/hooks.js";
 
 test("runs read as people say them", () => {
   assert.equal(runLabel(null), "Not run yet");
@@ -91,4 +91,13 @@ test("steps are reordered inside the list and numbered inside their stage", () =
   assert.equal(stagePosition(rows, 0), "1 of 2");
   assert.equal(stagePosition(rows, 2), "2 of 2");
   assert.equal(stagePosition(rows, 1), "");
+});
+
+test("only a new or changed command needs confirming", () => {
+  const saved = [{ name: "a", command: ["/bin/a"] }, { name: "u", url: "https://h/x" }];
+  assert.deepEqual(changedCommands(saved, saved), []);
+  assert.deepEqual(changedCommands(saved, [{ name: "a", command: ["/bin/a"], timeout_secs: 9 }, { name: "u", url: "https://h/y" }]), []);
+  assert.deepEqual(changedCommands(saved, [...saved, { name: "b", command: ["/bin/sh", "-c", "id"] }]), ["b"]);
+  assert.deepEqual(changedCommands(saved, [{ name: "a", command: ["/bin/a", "-x"] }]), ["a"]);
+  assert.deepEqual(changedCommands(undefined, [{ name: "a", command: ["/bin/a"] }]), ["a"]);
 });
