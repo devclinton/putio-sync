@@ -294,6 +294,74 @@ pub fn risks_in(config: &Config, host: &Host) -> Vec<Risk> {
     found
 }
 
+/// Danger risks for settings that make the daemon run a program the person has not run
+/// before: a hook command that is new or changed (by hook name), a new or changed
+/// `subtitles.transcription.ffmpeg_path`, and a new or changed `plugins_dir`. Anyone who can
+/// change these through the API can run commands as the app's user, so a save or import
+/// that does so needs a confirmation (`confirm_exec`).
+pub fn exec_risks(before: &Config, after: &Config) -> Vec<Risk> {
+    let mut found = Vec::new();
+    for hook in &after.hooks {
+        let Some(command) = &hook.command else {
+            continue;
+        };
+        let known = before
+            .hooks
+            .iter()
+            .find(|h| h.name == hook.name)
+            .and_then(|h| h.command.as_ref());
+        if known != Some(command) {
+            found.push(Risk {
+                id: "exec_hook_command",
+                level: Level::Danger,
+                keys: vec!["hooks"],
+                message: format!(
+                    "Hook {} runs the program {} on the machine as the app's user.",
+                    hook.name,
+                    command.first().map(String::as_str).unwrap_or_default()
+                ),
+            });
+        }
+    }
+    let (old, new) = (
+        &before.subtitles.transcription.ffmpeg_path,
+        &after.subtitles.transcription.ffmpeg_path,
+    );
+    if old != new && !new.trim().is_empty() {
+        found.push(Risk {
+            id: "exec_ffmpeg_path",
+            level: Level::Danger,
+            keys: vec!["subtitles.transcription.ffmpeg_path"],
+            message: format!(
+                "Transcription would run {} as ffmpeg, as the app's user.",
+                new
+            ),
+        });
+    }
+    if before.plugins_dir != after.plugins_dir {
+        if let Some(dir) = &after.plugins_dir {
+            found.push(Risk {
+                id: "exec_plugins_dir",
+                level: Level::Danger,
+                keys: vec!["plugins_dir"],
+                message: format!(
+                    "Plugins would be loaded from {}; a plugin there can read files and call hosts the app can.",
+                    dir.display()
+                ),
+            });
+        }
+    }
+    found
+}
+
+/// [`risks`] of `after`, plus the [`exec_risks`] of changing from `before`
+pub fn risks_between(before: &Config, after: &Config) -> Vec<Risk> {
+    let mut found = risks(after);
+    found.extend(exec_risks(before, after));
+    found.sort_by(|a, b| (a.level, a.id).cmp(&(b.level, b.id)));
+    found
+}
+
 /// `url` is plain http to a host that is not loopback, a private address, `.local` or a
 /// single label
 fn plain_http_off_lan(url: &str) -> bool {
@@ -443,6 +511,7 @@ fn masked(config: &Config) -> std::borrow::Cow<'_, Config> {
         && config.translation.chat.api_key.is_empty()
         && config.translation.callback.headers.is_empty()
         && config.notifications.smtp.password.is_empty()
+        && config.notifications.webhook_url.is_none()
     {
         return std::borrow::Cow::Borrowed(config);
     }
@@ -450,6 +519,12 @@ fn masked(config: &Config) -> std::borrow::Cow<'_, Config> {
     config.subtitles = config.subtitles.masked();
     config.translation = config.translation.masked();
     config.notifications.smtp = config.notifications.smtp.masked();
+    // The legacy webhook URL can hold a token in its path, like a hook URL
+    config.notifications.webhook_url = config
+        .notifications
+        .webhook_url
+        .as_deref()
+        .map(crate::redact::url);
     config.hooks = crate::hooks::mask(&config.hooks);
     config.plugins = crate::plugins::mask(&config.plugins);
     std::borrow::Cow::Owned(config)
@@ -531,6 +606,15 @@ pub fn import(current: &Config, text: &str) -> CoreResult<Import> {
         .smtp
         .clone()
         .unmasked(&current.notifications.smtp);
+    // The export shows the legacy webhook URL shortened; that means keep the stored one
+    if let (Some(new), Some(old)) = (
+        &config.notifications.webhook_url,
+        &current.notifications.webhook_url,
+    ) {
+        if *new == crate::redact::url(old) {
+            config.notifications.webhook_url = Some(old.clone());
+        }
+    }
     config.expand_paths()?;
     Ok(Import {
         config,
@@ -866,6 +950,56 @@ mod tests {
         assert_eq!(ids, expected);
         let plain = risks.iter().find(|r| r.id == "hook_plain_http").unwrap();
         assert!(plain.message.contains("far") && !plain.message.contains("token"));
+    }
+
+    #[test]
+    fn the_legacy_webhook_url_is_shortened_in_an_export_and_kept_on_import() {
+        let mut current = Config::default();
+        current.notifications.webhook_url =
+            Some("https://hooks.example/T0/secret-token".to_string());
+        let text = export_toml(&current).unwrap();
+        assert!(!text.contains("secret-token"), "{text}");
+        let imported = import(&current, &text).unwrap();
+        assert_eq!(
+            imported.config.notifications.webhook_url,
+            current.notifications.webhook_url
+        );
+    }
+
+    #[test]
+    fn running_a_new_program_is_a_danger() {
+        let hook = |name: &str, command: &[&str]| crate::hooks::HookConfig {
+            name: name.to_string(),
+            events: vec!["*".to_string()],
+            command: Some(command.iter().map(|s| s.to_string()).collect()),
+            ..Default::default()
+        };
+        let mut before = Config::default();
+        before.hooks.push(hook("a", &["/usr/bin/a"]));
+        assert!(exec_risks(&before, &before).is_empty());
+
+        let mut after = before.clone();
+        after.hooks.push(hook("b", &["/bin/sh", "-c", "id"]));
+        let found = exec_risks(&before, &after);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].level, Level::Danger);
+        assert!(found[0].message.contains("Hook b"));
+
+        // The same name with other arguments counts; a changed URL hook does not
+        let mut after = before.clone();
+        after.hooks[0].command = Some(vec!["/usr/bin/a".to_string(), "--x".to_string()]);
+        assert_eq!(exec_risks(&before, &after).len(), 1);
+
+        let mut after = before.clone();
+        after.subtitles.transcription.ffmpeg_path = "/tmp/evil".to_string();
+        after.plugins_dir = Some(PathBuf::from("/tmp/plugins"));
+        let ids: Vec<_> = exec_risks(&before, &after).iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec!["exec_ffmpeg_path", "exec_plugins_dir"]);
+        assert!(risks_between(&before, &after)
+            .iter()
+            .any(|r| r.id == "exec_plugins_dir"));
+        // Clearing them is safe
+        assert!(exec_risks(&after, &before).is_empty());
     }
 
     #[test]

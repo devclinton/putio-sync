@@ -503,6 +503,10 @@ pub struct StorageSettings {
 pub struct HooksSettings {
     #[serde(default)]
     pub hooks: Vec<putio_sync_core::hooks::HookConfig>,
+    /// A command hook runs a program as the app's user: adding one or changing its
+    /// program or arguments is refused unless the request says the person confirmed it
+    #[serde(default, skip_serializing)]
+    pub confirm_exec: bool,
 }
 
 /// Lua plugins (`plugins_dir` and `[[plugins]]`, feature 028). The view masks every
@@ -1476,7 +1480,27 @@ async fn update_hooks_settings(
 ) -> Result<Json<SuccessResponse>, ApiError> {
     let settings = body(settings)?;
     let before = state.config.read().await.hooks.clone();
-    let mut changed = update(&state, hooks_view, |config| apply_hooks(settings, config)).await?;
+    let confirmed = settings.confirm_exec;
+    let mut changed = update(&state, hooks_view, |config| {
+        if !confirmed {
+            let mut after = config.clone();
+            apply_hooks(
+                HooksSettings {
+                    hooks: settings.hooks.clone(),
+                    confirm_exec: false,
+                },
+                &mut after,
+            )?;
+            if let Some(risk) = putio_sync_core::assistant::exec_risks(config, &after).first() {
+                return Err(ApiError::BadRequest(format!(
+                    "{} Anyone who can save this can run commands as the app's user. Send confirm_exec: true to confirm.",
+                    risk.message
+                )));
+            }
+        }
+        apply_hooks(settings, config)
+    })
+    .await?;
     let hooks = state.config.read().await.hooks.clone();
     // The view masks values, so a changed header or env value alone shows no change there
     if changed.is_empty() && hooks != before {
@@ -1511,6 +1535,7 @@ pub(crate) fn live_hooks() -> (&'static [&'static str], &'static str) {
 fn hooks_view(config: &Config) -> HooksSettings {
     HooksSettings {
         hooks: putio_sync_core::hooks::mask(&config.hooks),
+        confirm_exec: false,
     }
 }
 

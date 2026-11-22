@@ -42,6 +42,19 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   no longer mark Put.io unhealthy; at most 8 folder scans run at once.
 - DLNA shows a watch folder by its last path component, and discovery and the device
   description no longer announce the exact putio-sync version.
+- Plugin actions and health checks get only the hosts and folders you approved, plus the
+  ones in the form values sent with the call; a plugin that was never approved no longer gets
+  its manifest's hosts and folders just because it was installed. A manifest folder of `/` or a
+  drive root is refused.
+- Adding or changing a hook command, the ffmpeg path or the plugins folder now shows a danger
+  risk and needs `confirm_exec: true` (settings import, `PUT /settings/hooks`); the page asks
+  first. The README now says that API access means running commands as the app's user.
+- Installing a plugin by URL refuses loopback, private, link-local, multicast and cloud
+  metadata addresses (resolved names too, on every redirect) and never follows https to http;
+  `PUTIO_SYNC_ALLOW_LOCAL_FETCH=1` lets it reach local addresses.
+- A `.torrent` URL sent to the Transmission RPC no longer reaches loopback, link-local or cloud
+  metadata addresses, including through redirects; the private LAN stays allowed.
+- The legacy `notifications.webhook_url` is shortened in the settings export like hook URLs.
 - Test and edit buttons no longer send a saved secret to a different server. The Radarr and
   Sonarr API key, SMTP password, transcription and chat API keys, and the header and env
   values of hooks and the translation callback come back from storage only when the address
