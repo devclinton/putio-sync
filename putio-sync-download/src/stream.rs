@@ -246,6 +246,22 @@ fn no_follow(options: &mut OpenOptions) -> &mut OpenOptions {
     options
 }
 
+/// The error for a failed write to `path`; a full disk or quota says so plainly
+fn write_error(e: std::io::Error, path: &Path) -> DownloadError {
+    let message = if matches!(
+        e.kind(),
+        std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded
+    ) {
+        format!(
+            "The disk is full: no space left to write {}",
+            path.display()
+        )
+    } else {
+        format!("Failed to write to download file: {}", e)
+    };
+    DownloadError::IoError(std::io::Error::new(e.kind(), message))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn stream_download(
     client: &PutioApiClient,
@@ -594,20 +610,7 @@ pub async fn stream_to_temp(
             let mut batch: Vec<u8> = Vec::with_capacity(WRITE_BATCH + 256 * 1024);
             let mut total_written = 0u64;
             let mut digest = digest;
-            let write_error = |e: std::io::Error| {
-                let message = if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded
-                ) {
-                    format!(
-                        "The disk is full: no space left to write {}",
-                        temp_path.display()
-                    )
-                } else {
-                    format!("Failed to write to download file: {}", e)
-                };
-                DownloadError::IoError(std::io::Error::new(e.kind(), message))
-            };
+            let write_error = |e: std::io::Error| write_error(e, &temp_path);
 
             // Continuously read from channel and write to disk
             while let Some(chunk) = rx.recv().await {
@@ -1131,41 +1134,25 @@ mod tests {
         assert!(finish_download(&temp, &target).await.is_err());
     }
 
-    /// `/dev/full` fails every write with ENOSPC, like a full disk
-    #[cfg(target_os = "linux")]
-    #[tokio::test]
-    async fn a_full_disk_is_reported_as_such_and_not_as_a_broken_pipe() {
-        let mut server = Server::new_async().await;
-        let _mock = server
-            .mock("GET", "/big.bin")
-            .with_status(200)
-            .with_body("x".repeat(64 * 1024))
-            .create_async()
-            .await;
-        let dir = TempDir::new().unwrap();
-        let target = dir.path().join("big.bin");
-        std::os::unix::fs::symlink("/dev/full", create_temp_path(&target).unwrap()).unwrap();
-        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url());
-        let url = format!("{}/big.bin", server.url());
-
-        let err = stream_to_temp(
-            &client,
-            &url,
-            &target,
-            "big.bin",
-            Some(64 * 1024),
-            1,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap_err();
-
-        assert!(err.is_storage_full(), "{err}");
-        assert!(!err.is_transient());
-        assert!(err.to_string().contains("disk is full"), "{err}");
+    /// A full disk is reported as such and not as a broken pipe. (The partial file is
+    /// opened with O_NOFOLLOW, so a symlink to `/dev/full` can no longer stand in for one.)
+    #[test]
+    fn a_full_disk_is_reported_as_such_and_not_as_a_broken_pipe() {
+        let path = Path::new("/downloads/big.bin.part");
+        for kind in [
+            std::io::ErrorKind::StorageFull,
+            std::io::ErrorKind::QuotaExceeded,
+        ] {
+            let err = write_error(std::io::Error::new(kind, "no space"), path);
+            assert!(err.is_storage_full(), "{err}");
+            assert!(!err.is_transient());
+            assert!(err.to_string().contains("disk is full"), "{err}");
+        }
+        let err = write_error(
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe"),
+            path,
+        );
+        assert!(!err.is_storage_full());
     }
 
     #[tokio::test]
