@@ -367,15 +367,8 @@ impl ArrService {
 
     /// The magnets held before Put.io (043), the oldest first, each with its item's name
     pub async fn held(&self) -> Result<Vec<(String, Held)>, ArrError> {
-        let names: HashMap<String, String> = self
-            .db
-            .arr()
-            .list()
-            .await?
-            .into_iter()
-            .filter(is_held)
-            .map(|i| (i.hash, i.name))
-            .collect();
+        let names: HashMap<String, String> =
+            self.db.arr().held_names().await?.into_iter().collect();
         Ok(self
             .db
             .held()
