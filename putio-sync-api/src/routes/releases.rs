@@ -696,18 +696,9 @@ fn to_csv(rows: &[ReportRow]) -> String {
     out
 }
 
-/// A CSV field, quoted when it holds a comma, quote or line break. A leading `=`, `+`,
-/// `-` or `@` gets a `'` so a spreadsheet doesn't run a release name as a formula.
+/// A CSV field: quoted, and defused against formula injection
 fn field(value: &str) -> String {
-    let value = match value.chars().next() {
-        Some('=' | '+' | '-' | '@') => format!("'{value}"),
-        _ => value.to_string(),
-    };
-    if value.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value
-    }
+    putio_sync_core::csv_field::csv_field(value)
 }
 
 #[cfg(test)]
