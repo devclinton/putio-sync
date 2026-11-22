@@ -162,3 +162,36 @@ async fn streams_active_counts_a_stream_in_flight() {
     }
     panic!("the stream never ended");
 }
+
+#[tokio::test]
+async fn too_many_open_streams_get_a_503_and_a_slot_frees_up() {
+    let f = Fixture::start(&["downloads"]).await;
+    // Big enough that the sockets back up and the streams stay open while unread
+    f.write("big.mp4", &vec![7u8; 32 * 1024 * 1024]);
+    let mut open = Vec::new();
+    for _ in 0..16 {
+        let r = f.get("/media/downloads/big.mp4").await;
+        assert_eq!(r.status(), 200);
+        open.push(r);
+    }
+    let refused = f.get("/media/downloads/big.mp4").await;
+    assert_eq!(refused.status(), 503);
+    assert_eq!(refused.headers()["retry-after"], "5");
+    // HEAD sends no body and is never refused
+    let head = reqwest::Client::new()
+        .head(format!("{}/media/downloads/big.mp4", f.base()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(head.status(), 200);
+    drop(open);
+    let mut again = 0;
+    for _ in 0..50 {
+        again = f.get("/media/downloads/big.mp4").await.status().as_u16();
+        if again == 200 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(again, 200);
+}

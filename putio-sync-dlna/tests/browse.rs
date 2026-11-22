@@ -192,3 +192,23 @@ async fn descriptions_and_subscriptions() {
         .unwrap();
     assert_eq!(put.status(), 404);
 }
+
+#[tokio::test]
+async fn a_watch_folder_shows_its_name_not_its_server_path() {
+    let watch = tempfile::tempdir().unwrap();
+    let dir = watch.path().join("sonarr-watch");
+    std::fs::create_dir(&dir).unwrap();
+    let key = format!("watch:{}", dir.display());
+    let d = dir.clone();
+    let f = Fixture::start_with(
+        &["downloads", &key],
+        None,
+        move |c| c.watch.paths = vec![d],
+        putio_sync_dlna::Options::default(),
+    )
+    .await;
+    let titles = f.children("0").await.titles();
+    assert_eq!(titles, ["Downloads", "sonarr-watch"]);
+    let meta = f.get("/description.xml").await.text().await.unwrap();
+    assert!(!meta.contains("modelNumber"), "{meta}");
+}

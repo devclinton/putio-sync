@@ -16,6 +16,8 @@ tokio = { workspace = true }
 
 # Metrics HTTP listener
 axum = "0.7"
+# Connection limits and header-read timeout for the listeners
+hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "service", "tokio"] }
 
 # Logging
 tracing = { workspace = true }
