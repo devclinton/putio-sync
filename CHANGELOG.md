@@ -14,6 +14,15 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Security
 
+- Test and edit buttons no longer send a saved secret to a different server. The Radarr and
+  Sonarr API key, SMTP password, transcription and chat API keys, and the header and env
+  values of hooks and the translation callback come back from storage only when the address
+  is the one they were saved for (host and port for SMTP; scheme, host and port for web
+  addresses, plus the URL base for Radarr and Sonarr). Otherwise the request is refused with
+  "Type the API key again to use it with a different server."
+- Test results for Radarr and Sonarr, transcription, chat and callback servers show only a
+  status such as "The server answered HTTP 401", not the start of the server's reply.
+- Radarr and Sonarr discovery ignores a Host header that is not a plain host name or address.
 - A request that came through a reverse proxy on the same machine no longer counts as a
   Tailscale sign-in, so a forged `Tailscale-User-Login` header can't get in. Identity sign-in
   still works with `tailscale serve` or a direct tailnet connection.

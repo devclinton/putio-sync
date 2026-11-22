@@ -1354,7 +1354,9 @@ async fn test_email(
     State(state): State<AppState>,
     smtp: Result<Json<SmtpConfig>, JsonRejection>,
 ) -> Result<Json<EmailTestResult>, ApiError> {
-    let smtp = body(smtp)?.unmasked(&state.config.read().await.notifications.smtp);
+    let smtp = body(smtp)?
+        .try_unmasked(&state.config.read().await.notifications.smtp)
+        .map_err(ApiError::BadRequest)?;
     let smtp = SmtpConfig {
         enabled: true,
         ..smtp
@@ -1377,7 +1379,9 @@ fn apply_notifications(
     config.notifications.webhook_url = settings.webhook_url;
     config.notifications.email = settings.email;
     if let Some(smtp) = settings.smtp {
-        config.notifications.smtp = smtp.unmasked(&config.notifications.smtp);
+        config.notifications.smtp = smtp
+            .try_unmasked(&config.notifications.smtp)
+            .map_err(ApiError::BadRequest)?;
     }
     Ok(())
 }
