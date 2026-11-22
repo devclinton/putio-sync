@@ -588,3 +588,71 @@ async fn arr_routes_are_reachable() {
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+async fn raw(s: &Setup, path: &str, host: Option<&str>) -> axum::response::Response {
+    let mut req = Request::builder().uri(path);
+    if let Some(host) = host {
+        req = req.header(header::HOST, host);
+    }
+    s.app
+        .clone()
+        .oneshot(req.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn setup_mode_refuses_rebinding_host_names() {
+    let s = setup_with(None, None);
+    for host in ["nas:15432", "192.168.1.5:15432", "nas.local", "localhost"] {
+        let res = raw(&s, "/setup/status", Some(host)).await;
+        assert_eq!(res.status(), StatusCode::OK, "{host}");
+    }
+    let res = raw(&s, "/setup/status", Some("evil.example.com")).await;
+    assert_eq!(res.status(), StatusCode::MISDIRECTED_REQUEST);
+
+    let mut config = Config::default();
+    config.api.allowed_hosts = vec!["sync.example.org".to_string()];
+    let s = setup_with(Some(config), None);
+    let res = raw(&s, "/setup/status", Some("sync.example.org")).await;
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn setup_mode_sends_the_security_headers() {
+    let s = setup_with(None, None);
+    for path in ["/", "/setup/status", "/nothing-here"] {
+        let res = raw(&s, path, Some("nas")).await;
+        let h = res.headers();
+        assert_eq!(h["x-frame-options"], "DENY", "{path}");
+        assert!(h.contains_key("content-security-policy"), "{path}");
+        assert_eq!(h["cross-origin-opener-policy"], "same-origin", "{path}");
+        assert!(h.contains_key("permissions-policy"), "{path}");
+    }
+}
+
+#[tokio::test]
+async fn the_setup_code_expires_and_is_replaced() {
+    let mut s = setup_with(None, None);
+    s.state = s
+        .state
+        .clone()
+        .with_code_lifetime(std::time::Duration::from_millis(150));
+    s.app = setup_router(s.state.clone());
+    let old = s.state.code();
+    let (status, _) = s
+        .call(Method::GET, "/setup/session", Some(&old), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let (status, _) = s
+        .call(Method::GET, "/setup/session", Some(&old), None)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let fresh = s.state.code();
+    assert_ne!(fresh, old);
+    let (status, _) = s
+        .call(Method::GET, "/setup/session", Some(&fresh), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}

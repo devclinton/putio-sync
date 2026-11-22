@@ -1471,6 +1471,29 @@ writes made with it also need the `X-CSRF-Token` the UI reads from `/auth/status
 Failed sign-ins count toward the same lockout as wrong tokens. **Sign out everywhere**
 ends every session. Radarr, Sonarr and the Transmission API keep using the token.
 
+### Host names (DNS rebinding)
+
+The API answers only to host names a person really uses: IP addresses, `localhost`, names
+with no dot (`nas:15432`), `*.local`, `*.lan`, `*.home`, `*.home.arpa`, `*.internal`, `*.ts.net`, the host of `[sign_in] public_url`, and
+the names in `[api] allowed_hosts`. A request for any other name gets `421 Misdirected
+Request` with a message naming the setting. This stops a web page from pointing its own
+name at the server and using your browser's access (DNS rebinding). If you reach the UI
+through a reverse proxy that passes the original `Host` on, set `public_url` or add the
+name:
+
+```toml
+[api]
+allowed_hosts = ["sync.example.org", "*.lan.example.org"]
+```
+
+Responses carry `Cache-Control: no-store` (the UI's own files aside),
+`Cross-Origin-Opener-Policy`, `Permissions-Policy`, and, when `public_url` is `https://`,
+`Strict-Transport-Security`. Password checks run two at a time, and a burst of wrong
+passwords is counted before it is checked, so it can't use up the server's memory; the
+Transmission API for Radarr and Sonarr has its own failure counter, so a wrong password
+there can't lock the UI out. The setup code (setup mode) works for an hour, then a new one
+is printed on the console.
+
 ## Tailscale
 
 putio-sync reads Tailscale's state from tailscaled's socket
@@ -1496,7 +1519,10 @@ With `identity_sign_in` on, allowed users open the UI and the API without the to
 - **Through `tailscale serve`** (`tailscale serve --bg 15432`, which gives an
   `https://<name>.<tailnet>.ts.net` address). serve adds `Tailscale-User-Login` and
   `Tailscale-User-Name` to each request; putio-sync trusts them **only on a loopback
-  connection**, so anyone else on the LAN can't send them.
+  connection**, so anyone else on the LAN can't send them, **and only while tailscaled's
+  serve config proxies to the port the request came in on**. Another proxy on the same
+  machine, or a port `tailscale serve` doesn't front, gets no identity. Don't run another
+  proxy to the same port as serve: it could pass the header on.
 - **Straight over the tailnet**, to `http://<name>:15432`: putio-sync asks tailscaled who
   the peer address belongs to.
 

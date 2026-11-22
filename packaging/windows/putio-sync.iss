@@ -51,7 +51,10 @@ Source: "..\..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"
 Source: "putio-sync-service.cmd"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
-Name: "{commonappdata}\putio-sync"; Tasks: service
+; SYSTEM and Administrators only: config.toml holds the Put.io token and API token, and the
+; log can hold paths and errors. The icacls step in [Run] also drops the ProgramData
+; inheritance, which would otherwise keep granting Users read access.
+Name: "{commonappdata}\putio-sync"; Tasks: service; Permissions: system-full admins-full
 
 [INI]
 Filename: "{app}\Put.io Sync Web UI.url"; Section: "InternetShortcut"; Key: "URL"; String: "http://localhost:15432/"
@@ -65,6 +68,7 @@ Name: "{userstartup}\putio-sync daemon"; Filename: "{app}\putio-sync.exe"; Param
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Tasks: path; Check: NeedsAddPath(ExpandConstant('{app}'))
 
 [Run]
+Filename: "{sys}\icacls.exe"; Parameters: """{commonappdata}\putio-sync"" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F"; Flags: runhidden; Tasks: service; StatusMsg: "Restricting the putio-sync data folder..."
 Filename: "{sys}\schtasks.exe"; Parameters: "/Create /F /TN ""putio-sync"" /SC ONSTART /RU SYSTEM /RL HIGHEST /TR ""\""{app}\putio-sync-service.cmd\"""""; Flags: runhidden; Tasks: service; StatusMsg: "Creating the putio-sync task..."
 Filename: "{sys}\schtasks.exe"; Parameters: "/Run /TN ""putio-sync"""; Flags: runhidden; Tasks: service
 Filename: "{app}\putio-sync.exe"; Parameters: "daemon"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent runminimized; Description: "Start the daemon now"; Tasks: login
