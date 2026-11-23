@@ -48,6 +48,11 @@ const BACKOFF_MS = 10000;
 const TOAST_MS = 6000;
 
 const view = document.getElementById("view");
+// The skip link focuses the page without touching the hash, which the router reads as a route
+document.querySelector("a.skip")?.addEventListener("click", (event) => {
+  event.preventDefault();
+  view.focus();
+});
 const banner = document.getElementById("banner");
 
 let current = null;
