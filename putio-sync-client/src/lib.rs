@@ -66,6 +66,7 @@
 
 pub mod account;
 pub mod auth;
+pub mod body;
 pub mod cleanup;
 pub mod client;
 pub mod delete;

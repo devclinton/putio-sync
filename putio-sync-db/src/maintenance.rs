@@ -13,6 +13,10 @@ pub const STORAGE_RUNS_KEEP_DAYS: i64 = 90;
 /// Days download history is kept (it feeds the statistics pages, so this is long)
 pub const HISTORY_KEEP_DAYS: i64 = 730;
 
+/// Days a completed download-queue row is kept (a finished download leaves the queue at
+/// once; only rows left by older versions or a failed removal reach this)
+pub const QUEUE_COMPLETED_KEEP_DAYS: i64 = 7;
+
 /// What one maintenance pass removed
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MaintenanceReport {
@@ -22,12 +26,14 @@ pub struct MaintenanceReport {
     pub storage_rows: u64,
     /// Download history rows deleted
     pub history: u64,
+    /// Completed download-queue rows deleted
+    pub queue_completed: u64,
 }
 
 impl MaintenanceReport {
     /// Total rows removed
     pub fn total(&self) -> u64 {
-        self.processed_torrents + self.storage_rows + self.history
+        self.processed_torrents + self.storage_rows + self.history + self.queue_completed
     }
 }
 
@@ -42,10 +48,15 @@ impl Database {
             .await?;
         let storage_rows = self.storage().prune(STORAGE_RUNS_KEEP_DAYS).await?;
         let history = self.history().prune(HISTORY_KEEP_DAYS).await?;
+        let queue_completed = self
+            .queue()
+            .prune_completed(QUEUE_COMPLETED_KEEP_DAYS)
+            .await?;
         let report = MaintenanceReport {
             processed_torrents,
             storage_rows,
             history,
+            queue_completed,
         };
 
         let auto_vacuum: i64 = sqlx::query_scalar("PRAGMA auto_vacuum")
@@ -70,6 +81,7 @@ impl Database {
                 processed_torrents = report.processed_torrents,
                 storage_rows = report.storage_rows,
                 history = report.history,
+                queue_completed = report.queue_completed,
                 "Pruned old database rows"
             );
         } else {
@@ -165,6 +177,36 @@ mod tests {
 
         // A second pass has nothing left to remove
         assert_eq!(db.run_maintenance().await.unwrap().total(), 0);
+    }
+
+    #[tokio::test]
+    async fn maintenance_prunes_only_old_completed_queue_rows() {
+        let (_dir, db) = db().await;
+        for (file_id, status, age) in [
+            (1, "completed", 30),
+            (2, "completed", 1),
+            (3, "failed", 30),
+            (4, "pending", 30),
+        ] {
+            sqlx::query(
+                "INSERT INTO download_queue (file_id, filename, file_size, download_url, status, updated_at) \
+                 VALUES (?, 'f', 1, 'u', ?, datetime('now', ?))",
+            )
+            .bind(file_id)
+            .bind(status)
+            .bind(format!("-{age} days"))
+            .execute(db.pool())
+            .await
+            .unwrap();
+        }
+        let report = db.run_maintenance().await.unwrap();
+        assert_eq!(report.queue_completed, 1);
+        let left: Vec<i64> =
+            sqlx::query_scalar("SELECT file_id FROM download_queue ORDER BY file_id")
+                .fetch_all(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(left, vec![2, 3, 4]);
     }
 
     #[tokio::test]

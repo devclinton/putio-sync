@@ -245,14 +245,19 @@ pub(super) async fn resolve(
 /// Partial downloads a worker writes now and putio-sync's own database files, canonical so
 /// they compare with resolved paths
 fn in_use(state: &AppState) -> HashSet<PathBuf> {
+    local_files::canonical_in_use(in_use_paths(state))
+}
+
+/// The paths `in_use` canonicalises. Reading them takes no file system access, so a
+/// handler can do it inline and canonicalise inside `spawn_blocking`.
+fn in_use_paths(state: &AppState) -> Vec<PathBuf> {
     let database = state.database.as_deref().map(|db| db.files());
-    local_files::canonical_in_use(
-        state
-            .download_manager
-            .partial_paths_in_use()
-            .into_iter()
-            .chain(database.into_iter().flatten()),
-    )
+    state
+        .download_manager
+        .partial_paths_in_use()
+        .into_iter()
+        .chain(database.into_iter().flatten())
+        .collect()
 }
 
 fn entry_info(entry: Entry) -> EntryInfo {
@@ -273,17 +278,22 @@ fn entry_info(entry: Entry) -> EntryInfo {
 
 /// GET /local/files
 async fn list_roots(State(state): State<AppState>) -> Json<RootsResponse> {
-    let roots = roots(&state)
-        .await
-        .into_iter()
-        .map(|r| RootInfo {
-            exists: r.path.is_dir(),
-            path: r.path.display().to_string(),
-            key: r.key,
-            label: r.label,
-            watch: r.watch,
-        })
-        .collect();
+    let roots = roots(&state).await;
+    // `is_dir` is a stat per root, which can stall on a slow mount
+    let roots = tokio::task::spawn_blocking(move || {
+        roots
+            .into_iter()
+            .map(|r| RootInfo {
+                exists: r.path.is_dir(),
+                path: r.path.display().to_string(),
+                key: r.key,
+                label: r.label,
+                watch: r.watch,
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default();
     Json(RootsResponse { roots })
 }
 
@@ -294,7 +304,14 @@ async fn list_folder(
     Query(query): Query<PathQuery>,
 ) -> Result<Json<ListingResponse>, ApiError> {
     let (_, dir) = resolve(&state, &key, &query.path).await?;
-    let listing = local_files::list(&dir, &in_use(&state)).map_err(api_error)?;
+    let used = in_use_paths(&state);
+    let (dir, listing) = tokio::task::spawn_blocking(move || {
+        let listing = local_files::list(&dir, &local_files::canonical_in_use(used));
+        (dir, listing)
+    })
+    .await
+    .map_err(|e| ApiError::InternalError(e.to_string()))?;
+    let listing = listing.map_err(api_error)?;
     Ok(Json(ListingResponse {
         root: key,
         path: dir.rel,
@@ -310,7 +327,13 @@ async fn summarize(
     Query(query): Query<PathQuery>,
 ) -> Result<Json<SummaryResponse>, ApiError> {
     let (_, target) = resolve(&state, &key, &query.path).await?;
-    let s = local_files::summary(&target, &in_use(&state)).map_err(api_error)?;
+    let used = in_use_paths(&state);
+    let s = tokio::task::spawn_blocking(move || {
+        local_files::summary(&target, &local_files::canonical_in_use(used))
+    })
+    .await
+    .map_err(|e| ApiError::InternalError(e.to_string()))?
+    .map_err(api_error)?;
     Ok(Json(SummaryResponse {
         files: s.files,
         folders: s.folders,
