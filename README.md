@@ -405,8 +405,8 @@ It needs no config or token. Exit codes: 0 no problems, 1 problems, 2 not a fold
 
 ### `crash-report`
 
-List, show and open the crash reports kept next to the config file. See
-[What leaves your machine](#what-leaves-your-machine).
+List, show and open the crash reports kept next to the config file. The "What leaves
+your machine" section says what a report holds and when anything is sent.
 
 ```bash
 putio-sync crash-report list [--json]

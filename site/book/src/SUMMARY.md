@@ -43,6 +43,7 @@
 - [Subtitles](subtitles.md)
 - [Subtitle translation](subtitle-translation.md)
 - [Metrics](metrics.md)
+- [What leaves your machine](privacy.md)
 
 # Extending
 
