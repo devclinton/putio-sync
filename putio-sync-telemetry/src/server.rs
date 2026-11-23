@@ -68,9 +68,13 @@ pub fn serve(listener: TcpListener, path: &str, telemetry: &'static Telemetry) -
         }
     }
     tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
-            tracing::error!(error = %e, "Metrics listener stopped");
-        }
+        crate::listener::serve_limited(
+            listener,
+            app,
+            crate::listener::Limits::default(),
+            std::future::pending(),
+        )
+        .await;
     })
 }
 
