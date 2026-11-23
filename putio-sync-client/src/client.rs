@@ -71,13 +71,31 @@ impl RetryPolicy {
     }
 }
 
-/// Outcome class of one HTTP attempt. Every 4xx, 429 included, is a client error.
+/// Outcome class of one HTTP attempt: 429 is `rate_limited`, 401 and 403 are
+/// `unauthorized`, every other 4xx is a client error.
 pub(crate) fn attempt_outcome(result: &reqwest::Result<Response>) -> ApiOutcome {
     match result {
         Ok(r) if r.status().is_success() => ApiOutcome::Success,
         Ok(r) if r.status().is_server_error() => ApiOutcome::ServerError,
+        Ok(r) if r.status() == StatusCode::TOO_MANY_REQUESTS => ApiOutcome::RateLimited,
+        Ok(r) if matches!(r.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) => {
+            ApiOutcome::Unauthorized
+        }
         Ok(_) => ApiOutcome::ClientError,
         Err(_) => ApiOutcome::NetworkError,
+    }
+}
+
+/// Export Put.io's request quota when the response carries both `X-RateLimit-*` headers.
+fn record_rate_limit(headers: &header::HeaderMap) {
+    let num = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<u64>().ok())
+    };
+    if let Some((limit, remaining)) = num("x-ratelimit-limit").zip(num("x-ratelimit-remaining")) {
+        api::record_rate_limit(limit, remaining);
     }
 }
 
@@ -610,6 +628,9 @@ impl PutioApiClient {
             let started = Instant::now();
             let result = self.client.execute(req).await;
             api::record_attempt(op, attempt_outcome(&result), started.elapsed());
+            if let Ok(response) = &result {
+                record_rate_limit(response.headers());
+            }
 
             let (delay, error, reason) = match result {
                 Ok(response) => {

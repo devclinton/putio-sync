@@ -67,6 +67,9 @@ struct Record {
 pub struct StallTracker {
     threshold: Duration,
     records: Mutex<HashMap<i64, Record>>,
+    /// Stalled transfers already announced at warn level; dropped once a transfer is no
+    /// longer stalled or has left the list
+    announced: Mutex<std::collections::HashSet<i64>>,
 }
 
 impl Default for StallTracker {
@@ -82,6 +85,7 @@ impl StallTracker {
         Self {
             threshold,
             records: Mutex::new(HashMap::new()),
+            announced: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -124,11 +128,24 @@ impl StallTracker {
         }
         *records = seen;
         let stalled = records.values().filter(|r| r.stall.is_some()).count();
+        self.announced
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|id| records.get(id).is_some_and(|r| r.stall.is_some()));
         drop(records);
         for event in stuck {
             events::emit(Payload::TransferStuck(event));
         }
         stalled
+    }
+
+    /// `true` the first time it is called for a stall of transfer `id`; `false` while
+    /// the same stall goes on. Used to log a stall once, not on every poll.
+    pub fn first_report(&self, id: i64) -> bool {
+        self.announced
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id)
     }
 
     /// The verdict for transfer `id`, if it is stalled
@@ -191,6 +208,24 @@ mod tests {
         assert_eq!(stall.since, at(0));
         assert_eq!(stall.reason, StallReason::NoProgress);
         assert_eq!(tracker.stalled_count(), 1);
+    }
+
+    #[test]
+    fn a_stall_is_reported_once_until_it_clears() {
+        let tracker = StallTracker::new(6 * HOUR);
+        let stuck = || [transfer(1, "DOWNLOADING", 970)];
+        tracker.observe(&stuck(), at(0));
+        tracker.observe(&stuck(), at(7));
+        assert!(tracker.first_report(1));
+        tracker.observe(&stuck(), at(8));
+        assert!(!tracker.first_report(1));
+        // Progress ends the stall; the next one is reported again
+        tracker.observe(&[transfer(1, "DOWNLOADING", 971)], at(9));
+        tracker.observe(&[transfer(1, "DOWNLOADING", 971)], at(16));
+        assert!(tracker.first_report(1));
+        // Leaving the list forgets it too
+        tracker.observe(&[], at(17));
+        assert!(tracker.first_report(1));
     }
 
     #[test]

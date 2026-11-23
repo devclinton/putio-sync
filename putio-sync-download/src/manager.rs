@@ -2066,7 +2066,10 @@ impl DownloadManager {
         });
         let (outcome, stats) = match &result {
             Ok(stats) => (SyncResult::Success, stats.clone()),
-            Err(_) => (SyncResult::Failure, SyncStats::default()),
+            Err(e) => {
+                telemetry::sync::failed(e.sync_fail_reason());
+                (SyncResult::Failure, SyncStats::default())
+            }
         };
         telemetry::sync::record_run(
             outcome,
@@ -2460,7 +2463,7 @@ impl DownloadManager {
             arrived::run_pending(db, &steps, arrived::STEPS_PER_PASS).await;
         }
 
-        info!(
+        let summary = format!(
             "Sync complete - Queued: {}, Skipped: {}, Blocked: {}, Deleted: {}, Streamed: {}, Failed: {}",
             stats.files_downloaded,
             stats.files_skipped,
@@ -2469,6 +2472,14 @@ impl DownloadManager {
             stats.files_streamed,
             stats.files_failed
         );
+        // Info only when the pass changed something; an idle pass every interval is noise
+        if stats.files_downloaded + stats.files_deleted + stats.files_streamed + stats.files_failed
+            > 0
+        {
+            info!("{}", summary);
+        } else {
+            debug!("{}", summary);
+        }
 
         Ok(TreeReport {
             stats,
@@ -2783,9 +2794,10 @@ impl DownloadManager {
             return Ok(false);
         }
 
-        info!(
-            "Processing queue item: {} (ID: {})",
-            queue_item.filename, file_id
+        debug!(
+            file_id,
+            name = %queue_item.filename,
+            "Processing queue item"
         );
 
         // A panic in the download must not leave the row stuck on "downloading" or end
@@ -2837,9 +2849,11 @@ impl DownloadManager {
         match self.client.get_file_details(file_id).await {
             Ok(file_response) => {
                 let file_info = file_response.file;
-                info!(
-                    "File verified on Put.io: {} ({} bytes)",
-                    file_info.name, file_info.size
+                debug!(
+                    file_id,
+                    name = %file_info.name,
+                    size_bytes = file_info.size,
+                    "File verified on Put.io"
                 );
 
                 // Download the file using the stored relative path
@@ -2857,7 +2871,12 @@ impl DownloadManager {
 
                 match self.download_file(download_file, None).await {
                     Ok(result) if result.success => {
-                        info!("Successfully downloaded: {}", file_info.name);
+                        info!(
+                            file_id,
+                            name = %file_info.name,
+                            size_bytes = file_info.size,
+                            "Downloaded"
+                        );
 
                         // Delete from Put.io if configured
                         if config
@@ -2889,15 +2908,17 @@ impl DownloadManager {
                                     ),
                                 }
                             } else {
-                                info!(
-                                    "Deleting file from Put.io: {} (ID: {})",
-                                    file_info.name, file_id
+                                debug!(
+                                    file_id,
+                                    name = %file_info.name,
+                                    "Deleting file from Put.io"
                                 );
                                 match self.client.delete_files(vec![file_id]).await {
                                     Ok(_) => {
-                                        info!(
-                                            "Successfully deleted from Put.io: {}",
-                                            file_info.name
+                                        debug!(
+                                            file_id,
+                                            name = %file_info.name,
+                                            "Deleted from Put.io"
                                         );
                                     }
                                     Err(e) => {

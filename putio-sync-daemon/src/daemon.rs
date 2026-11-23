@@ -1025,12 +1025,27 @@ pub fn observe_stalls(
     putio_sync_telemetry::transfers::set_stalled(stalled);
     for transfer in transfers {
         if let Some(stall) = tracker.get(transfer.id) {
-            debug!(
-                transfer_id = transfer.id,
-                name = %transfer.name,
-                reason = %stall.reason.label(),
-                "Transfer stalled"
-            );
+            let stalled_for_secs = now
+                .duration_since(stall.since)
+                .unwrap_or(Duration::ZERO)
+                .as_secs();
+            if tracker.first_report(transfer.id) {
+                warn!(
+                    transfer_id = transfer.id,
+                    name = %transfer.name,
+                    reason = %stall.reason.label(),
+                    stalled_for_secs,
+                    "Transfer stalled"
+                );
+            } else {
+                debug!(
+                    transfer_id = transfer.id,
+                    name = %transfer.name,
+                    reason = %stall.reason.label(),
+                    stalled_for_secs,
+                    "Transfer still stalled"
+                );
+            }
         }
     }
     stalled

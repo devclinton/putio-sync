@@ -106,6 +106,7 @@ where
                 // Check if this is a stalled download error
                 let is_stall_error = e.to_string().contains("Download stalled");
                 let delay = backoff(attempt, initial_delay, is_stall_error);
+                putio_sync_telemetry::download::retried(e.retry_reason());
 
                 if is_stall_error {
                     warn!(
@@ -162,6 +163,36 @@ mod tests {
         .unwrap();
         assert_eq!(result.value, 7);
         assert_eq!(result.attempts, 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn each_retry_is_counted_by_reason() {
+        let sample = |reason: &str| {
+            putio_sync_telemetry::global()
+                .sample("putio_sync_download_retries_total", &[("reason", reason)])
+                .unwrap_or(0.0)
+        };
+        let before = sample("stall");
+        let calls = AtomicU32::new(0);
+        retry_with_stall_detection(
+            || async {
+                if calls.fetch_add(1, Ordering::SeqCst) < 2 {
+                    Err(DownloadError::ApiError(
+                        "Download stalled - no data received for 60 seconds".into(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            },
+            3,
+            1,
+            "test",
+            None,
+        )
+        .await
+        .unwrap();
+        // Other tests may retry in parallel, so only a lower bound is stable
+        assert!(sample("stall") - before >= 2.0);
     }
 
     #[tokio::test(start_paused = true)]

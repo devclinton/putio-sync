@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use crate::{
-    global, unix_now, Mp4Request, OrganiseMoveKind, OrganiseResult, RuleDecision, SyncKind,
-    SyncResult, Telemetry,
+    global, unix_now, Mp4Request, OrganiseMoveKind, OrganiseResult, RuleDecision, SyncFailReason,
+    SyncKind, SyncResult, Telemetry,
 };
 
 impl Telemetry {
@@ -31,6 +31,13 @@ impl Telemetry {
                 .with_label_values::<&str>(&[])
                 .set(unix_now());
         }
+    }
+
+    /// Count a failed sync run by reason (call next to [`Telemetry::sync_run`]).
+    pub fn sync_failed(&self, reason: SyncFailReason) {
+        self.sync_failures
+            .with_label_values(&[reason.as_str()])
+            .inc();
     }
 
     /// Count a file blocked or skipped by a rule (call once per file id).
@@ -70,6 +77,11 @@ pub fn started() {
 /// Record a finished sync run on the global instance.
 pub fn record_run(result: SyncResult, elapsed: Duration, counts: &[(SyncKind, usize)]) {
     global().sync_run(result, elapsed, counts);
+}
+
+/// Count a failed sync run by reason on the global instance.
+pub fn failed(reason: SyncFailReason) {
+    global().sync_failed(reason);
 }
 
 /// Count a blocked file on the global instance.
