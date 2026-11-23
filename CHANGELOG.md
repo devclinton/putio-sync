@@ -174,6 +174,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - The `daemon` flags `--filter`, `--delete-after`, `--delete-empty-folders`, `--watch-only`,
   `--download-only`, `--archive-dir` and `--delete-torrents`, and `download --chunk-size`, are
   hidden from help and warn that they are ignored, naming the config key to use instead.
+- A sync lists up to four Put.io folders at a time instead of one, and a plugin filter is
+  asked only about files that are not already downloaded or queued.
+- The Status page no longer waits on a slow Put.io transfers refresh, and the Active page
+  reads the database with a few queries instead of one per finished item.
+- Radarr and Sonarr adds remember a category's Put.io folder for 5 minutes, and a kept watch
+  file that has not changed is no longer read and hashed on every scan.
 
 ### Removed
 

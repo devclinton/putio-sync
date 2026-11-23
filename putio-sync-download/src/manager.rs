@@ -240,6 +240,10 @@ fn locked<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Put.io folder listings in flight at once during a sync's tree walk; small, for
+/// Put.io's rate limits
+const LIST_CONCURRENCY: usize = 4;
+
 /// [`locked`] for the read side of a std `RwLock`
 fn read_locked<T>(l: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
     l.read().unwrap_or_else(|e| e.into_inner())
@@ -647,8 +651,11 @@ pub struct DownloadManager {
     /// In-memory notes per file id
     notes: Arc<Mutex<HashMap<i64, String>>>,
     /// The last Put.io transfer list, shared by the Active page, Status and the daemon
-    /// loop (feature 039, R3). The async lock makes concurrent callers share one fetch.
-    transfers_cache: Arc<tokio::sync::Mutex<Option<CachedTransfers>>>,
+    /// loop (feature 039, R3). A plain lock held for a copy, never across the fetch, so
+    /// readers (`/status`) never wait on a slow Put.io.
+    transfers_cache: Arc<Mutex<Option<CachedTransfers>>>,
+    /// Held across the Put.io fetch: one refresh at a time
+    transfers_refresh: Arc<tokio::sync::Mutex<()>>,
     /// The transfer classes behind `transfer.*` events; `None` until read from the
     /// database (feature 027)
     transfer_events: Arc<tokio::sync::Mutex<Option<TransferEvents>>>,
@@ -771,7 +778,8 @@ impl DownloadManager {
             stop_signals: Arc::new(Mutex::new(HashMap::new())),
             stopped_partial: Arc::new(Mutex::new(HashSet::new())),
             notes: Arc::new(Mutex::new(HashMap::new())),
-            transfers_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            transfers_cache: Arc::new(Mutex::new(None)),
+            transfers_refresh: Arc::new(tokio::sync::Mutex::new(())),
             transfer_events: Arc::new(tokio::sync::Mutex::new(None)),
             finish_seen: Arc::new(tokio::sync::Mutex::new(None)),
             paths_in_use: Arc::new(Mutex::new(HashSet::new())),
@@ -813,7 +821,8 @@ impl DownloadManager {
             stop_signals: Arc::new(Mutex::new(HashMap::new())),
             stopped_partial: Arc::new(Mutex::new(HashSet::new())),
             notes: Arc::new(Mutex::new(HashMap::new())),
-            transfers_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            transfers_cache: Arc::new(Mutex::new(None)),
+            transfers_refresh: Arc::new(tokio::sync::Mutex::new(())),
             transfer_events: Arc::new(tokio::sync::Mutex::new(None)),
             finish_seen: Arc::new(tokio::sync::Mutex::new(None)),
             paths_in_use: Arc::new(Mutex::new(HashSet::new())),
@@ -2299,7 +2308,12 @@ impl DownloadManager {
                 .entry(relative_path.clone())
                 .or_insert_with(|| config.effective(&relative_path));
             let mut decision = rules.decide(&file.name);
-            if let Some(hooks) = &filter_hooks {
+            // A file already downloaded or queued is skipped whatever a plugin says about
+            // it, so the hook is only asked about candidates (one plugin round trip each)
+            let known = completed_ids.contains(&file.id) || queued_ids.contains_key(&file.id);
+            let ask_hook =
+                !(known && matches!(decision, Decision::Download | Decision::Stream { .. }));
+            if let Some(hooks) = filter_hooks.as_ref().filter(|_| ask_hook) {
                 decision = filtered(hooks.as_ref(), &file, &relative_path, decision).await;
             }
             if let Decision::Stream { rule } = &decision {
@@ -3226,30 +3240,53 @@ impl DownloadManager {
         Ok(names.join("/"))
     }
 
-    /// List all files recursively from Put.io
+    /// List all files recursively from Put.io, up to [`LIST_CONCURRENCY`] folders at a time
     /// Returns a list of (FileEntry, relative_path) tuples, with paths under `base_path`
     async fn list_all_files(
         &self,
         parent_id: i64,
         base_path: String,
     ) -> DownloadResult<Vec<(FileEntry, String)>> {
+        use futures_util::stream::{FuturesUnordered, StreamExt};
+
+        // List the folders a few at a time: one round trip each adds up over a big library
+        let mut listings: HashMap<i64, Vec<FileEntry>> = HashMap::new();
+        let mut pending = std::collections::VecDeque::from([parent_id]);
+        let mut seen = HashSet::from([parent_id]);
+        let mut in_flight = FuturesUnordered::new();
+        loop {
+            while in_flight.len() < LIST_CONCURRENCY {
+                let Some(id) = pending.pop_front() else {
+                    break;
+                };
+                debug!("Fetching files from folder: {}", id);
+                let client = &self.client;
+                in_flight.push(async move { (id, client.list_files(id).await) });
+            }
+            // An error drops the listings still in flight
+            let Some((id, response)) = in_flight.next().await else {
+                break;
+            };
+            let files = response.map_err(DownloadError::ClientError)?.files;
+            for file in &files {
+                if file.file_type == "FOLDER" && seen.insert(file.id) {
+                    pending.push_back(file.id);
+                }
+            }
+            listings.insert(id, files);
+        }
+
+        // Assemble in the order a one-at-a-time walk gives, whichever listing came first:
+        // a folder's files, then its last subfolder's tree first
         let mut all_files = Vec::new();
-        // Track (folder_id, relative_path) for each folder to process
         let mut folders_to_process = vec![(parent_id, base_path)];
-
         while let Some((current_folder, current_path)) = folders_to_process.pop() {
-            debug!(
-                "Fetching files from folder: {} (path: {})",
-                current_folder, current_path
-            );
-
-            let response = self
-                .client
-                .list_files(current_folder)
-                .await
-                .map_err(DownloadError::ClientError)?;
-
-            for file in response.files {
+            // Taken out of the map, so a folder listed twice in a malformed tree is not
+            // walked twice
+            let Some(files) = listings.remove(&current_folder) else {
+                continue;
+            };
+            for file in files {
                 if file.file_type == "FOLDER" {
                     // Build the folder's relative path
                     let folder_path = join_path(&current_path, &sanitize_filename(&file.name));
@@ -3421,27 +3458,51 @@ impl DownloadManager {
     /// returned flagged stale, and the next try waits `max_age` too; with no list yet,
     /// the error is returned.
     pub async fn transfers_snapshot(&self, max_age: Duration) -> DownloadResult<TransfersSnapshot> {
-        let mut cache = self.transfers_cache.lock().await;
-        if let Some(cached) = cache.as_ref() {
-            if cached.attempted.elapsed() < max_age {
-                return Ok(cached.snapshot());
+        let fresh = |me: &Self| {
+            locked(&me.transfers_cache)
+                .as_ref()
+                .filter(|c| c.attempted.elapsed() < max_age)
+                .map(CachedTransfers::snapshot)
+        };
+        if let Some(snapshot) = fresh(self) {
+            return Ok(snapshot);
+        }
+        // One refresh at a time. While another caller fetches, a caller with an older
+        // list uses it; one with none waits for the fetch.
+        let _refreshing = match self.transfers_refresh.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                if let Some(cached) = locked(&self.transfers_cache).as_ref() {
+                    return Ok(cached.snapshot());
+                }
+                let guard = self.transfers_refresh.lock().await;
+                if let Some(snapshot) = fresh(self) {
+                    return Ok(snapshot);
+                }
+                guard
             }
+        };
+        // Another caller may have refreshed between the check and the lock
+        if let Some(snapshot) = fresh(self) {
+            return Ok(snapshot);
         }
         match self.client.list_transfers().await {
             Ok(response) => {
-                let snapshot = cache
-                    .insert(CachedTransfers {
-                        attempted: Instant::now(),
-                        fetched_at: SystemTime::now(),
-                        transfers: Arc::new(response.transfers),
-                        stale: false,
-                    })
-                    .snapshot();
-                drop(cache);
+                let snapshot = {
+                    let mut cache = locked(&self.transfers_cache);
+                    cache
+                        .insert(CachedTransfers {
+                            attempted: Instant::now(),
+                            fetched_at: SystemTime::now(),
+                            transfers: Arc::new(response.transfers),
+                            stale: false,
+                        })
+                        .snapshot()
+                };
                 self.track_transfers(&snapshot.transfers).await;
                 Ok(snapshot)
             }
-            Err(e) => match cache.as_mut() {
+            Err(e) => match locked(&self.transfers_cache).as_mut() {
                 Some(cached) => {
                     warn!(error = %error_chain(&e), "Failed to list transfers; using the last list");
                     cached.attempted = Instant::now();
@@ -3455,9 +3516,7 @@ impl DownloadManager {
 
     /// The last Put.io transfer list fetched, without asking Put.io
     pub(crate) async fn cached_transfers(&self) -> Option<Arc<Vec<Transfer>>> {
-        self.transfers_cache
-            .lock()
-            .await
+        locked(&self.transfers_cache)
             .as_ref()
             .map(|c| c.transfers.clone())
     }
@@ -3547,12 +3606,7 @@ impl DownloadManager {
         stalls: &StallTracker,
         retention_hours: u64,
     ) -> DownloadResult<crate::pipeline::Pipeline> {
-        let snapshot = self
-            .transfers_cache
-            .lock()
-            .await
-            .as_ref()
-            .map(|c| c.snapshot());
+        let snapshot = locked(&self.transfers_cache).as_ref().map(|c| c.snapshot());
         self.pipeline_from(snapshot, stalls, retention_hours).await
     }
 

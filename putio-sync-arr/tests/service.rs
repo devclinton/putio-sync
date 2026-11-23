@@ -1889,3 +1889,50 @@ async fn stalling_cache_is_asked_briefly_when_holding() {
         vec![(Some("timeout".into()), None, "pending".into(), None)]
     );
 }
+
+#[tokio::test]
+async fn the_category_folder_is_listed_once_across_adds() {
+    let mut h = Harness::new().await;
+    let list = h
+        .putio
+        .mock("GET", "/files/list?parent_id=0")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"files":[{}],"parent":{},"status":"OK"}}"#,
+            entry(CATEGORY_FOLDER, "sonarr", "FOLDER", 0, 0),
+            entry(0, "root", "FOLDER", 0, 0)
+        ))
+        .expect(1)
+        .create_async()
+        .await;
+    let add = h
+        .putio
+        .mock("POST", "/transfers/add")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"transfer":{},"status":"OK"}}"#,
+            transfer("IN_QUEUE", 0, None, None)
+        ))
+        .expect(2)
+        .create_async()
+        .await;
+    let service = h.service(vec![]);
+    let dir = format!("{}/sonarr", h.target().display());
+    let second = "b".repeat(40);
+
+    service
+        .add(AddSource::Magnet(magnet()), Some(&dir))
+        .await
+        .unwrap();
+    service
+        .add(
+            AddSource::Magnet(magnet_for(&second, "Show.S01E02")),
+            Some(&dir),
+        )
+        .await
+        .unwrap();
+    list.assert_async().await;
+    add.assert_async().await;
+}
