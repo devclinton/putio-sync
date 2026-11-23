@@ -249,6 +249,86 @@ pub fn below_free_space_floor(free: u64, min_free: u64, next_size: u64) -> bool 
     min_free > 0 && free.saturating_sub(next_size) < min_free
 }
 
+/// How often the "free space can't be read" warning may repeat
+const SPACE_WARN_EVERY: Duration = Duration::from_secs(300);
+
+/// Bytes still to be written by the downloads running now, shared by the workers. A
+/// download reserves its file size when it starts and gives it back when its
+/// [`SpaceGuard`] drops (finish, failure, cancel or panic).
+#[derive(Debug, Clone, Default)]
+pub struct SpaceReservations(Arc<Mutex<u64>>);
+
+impl SpaceReservations {
+    /// Bytes reserved by running downloads
+    pub fn reserved(&self) -> u64 {
+        *locked(&self.0)
+    }
+
+    /// Reserve `size` bytes unless free space, less what is reserved and `size`, would
+    /// fall under `min_free` (the floor is off at 0). The check and the reservation
+    /// happen under one lock, so workers can't both pass on the same room.
+    pub fn try_reserve(&self, free: u64, min_free: u64, size: u64) -> Option<SpaceGuard> {
+        let mut reserved = locked(&self.0);
+        if below_free_space_floor(free.saturating_sub(*reserved), min_free, size) {
+            return None;
+        }
+        *reserved = reserved.saturating_add(size);
+        Some(SpaceGuard {
+            reservations: self.0.clone(),
+            size,
+        })
+    }
+}
+
+/// A reservation in [`SpaceReservations`]; released on drop
+#[derive(Debug)]
+pub struct SpaceGuard {
+    reservations: Arc<Mutex<u64>>,
+    size: u64,
+}
+
+impl Drop for SpaceGuard {
+    fn drop(&mut self) {
+        let mut reserved = locked(&self.reservations);
+        *reserved = reserved.saturating_sub(self.size);
+    }
+}
+
+/// Free bytes on the volume that holds (or will hold) `dir`. A directory that doesn't
+/// exist yet is measured through its nearest existing parent, since the download creates
+/// it. `None` when it can't be read; that is logged at most every [`SPACE_WARN_EVERY`].
+fn free_bytes_of(dir: &Path, warned: &Mutex<Option<Instant>>) -> Option<u64> {
+    let mut probe = dir;
+    loop {
+        match putio_sync_telemetry::gauges::disk_usage(probe) {
+            Ok((free, _)) => return Some(free),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    if let Some(parent) = probe.parent() {
+                        probe = if parent.as_os_str().is_empty() {
+                            Path::new(".")
+                        } else {
+                            parent
+                        };
+                        continue;
+                    }
+                }
+                let mut last = locked(warned);
+                if last.is_none_or(|t| t.elapsed() >= SPACE_WARN_EVERY) {
+                    *last = Some(Instant::now());
+                    warn!(
+                        dir = %dir.display(),
+                        error = %e,
+                        "Can't read free space of the download folder; new downloads are \
+                         on hold until it can be read (or set min_free_space_mb = 0)"
+                    );
+                }
+                return None;
+            }
+        }
+    }
+}
+
 const IDLE_POLL: Duration = Duration::from_secs(30);
 
 /// How many times a sync queues a transiently failed file again before it stays failed
@@ -656,6 +736,10 @@ pub struct DownloadManager {
     work_notify: Arc<Notify>,
     /// Set while new downloads are held back for lack of free space
     low_space: Arc<Mutex<Option<LowSpace>>>,
+    /// Bytes the running downloads may still write, counted whole-file from their start
+    space: SpaceReservations,
+    /// When the unreadable-target-directory warning was last logged
+    space_warned: Arc<Mutex<Option<Instant>>>,
     /// Transient failures per file id (retries used up on a flaky link): a later sync
     /// queues the row again, at most `MAX_SYNC_REQUEUES` times. In memory, so a restart
     /// starts the count again and the queue table needs no new column.
@@ -797,6 +881,8 @@ impl DownloadManager {
             sync_notify: Arc::new(Notify::new()),
             work_notify: Arc::new(Notify::new()),
             low_space: Arc::new(Mutex::new(None)),
+            space: SpaceReservations::default(),
+            space_warned: Arc::new(Mutex::new(None)),
             transient_failures: Arc::new(Mutex::new(HashMap::new())),
             manual_sync: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stop_signals: Arc::new(Mutex::new(HashMap::new())),
@@ -841,6 +927,8 @@ impl DownloadManager {
             sync_notify: Arc::new(Notify::new()),
             work_notify: Arc::new(Notify::new()),
             low_space: Arc::new(Mutex::new(None)),
+            space: SpaceReservations::default(),
+            space_warned: Arc::new(Mutex::new(None)),
             transient_failures: Arc::new(Mutex::new(HashMap::new())),
             manual_sync: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stop_signals: Arc::new(Mutex::new(HashMap::new())),
@@ -2805,19 +2893,38 @@ impl DownloadManager {
 
         let queue_repo = db.queue();
 
+        // Room for a file: what is free, less the running downloads' unwritten bytes and
+        // the floor. Rows bigger than that stay pending, so a big head row never keeps
+        // smaller ones behind it from running.
+        let budget = self.room_for_next(&config);
+
         // Atomically claim next pending item (prevents race conditions between workers)
-        let queue_item = queue_repo.claim_next_pending().await.map_err(|e| {
-            DownloadError::InternalError(format!("Failed to claim next pending item: {}", e))
-        })?;
+        let queue_item = queue_repo
+            .claim_next_pending_fitting(budget)
+            .await
+            .map_err(|e| {
+                DownloadError::InternalError(format!("Failed to claim next pending item: {}", e))
+            })?;
 
         let queue_item = match queue_item {
             Some(item) => item,
             None => {
-                debug!("Queue is empty");
-                // Nothing is waiting for room any more
-                let mut state = locked(&self.low_space);
-                if state.is_some_and(|s| s.file_too_big) {
-                    *state = None;
+                debug!("Nothing claimable");
+                let waiting = budget != i64::MAX
+                    && queue_repo
+                        .counts_by_status()
+                        .await
+                        .map(|c| c.iter().any(|(s, n)| s == "pending" && *n > 0))
+                        .unwrap_or(false);
+                if waiting {
+                    // Pending rows, none of which fits: hold, with the usual notice
+                    self.hold_for_space(&config, 1 + budget.max(0) as u64);
+                } else {
+                    // Nothing is waiting for room any more
+                    let mut state = locked(&self.low_space);
+                    if state.is_some_and(|s| s.file_too_big) {
+                        *state = None;
+                    }
                 }
                 return Ok(false);
             }
@@ -2843,13 +2950,26 @@ impl DownloadManager {
             return Ok(false);
         }
 
-        // The file would take the free space under the floor: back it goes, without
-        // waking the workers (the next idle poll looks again)
-        if self.hold_for_space(&config, queue_item.file_size.max(0) as u64) {
-            if let Err(e) = queue_repo.unclaim_files(&[file_id]).await {
-                warn!(file_id, error = %e, "Could not put the claimed file back in the queue");
+        // Reserve the file's bytes, checking free space under the reservation lock: another
+        // worker may have taken the room since the claim. Back it goes, without waking
+        // the workers (the next idle poll looks again).
+        let size = queue_item.file_size.max(0) as u64;
+        let _space = match self.reserve_space(&config, size) {
+            Some(guard) => guard,
+            None => {
+                self.hold_for_space(&config, size);
+                if let Err(e) = queue_repo.unclaim_files(&[file_id]).await {
+                    warn!(file_id, error = %e, "Could not put the claimed file back in the queue");
+                }
+                return Ok(false);
             }
-            return Ok(false);
+        };
+        // A file that fits is running: the "file too big" notice is over
+        {
+            let mut state = locked(&self.low_space);
+            if state.is_some_and(|s| s.file_too_big) {
+                *state = None;
+            }
         }
 
         debug!(
@@ -2879,19 +2999,53 @@ impl DownloadManager {
         }
     }
 
+    /// Free bytes of the download folder's volume, `None` if unreadable (see [`free_bytes_of`])
+    fn free_bytes(&self, dir: &Path) -> Option<u64> {
+        free_bytes_of(dir, &self.space_warned)
+    }
+
+    /// Bytes the next file may take: free space less the reserved bytes and the floor.
+    /// `i64::MAX` when the floor is off.
+    fn room_for_next(&self, config: &DownloadConfig) -> i64 {
+        let min = config.min_free_space_bytes;
+        if min == 0 {
+            return i64::MAX;
+        }
+        let free = self.free_bytes(&config.target_directory).unwrap_or(0);
+        let room = free
+            .saturating_sub(self.space.reserved())
+            .saturating_sub(min);
+        i64::try_from(room).unwrap_or(i64::MAX - 1)
+    }
+
+    /// Reserve `size` bytes for a download about to start, or `None` if they don't fit
+    /// above the floor. With the floor off the reservation always succeeds.
+    fn reserve_space(&self, config: &DownloadConfig, size: u64) -> Option<SpaceGuard> {
+        let min = config.min_free_space_bytes;
+        let free = if min == 0 {
+            0
+        } else {
+            self.free_bytes(&config.target_directory)?
+        };
+        self.space.try_reserve(free, min, size)
+    }
+
     /// Whether a download of `next_size` bytes must wait for free space. Records the state
-    /// for `low_space`, warns once when it begins and logs when it ends. A folder whose
-    /// space can't be read doesn't hold anything back.
+    /// for `low_space`, warns once when it begins and logs when it ends. With the floor
+    /// on, a folder whose space can't be read holds everything back (fail closed).
     fn hold_for_space(&self, config: &DownloadConfig, next_size: u64) -> bool {
         let min = config.min_free_space_bytes;
         let free = if min == 0 {
             None
         } else {
-            putio_sync_telemetry::gauges::disk_usage(&config.target_directory)
-                .ok()
-                .map(|(free, _)| free)
+            self.free_bytes(&config.target_directory)
         };
-        let hold = free.is_some_and(|free| below_free_space_floor(free, min, next_size));
+        let reserved = self.space.reserved();
+        let unreadable = min > 0 && free.is_none();
+        let hold = unreadable
+            || free.is_some_and(|free| {
+                below_free_space_floor(free.saturating_sub(reserved), min, next_size)
+            });
         let mut state = locked(&self.low_space);
         match (hold, free, state.is_some()) {
             (true, Some(free), was_held) => {
@@ -2905,7 +3059,8 @@ impl DownloadManager {
                 *state = Some(LowSpace {
                     free_bytes: free,
                     min_free_bytes: min,
-                    file_too_big: next_size > 0 && !below_free_space_floor(free, min, 0),
+                    file_too_big: next_size > 0
+                        && !below_free_space_floor(free.saturating_sub(reserved), min, 0),
                 });
             }
             // The pre-claim check passing doesn't clear a state a too-big file set
@@ -4276,6 +4431,51 @@ mod tests {
         assert!(below_free_space_floor(8 * GB, 5 * GB, 4 * GB));
         assert!(!below_free_space_floor(8 * GB, 5 * GB, 3 * GB));
         assert!(below_free_space_floor(GB, 5 * GB, 100 * GB));
+    }
+
+    #[test]
+    fn reservations_stop_concurrent_overshoot_and_release_on_drop() {
+        const GB: u64 = 1 << 30;
+        let space = SpaceReservations::default();
+        // 10 GB free, 5 GB floor: room for 5 GB in all
+        let a = space.try_reserve(10 * GB, 5 * GB, 3 * GB).expect("fits");
+        assert_eq!(space.reserved(), 3 * GB);
+        // Each would pass alone, but not with the first one's bytes still to come
+        assert!(space.try_reserve(10 * GB, 5 * GB, 3 * GB).is_none());
+        assert_eq!(space.reserved(), 3 * GB, "a refusal reserves nothing");
+        let b = space.try_reserve(10 * GB, 5 * GB, 2 * GB).expect("fits");
+        assert!(space.try_reserve(10 * GB, 5 * GB, 1).is_none());
+        drop(a);
+        assert_eq!(space.reserved(), 2 * GB);
+        assert!(space.try_reserve(10 * GB, 5 * GB, 3 * GB).is_some());
+        drop(b);
+        // Floor off: always reserves
+        assert!(space.try_reserve(0, 0, 100 * GB).is_some());
+    }
+
+    #[test]
+    fn reservations_hold_under_threads() {
+        const GB: u64 = 1 << 30;
+        let space = SpaceReservations::default();
+        let granted: Vec<_> = (0..16)
+            .map(|_| {
+                let space = space.clone();
+                std::thread::spawn(move || space.try_reserve(10 * GB, 5 * GB, GB))
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|h| h.join().unwrap())
+            .collect();
+        assert_eq!(granted.len(), 5, "exactly the room above the floor");
+        assert_eq!(space.reserved(), 5 * GB);
+    }
+
+    #[test]
+    fn free_bytes_walks_up_to_an_existing_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let warned = Mutex::new(None);
+        assert!(free_bytes_of(&dir.path().join("not/yet/made"), &warned).is_some());
+        assert!(warned.lock().unwrap().is_none(), "no warning for that");
     }
 
     #[test]
