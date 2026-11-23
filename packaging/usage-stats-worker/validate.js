@@ -17,7 +17,9 @@ const STAGES = ["pre_download", "pre_processing", "post_processing"];
 const TOP = ["schema", "install_id", "version", "build", "os", "arch", "features", "sizes"];
 
 const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const VERSION = /^\d{1,3}\.\d{1,3}\.\d{1,3}(-[0-9A-Za-z.]{1,20})?$/;
+const VERSION = /^\d{1,3}\.\d{1,3}\.\d{1,3}(-[0-9A-Za-z]([0-9A-Za-z.]{0,14}[0-9A-Za-z])?)?$/;
+/** Most distinct values kept per field in one day's record; the rest count as `field:other` */
+export const MAX_VALUES = 200;
 
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const sameKeys = (obj, keys) => Object.keys(obj).length === keys.length && keys.every((k) => k in obj);
@@ -64,12 +66,53 @@ export function validate(p) {
   return { ok: true, id: p.install_id, counts };
 }
 
-/** Add one to each `[field, value]` in a day's tally (`{ "field:value": n }`) */
-export function tally(day, counts) {
+/**
+ * Add one to each `[field, value]` in a day's tally (`{ "field:value": n }`). At most `cap`
+ * distinct values are kept per field; a new value past that is folded into `field:other`, so a
+ * flood of made-up values cannot grow the record without bound.
+ */
+export function tally(day, counts, cap = MAX_VALUES) {
   const out = { ...day };
+  const distinct = {};
+  for (const key of Object.keys(out)) {
+    const field = key.slice(0, key.indexOf(":"));
+    distinct[field] = (distinct[field] || 0) + 1;
+  }
   for (const [field, value] of counts) {
-    const key = `${field}:${value}`;
+    let key = `${field}:${value}`;
+    if (!(key in out)) {
+      if ((distinct[field] || 0) >= cap) key = `${field}:other`;
+      if (!(key in out)) distinct[field] = (distinct[field] || 0) + 1;
+    }
     out[key] = (out[key] || 0) + 1;
   }
   return out;
+}
+
+/**
+ * Read a request body as text, counting bytes, and stop as soon as it passes `limit`.
+ * Returns the text, or `null` when the body is too large.
+ */
+export async function readLimited(request, limit = MAX_BODY) {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.byteLength;
+  }
+  return new TextDecoder().decode(all);
 }

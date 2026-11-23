@@ -1,14 +1,14 @@
 // Anonymous usage stats receiver for putio-sync (feature 058). A Cloudflare Worker.
 //
 //   POST /        one payload (schema 1), checked against an allow-list in validate.js
-//   GET  /summary daily aggregate counts: ?days=14 (1 to 90)
+//   GET  /summary daily aggregate counts: ?days=14 (1 to 90). Off unless PUBLIC_SUMMARY=1.
 //
 // Privacy: the request's IP address and headers are never read, logged or stored. Only the
 // counts are kept, one KV entry per day. To count an install once a day, a SHA-256 of
 // "day:install id" is kept for 2 days, and the install id itself is not.
 // Not deployed by the project: see README.md.
 
-import { MAX_BODY, tally, validate } from "./validate.js";
+import { MAX_BODY, readLimited, tally, validate } from "./validate.js";
 
 const JSON_HEADERS = { "content-type": "application/json", "cache-control": "no-store" };
 const DAY_TTL = 60 * 60 * 24 * 400;
@@ -26,8 +26,13 @@ async function sha256(text) {
 async function receive(request, env) {
   const type = request.headers.get("content-type") || "";
   if (!type.startsWith("application/json")) return reply(415, { error: "send JSON" });
-  const text = await request.text();
-  if (text.length > MAX_BODY) return reply(413, { error: "too large" });
+  const length = request.headers.get("content-length");
+  if (length === null) return reply(411, { error: "length required" });
+  if (!/^\d+$/.test(length)) return reply(400, { error: "bad content-length" });
+  if (Number(length) > MAX_BODY) return reply(413, { error: "too large" });
+  // The header can lie, so the bytes are counted as they are read too.
+  const text = await readLimited(request, MAX_BODY);
+  if (text === null) return reply(413, { error: "too large" });
   let body;
   try {
     body = JSON.parse(text);
@@ -64,7 +69,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "POST" && url.pathname === "/") return receive(request, env);
-    if (request.method === "GET" && url.pathname === "/summary") {
+    if (request.method === "GET" && url.pathname === "/summary" && env.PUBLIC_SUMMARY === "1") {
       const res = await summary(url, env);
       res.headers.set("access-control-allow-origin", "*");
       return res;

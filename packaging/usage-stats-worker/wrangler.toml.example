@@ -11,3 +11,7 @@ id = "REPLACE_WITH_THE_NAMESPACE_ID"
 # Keep request logs off: the receiver must not keep IP addresses.
 [observability]
 enabled = false
+
+# /summary is public when on, so it is off unless you set this to "1".
+[vars]
+PUBLIC_SUMMARY = "0"
