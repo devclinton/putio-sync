@@ -191,6 +191,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- The web UI's new strings are translated into all 26 languages. The Queue's bulk retry and
+  remove messages are now whole sentences, so they translate too.
+
 - Web UI errors say what to try next: a rejected token, the can't-reach banner, a failed last sync (links to Logs and Doctor), and Retry buttons on the Status and Queue summaries.
 - The web UI loads Stats, Doctor, Logs, Settings and Setup the first time they are opened, so the first page load is about 75 KB smaller.
 - The download queue has an index on status and priority, so claiming and polling no longer scan the whole table; the daily maintenance also removes completed queue rows older than 7 days.
