@@ -33,9 +33,10 @@ impl From<OnExisting> for putio_sync_core::config::ExistingFile {
     name = "putio-sync",
     author = "Clinton Collins",
     version = VERSION,
-    about = "Synchronize files with Put.io",
-    long_about = "A command-line tool for synchronizing files with Put.io cloud storage.\n\
-                  Supports file listing, downloading, and management."
+    about = "Sync a Put.io account to this machine, with a web UI",
+    long_about = "Sync a Put.io account to this machine, with a web UI.\n\
+                  Also lists, downloads and manages files from the command line.",
+    after_help = "Examples:\n  putio-sync daemon    run the sync, folder watcher and web UI (what the Docker image runs)\n  putio-sync setup     first-run setup in the terminal\n  putio-sync doctor    check the setup and report what is wrong"
 )]
 pub struct Cli {
     /// Path to config file
@@ -74,6 +75,18 @@ pub struct Cli {
 /// Available commands
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Print a shell completion script (bash, zsh, fish, elvish, powershell)
+    #[command(
+        about = "Print a shell completion script",
+        long_about = "Print a shell completion script to standard output, e.g. \
+                      'putio-sync completions bash > /etc/bash_completion.d/putio-sync'."
+    )]
+    Completions {
+        /// Shell to generate the script for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
     /// Authenticate with Put.io using OAuth token
     #[command(about = "Authenticate with Put.io using OAuth token")]
     Login {
@@ -507,7 +520,11 @@ pub enum Commands {
 
     /// Run combined download sync and torrent watch daemon
     #[cfg(feature = "server")]
-    #[command(about = "Run combined download sync and torrent watch daemon")]
+    #[command(
+        about = "Run putio-sync: sync downloads, watch folders and serve the web UI",
+        long_about = "Run putio-sync: sync downloads, watch folders and serve the web UI. \
+                      This is what the Docker image runs."
+    )]
     Daemon {
         /// Download sync interval in seconds
         #[arg(
@@ -616,7 +633,7 @@ pub enum Commands {
 
     /// Start HTTP API server with optional daemon modes
     #[cfg(feature = "server")]
-    #[command(about = "Start HTTP API server")]
+    #[command(about = "Start only the HTTP API (advanced); most people want 'daemon'")]
     Server {
         /// Enable watch mode for monitoring torrent directories
         #[arg(

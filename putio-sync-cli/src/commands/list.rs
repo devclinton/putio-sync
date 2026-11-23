@@ -45,16 +45,16 @@ pub async fn execute_list(
     // Create API client
     let client = match auth.auth_method {
         AuthMethod::Token => {
-            let token = auth.token.ok_or_else(|| anyhow!("Token not configured"))?;
+            let token = auth.token.ok_or_else(crate::commands::missing_token)?;
             PutioApiClient::new(token)
         }
         AuthMethod::AppPassword => {
             let username = auth
                 .username
-                .ok_or_else(|| anyhow!("Username not configured"))?;
+                .ok_or_else(crate::commands::missing_username)?;
             let password = auth
                 .password
-                .ok_or_else(|| anyhow!("Password not configured"))?;
+                .ok_or_else(crate::commands::missing_password)?;
             PutioApiClient::with_credentials(username, password)
         }
     };

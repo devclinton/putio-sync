@@ -312,3 +312,27 @@ async fn folder_and_rename_rules_place_a_download() {
     assert_eq!(hooks.asked(Hook::Rename).len(), 1);
     assert_eq!(hooks.asked(Hook::Folder).len(), 2);
 }
+
+#[tokio::test]
+async fn the_filter_is_not_asked_about_files_already_queued() {
+    let hooks = Arc::new(Fake {
+        filter: HashMap::from([("sample.mkv", FilterAnswer::Skip)]),
+        ..Fake::default()
+    });
+    let s = setup(DownloadSettings::default(), hooks.clone()).await;
+    s.manager.sync_downloads().await.unwrap();
+    assert!(queued(&s.db, 11).await);
+    let first = hooks.asked(Hook::Filter).len();
+    assert!(hooks
+        .asked(Hook::Filter)
+        .iter()
+        .any(|f| f.name == "film.mkv"));
+
+    s.manager.sync_downloads().await.unwrap();
+    let asked = hooks.asked(Hook::Filter);
+    let again: Vec<_> = asked[first..].iter().map(|f| f.name.as_str()).collect();
+    assert!(!again.contains(&"film.mkv"), "{again:?}");
+    assert!(!again.contains(&"loose.mkv"), "{again:?}");
+    // Not queued, so still a candidate
+    assert!(again.contains(&"sample.mkv"), "{again:?}");
+}

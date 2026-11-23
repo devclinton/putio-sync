@@ -225,3 +225,27 @@ async fn modules_the_host_cannot_run_are_broken() {
         assert!(error.contains(want), "{name}: {error}");
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fd_write_refuses_huge_vector_counts_and_bad_addresses() {
+    let _turn = SERIAL.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    // Memory is zeroed from 8192 on, so every iovec there is empty: a huge count would loop for billions
+    // of host iterations. Each answer must be an errno, EINVAL (28) here, and fast.
+    let body = r#"
+    (if (i32.ne (call $write (i32.const 1) (i32.const 0) (i32.const 2147483647) (i32.const 512))
+                (i32.const 28)) (then unreachable))
+    (if (i32.ne (call $write (i32.const 1) (i32.const 0) (i32.const -1) (i32.const 512))
+                (i32.const 28)) (then unreachable))
+    (if (i32.ne (call $write (i32.const 1) (i32.const -4) (i32.const 1024) (i32.const 512))
+                (i32.const 21)) (then unreachable))
+    (if (i32.ne (call $write (i32.const 1) (i32.const 8192) (i32.const 1024) (i32.const 512))
+                (i32.const 0)) (then unreachable))"#;
+    let imports = r#"(import "wasi_snapshot_preview1" "fd_write"
+        (func $write (param i32 i32 i32 i32) (result i32)))"#;
+    plugin(dir.path(), "writer", &module(imports, body, ""));
+    let plugins = service(dir.path(), &["writer"]);
+    let run = event_run(&plugins, "writer").await;
+    assert_eq!(run.result, RunResult::Success, "{:?}", run.error);
+    assert!(run.duration_ms < 500, "{}", run.duration_ms);
+}

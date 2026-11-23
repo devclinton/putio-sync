@@ -66,10 +66,13 @@ pub struct Telemetry {
 
     pub(crate) api_requests: IntCounterVec,
     pub(crate) api_retries: IntCounterVec,
+    pub(crate) api_rate_limit: IntGauge,
+    pub(crate) api_rate_remaining: IntGauge,
     pub(crate) api_duration: Histogram,
     pub(crate) api_op_duration: HistogramVec,
 
     pub(crate) sync_runs: IntCounterVec,
+    pub(crate) sync_failures: IntCounterVec,
     pub(crate) sync_duration: Histogram,
     pub(crate) last_sync_duration: Gauge,
     // Label-less vecs: the series is absent until the first `with_label_values(&[])`.
@@ -89,6 +92,7 @@ pub struct Telemetry {
     pub(crate) bandwidth_override: IntGauge,
     pub(crate) downloads_completed: IntCounter,
     pub(crate) downloads_failed: IntCounterVec,
+    pub(crate) download_retries: IntCounterVec,
     pub(crate) existing_files: IntCounterVec,
     pub(crate) downloaded_bytes: IntCounter,
     pub(crate) download_duration: Histogram,
@@ -235,6 +239,16 @@ impl Telemetry {
                 &["reason"],
             )
             .unwrap(),
+            api_rate_limit: IntGauge::with_opts(opts(
+                "api_rate_limit",
+                "Put.io request quota from the last X-RateLimit-Limit header.",
+            ))
+            .unwrap(),
+            api_rate_remaining: IntGauge::with_opts(opts(
+                "api_rate_limit_remaining",
+                "Put.io requests left from the last X-RateLimit-Remaining header.",
+            ))
+            .unwrap(),
             api_duration: Histogram::with_opts(hopts(
                 "api_request_duration_seconds",
                 "Latency of each Put.io HTTP attempt.",
@@ -254,6 +268,11 @@ impl Telemetry {
             sync_runs: IntCounterVec::new(
                 opts("sync_runs_total", "Completed sync runs."),
                 &["result"],
+            )
+            .unwrap(),
+            sync_failures: IntCounterVec::new(
+                opts("sync_failures_total", "Failed sync runs, by reason."),
+                &["reason"],
             )
             .unwrap(),
             sync_duration: Histogram::with_opts(hopts(
@@ -435,6 +454,14 @@ impl Telemetry {
             .unwrap(),
             downloads_failed: IntCounterVec::new(
                 opts("downloads_failed_total", "Downloads that ended in failure."),
+                &["reason"],
+            )
+            .unwrap(),
+            download_retries: IntCounterVec::new(
+                opts(
+                    "download_retries_total",
+                    "Retries inside a download (dropped connection, timeout, stall, server error).",
+                ),
                 &["reason"],
             )
             .unwrap(),
@@ -948,9 +975,12 @@ impl Telemetry {
         let collectors: Vec<Box<dyn prometheus::core::Collector>> = vec![
             Box::new(self.api_requests.clone()),
             Box::new(self.api_retries.clone()),
+            Box::new(self.api_rate_limit.clone()),
+            Box::new(self.api_rate_remaining.clone()),
             Box::new(self.api_duration.clone()),
             Box::new(self.api_op_duration.clone()),
             Box::new(self.sync_runs.clone()),
+            Box::new(self.sync_failures.clone()),
             Box::new(self.sync_duration.clone()),
             Box::new(self.last_sync_duration.clone()),
             Box::new(self.last_success.clone()),
@@ -967,6 +997,7 @@ impl Telemetry {
             Box::new(self.bandwidth_override.clone()),
             Box::new(self.downloads_completed.clone()),
             Box::new(self.downloads_failed.clone()),
+            Box::new(self.download_retries.clone()),
             Box::new(self.existing_files.clone()),
             Box::new(self.downloaded_bytes.clone()),
             Box::new(self.download_duration.clone()),
@@ -1072,6 +1103,12 @@ impl Telemetry {
         }
         for r in SyncResult::ALL {
             self.sync_runs.with_label_values(&[r.as_str()]);
+        }
+        for r in SyncFailReason::ALL {
+            self.sync_failures.with_label_values(&[r.as_str()]);
+        }
+        for r in DownloadRetryReason::ALL {
+            self.download_retries.with_label_values(&[r.as_str()]);
         }
         for k in SyncKind::ALL {
             self.last_sync_files.with_label_values(&[k.as_str()]);

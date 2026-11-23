@@ -736,30 +736,39 @@ impl Pipeline {
         Some(view)
     }
 
-    /// The item finished with warnings (an optional step gave up)
-    pub async fn has_warnings(&self, key: &str) -> bool {
-        matches!(
-            self.inner.store.item(key).await,
-            Ok(Some(item)) if item.state == ItemState::DoneWithWarnings
-        )
+    /// The keys of the items that finished with warnings, in one query
+    pub async fn warning_keys(&self) -> HashSet<String> {
+        self.inner
+            .store
+            .keys_in_state(ItemState::DoneWithWarnings)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .collect()
     }
 
     /// The step line of an item's Active row, by key
     pub async fn summaries(&self) -> HashMap<String, StepSummary> {
+        let items = self.inner.store.items().await.unwrap_or_default();
+        self.summaries_of(&items).await
+    }
+
+    async fn summaries_of(&self, items: &[ItemRow]) -> HashMap<String, StepSummary> {
         let mut out = HashMap::new();
         let store = &self.inner.store;
         let jobs = store.waiting_jobs().await.unwrap_or_default();
-        for item in store.items().await.unwrap_or_default() {
+        let mut steps = store.steps_of_open_items().await.unwrap_or_default();
+        for item in items {
             if item.state.is_terminal() {
                 continue;
             }
-            let steps = store.steps(&item.key).await.unwrap_or_default();
-            if let Some(mut summary) = timeline::summary(&item, &steps) {
+            let steps = steps.remove(&item.key).unwrap_or_default();
+            if let Some(mut summary) = timeline::summary(item, &steps) {
                 summary.waiting = jobs
                     .iter()
                     .find(|j| j.step_id == summary.id)
                     .map(timeline::Waiting::from_job);
-                out.insert(item.key, summary);
+                out.insert(item.key.clone(), summary);
             }
         }
         out
@@ -768,14 +777,22 @@ impl Pipeline {
     /// Items to show on the Active page that the download view no longer lists: downloaded,
     /// not finished with processing
     pub async fn processing_items(&self) -> Vec<ItemRow> {
-        self.inner
-            .store
-            .items()
-            .await
-            .unwrap_or_default()
+        let items = self.inner.store.items().await.unwrap_or_default();
+        Self::processing_of(items)
+    }
+
+    fn processing_of(items: Vec<ItemRow>) -> Vec<ItemRow> {
+        items
             .into_iter()
             .filter(|i| !i.state.is_terminal() && i.stage > Stage::Downloading)
             .collect()
+    }
+
+    /// [`Self::summaries`] and [`Self::processing_items`] from one read of the items
+    pub async fn active_rows(&self) -> (HashMap<String, StepSummary>, Vec<ItemRow>) {
+        let items = self.inner.store.items().await.unwrap_or_default();
+        let summaries = self.summaries_of(&items).await;
+        (summaries, Self::processing_of(items))
     }
 
     /// Run a failed or interrupted step again

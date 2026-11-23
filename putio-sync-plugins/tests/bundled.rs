@@ -36,6 +36,8 @@ impl Clock {
 fn service(settings: Vec<PluginSettings>, clock: &Clock) -> PluginsService {
     let plugins = PluginsService::new(PluginsOptions {
         clock: clock.options(),
+        // The test servers listen on loopback
+        reach: Some(putio_sync_core::net_guard::Reach::Local),
         ..PluginsOptions::default()
     });
     let checked = plugins.check(&settings).unwrap();
