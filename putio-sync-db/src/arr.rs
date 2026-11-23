@@ -282,6 +282,18 @@ impl<'a> ArrRepository<'a> {
         Ok(rows.iter().map(item_from_row).collect())
     }
 
+    /// `(hash, name)` of the magnets held before Put.io (043): no transfer yet, state `putio`,
+    /// Put.io status `HELD`
+    pub async fn held_names(&self) -> DbResult<Vec<(String, String)>> {
+        sqlx::query_as(
+            "SELECT hash, name FROM arr_items \
+             WHERE transfer_id IS NULL AND state = 'putio' AND putio_status = 'HELD'",
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to list held arr items"))
+    }
+
     /// The categories items have used, sorted
     pub async fn categories(&self) -> DbResult<Vec<String>> {
         sqlx::query_scalar("SELECT DISTINCT category FROM arr_items ORDER BY category")
@@ -542,6 +554,24 @@ mod tests {
     }
 
     const HASH: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    #[tokio::test]
+    async fn held_names_lists_only_held_magnets_without_a_transfer() {
+        let (_dir, db) = db().await;
+        let repo = db.arr();
+        let held = "a".repeat(40);
+        let other = "b".repeat(40);
+        let mut item = new_item(&held);
+        item.transfer_id = None;
+        item.putio_status = "HELD";
+        repo.insert(&item).await.unwrap();
+        // Has a transfer, so not held; and a different status
+        repo.insert(&new_item(&other)).await.unwrap();
+        assert_eq!(
+            repo.held_names().await.unwrap(),
+            vec![(held, "Show.S01E01".to_string())]
+        );
+    }
 
     #[tokio::test]
     async fn insert_get_and_list() {

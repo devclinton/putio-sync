@@ -162,6 +162,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 ### Changed
 
 - The web UI loads Stats, Doctor, Logs, Settings and Setup the first time they are opened, so the first page load is about 75 KB smaller.
+- The download queue has an index on status and priority, so claiming and polling no longer scan the whole table; the daily maintenance also removes completed queue rows older than 7 days.
+- The local files page lists folders and sizes them on a blocking thread, so a slow disk no longer stalls the API; the Status page's held-magnet lookup reads only held items.
+- The Logs page's "after" cursor stops scanning older lines, so a busy log tail holds the log buffer for less time.
 - Watched .torrent and .magnet files stay in the folder after upload unless
   `delete_after_upload = true` or `archive_directory` is set, also when the config has no
   `[watch]` table.
