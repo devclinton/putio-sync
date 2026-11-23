@@ -79,6 +79,9 @@ pub mod log_redact;
 /// Crash reports: panic hook, crash files and the GitHub issue link (feature 058)
 pub mod crash;
 
+/// Anonymous usage stats: opt-in payload, install id and schedule (feature 058, part 2)
+pub mod usage_stats;
+
 /// Recent log lines kept for the web UI's Logs page (feature 047)
 pub mod log_capture;
 

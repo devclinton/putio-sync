@@ -503,6 +503,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/whats-new", routes::system::whats_new::router())
         .nest("/update", routes::system::update::router())
         .nest("/crash-reports", routes::system::crash::router())
+        .nest("/usage-stats", routes::system::usage_stats::router())
         .nest("/tailscale", routes::system::tailscale::router())
         .nest("/logs", routes::system::logs::router())
         .nest("/media-server", routes::system::media_server::router())
@@ -769,6 +770,12 @@ pub async fn create_app_state(
         file_watcher,
     );
     Ok(state)
+}
+
+/// Start the once-a-day anonymous usage stats check (feature 058). Sends nothing unless
+/// `[usage_stats]` is on with an endpoint.
+pub fn spawn_usage_stats(state: &AppState) {
+    routes::system::usage_stats::spawn(state);
 }
 
 /// Read each saved Radarr/Sonarr's categories now, then every 15 minutes (feature 018, R4)

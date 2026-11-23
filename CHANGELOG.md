@@ -12,6 +12,16 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- Anonymous usage stats (058, part 2), off by default. With `[usage_stats] enabled = true` and
+  an `endpoint`, putio-sync posts one small JSON document a day (random install id, version,
+  install kind, OS, enabled feature names, bucketed files per day and library size, crash
+  report count). The Settings Advanced card and `putio-sync usage-stats show` print the exact
+  document; `GET/PUT /usage-stats` and `POST /usage-stats/reset-id` back them. A failed send
+  waits a day. `packaging/usage-stats-worker/` has a Cloudflare Worker that receives and
+  tallies it.
+
 ### Security
 
 - Debug logs no longer print request or response headers (the Put.io bearer token, cookies) or

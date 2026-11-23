@@ -508,6 +508,7 @@ form > .error-text { margin: 12px 0 0; }
 .crash-slot:empty { display: none; }
 .notice.crash h2 { margin: 0 0 var(--s-2, 8px); font-size: var(--fs-lg, 1.1rem); }
 .crash-text { max-height: 18rem; overflow: auto; margin: var(--s-2, 8px) 0; padding: var(--s-3, 12px); border-radius: var(--r-md); background: var(--surface); font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+.usage-json { max-height: 16rem; overflow: auto; padding: var(--s-3, 12px); border-radius: var(--r-md); background: var(--surface); font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
 .crash-actions { display: flex; flex-wrap: wrap; gap: var(--s-2, 8px); }
 .notice.storage-warn { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: var(--text); margin-bottom: var(--gap); }
 .storage-top { display: grid; gap: 10px; margin: 14px 0 0; padding: 0; list-style: none; }

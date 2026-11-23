@@ -403,6 +403,16 @@ putio-sync plugins check FOLDER [--json]
 
 It needs no config or token. Exit codes: 0 no problems, 1 problems, 2 not a folder.
 
+### `usage-stats`
+
+Show or switch the opt-in usage stats. `show` prints the status and the exact JSON that would be
+sent; `enable` and `disable` change `[usage_stats] enabled`. See
+[What leaves your machine](#what-leaves-your-machine).
+
+```bash
+putio-sync usage-stats show|enable|disable
+```
+
 ### `crash-report`
 
 List, show and open the crash reports kept next to the config file. The "What leaves
@@ -2811,7 +2821,8 @@ warn about the old one, which you can delete.
 
 putio-sync talks to Put.io, to the Radarr, Sonarr, notification and plugin addresses you set,
 and, if you leave the update check on, to GitHub Releases to look for a newer version. It has no
-analytics and sends nothing about you or your files anywhere else.
+analytics unless you opt in to the usage stats below, and sends nothing about you or your files
+anywhere else.
 
 **Crash reports** are never sent by putio-sync. When it panics, it writes a file to
 `crash-reports/` next to the config file (the 10 newest are kept): version, how it was
@@ -2827,6 +2838,20 @@ GitHub account; **Copy report** copies the text, and **Dismiss** hides the notic
 terminal, use `putio-sync crash-report list`, `show ID` and `open ID`. The doctor warns about
 an undismissed crash from the last 7 days. If the report is too long for a link it is cut and
 the issue asks you to paste the copied one.
+
+**Usage stats** are off until you turn them on in Settings, Advanced, Usage stats, or with
+`putio-sync usage-stats enable`, and they need an endpoint address in `[usage_stats]` too:
+nothing is sent while either is missing, and no address is built in. Once a day (with up to an
+hour of random delay) putio-sync posts one small JSON document to that address, with no
+cookies, no redirects and the same blocklist for private addresses as other outgoing calls:
+a random install id, the version and install kind, OS and architecture, which features are
+switched on (names only: Radarr, Sonarr, DLNA, hooks, the bundled plugins you enabled), a
+bucketed files-per-day (`0`, `1-10`, `11-100`, `101-1000`, `1000+`) and a bucketed library
+size (`<100GB`, `100GB-1TB`, `1-10TB`, `10TB+`), and how many crash reports are kept. It never
+includes paths, file or folder names, hosts, tokens, user names or IP-derived data. The
+Settings card and `putio-sync usage-stats show` print the exact document that would be sent;
+**Reset id** makes a new random id. A failed send is not retried until the next day. The
+optional Cloudflare Worker that receives it lives in `packaging/usage-stats-worker/`.
 <!-- ANCHOR_END: what-leaves-your-machine -->
 
 <!-- ANCHOR: architecture -->

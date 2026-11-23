@@ -876,6 +876,17 @@ check = true
 auto_install = false
 
 # ============================================================================
+# Usage stats
+# ============================================================================
+# Anonymous, opt-in. Nothing is sent unless `enabled` is true AND `endpoint`
+# is set; there is no built-in address. Once a day putio-sync posts the JSON
+# that `putio-sync usage-stats show` prints (install id, version, OS, feature
+# names, bucketed counts; never paths, names, hosts or tokens).
+[usage_stats]
+enabled = false
+# endpoint = "https://stats.example.com/"
+
+# ============================================================================
 # API and Web UI
 # ============================================================================
 # `daemon` serves the JSON API and the web UI on one port (http://<host>:15432/).

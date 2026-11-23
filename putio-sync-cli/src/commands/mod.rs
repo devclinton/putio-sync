@@ -26,6 +26,7 @@ pub mod setup_mode;
 pub mod stat;
 pub mod status;
 pub mod transfers;
+pub mod usage_stats;
 
 #[cfg(feature = "server")]
 pub use archive::execute_archive;

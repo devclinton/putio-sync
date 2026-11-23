@@ -116,6 +116,23 @@ async fn run() {
         std::process::exit(code);
     }
 
+    // Usage stats show the payload and edit one setting: no token or logging (058)
+    if let Commands::UsageStats(command) = &args.command {
+        use commands::usage_stats::UsageStatsCommands as Run;
+        let run = match command {
+            cli::UsageStatsCommands::Show => Run::Show,
+            cli::UsageStatsCommands::Enable => Run::Enable,
+            cli::UsageStatsCommands::Disable => Run::Disable,
+        };
+        let code = commands::usage_stats::execute(
+            run,
+            args.config.as_deref(),
+            &mut std::io::stdout().lock(),
+        )
+        .await;
+        std::process::exit(code);
+    }
+
     // Load config early for logging configuration; what happened is logged once logging is up
     let mut config_note = String::from("No config file given, using the built-in defaults");
     let mut config = if let Some(config_path) = args.config.as_ref() {
@@ -492,6 +509,7 @@ async fn run() {
         #[cfg(feature = "plugins")]
         Commands::Plugins(_) => unreachable!("handled before the config loads"),
         Commands::CrashReport(_) => unreachable!("handled before the config loads"),
+        Commands::UsageStats(_) => unreachable!("handled before the config loads"),
         #[cfg(feature = "server")]
         Commands::Archive(job) => {
             let job = match job {

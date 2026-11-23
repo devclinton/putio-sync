@@ -187,6 +187,7 @@ pub async fn execute_server(
     }
     // After the first bind, so Radarr/Sonarr hear the port actually listened on
     putio_sync_api::spawn_arr_refresh(&state).await;
+    putio_sync_api::spawn_usage_stats(&state);
     info!("");
     info!("Press Ctrl+C to stop the server");
 

@@ -322,7 +322,7 @@ The sync-time decision hooks (filter, rename, folder rules) stay in 028.
 Each new callback gets a starter in `examples/plugins/` and a section in
 PLUGINS.md; each event gets its table in EVENTS.md.
 
-### 058 Crash reports (part 1 done), then anonymous usage stats
+### 058 Crash reports, then anonymous usage stats (both done)
 
 Nothing in putio-sync calls home today, and the README says what little
 leaves the machine. Keep it that way by default: nothing is sent without the
@@ -353,7 +353,7 @@ So the person files the report from their own GitHub account:
 - Release builds keep symbol names so backtraces are readable; tests force
   a panic and check the file, the redaction and the issue URL.
 
-**Part 2, anonymous usage stats (later, opt-in).** A once-a-day ping that is
+**Part 2, anonymous usage stats (done, `specs/058-usage-stats/`; the 056 review-screen offer is not built).** A once-a-day ping that is
 off by default and offered on the 056 review screen and in Settings, with the
 exact JSON shown before it is turned on: a random install id (not tied to
 the Put.io account, reset with one button), version, build, OS and arch, and
