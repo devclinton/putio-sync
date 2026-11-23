@@ -41,6 +41,7 @@ struct Summary {
     signature: String,
     message: String,
     dismissed: bool,
+    stopped: bool,
 }
 
 #[derive(Serialize)]
@@ -86,6 +87,7 @@ async fn list(State(state): State<AppState>) -> Result<Json<List>, ApiError> {
                     time: r.time,
                     version: r.version,
                     dismissed: r.dismissed,
+                    stopped: r.stopped,
                 })
                 .collect(),
         )

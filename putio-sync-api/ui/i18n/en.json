@@ -1633,6 +1633,7 @@
  "putio-sync can't replace itself:": "putio-sync can't replace itself:",
  "putio-sync can't tell whether this page will still reach it after a restart.{0}": "putio-sync can't tell whether this page will still reach it after a restart.{0}",
  "putio-sync hasn't come back after the restart. Check its log.": "putio-sync hasn't come back after the restart. Check its log.",
+ "putio-sync hit an internal error": "putio-sync hit an internal error",
  "putio-sync stopped unexpectedly": "putio-sync stopped unexpectedly",
  "set; leave empty to keep": "set; leave empty to keep",
  "so the audio will be sent to your transcription server. That can take several minutes.": "so the audio will be sent to your transcription server. That can take several minutes.",

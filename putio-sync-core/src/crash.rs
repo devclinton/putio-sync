@@ -88,6 +88,15 @@ pub struct CrashReport {
     /// The person dismissed it in the UI or CLI
     #[serde(default)]
     pub dismissed: bool,
+    /// The process ended: a panic on the main thread, a run found stopped at the next start, or
+    /// a stop without a report. `false` is an internal error the process survived (a panic in
+    /// a task the runtime caught).
+    #[serde(default = "yes")]
+    pub stopped: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// What a panic hook knows
@@ -279,6 +288,9 @@ pub fn write_panic(
         backtrace: clean(backtrace),
         log: log.iter().map(|l| clean(l)).take(LOG_LINES).collect(),
         dismissed: false,
+        // Only a panic on the main thread is known to end the process now; a later look at
+        // the leftover marker (`note_unclean_stop`) can show others did
+        stopped: details.thread == "main",
     };
     write_file(dir, &report)?;
     prune(dir);
@@ -319,6 +331,13 @@ struct Marker {
     started: String,
     version: String,
     build: String,
+}
+
+/// Remove the running marker now, for a restart that skips destructors (an update rollback)
+pub fn clear_marker() {
+    if let Some(state) = STATE.get() {
+        let _ = std::fs::remove_file(state.dir.join(MARKER));
+    }
 }
 
 /// A running daemon or server. Dropping it (a clean stop) removes the marker.
@@ -373,9 +392,13 @@ pub fn start(config_path: Option<&Path>, build: &str) -> Option<Session> {
 /// report" entry. Returns it.
 pub fn note_unclean_stop(dir: &Path) -> Option<CrashReport> {
     let marker: Marker = serde_json::from_slice(&std::fs::read(dir.join(MARKER)).ok()?).ok()?;
-    let reported = list(dir).iter().any(|r| r.time >= marker.started);
     let _ = std::fs::remove_file(dir.join(MARKER));
-    if reported {
+    // The newest report since that start explains the stop: the process ended with it
+    if let Some(mut newest) = list(dir).into_iter().find(|r| r.time >= marker.started) {
+        if !newest.stopped {
+            newest.stopped = true;
+            let _ = write_file(dir, &newest);
+        }
         return None;
     }
     let report = CrashReport {
@@ -393,6 +416,7 @@ pub fn note_unclean_stop(dir: &Path) -> Option<CrashReport> {
         backtrace: String::new(),
         log: Vec::new(),
         dismissed: false,
+        stopped: true,
     };
     write_file(dir, &report).ok()?;
     prune(dir);
@@ -499,7 +523,7 @@ impl CrashReport {
 /// What the person opens on GitHub
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Issue {
-    /// `Crash: <signature>`
+    /// `Crash: <signature>` when putio-sync stopped, `Panic: <signature>` when it kept running
     pub title: String,
     /// A prefilled new `crash` issue
     pub url: String,
@@ -525,7 +549,8 @@ pub fn encode(text: &str) -> String {
 }
 
 fn issue_for(report: &CrashReport) -> Issue {
-    let title: String = format!("Crash: {}", report.signature())
+    let prefix = if report.stopped { "Crash" } else { "Panic" };
+    let title: String = format!("{prefix}: {}", report.signature())
         .chars()
         .take(100)
         .collect();
@@ -728,5 +753,47 @@ mod tests {
         marker("2020-01-01T00:00:00.000Z");
         assert!(note_unclean_stop(dir.path()).is_none());
         assert_eq!(list(dir.path()).len(), 1);
+    }
+
+    #[test]
+    fn a_panic_the_process_survived_is_an_internal_error_until_a_leftover_marker_says_otherwise() {
+        let dir = tempfile::tempdir().unwrap();
+        let task = PanicDetails {
+            thread: "tokio-runtime-worker".into(),
+            ..details("task panicked")
+        };
+        let report = write_panic(dir.path(), Instant::now(), &task, BACKTRACE, vec![]).unwrap();
+        assert!(!report.stopped);
+        assert!(report.issue().title.starts_with("Panic: "));
+        let main =
+            write_panic(dir.path(), Instant::now(), &details("x"), BACKTRACE, vec![]).unwrap();
+        assert!(main.stopped);
+        assert!(main.issue().title.starts_with("Crash: "));
+
+        // A clean stop removed the marker: the report stays an internal error
+        assert!(note_unclean_stop(dir.path()).is_none());
+        assert!(!get(dir.path(), &report.id).unwrap().stopped);
+
+        // The marker was left behind after the panic: the run did end
+        let marker = Marker {
+            started: "2020-01-01T00:00:00.000Z".into(),
+            version: "0.1.0".into(),
+            build: "docker".into(),
+        };
+        std::fs::write(
+            dir.path().join(MARKER),
+            serde_json::to_vec(&marker).unwrap(),
+        )
+        .unwrap();
+        let only = tempfile::tempdir().unwrap();
+        let lone = write_panic(only.path(), Instant::now(), &task, "", vec![]).unwrap();
+        std::fs::write(
+            only.path().join(MARKER),
+            serde_json::to_vec(&marker).unwrap(),
+        )
+        .unwrap();
+        assert!(note_unclean_stop(only.path()).is_none(), "no extra entry");
+        assert!(get(only.path(), &lone.id).unwrap().stopped);
+        assert!(list(only.path()).len() == 1);
     }
 }

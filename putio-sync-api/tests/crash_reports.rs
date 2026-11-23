@@ -67,6 +67,7 @@ async fn a_report_is_listed_shown_and_dismissed() {
     let detail = body_json(res).await;
     assert_eq!(detail["signature"], "fetch::part < putio_sync_cli::main");
     assert_eq!(detail["title"], "Crash: fetch::part < putio_sync_cli::main");
+    assert_eq!(detail["stopped"], true);
     let url = detail["url"].as_str().unwrap();
     assert!(
         url.starts_with("https://github.com/devclinton/putio-sync/issues/new?template=crash.yml")
@@ -109,6 +110,7 @@ fn the_notice_uses_text_nodes_and_noopener() {
             && !js.contains("insertAdjacentHTML")
     );
     assert!(js.contains("text.textContent = report.text"));
+    assert!(js.contains("putio-sync hit an internal error"));
     assert!(js.contains(r#"rel: "noopener""#));
     assert!(js.contains(r#"target: "_blank""#));
 }

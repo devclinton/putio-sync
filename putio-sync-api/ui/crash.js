@@ -40,7 +40,7 @@ export function crashNotice(report, onDismiss) {
   return h(
     "section",
     { class: "notice crash", role: "alert" },
-    h("h2", { text: "putio-sync stopped unexpectedly" }),
+    h("h2", { text: report.stopped ? "putio-sync stopped unexpectedly" : "putio-sync hit an internal error" }),
     h("p", { class: "muted" }, "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like."),
     search_url ? h("p", {}, h("a", { href: search_url, target: "_blank", rel: "noopener", text: "Search existing issues" }), h("span", { class: "muted" }, " Repeats can go on the same issue.")) : null,
     text,

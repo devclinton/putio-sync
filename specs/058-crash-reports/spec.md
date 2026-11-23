@@ -55,6 +55,11 @@ undismissed crash from the last 7 days.
 - **FR-004** `daemon` and `server` write a `running` marker at start and remove it on a clean stop
   (including the restart after "Update now"). A marker left with no crash file newer than its start
   time becomes a `kind: "unclean"` entry.
+- **FR-004a** Each report records `stopped`: true for a panic on the main thread, for a stop
+  without a report, and for a report newer than a marker that was left behind at the next start;
+  false for a panic the process survived. The UI says "putio-sync stopped unexpectedly" for the
+  first and "putio-sync hit an internal error" for the second, and the issue title starts with
+  "Crash:" or "Panic:". A rollback after a failed update trial clears the marker.
 - **FR-005** `GET /crash-reports` (list and `pending`), `GET /crash-reports/{id}` (full report,
   `text`, `url`, `search_url`, `truncated`), `POST /crash-reports/{id}/dismiss`. All need the same
   authentication as the other routes. Ids are checked, so no path can escape the folder.
