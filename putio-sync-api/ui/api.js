@@ -116,7 +116,7 @@ export const put = (path, body) => request("PUT", path, body);
 export const settingsAssistant = () => get("/settings/assistant");
 export const previewSettings = (group, body) => post(`/settings/${group}/preview`, body);
 export const exportSettings = () => get("/settings/export");
-export const importSettings = (toml, apply) => post("/settings/import", { toml, apply });
+export const importSettings = (toml, apply, confirm_exec = false) => post("/settings/import", { toml, apply, confirm_exec });
 export const del = (path) => request("DELETE", path);
 
 // Bandwidth (feature 032): pause or slow downloads for `minutes`, or follow the schedule again

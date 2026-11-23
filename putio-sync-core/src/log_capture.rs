@@ -203,6 +203,8 @@ impl LogBuffer {
             .lines
             .iter()
             .rev()
+            // Seqs rise along the ring, so the first line at or below `after` ends the scan
+            .take_while(|line| query.after.is_none_or(|after| line.seq > after))
             .filter(|line| line.matches(query))
             .take(limit)
             .cloned()

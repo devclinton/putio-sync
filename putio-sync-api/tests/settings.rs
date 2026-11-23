@@ -832,6 +832,60 @@ async fn hooks_save_masks_values_and_applies_now() {
     assert_eq!(saved(&app).hooks[0].headers["Authorization"], "Bearer new");
 }
 
+/// A command hook runs a program as the app's user, so adding or changing one needs
+/// `confirm_exec`; anything else about hooks saves as before
+#[tokio::test]
+async fn a_new_or_changed_hook_command_needs_confirm_exec() {
+    let app = test_app().await;
+    let program = if cfg!(windows) {
+        r"C:\Windows\System32\whoami.exe"
+    } else {
+        "/bin/true"
+    };
+    let command = |args: &[&str]| {
+        let mut c = vec![json!(program)];
+        c.extend(args.iter().map(|a| json!(a)));
+        json!({"name": "run", "events": ["download.finished"], "command": c, "timeout_secs": 10})
+    };
+
+    let (status, body) = put(&app, "/settings/hooks", json!({"hooks": [command(&[])]})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("confirm_exec"),
+        "{body}"
+    );
+    assert!(saved(&app).hooks.is_empty());
+
+    let (status, body) = put(
+        &app,
+        "/settings/hooks",
+        json!({"hooks": [command(&[])], "confirm_exec": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // The same command with another timeout, and a URL hook, need nothing
+    let mut same = command(&[]);
+    same["timeout_secs"] = json!(20);
+    let (status, body) = put(
+        &app,
+        "/settings/hooks",
+        json!({"hooks": [same, url_hook()]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // New arguments are a change
+    let (status, _) = put(
+        &app,
+        "/settings/hooks",
+        json!({"hooks": [command(&["-c", "id"]), url_hook()]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(saved(&app).hooks[0].command.as_ref().unwrap().len(), 1);
+}
+
 /// Feature 038: a hook that is a pipeline step keeps its stage, order and flags, and a bad
 /// step is refused naming the hook
 #[tokio::test]
@@ -849,7 +903,7 @@ async fn pipeline_step_hooks_save_in_order_and_bad_ones_are_refused() {
             "stage": stage, "required": false, "categories": ["radarr"]
         })
     };
-    let hooks = json!({ "hooks": [step("b", "post_processing"), step("a", "post_processing"), step("c", "pre_download")] });
+    let hooks = json!({ "hooks": [step("b", "post_processing"), step("a", "post_processing"), step("c", "pre_download")], "confirm_exec": true });
     let (status, body) = put(&app, "/settings/hooks", hooks).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let view = get_ok(&app, "/settings/hooks").await;
@@ -871,7 +925,12 @@ async fn pipeline_step_hooks_save_in_order_and_bad_ones_are_refused() {
     // A step takes no events
     let mut bad = step("x", "post_processing");
     bad["events"] = json!(["download.finished"]);
-    let (status, body) = put(&app, "/settings/hooks", json!({ "hooks": [bad] })).await;
+    let (status, body) = put(
+        &app,
+        "/settings/hooks",
+        json!({ "hooks": [bad], "confirm_exec": true }),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(body["error"].as_str().unwrap().contains("\"x\""), "{body}");
     assert_eq!(saved(&app).hooks.len(), 3, "a refused save changes nothing");
@@ -1218,4 +1277,64 @@ async fn a_new_plugins_folder_is_read_at_once() {
         .find(|p| p.name == "mine")
         .unwrap();
     assert_eq!(mine.state, putio_sync_plugins::PluginState::Enabled);
+}
+
+/// The saved SMTP password is only used for the saved server
+#[tokio::test]
+async fn email_test_and_save_keep_the_password_with_its_server() {
+    let app = test_daemon_app(true).await;
+    let path = "/settings/notifications";
+    let mut body = get_ok(&app, path).await;
+    body["smtp"] = json!({
+        "enabled": true, "host": "smtp.example.com", "username": "nas",
+        "password": "smtp-pass-1", "from": "nas@example.com", "to": ["me@example.com"],
+    });
+    let (status, response) = put(&app, path, body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+
+    let moved = json!({
+        "enabled": true, "host": "mail.evil.test", "username": "nas",
+        "password": "********", "security": "starttls",
+        "from": "nas@example.com", "to": ["me@example.com"],
+    });
+    let response = app
+        .post_json("/settings/notifications/test", moved.clone())
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let text = body_json(response).await.to_string();
+    assert!(text.contains("Type the password again"), "{text}");
+    assert!(!text.contains("smtp-pass-1"));
+
+    // Saving the new host with the mask is refused too, and keeps what was saved
+    let mut body = get_ok(&app, path).await;
+    body["smtp"]["host"] = json!("mail.evil.test");
+    let (status, _) = put(&app, path, body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(saved(&app).notifications.smtp.host, "smtp.example.com");
+
+    // Typing the password again is allowed for the new host
+    let mut body = get_ok(&app, path).await;
+    body["smtp"]["host"] = json!("mail.other.test");
+    body["smtp"]["password"] = json!("typed-again");
+    let (status, response) = put(&app, path, body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(saved(&app).notifications.smtp.password, "typed-again");
+}
+
+/// A hook's masked headers are not restored when its URL points at another server
+#[tokio::test]
+async fn hook_secrets_do_not_follow_a_new_url() {
+    let app = test_app().await;
+    let (status, _) = put(&app, "/settings/hooks", json!({ "hooks": [url_hook()] })).await;
+    assert_eq!(status, StatusCode::OK);
+    let view = get_ok(&app, "/settings/hooks").await;
+    let mut hook = view["hooks"][0].clone();
+    hook["url"] = json!("https://evil.test/hook");
+    let (status, body) = put(&app, "/settings/hooks", json!({ "hooks": [hook] })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.to_string().contains("Type the value again"), "{body}");
+    assert_eq!(
+        saved(&app).hooks[0].url.as_deref(),
+        Some("https://ha.lan/api/webhook/abc")
+    );
 }

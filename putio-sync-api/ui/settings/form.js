@@ -9,7 +9,7 @@
 
 import { get, previewSettings, put, settingsAssistant } from "../api.js";
 import { describeEntry } from "../bandwidth.js";
-import { h, toast } from "../app.js";
+import { docs, h, toast } from "../app.js";
 
 let assist = null;
 
@@ -246,6 +246,7 @@ function form(g, data, reload, help, ctx, start = null) {
       onchange: preview,
     },
     h("h2", { text: g.title }),
+    g.guide ? h("p", { class: "muted small guide-link" }, docs(g.guide, "", g.guideText || "Guide")) : null,
     h("div", { class: "fields" }, fields),
     extra ? extra.nodes : null,
     panel,

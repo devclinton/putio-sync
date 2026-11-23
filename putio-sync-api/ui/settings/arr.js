@@ -16,7 +16,7 @@ import {
   testArrApplication,
   testArrForm,
 } from "../api.js";
-import { confirm, fill, h, toast } from "../app.js";
+import { confirm, docs, fill, h, toast } from "../app.js";
 import { relative } from "../format.js";
 import { reason } from "./form.js";
 
@@ -43,20 +43,20 @@ const FOUND_BY = { saved: "saved", container: "container", host: "this host", br
 
 export function arrCard(ctx) {
   const card = h("section", { class: "card", id: "card-arr" });
-  const title = () => h("h2", { text: "Radarr / Sonarr" });
+  const title = () => [h("h2", { text: "Radarr / Sonarr" }), h("p", { class: "muted small guide-link" }, docs("guides/radarr-sonarr", "", "Guide"))];
   const load = async () => {
-    card.replaceChildren(title(), h("p", { class: "muted", text: "Loading…" }));
+    card.replaceChildren(...title(), h("p", { class: "muted", text: "Loading…" }));
     try {
       const data = await arrStatus();
       if (!ctx.alive()) return;
       ctx.report("arr", { problem: false });
       // replaceChildren prints null as text, unlike h(), so drop the optional parts
-      card.replaceChildren(title(), ...arrBody(data, load, ctx).filter(Boolean));
+      card.replaceChildren(...title(), ...arrBody(data, load, ctx).filter(Boolean));
     } catch (e) {
       if (!ctx.alive() || e.status === 401 || e.status === 429) return;
       ctx.report("arr", { problem: true });
       card.replaceChildren(
-        title(),
+        ...title(),
         h("p", { class: "error-text", text: reason(e) }),
         h("button", { type: "button", class: "btn spaced", onclick: load }, "Retry"),
       );

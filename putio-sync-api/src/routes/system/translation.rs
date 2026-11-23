@@ -114,7 +114,9 @@ async fn put_translation(
     let settings = body(settings)?;
     let before = state.config.read().await.translation.clone();
     let mut changed = update(&state, translation_view, |config| {
-        config.translation = settings.unmasked(&config.translation);
+        config.translation = settings
+            .try_unmasked(&config.translation)
+            .map_err(ApiError::BadRequest)?;
         config.translation.normalize().map_err(invalid)?;
         Ok(())
     })
@@ -179,7 +181,7 @@ async fn test_translation(
         (config.translation.clone(), config.subtitles.wanted())
     };
     let mut cfg = match parsed.translation {
-        Some(t) => t.unmasked(&stored),
+        Some(t) => t.try_unmasked(&stored).map_err(ApiError::BadRequest)?,
         None => stored,
     };
     cfg.normalize().map_err(invalid)?;
@@ -195,7 +197,7 @@ async fn test_translation(
         )),
         TranslatorKind::Chat => {
             let key = cfg.chat.effective_api_key();
-            let probe = putio_sync_translation::probe::chat(
+            let mut probe = putio_sync_translation::probe::chat(
                 &cfg.chat.base_url,
                 &cfg.chat.model,
                 &key,
@@ -203,11 +205,49 @@ async fn test_translation(
                 &cfg.instruction,
             )
             .await;
+            clean_chat_probe(&mut probe);
             let mut out = serde_json::to_value(&probe).unwrap_or_default();
             out["kind"] = Value::String("chat".to_string());
             Ok(Json(out))
         }
         TranslatorKind::Callback => Ok(Json(callback_test(&cfg, &target).await)),
+    }
+}
+
+/// The three digits after the first `HTTP ` in `raw`
+fn http_status(raw: &str) -> Option<&str> {
+    let at = raw.find("HTTP ")? + 5;
+    let digits = raw.get(at..at + 3)?;
+    digits.bytes().all(|b| b.is_ascii_digit()).then_some(digits)
+}
+
+/// What a test shows of a failed answer from a remote server: a status class or a fixed
+/// sentence, never any of the server's own words. They go to the debug log.
+pub(super) fn fixed_error(what: &str, problem: Option<&str>, raw: &str) -> String {
+    tracing::debug!(error = %raw, problem, "{what} test failed");
+    if let Some(code) = http_status(raw) {
+        return format!("The server answered HTTP {code}");
+    }
+    if raw.starts_with("unreachable") {
+        return "The server could not be reached".to_string();
+    }
+    if raw.starts_with("timeout") || raw.starts_with("no answer within") {
+        return "The server did not answer in time".to_string();
+    }
+    match problem {
+        Some("key") => "The server rejected the API key".to_string(),
+        Some("model") => "The server does not have that model".to_string(),
+        Some("format") => "The server's reply was not in the expected format".to_string(),
+        Some("url") if !raw.contains("://") && !raw.contains("answer") => raw.to_string(),
+        _ => "The server's answer was not what was expected".to_string(),
+    }
+}
+
+/// A chat test result whose error is a fixed sentence. The numbered sample lines of a
+/// reply in the wrong format stay: they are what the Test button shows to fix the prompt.
+fn clean_chat_probe(probe: &mut putio_sync_translation::probe::ChatProbe) {
+    if let Some(raw) = probe.error.take() {
+        probe.error = Some(fixed_error("Chat", probe.problem, &raw));
     }
 }
 
@@ -272,10 +312,16 @@ async fn callback_test(cfg: &TranslationConfig, target: &str) -> Value {
         }
         Reply::Failed(message) => {
             let (problem, status) = classify_failure(&message);
+            let shown = if message.starts_with("the reply") {
+                // Our own sentence about the cue count, no remote text
+                message.clone()
+            } else {
+                fixed_error("Callback", Some(problem), &message)
+            };
             out["problem"] = problem.into();
             out["service"]["status"] = status.map(Value::from).unwrap_or(Value::Null);
-            out["service"]["error"] = message.clone().into();
-            out["error"] = message.into();
+            out["service"]["error"] = shown.clone().into();
+            out["error"] = shown.into();
         }
     }
     if out["ok"] == true && reachable["checked"] == true && reachable["status"].is_null() {

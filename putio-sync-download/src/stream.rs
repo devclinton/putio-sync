@@ -3,6 +3,7 @@
 use crate::error::{DownloadError, DownloadResult};
 use crate::files::{create_temp_path, Crc32};
 use crate::rate_limiter::RateLimiter;
+use putio_sync_client::client::loggable_url;
 use putio_sync_client::PutioApiClient;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -114,6 +115,15 @@ impl ProgressLogger {
 }
 
 /// Format bytes as human-readable string
+/// The `Range` header value for a resume. The last byte is `expected - 1`, saturating so an
+/// expected size of 0 cannot wrap to `u64::MAX`.
+fn range_header_value(resume_from: u64, expected_size: Option<u64>) -> String {
+    match expected_size {
+        Some(expected) => format!("bytes={}-{}", resume_from, expected.saturating_sub(1)),
+        None => format!("bytes={}-", resume_from),
+    }
+}
+
 fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
@@ -237,6 +247,30 @@ const STALL_TIMEOUT: Duration = if cfg!(test) {
 } else {
     Duration::from_secs(60)
 };
+
+/// Never open a partial file through a symlink: someone with write access to the
+/// download folder could plant one (Unix; Windows has no O_NOFOLLOW)
+fn no_follow(options: &mut OpenOptions) -> &mut OpenOptions {
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    options
+}
+
+/// The error for a failed write to `path`; a full disk or quota says so plainly
+fn write_error(e: std::io::Error, path: &Path) -> DownloadError {
+    let message = if matches!(
+        e.kind(),
+        std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded
+    ) {
+        format!(
+            "The disk is full: no space left to write {}",
+            path.display()
+        )
+    } else {
+        format!("Failed to write to download file: {}", e)
+    };
+    DownloadError::IoError(std::io::Error::new(e.kind(), message))
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn stream_download(
@@ -366,7 +400,7 @@ pub async fn stream_to_temp(
 
     // Make the authenticated request on the shared download client (connect and read
     // timeouts, no total one); a stop ends the wait for the server's answer
-    debug!("Making download request to: {}", url);
+    debug!("Making download request to: {}", loggable_url(url));
     let mut request_builder = client.authenticated_download_request(url)?;
 
     // Add user agent and other headers that Put.io might expect
@@ -376,22 +410,18 @@ pub async fn stream_to_temp(
 
     // Add Range header for resuming if specified
     if let Some(resume_from) = resume_from_byte {
-        if let Some(expected) = expected_size {
-            let range_header = format!("bytes={}-{}", resume_from, expected - 1);
-            debug!("Adding Range header: {}", range_header);
-            request_builder = request_builder.header("Range", range_header);
-        } else {
-            let range_header = format!("bytes={}-", resume_from);
-            debug!("Adding Range header: {}", range_header);
-            request_builder = request_builder.header("Range", range_header);
-        }
+        let range_header = range_header_value(resume_from, expected_size);
+        debug!("Adding Range header: {}", range_header);
+        request_builder = request_builder.header("Range", range_header);
     }
 
     let request = request_builder.build().map_err(DownloadError::HttpError)?;
 
-    debug!("Request URL: {}", request.url());
-    debug!("Request method: {}", request.method());
-    debug!("Request headers: {:?}", request.headers());
+    debug!(
+        "Request: {} {}",
+        request.method(),
+        loggable_url(request.url().as_str())
+    );
 
     let response = unless_stopped(stop, client.download_client().execute(request))
         .await?
@@ -406,7 +436,6 @@ pub async fn stream_to_temp(
         status.as_u16(),
         status.canonical_reason().unwrap_or("Unknown")
     );
-    debug!("Response headers: {:?}", response.headers());
 
     // Log specific headers that might be relevant for debugging
     if let Some(content_type) = response.headers().get("content-type") {
@@ -425,7 +454,10 @@ pub async fn stream_to_temp(
     // The server cannot serve the range asked for (the file changed, or it no longer
     // allows ranges): the partial file is no use, so the next attempt starts over
     if status.as_u16() == 416 && resume_from_byte.is_some() {
-        warn!("Server answered 416 to a resume of {}; starting over", url);
+        warn!(
+            "Server answered 416 to a resume of {}; starting over",
+            loggable_url(url)
+        );
         let _ = tokio::fs::remove_file(&temp_path).await;
         return Err(DownloadError::ApiError(
             "Resume refused by the server (416); the partial download was discarded".to_string(),
@@ -435,27 +467,21 @@ pub async fn stream_to_temp(
     // Check for valid response status: 200 (OK) for full download, 206 (Partial Content) for range requests
     if !status.is_success() {
         // Try to get response body for more detailed error info
-        let error_body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unable to read error response".to_string());
+        let error_body =
+            putio_sync_client::body::read_error_text(response, "Unable to read error response")
+                .await;
 
         // Enhanced error logging for 400 Bad Request
         if status.as_u16() == 400 {
             error!("=== 400 BAD REQUEST DETAILS ===");
-            error!("Request URL: {}", url);
+            error!("Request URL: {}", loggable_url(url));
             error!("Request method: GET");
             if let Some(resume_from) = resume_from_byte {
                 error!("Resume requested from byte: {}", resume_from);
-                if let Some(expected) = expected_size {
-                    error!(
-                        "Range header would be: bytes={}-{}",
-                        resume_from,
-                        expected - 1
-                    );
-                } else {
-                    error!("Range header would be: bytes={}-", resume_from);
-                }
+                error!(
+                    "Range header would be: {}",
+                    range_header_value(resume_from, expected_size)
+                );
             } else {
                 error!("No range request (full download)");
             }
@@ -474,7 +500,11 @@ pub async fn stream_to_temp(
             status.canonical_reason().unwrap_or("Unknown"),
             error_body
         );
-        warn!("Download failed for URL {}: {}", url, error_msg);
+        warn!(
+            "Download failed for URL {}: {}",
+            loggable_url(url),
+            error_msg
+        );
         return Err(DownloadError::ApiError(error_msg));
     }
 
@@ -521,8 +551,7 @@ pub async fn stream_to_temp(
 
     // Open file for writing
     let file = if from > 0 {
-        let mut file = OpenOptions::new()
-            .write(true)
+        let mut file = no_follow(OpenOptions::new().write(true))
             .open(&temp_path)
             .await
             .map_err(|e| {
@@ -547,10 +576,7 @@ pub async fn stream_to_temp(
         file
     } else {
         // For new downloads, truncate the file
-        let file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
+        let file = no_follow(OpenOptions::new().create(true).write(true).truncate(true))
             .open(&temp_path)
             .await
             .map_err(|e| {
@@ -590,20 +616,7 @@ pub async fn stream_to_temp(
             let mut batch: Vec<u8> = Vec::with_capacity(WRITE_BATCH + 256 * 1024);
             let mut total_written = 0u64;
             let mut digest = digest;
-            let write_error = |e: std::io::Error| {
-                let message = if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded
-                ) {
-                    format!(
-                        "The disk is full: no space left to write {}",
-                        temp_path.display()
-                    )
-                } else {
-                    format!("Failed to write to download file: {}", e)
-                };
-                DownloadError::IoError(std::io::Error::new(e.kind(), message))
-            };
+            let write_error = |e: std::io::Error| write_error(e, &temp_path);
 
             // Continuously read from channel and write to disk
             while let Some(chunk) = rx.recv().await {
@@ -837,10 +850,52 @@ async fn preallocate(file: tokio::fs::File, _len: u64) -> tokio::fs::File {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn range_header_does_not_underflow_for_an_expected_size_of_zero() {
+        assert_eq!(super::range_header_value(0, Some(0)), "bytes=0-0");
+        assert_eq!(super::range_header_value(10, Some(100)), "bytes=10-99");
+        assert_eq!(super::range_header_value(10, None), "bytes=10-");
+    }
+
     use super::*;
     use mockito::Server;
     use std::time::Instant;
     use tempfile::TempDir;
+
+    /// A symlink planted at the partial file's name is not written through
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_planted_symlink_is_not_written_through() {
+        let mut server = Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/f")
+            .with_status(200)
+            .with_body("Hello, World!")
+            .create_async()
+            .await;
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("f.txt");
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, "keep").unwrap();
+        std::os::unix::fs::symlink(&victim, create_temp_path(&target).unwrap()).unwrap();
+
+        let client = PutioApiClient::with_base_url("t".to_string(), server.url());
+        let url = format!("{}/f", server.url());
+        let result = stream_download(
+            &client,
+            &url,
+            &target,
+            "f.txt",
+            Some(13),
+            1,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+    }
 
     #[tokio::test]
     async fn test_stream_download_mock() {
@@ -1092,41 +1147,25 @@ mod tests {
         assert!(finish_download(&temp, &target).await.is_err());
     }
 
-    /// `/dev/full` fails every write with ENOSPC, like a full disk
-    #[cfg(target_os = "linux")]
-    #[tokio::test]
-    async fn a_full_disk_is_reported_as_such_and_not_as_a_broken_pipe() {
-        let mut server = Server::new_async().await;
-        let _mock = server
-            .mock("GET", "/big.bin")
-            .with_status(200)
-            .with_body("x".repeat(64 * 1024))
-            .create_async()
-            .await;
-        let dir = TempDir::new().unwrap();
-        let target = dir.path().join("big.bin");
-        std::os::unix::fs::symlink("/dev/full", create_temp_path(&target).unwrap()).unwrap();
-        let client = PutioApiClient::with_base_url("test_token".to_string(), server.url());
-        let url = format!("{}/big.bin", server.url());
-
-        let err = stream_to_temp(
-            &client,
-            &url,
-            &target,
-            "big.bin",
-            Some(64 * 1024),
-            1,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap_err();
-
-        assert!(err.is_storage_full(), "{err}");
-        assert!(!err.is_transient());
-        assert!(err.to_string().contains("disk is full"), "{err}");
+    /// A full disk is reported as such and not as a broken pipe. (The partial file is
+    /// opened with O_NOFOLLOW, so a symlink to `/dev/full` can no longer stand in for one.)
+    #[test]
+    fn a_full_disk_is_reported_as_such_and_not_as_a_broken_pipe() {
+        let path = Path::new("/downloads/big.bin.part");
+        for kind in [
+            std::io::ErrorKind::StorageFull,
+            std::io::ErrorKind::QuotaExceeded,
+        ] {
+            let err = write_error(std::io::Error::new(kind, "no space"), path);
+            assert!(err.is_storage_full(), "{err}");
+            assert!(!err.is_transient());
+            assert!(err.to_string().contains("disk is full"), "{err}");
+        }
+        let err = write_error(
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe"),
+            path,
+        );
+        assert!(!err.is_storage_full());
     }
 
     #[tokio::test]

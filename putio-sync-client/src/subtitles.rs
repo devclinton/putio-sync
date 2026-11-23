@@ -137,11 +137,15 @@ impl PutioApiClient {
         let request = self
             .client
             .get(url)
-            .header(header::AUTHORIZATION, auth)
+            .header(header::AUTHORIZATION, crate::client::sensitive(auth)?)
             .build()
             .map_err(ClientError::HttpError)?;
         let response = self.send_with_retry(request).await?;
-        let bytes = response.bytes().await.map_err(ClientError::HttpError)?;
-        Ok(bytes.to_vec())
+        crate::body::read_capped(response, crate::body::MAX_SMALL_BODY)
+            .await
+            .map_err(|e| match e {
+                crate::body::BodyError::Http(e) => ClientError::HttpError(e),
+                e @ crate::body::BodyError::TooLarge => ClientError::ApiError(e.to_string()),
+            })
     }
 }

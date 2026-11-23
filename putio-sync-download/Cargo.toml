@@ -42,8 +42,8 @@ chrono = { version = "0.4", features = ["serde"] }
 # hardware-accelerated implementation, picked at run time. Already in Cargo.lock through flate2
 crc32fast = "1.4"
 
-# Reserve disk space for a download up front (Linux, best effort)
-[target.'cfg(target_os = "linux")'.dependencies]
+# Reserve disk space up front (Linux, best effort) and O_NOFOLLOW for partial files (Unix)
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]

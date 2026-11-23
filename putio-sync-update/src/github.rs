@@ -33,6 +33,20 @@ pub fn client() -> reqwest::Client {
         .expect("a client with a user agent and a timeout builds")
 }
 
+fn is_https(url: &str) -> bool {
+    url.get(..8)
+        .is_some_and(|p| p.eq_ignore_ascii_case("https://"))
+}
+
+/// The URL when it is https, else empty: the UI links only https URLs
+fn https_only(url: String) -> String {
+    if is_https(&url) {
+        url
+    } else {
+        String::new()
+    }
+}
+
 /// A published release newer than the running one
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleaseInfo {
@@ -205,11 +219,12 @@ pub async fn fetch_releases(
             (version > current).then(|| ReleaseInfo {
                 version,
                 published_at: r.published_at,
-                html_url: r.html_url,
+                html_url: https_only(r.html_url),
                 body: r.body.unwrap_or_default(),
                 assets: r
                     .assets
                     .into_iter()
+                    .filter(|a| is_https(&a.browser_download_url))
                     .map(|a| Asset {
                         name: a.name,
                         url: a.browser_download_url,
@@ -248,6 +263,32 @@ mod tests {
         {"tag_name": "v0.3.0", "prerelease": false, "draft": false,
          "published_at": "2026-11-01T10:00:00Z", "html_url": "u30", "body": "", "assets": []}
     ]"####;
+
+    /// UI-01: a release page or asset that is not https is not passed on
+    #[tokio::test]
+    async fn drops_urls_that_are_not_https() {
+        let body = r#"[{"tag_name": "v0.9.0", "prerelease": false, "draft": false,
+            "published_at": null, "html_url": "javascript:alert(1)", "body": "",
+            "assets": [
+              {"name": "a", "size": 1, "browser_download_url": "http://example/a"},
+              {"name": "b", "size": 1, "browser_download_url": "https://example/b"}]}]"#;
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/releases")
+            .match_query(Matcher::Any)
+            .with_body(body)
+            .create_async()
+            .await;
+        let got = fetch_releases(&client(), &server.url(), None, v("0.3.0"))
+            .await
+            .unwrap();
+        let Fetched::Releases { releases, .. } = got else {
+            panic!("{got:?}")
+        };
+        assert_eq!(releases[0].html_url, "");
+        assert_eq!(releases[0].assets.len(), 1);
+        assert_eq!(releases[0].assets[0].name, "b");
+    }
 
     #[tokio::test]
     async fn keeps_newer_published_releases_newest_first() {

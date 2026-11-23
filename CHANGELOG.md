@@ -14,6 +14,14 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Security
 
+- Debug logs no longer print request or response headers (the Put.io bearer token, cookies) or
+  the query string of a download URL; the Authorization header is marked sensitive.
+- The CLI's `--csv` output and `history` CSV now defuse cells that start with `=`, `+`, `-`, `@`,
+  tab or carriage return, as the release export already did.
+- Subtitle downloads and error answers are read with a size limit (10 MiB and 64 KiB), so a
+  hostile endpoint cannot fill memory.
+- A resume of a download whose expected size is 0 no longer wraps the `Range` header.
+
 - The API now refuses a request whose `Host` is not an IP address, `localhost`, a name with
   no dot, `*.local`, `*.ts.net`, the `public_url` host, or listed in the new
   `[api] allowed_hosts` (421), which stops DNS rebinding. Behind a reverse proxy that passes a
@@ -42,6 +50,44 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   no longer mark Put.io unhealthy; at most 8 folder scans run at once.
 - DLNA shows a watch folder by its last path component, and discovery and the device
   description no longer announce the exact putio-sync version.
+- Plugin actions and health checks get only the hosts and folders you approved, plus the
+  ones in the form values sent with the call; a plugin that was never approved no longer gets
+  its manifest's hosts and folders just because it was installed. A manifest folder of `/` or a
+  drive root is refused.
+- Adding or changing a hook command, the ffmpeg path or the plugins folder now shows a danger
+  risk and needs `confirm_exec: true` (settings import, `PUT /settings/hooks`); the page asks
+  first. The README now says that API access means running commands as the app's user.
+- Installing a plugin by URL refuses loopback, private, link-local, multicast and cloud
+  metadata addresses (resolved names too, on every redirect) and never follows https to http;
+  `PUTIO_SYNC_ALLOW_LOCAL_FETCH=1` lets it reach local addresses.
+- A `.torrent` URL sent to the Transmission RPC no longer reaches loopback, link-local or cloud
+  metadata addresses, including through redirects; the private LAN stays allowed.
+- The legacy `notifications.webhook_url` is shortened in the settings export like hook URLs.
+- Test and edit buttons no longer send a saved secret to a different server. The Radarr and
+  Sonarr API key, SMTP password, transcription and chat API keys, and the header and env
+  values of hooks and the translation callback come back from storage only when the address
+  is the one they were saved for (host and port for SMTP; scheme, host and port for web
+  addresses, plus the URL base for Radarr and Sonarr). Otherwise the request is refused with
+  "Type the API key again to use it with a different server."
+- Test results for Radarr and Sonarr, transcription, chat and callback servers show only a
+  status such as "The server answered HTTP 401", not the start of the server's reply.
+- Radarr and Sonarr discovery ignores a Host header that is not a plain host name or address.
+- "Delete local data" from Sonarr or Radarr no longer removes a category folder, the download
+  folder, the staging folder, or another item's folder when a torrent has the same name.
+- Saving the config no longer leaves a moment where the Put.io token is readable by other users,
+  and a new config folder is created private (0700).
+- The database, its journal files and the database copies made by `archive db` are readable only
+  by their owner (Unix).
+- ffmpeg and ffprobe read downloaded media as plain files only, so a crafted playlist can't make
+  them open other files or network addresses.
+- The updater refuses a release whose signed checksum list was signed for another version, and a
+  release that is not newer than the running one.
+- The updater writes the new binary with `create_new`, so a planted link next to the binary is
+  not followed.
+- Update links from release data are shown only when they are https.
+- The translation callback checks the token before reading the body, and a failed torrent
+  upload no longer reports the temp file path.
+- Partial downloads are not written through a symlink placed in the download folder (Unix).
 - A request that came through a reverse proxy on the same machine no longer counts as a
   Tailscale sign-in, so a forged `Tailscale-User-Login` header can't get in. Identity sign-in
   still works with `tailscale serve` or a direct tailnet connection.
@@ -123,6 +169,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- The web UI loads Stats, Doctor, Logs, Settings and Setup the first time they are opened, so the first page load is about 75 KB smaller.
+- The download queue has an index on status and priority, so claiming and polling no longer scan the whole table; the daily maintenance also removes completed queue rows older than 7 days.
+- The local files page lists folders and sizes them on a blocking thread, so a slow disk no longer stalls the API; the Status page's held-magnet lookup reads only held items.
+- The Logs page's "after" cursor stops scanning older lines, so a busy log tail holds the log buffer for less time.
 - The CLI no longer prints a startup banner on every command (it broke cron mail and buried real errors), errors show their cause (`Error: Failed to load configuration: expected "=" ...`), a missing Put.io token says to run `putio-sync login` or `putio-sync setup`, and `--help` says which command to run (`daemon` for the sync, watcher and web UI; `server` is the API only).
 - New `putio-sync completions <bash|zsh|fish|elvish|powershell>` prints a shell completion script.
 - Watched .torrent and .magnet files stay in the folder after upload unless
@@ -143,6 +193,21 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 - The unused legacy notification service (it sent nothing for email and was never called).
   Use `[notifications.smtp]`, hooks or plugins.
+### Added
+
+- Setup guides in the docs, one per platform: Unraid, TrueNAS SCALE, Raspberry Pi, Docker
+  and Compose, macOS, Windows and Linux. Each ends with the same walk-through of the setup
+  wizard and the first sync.
+- Task guides in the docs for a running setup: connecting Radarr and Sonarr, choosing what
+  downloads, watch folders, playing downloads on a TV, Prometheus and Grafana, and
+  troubleshooting.
+- Switching guides in the docs, from qBittorrent, Transmission and Deluge, and for using
+  Put.io next to SABnzbd or NZBGet.
+- Links to the guides from the web UI: a Setup guide link in the setup wizard that fits how
+  putio-sync was installed, Guide links in Settings (Radarr / Sonarr, Folder rules, Torrent
+  watcher, Media server and Network), a Troubleshooting guide link on Doctor and Logs, and a
+  Guides group in the command palette. The TrueNAS app now reports itself as TrueNAS, so
+  its update card says to update from TrueNAS Apps.
 
 ## [0.5.0] - 2026-11-17
 

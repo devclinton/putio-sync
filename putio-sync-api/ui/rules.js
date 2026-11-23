@@ -7,7 +7,7 @@
 // Feature 022 adds the mode: download the files, or keep them on Put.io for streaming.
 
 import { del, get, post, put } from "./api.js";
-import { confirm, h, toast } from "./app.js";
+import { confirm, docs, h, toast } from "./app.js";
 import { dateTime } from "./format.js";
 import { filterMatcher } from "./query.js";
 
@@ -369,13 +369,13 @@ export function settingsCards(alive) {
       all = await get("/rules");
     } catch (e) {
       if (alive() && !quiet(e)) {
-        rules.replaceChildren(h("h2", { text: "Folder rules" }), h("p", { class: "error-text", text: reason(e) }));
+        rules.replaceChildren(...folderRulesHead(), h("p", { class: "error-text", text: reason(e) }));
         presets.replaceChildren();
       }
       return;
     }
     if (!alive()) return;
-    rules.replaceChildren(h("h2", { text: "Folder rules" }), h("div", {}, rulesList(all, loadRules)));
+    rules.replaceChildren(...folderRulesHead(), h("div", {}, rulesList(all, loadRules)));
     presets.replaceChildren(h("h2", { text: "Presets" }), h("div", {}, presetsList(all.presets, loadRules)));
   };
 
@@ -533,4 +533,8 @@ function decisionsList(items, reload) {
     ),
     h("button", { type: "button", class: "btn btn-small spaced", onclick: clear }, "Clear"),
   ];
+}
+
+function folderRulesHead() {
+  return [h("h2", { text: "Folder rules" }), h("p", { class: "muted small guide-link" }, docs("guides/folder-rules", "", "Guide"))];
 }

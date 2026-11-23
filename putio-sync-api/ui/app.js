@@ -12,15 +12,21 @@ import * as putio from "./pages/putio.js";
 import * as files from "./pages/files.js";
 import * as transfers from "./pages/transfers.js";
 import * as history from "./pages/history.js";
-import * as stats from "./pages/stats.js";
-import * as settings from "./pages/settings.js";
-import * as doctor from "./pages/doctor.js";
-import * as logs from "./pages/logs.js";
 import * as login from "./pages/login.js";
-import * as setup from "./pages/setup.js";
 import * as news from "./pages/news.js";
 
-const PAGES = { status, active, queue, putio, files, transfers, history, stats, doctor, logs, settings, login, setup, news };
+const PAGES = { status, active, queue, putio, files, transfers, history, login, news };
+// Pages most visits never open load on first use, so they don't weigh on the first load
+const LAZY = {
+  stats: () => import("./pages/stats.js"),
+  doctor: () => import("./pages/doctor.js"),
+  logs: () => import("./pages/logs.js"),
+  settings: () => import("./pages/settings.js"),
+  setup: () => import("./pages/setup.js"),
+};
+const loaded = {};
+const page = (name) => PAGES[name] || loaded[name];
+const known = (name) => Boolean(PAGES[name] || LAZY[name]);
 const TITLES = {
   status: "Status",
   active: "Active",
@@ -118,8 +124,8 @@ function remembered() {
 function parse(hash) {
   const [route, search = ""] = hash.replace(/^#\/?/, "").split("?", 2);
   const parts = route.split("/").filter(Boolean);
-  const name = PAGES[parts[0]] ? parts[0] : "status";
-  return { name, path: PAGES[parts[0]] ? parts.slice(1) : [], query: new URLSearchParams(search) };
+  const name = known(parts[0]) ? parts[0] : "status";
+  return { name, path: known(parts[0]) ? parts.slice(1) : [], query: new URLSearchParams(search) };
 }
 
 /** Go to `hash` (e.g. "#/queue"); re-renders when it is already the current route. */
@@ -130,7 +136,7 @@ export function navigate(hash) {
 
 function route() {
   if (setupMode) {
-    if (current !== setup) mount("setup", {});
+    if (currentName !== "setup" || !current) mount("setup", {});
     return;
   }
   const { name, path, query } = parse(window.location.hash);
@@ -146,7 +152,7 @@ function route() {
   }
   remember(window.location.hash || "#/status");
   // A page with `update` shows another address of itself in place (Settings sections, 046)
-  if (current === PAGES[name] && current.update) return void current.update({ path, query });
+  if (current && current === page(name) && current.update) return void current.update({ path, query });
   mount(name, { path, query });
   if (!newsChecked) {
     newsChecked = true;
@@ -157,7 +163,25 @@ function route() {
   }
 }
 
+let mountSeq = 0;
+
+/** Show page `name`, loading it first when it is one of the LAZY pages */
 function mount(name, params) {
+  const seq = ++mountSeq;
+  const mod = page(name);
+  if (mod) return show(name, mod, params);
+  LAZY[name]().then(
+    (m) => {
+      loaded[name] = m;
+      if (seq === mountSeq) show(name, m, params);
+    },
+    (e) => {
+      if (seq === mountSeq) toast("Couldn't load this page. Reload to try again.", "error", String(e));
+    },
+  );
+}
+
+function show(name, mod, params) {
   if (current) {
     try {
       current.unmount();
@@ -183,7 +207,7 @@ function mount(name, params) {
 
   view.replaceChildren();
   enter();
-  current = PAGES[name];
+  current = mod;
   current.mount(view, params);
 }
 
