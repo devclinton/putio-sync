@@ -765,6 +765,19 @@ pub enum Commands {
     )]
     CrashReport(CrashReportCommands),
 
+    /// Anonymous usage stats, off by default (feature 058)
+    #[command(
+        subcommand,
+        name = "usage-stats",
+        about = "Show, enable or disable anonymous usage stats",
+        long_about = "Anonymous usage stats are off by default. `show` prints the exact JSON \
+                      that would be sent (a random install id, version, install kind, OS, \
+                      which features are on and size buckets; never names, paths, hosts or \
+                      Put.io data). Nothing is sent unless they are enabled and \
+                      [usage_stats] endpoint names a receiver."
+    )]
+    UsageStats(UsageStatsCommands),
+
     /// First-run setup in the terminal (feature 013)
     #[cfg(feature = "server")]
     #[command(
@@ -903,6 +916,20 @@ pub enum CrashReportCommands {
         #[arg(long = "no-browser")]
         no_browser: bool,
     },
+}
+
+/// Usage stats subcommands (feature 058)
+#[derive(Subcommand, Debug)]
+pub enum UsageStatsCommands {
+    /// Print the payload that would be sent
+    #[command(about = "Print the exact JSON that would be sent")]
+    Show,
+    /// Turn the once-a-day send on
+    #[command(about = "Turn anonymous usage stats on")]
+    Enable,
+    /// Turn it off
+    #[command(about = "Turn anonymous usage stats off")]
+    Disable,
 }
 
 /// Plugin subcommands (feature 059)

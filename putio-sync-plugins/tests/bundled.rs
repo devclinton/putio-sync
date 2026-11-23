@@ -327,3 +327,21 @@ async fn stuck_transfers_and_doctor_problems_are_sent_by_default() {
     stuck.assert_async().await;
     doctor.assert_async().await;
 }
+
+/// Usage stats (feature 058) name a plugin only when it is bundled; the list in core must be
+/// exactly the plugins that ship in the binary
+#[test]
+fn the_usage_stats_list_of_bundled_names_matches_the_binary() {
+    let mut shipped: Vec<String> = discover(None)
+        .into_iter()
+        .filter(|f| f.source == Source::Bundled)
+        .map(|f| f.name)
+        .collect();
+    shipped.sort();
+    let mut listed: Vec<String> = putio_sync_core::usage_stats::BUNDLED_PLUGINS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    listed.sort();
+    assert_eq!(shipped, listed);
+}

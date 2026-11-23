@@ -182,6 +182,16 @@ impl<'a> StatsRepository<'a> {
 
         Ok(result)
     }
+
+    /// Total bytes of the files recorded as downloaded (for the usage stats' size bucket)
+    pub async fn library_bytes(&self) -> DbResult<i64> {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(SUM(file_size), 0) FROM downloads WHERE status = 'completed'",
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to get library size"))
+    }
 }
 
 #[cfg(test)]

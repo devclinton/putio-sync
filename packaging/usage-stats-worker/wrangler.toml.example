@@ -1,0 +1,13 @@
+# Copy to wrangler.toml, make the KV namespace, and put its id below:
+#   npx wrangler kv namespace create STATS
+name = "putio-sync-usage-stats"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+[[kv_namespaces]]
+binding = "STATS"
+id = "REPLACE_WITH_THE_NAMESPACE_ID"
+
+# Keep request logs off: the receiver must not keep IP addresses.
+[observability]
+enabled = false

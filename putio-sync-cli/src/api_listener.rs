@@ -51,6 +51,7 @@ pub async fn start(config: &Config, state: AppState) -> Result<Option<Bound>, Co
     handle.first_bound(FIRST_BIND).await;
     // After the first bind, so Radarr/Sonarr hear the port actually listened on
     spawn_arr_refresh(&state).await;
+    putio_sync_api::spawn_usage_stats(&state);
     info!(
         bind = %shown.join(", "),
         tailnet_only = config.tailscale.tailnet_only,

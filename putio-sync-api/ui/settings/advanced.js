@@ -55,7 +55,14 @@ const LOGGING = {
 /** The groups whose fields the settings catalog lists (061) */
 export const groups = [NETWORK, TAILSCALE, LOGGING];
 export const networkCards = (ctx) => [groupCard(NETWORK, ctx), groupCard(TAILSCALE, ctx)];
-export const advancedCards = (ctx) => [groupCard(LOGGING, ctx), backupCard(ctx.remount)];
+export const advancedCards = (ctx) => [groupCard(LOGGING, ctx), usageStatsCard(ctx), backupCard(ctx.remount)];
+
+/** Loaded on demand: it is a few hundred bytes only when this section is opened */
+function usageStatsCard(ctx) {
+  const card = h("section", { class: "card", id: "card-usage-stats" }, h("h2", { text: "Usage stats" }));
+  import("../usage_stats.js").then((m) => m.fillUsageStats(card, ctx.alive), () => {});
+  return card;
+}
 
 function backupCard(remount) {
   const text = h("textarea", { class: "input wide", rows: 5, spellcheck: "false", placeholder: "Paste a settings file, or choose one", "aria-label": "Settings file" });

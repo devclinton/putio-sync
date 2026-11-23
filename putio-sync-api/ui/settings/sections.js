@@ -67,7 +67,7 @@ export const SECTIONS = [
     id: "advanced",
     title: "Advanced",
     help: "Logging and how many lines the Logs page keeps, and saving or restoring every setting as one file.",
-    cards: [["logging", "Logging"], ["backup", "Backup and restore"]],
+    cards: [["logging", "Logging"], ["usage-stats", "Usage stats"], ["backup", "Backup and restore"]],
   },
 ];
 
@@ -107,6 +107,7 @@ const KEY_SECTION = {
   sign_in: "sign-in",
   api: "network",
   logging: "advanced",
+  usage_stats: "advanced",
   notifications: "notifications",
   updates: "general",
   precheck: "rules",

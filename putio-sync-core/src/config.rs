@@ -278,6 +278,12 @@ pub struct Config {
         skip_serializing_if = "crate::plugins::PluginRegistryConfig::is_default"
     )]
     pub plugin_registry: crate::plugins::PluginRegistryConfig,
+    /// Anonymous usage stats, off by default (feature 058)
+    #[serde(
+        default,
+        skip_serializing_if = "crate::usage_stats::UsageStatsConfig::is_default"
+    )]
+    pub usage_stats: crate::usage_stats::UsageStatsConfig,
 }
 
 /// `[doctor]`: how often the daemon runs the doctor's checks (feature 010). The CLI and
@@ -1726,6 +1732,7 @@ impl Config {
         crate::hooks::validate(&self.hooks)?;
         crate::plugins::validate(&self.plugins)?;
         self.plugin_registry.validate()?;
+        self.usage_stats.validate()?;
         self.validate_binds()?;
 
         Ok(())
@@ -1987,6 +1994,7 @@ impl ConfigBuilder {
             database: Default::default(),
             plugin_editor: false,
             plugin_registry: Default::default(),
+            usage_stats: Default::default(),
         }
     }
 }
@@ -3370,6 +3378,7 @@ mod tests {
             database: Default::default(),
             plugin_editor: false,
             plugin_registry: Default::default(),
+            usage_stats: Default::default(),
         }
     }
 

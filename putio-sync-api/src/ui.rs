@@ -46,6 +46,7 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("listctl.js", JS, include_bytes!("../ui/listctl.js")),
     ("fuzzy.js", JS, include_bytes!("../ui/fuzzy.js")),
     ("crash.js", JS, include_bytes!("../ui/crash.js")),
+    ("usage_stats.js", JS, include_bytes!("../ui/usage_stats.js")),
     ("guides.js", JS, include_bytes!("../ui/guides.js")),
     ("palette.js", JS, include_bytes!("../ui/palette.js")),
     ("theme.js", JS, include_bytes!("../ui/theme.js")),
