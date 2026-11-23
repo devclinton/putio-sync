@@ -161,6 +161,7 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- The web UI loads Stats, Doctor, Logs, Settings and Setup the first time they are opened, so the first page load is about 75 KB smaller.
 - Metrics: `putio_sync_api_requests_total` has new outcomes `rate_limited` (429) and `unauthorized` (401/403) instead of `client_error`; new `putio_sync_api_rate_limit` and `putio_sync_api_rate_limit_remaining` gauges from Put.io's `X-RateLimit-*` headers; new `putio_sync_download_retries_total{reason}` and `putio_sync_sync_failures_total{reason}` counters.
 - Logs: a stalled Put.io transfer is logged once at warn when it stalls (repeats at debug); the per-file "Processing", "verified" and "deleted" lines moved to debug, leaving one info line per downloaded file; "Sync complete" is info only when the pass queued, deleted, streamed or failed something.
 - Watched .torrent and .magnet files stay in the folder after upload unless
