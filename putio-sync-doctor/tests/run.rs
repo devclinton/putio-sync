@@ -155,3 +155,72 @@ async fn concurrent_runs_share_one_run() {
     assert_eq!(a, b);
     account.assert_async().await;
 }
+
+#[tokio::test]
+async fn free_space_under_the_floor_is_a_problem() {
+    // A floor no disk has
+    let mut env = Env::with_config(|c| c.download.min_free_space_mb = u64::MAX / (1 << 21)).await;
+    env.healthy().await;
+    let report = env.doctor.run().await;
+    let check = report.check(CheckId::DiskSpace).unwrap();
+    assert_eq!(check.status, Status::Problem, "{check:?}");
+    assert!(
+        check.summary.contains("new downloads are on hold"),
+        "{}",
+        check.summary
+    );
+
+    // 0 turns the floor off
+    let mut env = Env::with_config(|c| c.download.min_free_space_mb = 0).await;
+    env.healthy().await;
+    let report = env.doctor.run().await;
+    assert!(!report
+        .check(CheckId::DiskSpace)
+        .unwrap()
+        .summary
+        .contains("on hold"));
+}
+
+#[tokio::test]
+async fn the_queue_is_summed_whole_and_compared_with_free_space() {
+    let mut env = Env::with_config(|c| c.download.min_free_space_mb = 0).await;
+    env.healthy().await;
+    // Far more pending than any disk holds
+    env.db
+        .queue()
+        .add(
+            1,
+            "huge.mkv",
+            i64::MAX / 4,
+            "http://x/1",
+            "huge.mkv",
+            0,
+            QueueStatus::Pending,
+        )
+        .await
+        .unwrap();
+    let report = env.doctor.run().await;
+    let check = report.check(CheckId::DiskSpace).unwrap();
+    assert_eq!(check.status, Status::Warning, "{check:?}");
+    assert!(
+        check.summary.contains("not enough room for the queue"),
+        "{}",
+        check.summary
+    );
+}
+
+#[tokio::test]
+async fn the_database_check_writes_a_probe() {
+    let mut env = Env::new().await;
+    env.healthy().await;
+    let report = env.doctor.run().await;
+    let check = report.check(CheckId::Database).unwrap();
+    assert_eq!(check.status, Status::Ok, "{check:?}");
+    assert!(
+        check.summary.contains("can be written"),
+        "{}",
+        check.summary
+    );
+    // Run again: nothing was left behind to clash with
+    env.db.write_probe().await.unwrap();
+}

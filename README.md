@@ -560,7 +560,15 @@ Configure download behavior including streaming buffer size and resume support:
 buffer_size_mb = 16        # Stream buffer size for downloads
 resume_enabled = true      # Enable automatic resume
 on_existing = "resume"     # A file already on disk: resume, overwrite or keep_both
+min_free_space_mb = 5120   # Hold new downloads under this much free space; 0 = off
 ```
+
+**Low disk space.** While the download folder has less than `min_free_space_mb` free
+(1 MB is 1 048 576 bytes; default 5120, so 5 GB), no new download starts, and neither
+does a file that would take the free space under the minimum. Downloads that are already
+running continue. The daemon logs a warning once, the Status page shows a "Low disk
+space" notice (`low_disk` in `GET /status`), and downloads start again by themselves when
+space is back. Doctor's disk check reports the same floor. Set it to `0` to turn this off.
 
 ### When a file already exists
 
@@ -1205,7 +1213,7 @@ daemon's download manager and watcher:
 | Group | Applies live | Needs a restart |
 |---|---|---|
 | Logging | `level`, `module_filters`, within 10 s (ignored while `RUST_LOG` is set) | `console_format`, `console_enabled`, `file_*` |
-| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`, `slow_limit_bytes_per_sec` (running downloads too), `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, `verify`, `verify_max_redownloads`, `verify_read_limit_mb_per_sec`, `verify_follow_bandwidth_pause`, for the next download or verify run | `target_directory` (new downloads go there at once, but the disk figures stay on the startup folder), and the rest of the group |
+| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`, `slow_limit_bytes_per_sec` (running downloads too), `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `min_free_space_mb`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, `verify`, `verify_max_redownloads`, `verify_read_limit_mb_per_sec`, `verify_follow_bandwidth_pause`, for the next download or verify run | `target_directory` (new downloads go there at once, but the disk figures stay on the startup folder), and the rest of the group |
 | Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Release check | — | everything |
@@ -2416,7 +2424,7 @@ applies live and what needs a restart.
 At startup, `daemon` and `server` (its API and its `--download` thread) give the download
 manager every `[download]` setting it has: `target_directory`, `workers`,
 `buffer_size_mb`, `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`,
-`slow_limit_bytes_per_sec`, `max_retries`, `retry_initial_delay_secs`, `on_existing`, `resume_enabled`, `delete_after_download` and
+`slow_limit_bytes_per_sec`, `max_retries`, `retry_initial_delay_secs`, `min_free_space_mb`, `on_existing`, `resume_enabled`, `delete_after_download` and
 `blocked_extensions`. The glob `whitelist_patterns` and `blacklist_patterns` apply to the
 daemon too. `progress_style`, sorting and `delete_empty_folders` are read by the one-off
 `download` command only, and `chunk_size_mb` and `max_concurrent` are ignored everywhere

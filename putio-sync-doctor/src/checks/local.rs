@@ -10,6 +10,9 @@ use putio_sync_telemetry::gauges::disk_usage;
 /// Free space that gives a warning / a problem, in percent
 const DISK_WARNING: f64 = 10.0;
 const DISK_PROBLEM: f64 = 2.0;
+/// Free space on the database's volume that gives a problem / a warning
+const DB_DISK_PROBLEM: u64 = 100 * 1024 * 1024;
+const DB_DISK_WARNING: u64 = 1024 * 1024 * 1024;
 /// Integrity messages kept in the report
 const MAX_DB_MESSAGES: usize = 20;
 
@@ -43,6 +46,7 @@ pub(crate) async fn disk_space(ctx: &Ctx) -> Finding {
     if total == 0 {
         return Finding::skipped("The disk reported no size.");
     }
+    // Everything the queue still owns (pending, downloading and paused rows)
     let pending: u64 = match &ctx.db {
         Some(db) => db
             .queue()
@@ -52,20 +56,79 @@ pub(crate) async fn disk_space(ctx: &Ctx) -> Finding {
             .unwrap_or(0),
         None => 0,
     };
+    let floor = ctx.config.download.min_free_space_bytes();
     let pct = free as f64 * 100.0 / total as f64;
     let mut summary = format!("{} free of {} ({:.0}%).", bytes(free), bytes(total), pct);
     if pending > 0 {
-        summary.push_str(&format!(" The queue still needs {}.", bytes(pending)));
+        summary.push_str(&format!(
+            " The queue needs {}, leaving {} after it.",
+            bytes(pending),
+            bytes(free.saturating_sub(pending))
+        ));
     }
-    let status = if pct < DISK_PROBLEM {
+    let mut status = if pct < DISK_PROBLEM || (floor > 0 && free < floor) {
         Status::Problem
     } else if pct < DISK_WARNING || free < pending {
         Status::Warning
     } else {
         Status::Ok
     };
-    Finding::new(status, summary)
-        .suggest("Free up space on the disk; downloads fail when it fills up.")
+    let mut suggestion = "Free up space on the disk; downloads fail when it fills up.".to_string();
+    if floor > 0 && free < floor {
+        summary.push_str(&format!(
+            " That is under the {} minimum, so new downloads are on hold.",
+            bytes(floor)
+        ));
+        suggestion = "Free up space; downloads start again on their own. The minimum is `download.min_free_space_mb`.".to_string();
+    } else if free < pending {
+        summary.push_str(" There is not enough room for the queue.");
+    } else if floor > 0 && free.saturating_sub(pending) < floor {
+        summary.push_str(&format!(
+            " Downloading it all would leave less than the {} minimum.",
+            bytes(floor)
+        ));
+        if status == Status::Ok {
+            status = Status::Warning;
+        }
+    }
+
+    // The database lives on its own disk on many NAS setups
+    if let Some(db_dir) = db_directory(ctx) {
+        if let Ok((db_free, _)) = disk_usage(&db_dir) {
+            if db_free < DB_DISK_PROBLEM {
+                summary.push_str(&format!(
+                    " Only {} is free on the volume holding the database ({}).",
+                    bytes(db_free),
+                    db_dir.display()
+                ));
+                suggestion = format!(
+                    "Free up space on the volume holding {}; without room the database can't save progress.",
+                    db_dir.display()
+                );
+                status = Status::Problem;
+            } else if db_free < DB_DISK_WARNING {
+                summary.push_str(&format!(
+                    " {} is free on the volume holding the database.",
+                    bytes(db_free)
+                ));
+                if status == Status::Ok {
+                    status = Status::Warning;
+                }
+            }
+        }
+    }
+    Finding::new(status, summary).suggest(suggestion)
+}
+
+/// The folder holding the database file
+fn db_directory(ctx: &Ctx) -> Option<std::path::PathBuf> {
+    let path = match &ctx.db {
+        Some(db) => db.path().to_path_buf(),
+        None => putio_sync_core::database::path_for(&ctx.config, ctx.config_path.as_deref()),
+    };
+    path.parent()
+        .map(|p| p.to_path_buf())
+        .filter(|p| p.is_dir())
 }
 
 pub(crate) async fn database(ctx: &Ctx) -> Finding {
@@ -102,9 +165,20 @@ pub(crate) async fn database(ctx: &Ctx) -> Finding {
             ),
         )
         .suggest("Delete the older database once you no longer need it."),
-        Ok(lines) if lines == ["ok"] => {
-            Finding::ok(format!("The integrity check of {} passed.", path.display()))
-        }
+        Ok(lines) if lines == ["ok"] => match db.write_probe().await {
+            Ok(()) => Finding::ok(format!(
+                "The integrity check of {} passed and it can be written.",
+                path.display()
+            )),
+            Err(e) => Finding::new(
+                Status::Problem,
+                format!("The database at {} can't be written: {e}", path.display()),
+            )
+            .suggest(format!(
+                "Check that the volume holding {} is mounted read-write and has free space; putio-sync can't save progress until it is.",
+                path.display()
+            )),
+        },
         Ok(lines) => {
             let items = lines
                 .iter()

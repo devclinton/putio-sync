@@ -129,6 +129,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- Moving a finished watch-folder item into the library can no longer replace a file that
+  appeared there in the meantime; it is saved as `name (2)` and so on instead.
+- Starting OAuth sign-in from one address can't push out another address's pending sign-in:
+  each address keeps its newest 5.
 - Put.io folders with more than 1000 entries are listed completely, so files past the first
   page are no longer treated as missing.
 - A file is deleted from Put.io only after the download has been synced to disk and renamed
@@ -225,6 +229,13 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   serves it, and the doctor warns about an undismissed crash from the last 7 days. Nothing is
   sent by putio-sync. See "What leaves your machine" in the README.
 - Release builds keep symbol names (the snap now strips only debug info) so backtraces are readable.
+- New downloads wait while the download folder has less free space than the new
+  `[download] min_free_space_mb` (default 5120, 0 turns it off). Running downloads continue,
+  a file that would take the space under the minimum waits, downloads resume by themselves,
+  and the Status page shows a "Low disk space" notice. It is on the Downloads settings page.
+- Doctor's disk check applies the same minimum, counts the whole queue against free space,
+  and checks the volume holding the database; its database check now tries a write, so a
+  read-only or full database volume is reported.
 - Setup guides in the docs, one per platform: Unraid, TrueNAS SCALE, Raspberry Pi, Docker
   and Compose, macOS, Windows and Linux. Each ends with the same walk-through of the setup
   wizard and the first sync.

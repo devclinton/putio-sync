@@ -28,6 +28,9 @@ pub const FLOW_LIFETIME: Duration = Duration::from_secs(600);
 
 /// OAuth sign-ins in progress at once; the oldest is dropped past this
 const MAX_FLOWS: usize = 100;
+/// Pending sign-ins one client address may hold; its oldest goes first, so one client can't
+/// push another's sign-in out of the table
+const MAX_FLOWS_PER_IP: usize = 5;
 
 /// How long a verified Basic credential is remembered
 const BASIC_CACHE_TTL: Duration = Duration::from_secs(300);
@@ -99,6 +102,8 @@ pub struct Flow {
     /// Where in the UI to land afterwards (`#/…`)
     pub return_to: String,
     created: Instant,
+    /// The client address (its /64 for IPv6) that started it
+    client: std::net::IpAddr,
 }
 
 /// Sign-in state shared by the middleware and the routes
@@ -222,7 +227,8 @@ impl SignIn {
             .any(|(t, _)| t == tag)
     }
 
-    /// Keep a new OAuth sign-in under `state`
+    /// Keep a new OAuth sign-in under `state`, for the client address that started it
+    #[allow(clippy::too_many_arguments)]
     pub fn start_flow(
         &self,
         state: String,
@@ -231,9 +237,23 @@ impl SignIn {
         binding: [u8; 32],
         redirect_uri: String,
         return_to: String,
+        client: std::net::IpAddr,
     ) {
+        let client = crate::middleware::ratelimit::bucket(client);
         let mut flows = self.flows.lock().unwrap_or_else(|e| e.into_inner());
         flows.retain(|_, f| f.created.elapsed() < FLOW_LIFETIME);
+        // This client's oldest sign-ins make room for its new one
+        while flows.values().filter(|f| f.client == client).count() >= MAX_FLOWS_PER_IP {
+            let Some(oldest) = flows
+                .iter()
+                .filter(|(_, f)| f.client == client)
+                .min_by_key(|(_, f)| f.created)
+                .map(|(k, _)| k.clone())
+            else {
+                break;
+            };
+            flows.remove(&oldest);
+        }
         if flows.len() >= MAX_FLOWS {
             if let Some(oldest) = flows
                 .iter()
@@ -252,6 +272,7 @@ impl SignIn {
                 redirect_uri,
                 return_to,
                 created: Instant::now(),
+                client,
             },
         );
     }
@@ -555,10 +576,59 @@ mod tests {
             [1; 32],
             "r".into(),
             "#/status".into(),
+            "10.0.0.1".parse().unwrap(),
         );
         assert_eq!(sign_in.take_flow("s").unwrap().verifier, "v");
         assert!(sign_in.take_flow("s").is_none());
         assert!(sign_in.take_flow("other").is_none());
+    }
+
+    #[test]
+    fn one_client_cannot_push_out_another_clients_sign_in() {
+        let sign_in = SignIn::new(None);
+        let start = |state: String, ip: &str| {
+            sign_in.start_flow(
+                state,
+                Provider::Github,
+                "v".into(),
+                [1; 32],
+                "r".into(),
+                "#/".into(),
+                ip.parse().unwrap(),
+            );
+        };
+        start("owner".into(), "192.168.1.10");
+        // A flood from another address, far past the global cap
+        for i in 0..(MAX_FLOWS * 3) {
+            start(format!("flood{i}"), "192.168.1.99");
+        }
+        // The owner's sign-in survived, the flooder keeps only its newest
+        assert!(sign_in.take_flow("owner").is_some());
+        assert!(sign_in.take_flow("flood0").is_none());
+        let last = MAX_FLOWS * 3 - 1;
+        for i in (last + 1 - MAX_FLOWS_PER_IP)..=last {
+            assert!(sign_in.take_flow(&format!("flood{i}")).is_some(), "{i}");
+        }
+    }
+
+    #[test]
+    fn the_global_cap_still_holds() {
+        let sign_in = SignIn::new(None);
+        for i in 0..(MAX_FLOWS + 20) {
+            let ip = format!("10.1.{}.{}", i / 200, i % 200 + 1);
+            sign_in.start_flow(
+                format!("s{i}"),
+                Provider::Github,
+                "v".into(),
+                [1; 32],
+                "r".into(),
+                "#/".into(),
+                ip.parse().unwrap(),
+            );
+        }
+        assert_eq!(sign_in.flows.lock().unwrap().len(), MAX_FLOWS);
+        assert!(sign_in.take_flow("s0").is_none());
+        assert!(sign_in.take_flow(&format!("s{}", MAX_FLOWS + 19)).is_some());
     }
 
     #[test]

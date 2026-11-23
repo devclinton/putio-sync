@@ -38,11 +38,72 @@ pub fn final_path(staged: &Path) -> Option<PathBuf> {
     let home = parent.parent()?;
     let mut candidate = home.join(&name);
     let mut n = 2;
-    while candidate.exists() {
+    while candidate.symlink_metadata().is_ok() {
         candidate = home.join(format!("{name} ({n})"));
         n += 1;
     }
     Some(candidate)
+}
+
+/// Rename `from` to `to` without ever replacing something already at `to`: fails with
+/// `AlreadyExists` instead. The check and the move are one step where the OS has it
+/// (renameat2 on Linux, renamex_np on macOS); elsewhere, or on a filesystem without it,
+/// they are two and a file created in between is still at risk.
+pub fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let c = |p: &Path| std::ffi::CString::new(p.as_os_str().as_bytes());
+        let (Ok(a), Ok(b)) = (c(from), c(to)) else {
+            return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+        };
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        // SAFETY: both pointers are valid NUL-terminated strings for the call
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_renameat2,
+                libc::AT_FDCWD,
+                a.as_ptr(),
+                libc::AT_FDCWD,
+                b.as_ptr(),
+                1u32, // RENAME_NOREPLACE
+            ) as i64
+        };
+        #[cfg(target_os = "macos")]
+        // SAFETY: both pointers are valid NUL-terminated strings for the call
+        let rc = unsafe { libc::renamex_np(a.as_ptr(), b.as_ptr(), libc::RENAME_EXCL) as i64 };
+        if rc == 0 {
+            return Ok(());
+        }
+        let err = std::io::Error::last_os_error();
+        // Not supported here (old kernel, or a filesystem without the flag): the two steps
+        if !matches!(
+            err.raw_os_error(),
+            Some(libc::ENOSYS) | Some(libc::EINVAL) | Some(libc::ENOTSUP)
+        ) {
+            return Err(err);
+        }
+    }
+    if to.symlink_metadata().is_ok() {
+        return Err(std::io::ErrorKind::AlreadyExists.into());
+    }
+    std::fs::rename(from, to)
+}
+
+/// Move `staged` to its final place, under a free name; a name taken meanwhile gets the
+/// next `(n)`. Returns the path it ended up at.
+pub fn move_to_final(staged: &Path) -> Result<Option<PathBuf>, String> {
+    for _ in 0..1000 {
+        let Some(to) = final_path(staged) else {
+            return Ok(None);
+        };
+        match rename_no_replace(staged, &to) {
+            Ok(()) => return Ok(Some(to)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("rename failed: {e}")),
+        }
+    }
+    Err("rename failed: no free name".to_string())
 }
 
 /// Whether every staging folder under `target` (at the top or one category down) is on the
@@ -151,13 +212,12 @@ impl Pipeline {
     /// Move a staged item to its final place; nothing to do when it was not staged
     pub(crate) async fn finish_staging(&self, item: &ItemRow) -> Result<(), String> {
         let staged = PathBuf::from(&item.dir);
-        let Some(to) = final_path(&staged) else {
-            return Ok(());
-        };
-        if !staged.exists() {
+        if final_path(&staged).is_none() || !staged.exists() {
             return Ok(());
         }
-        std::fs::rename(&staged, &to).map_err(|e| format!("rename failed: {e}"))?;
+        let Some(to) = move_to_final(&staged)? else {
+            return Ok(());
+        };
         let retention = self
             .inner
             .settings
@@ -196,5 +256,68 @@ impl Pipeline {
             .await;
         info!(key = %item.key, to = %to.display(), "Staged item moved into place");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rename_never_replaces_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("new.mkv");
+        let to = dir.path().join("old.mkv");
+        std::fs::write(&from, b"new").unwrap();
+        std::fs::write(&to, b"old").unwrap();
+        let err = rename_no_replace(&from, &to).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&to).unwrap(), b"old");
+        assert!(from.exists());
+
+        let free = dir.path().join("free.mkv");
+        rename_no_replace(&from, &free).unwrap();
+        assert_eq!(std::fs::read(&free).unwrap(), b"new");
+        assert!(!from.exists());
+    }
+
+    #[test]
+    fn rename_does_not_replace_an_empty_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("a");
+        let to = dir.path().join("b");
+        std::fs::create_dir(&from).unwrap();
+        std::fs::create_dir(&to).unwrap();
+        let err = rename_no_replace(&from, &to).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn finishing_picks_a_free_name_and_keeps_the_library_file() {
+        let home = tempfile::tempdir().unwrap();
+        let staging = home.path().join(STAGING_DIR);
+        std::fs::create_dir(&staging).unwrap();
+        let staged = staging.join("movie.mkv");
+        std::fs::write(&staged, b"new").unwrap();
+        std::fs::write(home.path().join("movie.mkv"), b"library").unwrap();
+        std::fs::write(home.path().join("movie.mkv (2)"), b"library 2").unwrap();
+
+        let to = move_to_final(&staged).unwrap().unwrap();
+        assert_eq!(to, home.path().join("movie.mkv (3)"));
+        assert_eq!(std::fs::read(&to).unwrap(), b"new");
+        assert_eq!(
+            std::fs::read(home.path().join("movie.mkv")).unwrap(),
+            b"library"
+        );
+        assert!(!staged.exists());
+    }
+
+    #[test]
+    fn a_path_outside_staging_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("x");
+        std::fs::write(&f, b"x").unwrap();
+        assert_eq!(move_to_final(&f).unwrap(), None);
+        assert!(f.exists());
     }
 }

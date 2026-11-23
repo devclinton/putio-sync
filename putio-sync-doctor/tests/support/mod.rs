@@ -23,11 +23,17 @@ pub struct Env {
 
 impl Env {
     pub async fn new() -> Self {
+        Self::with_config(|_| {}).await
+    }
+
+    /// Like `new`, with the config changed by `change` first
+    pub async fn with_config(change: impl FnOnce(&mut Config)) -> Self {
         let server = Server::new_async().await;
         let dir = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.download.target_directory = dir.path().join("downloads");
         std::fs::create_dir_all(&config.download.target_directory).unwrap();
+        change(&mut config);
         let client = Arc::new(
             PutioApiClient::with_base_url("t".into(), server.url()).with_retry_policy(
                 RetryPolicy {

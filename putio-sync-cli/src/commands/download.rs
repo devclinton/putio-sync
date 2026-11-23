@@ -122,6 +122,7 @@ pub async fn execute_download(
         stream_mp4: old_config.stream_mp4,
         rules: putio_sync_core::rules::RuleSet::from_config(&old_config),
         verify: putio_sync_download::manager::VerifySettings::from(&old_config),
+        min_free_space_bytes: old_config.min_free_space_bytes(),
     };
     let delete_empty_folders_flag = delete_empty_folders.unwrap_or(old_config.delete_empty_folders);
     let sort_order = if let Some(s) = sort {

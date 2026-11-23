@@ -2594,6 +2594,7 @@ dependencies = [
 name = "putio-sync-pipeline"
 version = "0.5.0"
 dependencies = [
+ "libc",
  "mockito",
  "putio-sync-client",
  "putio-sync-core",

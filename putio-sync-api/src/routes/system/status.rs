@@ -31,6 +31,8 @@ pub struct StatusResponse {
     pub active: Option<Summary>,
     /// The Pause local downloads switch is on (feature 039)
     pub nas_paused: bool,
+    /// New downloads are held back for lack of free space (`[download] min_free_space_mb`)
+    pub low_disk: Option<LowDisk>,
     pub workers: WorkersSection,
     /// The download limit in force (feature 032), the `GET /bandwidth` body
     pub bandwidth: putio_sync_core::bandwidth::Status,
@@ -118,6 +120,14 @@ pub struct WatcherSection {
     pub paths: Vec<String>,
     /// `None` when no watcher runs in this process
     pub files_processed: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LowDisk {
+    pub free_bytes: u64,
+    pub min_free_bytes: u64,
+    /// The floor itself is fine; the next file would take the space under it
+    pub file_too_big: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -304,6 +314,11 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
         downloads,
         active,
         nas_paused: state.download_manager.nas_paused().await,
+        low_disk: state.download_manager.low_space().map(|l| LowDisk {
+            free_bytes: l.free_bytes,
+            min_free_bytes: l.min_free_bytes,
+            file_too_big: l.file_too_big,
+        }),
         workers,
         bandwidth: state.download_manager.bandwidth().status(),
         watcher,

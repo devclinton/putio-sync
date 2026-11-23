@@ -135,6 +135,10 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
                 "Wait before the first retry; it doubles each time",
             ),
             (
+                "min_free_space_mb",
+                "New downloads wait while the download folder has less free space than this",
+            ),
+            (
                 "delete_empty_folders",
                 "Removes Put.io folders left empty after a delete",
             ),
