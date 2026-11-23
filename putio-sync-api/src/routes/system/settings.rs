@@ -409,6 +409,10 @@ pub struct DownloadSettings {
     pub max_retries: u32,
     pub retry_initial_delay_secs: u64,
     pub delete_empty_folders: bool,
+    /// Hold new downloads under this much free space, in MB; 0 is off. Missing in a PUT
+    /// body leaves it unchanged.
+    #[serde(default)]
+    pub min_free_space_mb: Option<u64>,
     /// Download verification (feature 034). Each missing in a PUT body leaves it
     /// unchanged.
     #[serde(default)]
@@ -867,6 +871,7 @@ const DOWNLOAD_LIVE: &[&str] = &[
     "buffer_size_mb",
     "max_retries",
     "retry_initial_delay_secs",
+    "min_free_space_mb",
     "on_existing",
     "resume_enabled",
     "delete_after_download",
@@ -910,6 +915,7 @@ fn download_view(config: &Config) -> DownloadSettings {
         retry_initial_delay_secs: config.download.retry_initial_delay_secs,
         delete_empty_folders: config.download.delete_empty_folders,
         verify: Some(config.download.verify),
+        min_free_space_mb: Some(config.download.min_free_space_mb),
         verify_max_redownloads: Some(config.download.verify_max_redownloads),
         verify_read_limit_mb_per_sec: Some(config.download.verify_read_limit_mb_per_sec),
         verify_follow_bandwidth_pause: Some(config.download.verify_follow_bandwidth_pause),
@@ -1143,6 +1149,9 @@ fn apply_download(settings: DownloadSettings, config: &mut Config) -> Result<(),
     config.download.max_retries = settings.max_retries;
     config.download.retry_initial_delay_secs = settings.retry_initial_delay_secs;
     config.download.delete_empty_folders = settings.delete_empty_folders;
+    if let Some(min) = settings.min_free_space_mb {
+        config.download.min_free_space_mb = min;
+    }
     if let Some(verify) = settings.verify {
         config.download.verify = verify;
     }

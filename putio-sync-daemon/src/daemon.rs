@@ -1795,6 +1795,7 @@ mod tests {
             slow_limit_bytes_per_sec: 300_000,
             max_retries: 9,
             retry_initial_delay_secs: 11,
+            min_free_space_bytes: 0,
             workers: 3,
             delete_after_download: true,
             stream_mp4: true,

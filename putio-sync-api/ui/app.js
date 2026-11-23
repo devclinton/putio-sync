@@ -382,6 +382,22 @@ export function nasBanner(onChange = () => {}) {
   };
 }
 
+/**
+ * The notice shown while new downloads wait for free space (`[download] min_free_space_mb`).
+ * `update(lowDisk)` takes the status page's `low_disk` (or null) and shows or hides it.
+ */
+export function lowDiskBanner() {
+  const free = h("span", { class: "muted" });
+  const el = h("div", { class: "notice low-disk", role: "status", hidden: true }, h("strong", { text: "Low disk space" }), h("span", { text: " New downloads wait until there is more free space; running ones continue." }), free);
+  return {
+    el,
+    update(lowDisk, bytes) {
+      el.hidden = !lowDisk;
+      if (lowDisk) free.textContent = ` ${bytes(lowDisk.free_bytes)} free, minimum ${bytes(lowDisk.min_free_bytes)}.`;
+    },
+  };
+}
+
 /** Toast an API error with its `error` and `details`. */
 export function toastError(err) {
   toast(err && err.error ? err.error : String(err), "error", err && err.details);

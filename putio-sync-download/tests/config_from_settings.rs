@@ -32,6 +32,7 @@ fn non_default_settings() -> DownloadSettings {
         slow_limit_bytes_per_sec: 300_000,
         max_retries: 9,
         retry_initial_delay_secs: 11,
+        min_free_space_mb: 7,
         blocked_extensions: vec!["exe".to_string(), "iso".to_string()],
         rules: vec![FolderRule {
             path: "Movies".to_string(),
@@ -58,6 +59,7 @@ fn every_manager_field_comes_from_settings() {
             slow_limit_bytes_per_sec: 300_000,
             max_retries: 9,
             retry_initial_delay_secs: 11,
+            min_free_space_bytes: 7 * 1024 * 1024,
             workers: 7,
             delete_after_download: true,
             stream_mp4: false,

@@ -385,6 +385,28 @@ impl Database {
             .map_err(tracked(DbOp::Other, "Failed to run quick_check"))
     }
 
+    /// Whether the database can be written: a table and a few kilobytes go in inside a
+    /// transaction that is rolled back, so nothing stays behind. A read-only file or a full
+    /// volume fails here (doctor).
+    pub async fn write_probe(&self) -> DbResult<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to start the write probe"))?;
+        sqlx::query("CREATE TABLE doctor_write_probe (data BLOB)")
+            .execute(&mut *tx)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to write the probe table"))?;
+        sqlx::query("INSERT INTO doctor_write_probe VALUES (zeroblob(16384))")
+            .execute(&mut *tx)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to write the probe row"))?;
+        tx.rollback()
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to end the write probe"))
+    }
+
     /// Run database migrations
     ///
     /// This creates all necessary tables if they don't exist.

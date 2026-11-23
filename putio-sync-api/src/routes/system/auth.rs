@@ -358,6 +358,7 @@ pub async fn oauth_start(
         oauth::binding_digest(&binding),
         redirect_uri,
         oauth::safe_return(query.return_to.as_deref()),
+        ip,
     );
     let secure = session::is_secure(headers, config.base_url());
     (

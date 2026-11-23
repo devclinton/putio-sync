@@ -283,6 +283,13 @@ max_retries = 3
 # Default: 1
 retry_initial_delay_secs = 1
 
+# Free space the download folder must keep, in MB (1 MB = 1 048 576 bytes). Below it,
+# no new download starts (running ones finish unless a write fails), and a file that
+# would take the free space under it waits too. Downloads resume on their own when
+# space is back. The Status page shows a notice and Doctor reports it. 0 turns it off.
+# Default: 5120 (5 GB)
+min_free_space_mb = 5120
+
 # ============================================================================
 # Watch Configuration (for torrent file monitoring)
 # ============================================================================
