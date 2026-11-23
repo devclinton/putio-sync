@@ -595,6 +595,7 @@ mod tests {
                 stream_mp4: true,
                 rules: putio_sync_core::rules::RuleSet::from_config(&config.download),
                 verify: putio_sync_download::manager::VerifySettings::default(),
+                min_free_space_bytes: config.download.min_free_space_bytes(),
             }
         );
         assert_eq!(
