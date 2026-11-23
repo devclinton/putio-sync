@@ -160,6 +160,16 @@ impl<'a> QueueRepository<'a> {
     /// This prevents race conditions where multiple workers try to process the same item.
     /// Returns None if no pending items are available.
     pub async fn claim_next_pending(&self) -> DbResult<Option<QueueItem>> {
+        self.claim_next_pending_fitting(i64::MAX).await
+    }
+
+    /// [`claim_next_pending`](Self::claim_next_pending), skipping rows bigger than `max_size`
+    ///
+    /// Takes the first pending row, in the usual priority order, whose `file_size` is at
+    /// most `max_size`. A row of unknown size (0 or less) always fits. A big row at the
+    /// head is left untouched (status and `updated_at` unchanged), so smaller rows behind
+    /// it still run.
+    pub async fn claim_next_pending_fitting(&self, max_size: i64) -> DbResult<Option<QueueItem>> {
         // A single write statement takes the write lock up front. A deferred transaction
         // (SELECT then UPDATE) fails with SQLITE_BUSY when two workers upgrade at once,
         // because SQLite skips the busy handler for read-to-write upgrades.
@@ -169,7 +179,7 @@ impl<'a> QueueRepository<'a> {
             SET status = 'downloading', updated_at = CURRENT_TIMESTAMP
             WHERE file_id = (
                 SELECT file_id FROM download_queue
-                WHERE status = 'pending'
+                WHERE status = 'pending' AND file_size <= ?
                 ORDER BY priority DESC, created_at ASC
                 LIMIT 1
             )
@@ -177,6 +187,7 @@ impl<'a> QueueRepository<'a> {
             RETURNING *
             "#,
         )
+        .bind(max_size)
         .fetch_optional(self.pool)
         .await
         .map_err(tracked(DbOp::Queue, "Failed to claim queue item"))

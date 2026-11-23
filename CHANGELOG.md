@@ -29,6 +29,15 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   shared file can't turn sending on. `packaging/usage-stats-worker/` has a Cloudflare Worker
   that receives and tallies it.
 
+### Fixed
+
+- The free-space hold no longer blocks smaller files behind one that doesn't fit, or flips the
+  big file's status on every poll: rows that don't fit stay pending and the next one that fits
+  runs. Running downloads' unwritten bytes now count against the floor, so several workers can't
+  start together and overshoot `min_free_space_mb`. If the download folder's free space can't be
+  read, new downloads wait (with a warning in the log) instead of running unchecked; a folder
+  that doesn't exist yet is measured through its nearest existing parent.
+
 ### Security
 
 - Crash reports no longer carry file names, library paths or IP addresses: absolute paths,
