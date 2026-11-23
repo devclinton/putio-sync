@@ -60,6 +60,12 @@ pub async fn execute_server(
         .or_else(|| Config::default_path().ok())
         .context("Could not determine config path")?;
 
+    // Panic hook and the unclean-stop marker (feature 058); dropped on a clean stop
+    let _crash_session = putio_sync_core::crash::start(
+        Some(&config_file_path),
+        putio_sync_update::channel::Channel::detect().kind(),
+    );
+
     let mut config = if config_file_path.exists() {
         Config::load(&config_file_path).context("Failed to load configuration")?
     } else {

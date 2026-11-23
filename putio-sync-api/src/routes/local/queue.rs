@@ -371,9 +371,9 @@ async fn skip_item(
         .get_by_file_id(file_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get queue item: {}", e)))?;
-    if existing.is_none() {
+    let Some(existing) = existing else {
         return Err(ApiError::NotFound("Item not found in queue".to_string()));
-    }
+    };
 
     // Remove the item from queue
     queue_repo
@@ -382,7 +382,7 @@ async fn skip_item(
         .map_err(|e| ApiError::InternalError(format!("Failed to skip item: {}", e)))?;
 
     Ok(Json(SuccessResponse {
-        message: format!("Item {} skipped and removed from queue", file_id),
+        message: format!("Removed {} from the queue", existing.filename),
     }))
 }
 

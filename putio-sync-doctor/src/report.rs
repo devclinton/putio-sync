@@ -139,6 +139,7 @@ ids!(
         Plugins => "plugins",
         LogLevel => "log_level",
         SignIn => "sign_in",
+        Crashes => "crashes",
     }
 );
 
@@ -151,9 +152,8 @@ impl CheckId {
             DeadQueueRows | FailingDownloads | OrphanPartials | Bandwidth | Verification => {
                 Area::Sync
             }
-            DownloadDir | DiskSpace | Database | Config | Hooks | Plugins | LogLevel | SignIn => {
-                Area::Local
-            }
+            DownloadDir | DiskSpace | Database | Config | Hooks | Plugins | LogLevel | SignIn
+            | Crashes => Area::Local,
             Reachability | RateLimit | ClockSkew | Tailscale | Listen => Area::Connectivity,
         }
     }
@@ -186,6 +186,7 @@ impl CheckId {
             Plugins => "Plugins",
             LogLevel => "Log level",
             SignIn => "Sign-in options",
+            Crashes => "Crashes",
         }
     }
 
@@ -572,7 +573,7 @@ mod tests {
                 format!("\"{}\"", fix.as_str())
             );
         }
-        assert_eq!(CheckId::ALL.len(), 25);
+        assert_eq!(CheckId::ALL.len(), 26);
         assert!("nope".parse::<FixId>().is_err());
     }
 

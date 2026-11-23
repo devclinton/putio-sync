@@ -57,6 +57,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
+use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
 
 pub use setup::{setup_router, SetupState};
@@ -501,6 +502,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/releases", routes::releases::router())
         .nest("/whats-new", routes::system::whats_new::router())
         .nest("/update", routes::system::update::router())
+        .nest("/crash-reports", routes::system::crash::router())
         .nest("/tailscale", routes::system::tailscale::router())
         .nest("/logs", routes::system::logs::router())
         .nest("/media-server", routes::system::media_server::router())
@@ -632,8 +634,14 @@ fn public_routes(state: AppState) -> Router {
             "/translate/callback/:token",
             axum::routing::post(routes::translate_callback::callback),
         )
-        .route("/", axum::routing::get(ui::index))
-        .route("/assets/*path", axum::routing::get(ui::asset))
+        .route(
+            "/",
+            axum::routing::get(ui::index).layer(CompressionLayer::new().gzip(true)),
+        )
+        .route(
+            "/assets/*path",
+            axum::routing::get(ui::asset).layer(CompressionLayer::new().gzip(true)),
+        )
         // Radarr/Sonarr's Transmission client; Basic auth of its own (feature 011)
         .route(
             "/transmission/rpc",

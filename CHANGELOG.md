@@ -188,6 +188,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - New `putio-sync completions <bash|zsh|fish|elvish|powershell>` prints a shell completion script.
 - Metrics: `putio_sync_api_requests_total` has new outcomes `rate_limited` (429) and `unauthorized` (401/403) instead of `client_error`; new `putio_sync_api_rate_limit` and `putio_sync_api_rate_limit_remaining` gauges from Put.io's `X-RateLimit-*` headers; new `putio_sync_download_retries_total{reason}` and `putio_sync_sync_failures_total{reason}` counters.
 - Logs: a stalled Put.io transfer is logged once at warn when it stalls (repeats at debug); the per-file "Processing", "verified" and "deleted" lines moved to debug, leaving one info line per downloaded file; "Sync complete" is info only when the pass queued, deleted, streamed or failed something.
+- The web UI's pages and language catalogs are sent gzip-compressed to browsers that accept it (ETag revalidation unchanged), so the first load over a remote link is several times smaller.
+- The Logs page adds incoming lines once per frame instead of one at a time, and a paused tab keeps at most 2000 waiting lines (older ones are counted as dropped), so a debug-level burst no longer freezes the page.
+- The Queue page's "Skip" is now "Remove": it asks first, and the message names the file instead of its ID. The cancel-download dialog now offers "Keep downloading" / "Stop and remove".
+- Status, Active, Transfers and Doctor keep keyboard focus and open details when they refresh. Success messages stay for 6 seconds instead of 3.
 - Watched .torrent and .magnet files stay in the folder after upload unless
   `delete_after_upload = true` or `archive_directory` is set, also when the config has no
   `[watch]` table.
@@ -214,6 +218,17 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   Use `[notifications.smtp]`, hooks or plugins.
 ### Added
 
+- Crash reports (058): when putio-sync panics it writes a masked report (version, install kind,
+  OS, uptime, thread, message, backtrace and the last 50 log lines) to `crash-reports/` next to
+  the config, 10 kept. The web UI then says "putio-sync stopped unexpectedly" and shows the
+  whole report, with **Report on GitHub** (a prefilled issue you submit yourself), **Copy report**
+  and **Dismiss**. A panic the daemon survived (in a task) says "putio-sync hit an internal error"
+  instead, and its issue title starts with "Panic:". A run that was killed with no report is
+  noted as "stopped without a report".
+  `putio-sync crash-report list|show|open` does the same from a terminal, `GET /crash-reports`
+  serves it, and the doctor warns about an undismissed crash from the last 7 days. Nothing is
+  sent by putio-sync. See "What leaves your machine" in the README.
+- Release builds keep symbol names (the snap now strips only debug info) so backtraces are readable.
 - New downloads wait while the download folder has less free space than the new
   `[download] min_free_space_mb` (default 5120, 0 turns it off). Running downloads continue,
   a file that would take the space under the minimum waits, downloads resume by themselves,

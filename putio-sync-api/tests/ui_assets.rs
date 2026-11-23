@@ -363,3 +363,80 @@ async fn the_ui_satisfies_its_csp() {
         }
     }
 }
+
+async fn get_with_encoding(
+    app: &TestApp,
+    path: &str,
+    encoding: Option<&str>,
+) -> axum::response::Response {
+    let mut request = Request::builder().uri(path);
+    if let Some(encoding) = encoding {
+        request = request.header(header::ACCEPT_ENCODING, encoding);
+    }
+    app.send(request.body(Body::empty()).unwrap()).await
+}
+
+#[tokio::test]
+async fn text_assets_are_gzipped_when_accepted() {
+    let app = test_app().await;
+    for path in ["/", "/assets/app.js", "/assets/i18n/de.json"] {
+        let plain = get_with_encoding(&app, path, None).await;
+        assert!(
+            plain.headers().get(header::CONTENT_ENCODING).is_none(),
+            "{path}"
+        );
+        let plain_len = axum::body::to_bytes(plain.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .len();
+
+        let zipped = get_with_encoding(&app, path, Some("gzip")).await;
+        assert_eq!(zipped.status(), StatusCode::OK, "{path}");
+        assert_eq!(zipped.headers()[header::CONTENT_ENCODING], "gzip", "{path}");
+        assert_eq!(
+            zipped.headers()[header::CACHE_CONTROL],
+            "no-cache",
+            "{path}"
+        );
+        assert!(zipped.headers().contains_key(header::ETAG), "{path}");
+        assert!(zipped.headers().contains_key(header::VARY), "{path}");
+        let bytes = axum::body::to_bytes(zipped.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&bytes[..2], &[0x1f, 0x8b], "{path}: gzip magic");
+        assert!(
+            bytes.len() < plain_len / 2,
+            "{path}: {} vs {plain_len}",
+            bytes.len()
+        );
+    }
+}
+
+#[tokio::test]
+async fn gzip_keeps_304_and_security_headers() {
+    let app = test_app().await;
+    let first = get_with_encoding(&app, "/assets/app.js", Some("gzip")).await;
+    let etag = first.headers()[header::ETAG].clone();
+    let csp = first
+        .headers()
+        .get(header::CONTENT_SECURITY_POLICY)
+        .cloned();
+    let plain = get_with_encoding(&app, "/assets/app.js", None).await;
+    assert_eq!(
+        plain
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .cloned(),
+        csp
+    );
+
+    let request = Request::builder()
+        .uri("/assets/app.js")
+        .header(header::ACCEPT_ENCODING, "gzip")
+        .header(header::IF_NONE_MATCH, etag.clone())
+        .body(Body::empty())
+        .unwrap();
+    let second = app.send(request).await;
+    assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(second.headers()[header::ETAG], etag);
+}

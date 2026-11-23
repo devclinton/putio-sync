@@ -4,7 +4,7 @@
 
 import { arrRuntime, clearBandwidthOverride, get, setBandwidthOverride, syncNow } from "../api.js";
 import { describeSource, rate } from "../bandwidth.js";
-import { empty, h, lowDiskBanner, nasBanner, poll, toast, toastError } from "../app.js";
+import { empty, h, lowDiskBanner, nasBanner, poll, refill, toast, toastError } from "../app.js";
 import { bytes, duration, percent, relative } from "../format.js";
 import { storageNotice } from "../storage.js";
 import { BADGE, LABEL, STAGES } from "./active.js";
@@ -77,7 +77,8 @@ function render(s, arr) {
   banner.update(Boolean(s.nas_paused));
   diskBanner.update(s.low_disk, bytes);
   summary.replaceChildren(...headline(s));
-  grid.replaceChildren(
+  refill(
+    grid,
     syncCard(s.sync),
     queueCard(s.queue, reasons.get("queue")),
     activeCard(s.active, reasons.get("active")),

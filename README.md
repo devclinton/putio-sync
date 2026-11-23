@@ -74,7 +74,7 @@ each build is in [CHANGELOG.md](CHANGELOG.md), and planned work is in [ROADMAP.m
 - [All features](#all-features) · [First run](#first-run) · [Commands](#commands) · [Configuration](#configuration)
 - [Metrics](#metrics) · [Web UI](#web-ui) · [Media Server](#media-server) · [Sign-in options](#sign-in-options) · [Tailscale](#tailscale)
 - [Radarr and Sonarr](#radarr-and-sonarr) · [Release check](#release-check) · [Event hooks](#event-hooks) · [Plugins](#plugins)
-- [Subtitles](#subtitles) · [Docker](#docker) · [Development](#development)
+- [Subtitles](#subtitles) · [What leaves your machine](#what-leaves-your-machine) · [Docker](#docker) · [Development](#development)
 
 <!-- ANCHOR: all-features -->
 ## All features
@@ -402,6 +402,21 @@ putio-sync plugins check FOLDER [--json]
 ```
 
 It needs no config or token. Exit codes: 0 no problems, 1 problems, 2 not a folder.
+
+### `crash-report`
+
+List, show and open the crash reports kept next to the config file. The "What leaves
+your machine" section says what a report holds and when anything is sent.
+
+```bash
+putio-sync crash-report list [--json]
+putio-sync crash-report show ID
+putio-sync crash-report open ID [--no-browser]
+```
+
+They need no config load or token. `open` prints the prefilled GitHub issue link and a link
+that searches existing issues, and opens the issue link in your browser unless `--no-browser`.
+Exit codes: 0 done, 1 no such report.
 
 ### `transfers add`
 
@@ -1313,6 +1328,7 @@ addresses, for a plugin server or an indexer on the same machine.
 | `GET`/`PUT /settings/sign-in` | `[sign_in]` with client secrets masked, whether a password is `set`, and each provider's `redirect_url`; the PUT takes `password: {username, new_password, clear}` |
 | `POST /settings/sign-in/sign-out-everywhere` | A new session key: every browser signs in again → 204 |
 | `GET /status` | Everything on the status page in one response |
+| `GET /crash-reports`, `GET /crash-reports/{id}`, `POST /crash-reports/{id}/dismiss` | Crash reports (feature 058): the list with `pending` (undismissed in the last 7 days); one report with its `text`, the prefilled GitHub issue `url`, `search_url` and `truncated`; dismiss one. 404 for an unknown id |
 | `GET /whats-new`, `POST /whats-new/seen` | The built-in changelog with each entry marked `new`; record entries as seen (`{"ids": [...]}`) |
 | `POST /local/sync` | Start a folder sync now: 202, 409 while one runs, 503 without a database |
 | `GET /local/queue`, `/local/queue/stats` | Queue rows and counts |
@@ -2199,6 +2215,7 @@ daemon also runs it 2 minutes after it starts and then every `interval_minutes`.
 | | Disk space | Under 10% free, or less than the queue needs (warning); under 2% (problem) |
 | | Database | SQLite's integrity check fails (problem) |
 | | Config file | Unknown keys, or settings that are probably a mistake |
+| | Crashes | putio-sync panicked or stopped without a report in the last 7 days and the report is not dismissed (warning) |
 | | Event hooks | An enabled command hook's program is missing or not executable (problem); a hook's last run failed in the last 24 hours (warning; needs the daemon) |
 | | Plugins | An enabled plugin can't load (problem); a plugin needs host approval or a required setting, settings name a plugin that isn't found, or an enabled plugin's last run failed in the last 24 hours (warning) |
 | Connection | Put.io reachability | Put.io can't be reached (problem), errors or is slow (warning) |
@@ -2797,6 +2814,29 @@ saying where. If both exist, the new one is used and the daemon and `putio-sync 
 warn about the old one, which you can delete.
 
 <!-- ANCHOR_END: running-periodic-sync-and-watch-simultaneously -->
+<!-- ANCHOR: what-leaves-your-machine -->
+## What leaves your machine
+
+putio-sync talks to Put.io, to the Radarr, Sonarr, notification and plugin addresses you set,
+and, if you leave the update check on, to GitHub Releases to look for a newer version. It has no
+analytics and sends nothing about you or your files anywhere else.
+
+**Crash reports** are never sent by putio-sync. When it panics, it writes a file to
+`crash-reports/` next to the config file (the 10 newest are kept): version, how it was
+installed, OS and architecture, uptime, the thread, the panic message, a backtrace and the last
+50 log lines, with tokens, passwords and the home folder masked the same way the Logs page
+does. If it was killed with no chance to write one (out of memory, `SIGKILL`, a container
+restart), the next start notes "stopped without a report".
+
+The next time you open the web UI it says **putio-sync stopped unexpectedly** and shows the
+whole report, so you can remove names and paths. **Report on GitHub** opens a prefilled new
+issue on `devclinton/putio-sync` in your browser, where you review it and submit it from your own
+GitHub account; **Copy report** copies the text, and **Dismiss** hides the notice. From a
+terminal, use `putio-sync crash-report list`, `show ID` and `open ID`. The doctor warns about
+an undismissed crash from the last 7 days. If the report is too long for a link it is cut and
+the issue asks you to paste the copied one.
+<!-- ANCHOR_END: what-leaves-your-machine -->
+
 <!-- ANCHOR: architecture -->
 ## Architecture
 

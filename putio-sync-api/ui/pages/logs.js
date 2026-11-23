@@ -31,6 +31,9 @@ let f = {};
 let els = null;
 let shown = [];
 let waiting = [];
+let dropped = 0; // lines discarded from `waiting` while paused
+let pending = []; // lines received since the last animation frame
+let frame = 0;
 let paused = false;
 let last = 0;
 let tail = null;
@@ -42,6 +45,8 @@ export function mount(el, params = {}) {
   f = Object.fromEntries(KEYS.map((k) => [k, q.get(k) || ""]));
   shown = [];
   waiting = [];
+  dropped = 0;
+  pending = [];
   paused = false;
   const input = (key, attrs) => h("input", { class: "input", value: f[key], autocomplete: "off", oninput: (e) => onType(key, e.target.value), ...attrs });
   els = {
@@ -124,6 +129,8 @@ async function start() {
   stop();
   shown = [];
   waiting = [];
+  dropped = 0;
+  pending = [];
   fill(els.list);
   const run = (tail = { abort: new AbortController() });
   try {
@@ -183,14 +190,36 @@ function event(block) {
   }
   if (!data) return;
   const msg = JSON.parse(data);
-  if (type === "skipped") add([{ skipped: msg.count }]);
+  if (type === "skipped") queue({ skipped: msg.count });
   else if (type === "line") {
     last = Math.max(last, msg.seq);
-    if (paused) {
-      waiting.push(msg);
-      els.pause.textContent = `Resume (${waiting.length} waiting)`;
-    } else add([msg]);
+    queue(msg);
   }
+}
+
+// Lines arrive one SSE event at a time; they are added once per animation frame so a
+// burst costs one layout, not one per line
+function queue(l) {
+  if (paused) {
+    waiting.push(l);
+    if (waiting.length > MAX_SHOWN) {
+      dropped += waiting.length - MAX_SHOWN;
+      waiting.splice(0, waiting.length - MAX_SHOWN);
+    }
+    els.pause.textContent = `Resume (${waiting.length}${dropped ? "+" : ""} waiting)`;
+    return;
+  }
+  pending.push(l);
+  if (!frame) frame = requestAnimationFrame(flush);
+}
+
+function flush() {
+  frame = 0;
+  const lines = pending;
+  pending = [];
+  if (!els) return;
+  if (paused) lines.forEach(queue);
+  else add(lines);
 }
 
 function togglePause() {
@@ -198,7 +227,9 @@ function togglePause() {
   els.status.textContent = paused ? "Paused" : "Live";
   els.pause.textContent = "Pause";
   if (!paused) {
-    add(waiting);
+    const missed = dropped;
+    dropped = 0;
+    add(missed ? [{ skipped: missed, paused: true }, ...waiting] : waiting);
     waiting = [];
   }
 }
@@ -207,13 +238,16 @@ function add(lines) {
   if (!lines.length) return;
   const list = els.list;
   const atEnd = list.scrollTop + list.clientHeight >= list.scrollHeight - 8;
+  const batch = document.createDocumentFragment();
   for (const l of lines) {
     shown.push(l);
-    list.append(row(l));
+    batch.append(row(l));
   }
-  while (shown.length > MAX_SHOWN) {
-    shown.shift();
-    list.firstElementChild.remove();
+  list.append(batch);
+  const extra = shown.length - MAX_SHOWN;
+  if (extra > 0) {
+    shown.splice(0, extra);
+    for (let i = 0; i < extra && list.firstElementChild; i++) list.firstElementChild.remove();
   }
   if (atEnd) list.scrollTop = list.scrollHeight;
 }
@@ -226,7 +260,7 @@ function value(key, v) {
 }
 
 function row(l) {
-  if (l.skipped) return h("li", { class: "log-skip", text: `${l.skipped.toLocaleString()} lines skipped: they left memory before they could be sent.` });
+  if (l.skipped) return h("li", { class: "log-skip", text: l.paused ? `${l.skipped.toLocaleString()} older lines dropped while paused.` : `${l.skipped.toLocaleString()} lines skipped: they left memory before they could be sent.` });
   const t = new Date(l.time);
   return h(
     "li",
@@ -264,6 +298,8 @@ function download() {
 function clearView() {
   shown = [];
   waiting = [];
+  dropped = 0;
+  pending = [];
   if (paused) els.pause.textContent = "Resume";
   fill(els.list);
 }

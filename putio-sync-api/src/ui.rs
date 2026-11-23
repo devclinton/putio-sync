@@ -45,6 +45,7 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("query.js", JS, include_bytes!("../ui/query.js")),
     ("listctl.js", JS, include_bytes!("../ui/listctl.js")),
     ("fuzzy.js", JS, include_bytes!("../ui/fuzzy.js")),
+    ("crash.js", JS, include_bytes!("../ui/crash.js")),
     ("guides.js", JS, include_bytes!("../ui/guides.js")),
     ("palette.js", JS, include_bytes!("../ui/palette.js")),
     ("theme.js", JS, include_bytes!("../ui/theme.js")),
@@ -315,6 +316,7 @@ fn serve(
     let cache = [
         (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
         (header::ETAG, etag.clone()),
+        (header::VARY, HeaderValue::from_static("accept-encoding")),
     ];
     let tag = etag.to_str().unwrap_or_default();
     let fresh = headers

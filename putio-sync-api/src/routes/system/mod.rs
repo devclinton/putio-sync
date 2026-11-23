@@ -1,11 +1,12 @@
 //! System routes
 //!
 //! Routes for the bandwidth limit, settings (with the configuration assistant), folder rules, statistics, history, the status summary, sign-in, the
-//! doctor, event hooks, Lua plugins, What's new, Tailscale, the listen addresses, the Logs page, the DLNA media server and the update checker
+//! doctor, event hooks, Lua plugins, What's new, Tailscale, the listen addresses, the Logs page, the DLNA media server, the update checker and crash reports
 
 pub mod assistant;
 pub mod auth;
 pub mod bandwidth;
+pub mod crash;
 pub mod doctor;
 pub mod history;
 pub mod hooks;

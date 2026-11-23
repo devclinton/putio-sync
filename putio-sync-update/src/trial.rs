@@ -261,6 +261,8 @@ static ARMED: OnceLock<PathBuf> = OnceLock::new();
 
 /// Roll back and restart the old binary; returns only if that failed
 pub fn roll_back_and_restart(config_dir: &Path, reason: &str) {
+    // The restart skips destructors: a rollback is not an unclean stop (feature 058)
+    putio_sync_core::crash::clear_marker();
     match roll_back(config_dir, reason) {
         Ok(exe) => {
             let e = swap::restart(&exe, std::env::args_os().skip(1).collect());
