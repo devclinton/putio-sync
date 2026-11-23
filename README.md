@@ -406,8 +406,8 @@ It needs no config or token. Exit codes: 0 no problems, 1 problems, 2 not a fold
 ### `usage-stats`
 
 Show or switch the opt-in usage stats. `show` prints the status and the exact JSON that would be
-sent; `enable` and `disable` change `[usage_stats] enabled`. See
-[What leaves your machine](#what-leaves-your-machine).
+sent; `enable` and `disable` change `[usage_stats] enabled`. The "What leaves your machine"
+section lists every field.
 
 ```bash
 putio-sync usage-stats show|enable|disable
