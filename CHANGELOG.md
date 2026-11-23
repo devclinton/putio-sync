@@ -14,6 +14,14 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Security
 
+- Debug logs no longer print request or response headers (the Put.io bearer token, cookies) or
+  the query string of a download URL; the Authorization header is marked sensitive.
+- The CLI's `--csv` output and `history` CSV now defuse cells that start with `=`, `+`, `-`, `@`,
+  tab or carriage return, as the release export already did.
+- Subtitle downloads and error answers are read with a size limit (10 MiB and 64 KiB), so a
+  hostile endpoint cannot fill memory.
+- A resume of a download whose expected size is 0 no longer wraps the `Range` header.
+
 - The API now refuses a request whose `Host` is not an IP address, `localhost`, a name with
   no dot, `*.local`, `*.ts.net`, the `public_url` host, or listed in the new
   `[api] allowed_hosts` (421), which stops DNS rebinding. Behind a reverse proxy that passes a

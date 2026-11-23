@@ -3,6 +3,7 @@
 use crate::error::{DownloadError, DownloadResult};
 use crate::files::{create_temp_path, Crc32};
 use crate::rate_limiter::RateLimiter;
+use putio_sync_client::client::loggable_url;
 use putio_sync_client::PutioApiClient;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -114,6 +115,15 @@ impl ProgressLogger {
 }
 
 /// Format bytes as human-readable string
+/// The `Range` header value for a resume. The last byte is `expected - 1`, saturating so an
+/// expected size of 0 cannot wrap to `u64::MAX`.
+fn range_header_value(resume_from: u64, expected_size: Option<u64>) -> String {
+    match expected_size {
+        Some(expected) => format!("bytes={}-{}", resume_from, expected.saturating_sub(1)),
+        None => format!("bytes={}-", resume_from),
+    }
+}
+
 fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
@@ -390,7 +400,7 @@ pub async fn stream_to_temp(
 
     // Make the authenticated request on the shared download client (connect and read
     // timeouts, no total one); a stop ends the wait for the server's answer
-    debug!("Making download request to: {}", url);
+    debug!("Making download request to: {}", loggable_url(url));
     let mut request_builder = client.authenticated_download_request(url)?;
 
     // Add user agent and other headers that Put.io might expect
@@ -400,22 +410,18 @@ pub async fn stream_to_temp(
 
     // Add Range header for resuming if specified
     if let Some(resume_from) = resume_from_byte {
-        if let Some(expected) = expected_size {
-            let range_header = format!("bytes={}-{}", resume_from, expected - 1);
-            debug!("Adding Range header: {}", range_header);
-            request_builder = request_builder.header("Range", range_header);
-        } else {
-            let range_header = format!("bytes={}-", resume_from);
-            debug!("Adding Range header: {}", range_header);
-            request_builder = request_builder.header("Range", range_header);
-        }
+        let range_header = range_header_value(resume_from, expected_size);
+        debug!("Adding Range header: {}", range_header);
+        request_builder = request_builder.header("Range", range_header);
     }
 
     let request = request_builder.build().map_err(DownloadError::HttpError)?;
 
-    debug!("Request URL: {}", request.url());
-    debug!("Request method: {}", request.method());
-    debug!("Request headers: {:?}", request.headers());
+    debug!(
+        "Request: {} {}",
+        request.method(),
+        loggable_url(request.url().as_str())
+    );
 
     let response = unless_stopped(stop, client.download_client().execute(request))
         .await?
@@ -430,7 +436,6 @@ pub async fn stream_to_temp(
         status.as_u16(),
         status.canonical_reason().unwrap_or("Unknown")
     );
-    debug!("Response headers: {:?}", response.headers());
 
     // Log specific headers that might be relevant for debugging
     if let Some(content_type) = response.headers().get("content-type") {
@@ -449,7 +454,10 @@ pub async fn stream_to_temp(
     // The server cannot serve the range asked for (the file changed, or it no longer
     // allows ranges): the partial file is no use, so the next attempt starts over
     if status.as_u16() == 416 && resume_from_byte.is_some() {
-        warn!("Server answered 416 to a resume of {}; starting over", url);
+        warn!(
+            "Server answered 416 to a resume of {}; starting over",
+            loggable_url(url)
+        );
         let _ = tokio::fs::remove_file(&temp_path).await;
         return Err(DownloadError::ApiError(
             "Resume refused by the server (416); the partial download was discarded".to_string(),
@@ -459,27 +467,21 @@ pub async fn stream_to_temp(
     // Check for valid response status: 200 (OK) for full download, 206 (Partial Content) for range requests
     if !status.is_success() {
         // Try to get response body for more detailed error info
-        let error_body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unable to read error response".to_string());
+        let error_body =
+            putio_sync_client::body::read_error_text(response, "Unable to read error response")
+                .await;
 
         // Enhanced error logging for 400 Bad Request
         if status.as_u16() == 400 {
             error!("=== 400 BAD REQUEST DETAILS ===");
-            error!("Request URL: {}", url);
+            error!("Request URL: {}", loggable_url(url));
             error!("Request method: GET");
             if let Some(resume_from) = resume_from_byte {
                 error!("Resume requested from byte: {}", resume_from);
-                if let Some(expected) = expected_size {
-                    error!(
-                        "Range header would be: bytes={}-{}",
-                        resume_from,
-                        expected - 1
-                    );
-                } else {
-                    error!("Range header would be: bytes={}-", resume_from);
-                }
+                error!(
+                    "Range header would be: {}",
+                    range_header_value(resume_from, expected_size)
+                );
             } else {
                 error!("No range request (full download)");
             }
@@ -498,7 +500,11 @@ pub async fn stream_to_temp(
             status.canonical_reason().unwrap_or("Unknown"),
             error_body
         );
-        warn!("Download failed for URL {}: {}", url, error_msg);
+        warn!(
+            "Download failed for URL {}: {}",
+            loggable_url(url),
+            error_msg
+        );
         return Err(DownloadError::ApiError(error_msg));
     }
 
@@ -844,6 +850,13 @@ async fn preallocate(file: tokio::fs::File, _len: u64) -> tokio::fs::File {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn range_header_does_not_underflow_for_an_expected_size_of_zero() {
+        assert_eq!(super::range_header_value(0, Some(0)), "bytes=0-0");
+        assert_eq!(super::range_header_value(10, Some(100)), "bytes=10-99");
+        assert_eq!(super::range_header_value(10, None), "bytes=10-");
+    }
+
     use super::*;
     use mockito::Server;
     use std::time::Instant;
