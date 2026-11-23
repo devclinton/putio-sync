@@ -189,14 +189,15 @@ async function onClear() {
   }
   const ok = await confirm({
     title: "Clear completed",
-    text: `Remove ${n} completed ${n === 1 ? "item" : "items"} from the queue?`,
+    text: n === 1 ? "Remove 1 completed item from the queue?" : `Remove ${n} completed items from the queue?`,
     verb: "Remove",
   });
   if (ok) await act(els && els.clear, "clear completed items", () => post("/local/queue/clear"));
 }
 
 /** Apply `path(item)` to every failed item, one request each; says how many went through */
-async function eachFailed(button, verbed, what, path) {
+// Whole sentences per case, so each one is a catalog string with no English word put in it
+async function eachFailed(button, said, partly, path) {
   const failed = items.filter((i) => state(i) === "failed");
   if (button) button.disabled = true;
   let done = 0;
@@ -210,10 +211,8 @@ async function eachFailed(button, verbed, what, path) {
       last = e;
     }
   }
-  const n = failed.length;
-  const some = `${verbed} ${done} of ${n} failed ${n === 1 ? "item" : "items"}`;
-  if (last) toast(`${some}. The rest could not be ${what}`, "error", reason(last));
-  else toast(some);
+  if (last) toast(partly(done, failed.length), "error", reason(last));
+  else toast(said(done, failed.length));
   refresh();
 }
 
@@ -225,10 +224,17 @@ async function onRetryFailed() {
   }
   const ok = await confirm({
     title: "Retry failed",
-    text: `Try ${n} failed ${n === 1 ? "item" : "items"} again?`,
+    text: n === 1 ? "Try 1 failed item again?" : `Try ${n} failed items again?`,
     verb: "Retry",
   });
-  if (ok) await eachFailed(els && els.retryFailed, "Retrying", "retried", (i) => `/local/queue/${i.file_id}/retry`);
+  if (ok) {
+    await eachFailed(
+      els && els.retryFailed,
+      (done, all) => `Retrying ${done} of ${all} failed items`,
+      (done, all) => `Retrying ${done} of ${all} failed items. The rest could not be retried`,
+      (i) => `/local/queue/${i.file_id}/retry`,
+    );
+  }
 }
 
 async function onRemoveFailed() {
@@ -239,10 +245,20 @@ async function onRemoveFailed() {
   }
   const ok = await confirm({
     title: "Remove failed",
-    text: `Remove ${n} failed ${n === 1 ? "item" : "items"} from the queue? They stay on Put.io and are added again by the next sync unless a folder rule skips them.`,
+    text:
+      n === 1
+        ? "Remove 1 failed item from the queue? It stays on Put.io and is added again by the next sync unless a folder rule skips it."
+        : `Remove ${n} failed items from the queue? They stay on Put.io and are added again by the next sync unless a folder rule skips them.`,
     verb: "Remove",
   });
-  if (ok) await eachFailed(els && els.removeFailed, "Removed", "removed", (i) => `/local/queue/${i.file_id}/skip`);
+  if (ok) {
+    await eachFailed(
+      els && els.removeFailed,
+      (done, all) => `Removed ${done} of ${all} failed items`,
+      (done, all) => `Removed ${done} of ${all} failed items. The rest could not be removed`,
+      (i) => `/local/queue/${i.file_id}/skip`,
+    );
+  }
 }
 
 async function onRemove(button, item) {
