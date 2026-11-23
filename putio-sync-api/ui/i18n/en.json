@@ -293,6 +293,7 @@
  "Couldn't fetch subtitles for {0}": "Couldn't fetch subtitles for {0}",
  "Couldn't free up space": "Couldn't free up space",
  "Couldn't load that language": "Couldn't load that language",
+ "Couldn't load this page. Reload to try again.": "Couldn't load this page. Reload to try again.",
  "Couldn't look inside {0}": "Couldn't look inside {0}",
  "Couldn't plan a free-up": "Couldn't plan a free-up",
  "Couldn't queue {0}": "Couldn't queue {0}",
