@@ -22,6 +22,8 @@ fn help_and_version_print_no_startup_banner() {
     }
 }
 
+/// The daemon, server and setup commands exist only in the `server` build
+#[cfg(feature = "server")]
 #[test]
 fn help_says_what_to_run() {
     cli()
