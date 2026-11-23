@@ -646,6 +646,7 @@ async fn no_hook_secret_in_responses_or_logs() {
 /// lines or a log line, even when the plugin logs one or fails with it (feature 028)
 #[tokio::test]
 async fn no_plugin_secret_in_responses_or_logs() {
+    allow_loopback_plugin_fetch();
     const WEBHOOK_PATH: &str = "PLUGINWEBHOOK0123";
     const TOKEN: &str = "PLUGINTOKEN0123";
     let logs = captured_logs();
@@ -1052,6 +1053,7 @@ async fn no_translation_secrets_in_responses_or_logs() {
 /// doctor's health check, the metrics or a log line (feature 031)
 #[tokio::test]
 async fn no_plex_token_in_responses_or_logs() {
+    allow_loopback_plugin_fetch();
     const TOKEN: &str = "PLEXTOKEN0123secret";
     let logs = captured_logs();
     let mut plex = mockito::Server::new_async().await;
@@ -1152,4 +1154,10 @@ async fn no_plex_token_in_responses_or_logs() {
     }
     let all = texts.join("\n");
     assert!(all.contains("Token refused"), "{all}");
+}
+
+/// Plugin requests are held to the LAN unless loopback is opted into; these tests' mock
+/// servers listen on 127.0.0.1
+fn allow_loopback_plugin_fetch() {
+    std::env::set_var("PUTIO_SYNC_ALLOW_LOCAL_FETCH", "1");
 }

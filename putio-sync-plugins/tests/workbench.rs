@@ -33,6 +33,8 @@ fn service(dir: &Path, settings: Vec<PluginSettings>, data: Option<&Path>) -> Pl
         dir: Some(dir.to_path_buf()),
         data_dir: data.map(Path::to_path_buf),
         download_dir: Some(dir.to_path_buf()),
+        // The test servers listen on loopback
+        reach: Some(putio_sync_core::net_guard::Reach::Local),
         ..PluginsOptions::default()
     });
     let checked = plugins.check(&settings).unwrap();

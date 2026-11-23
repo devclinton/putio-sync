@@ -19,6 +19,12 @@ impl Telemetry {
         }
     }
 
+    /// Record Put.io's request quota from the `X-RateLimit-*` headers of a response.
+    pub fn api_rate_limit(&self, limit: u64, remaining: u64) {
+        self.api_rate_limit.set(limit as i64);
+        self.api_rate_remaining.set(remaining as i64);
+    }
+
     /// Record one retry scheduled by the retry policy.
     pub fn api_retry(&self, reason: RetryReason) {
         self.api_retries.with_label_values(&[reason.as_str()]).inc();
@@ -33,4 +39,9 @@ pub fn record_attempt(op: ApiOp, outcome: ApiOutcome, elapsed: Duration) {
 /// Record one retry on the global instance.
 pub fn record_retry(reason: RetryReason) {
     global().api_retry(reason);
+}
+
+/// Record Put.io's request quota on the global instance.
+pub fn record_rate_limit(limit: u64, remaining: u64) {
+    global().api_rate_limit(limit, remaining);
 }

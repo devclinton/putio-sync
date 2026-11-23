@@ -169,6 +169,9 @@ pub struct TorrentWatchCore {
     precheck: Option<Arc<Prechecker>>,
     /// Put.io folder paths by id, for the check's policy
     folder_paths: Mutex<HashMap<i64, String>>,
+    /// Files the database has as uploaded, by size and modified time: a kept file that
+    /// has not changed is not read and hashed again on each scan
+    known_unchanged: Mutex<HashMap<PathBuf, (u64, std::time::SystemTime)>>,
 }
 
 impl TorrentWatchCore {
@@ -179,6 +182,7 @@ impl TorrentWatchCore {
             warned: Mutex::new(HashSet::new()),
             precheck: None,
             folder_paths: Mutex::new(HashMap::new()),
+            known_unchanged: Mutex::new(HashMap::new()),
         }
     }
 
@@ -189,6 +193,7 @@ impl TorrentWatchCore {
             warned: Mutex::new(HashSet::new()),
             precheck: None,
             folder_paths: Mutex::new(HashMap::new()),
+            known_unchanged: Mutex::new(HashMap::new()),
         }
     }
 
@@ -235,7 +240,11 @@ impl TorrentWatchCore {
             stats.directories_scanned += 1;
 
             // Find torrent files in this directory
-            let torrent_files = self.find_torrent_files(dir)?;
+            // On a blocking thread: a big folder is many stat calls
+            let owned = dir.to_path_buf();
+            let torrent_files = tokio::task::spawn_blocking(move || list_watch_files(&owned))
+                .await
+                .map_err(|e| anyhow::anyhow!("watch folder listing failed: {e}"))??;
             stats.files_found += torrent_files.len();
 
             if !torrent_files.is_empty() {
@@ -366,6 +375,21 @@ impl TorrentWatchCore {
         parent_id: Option<i64>,
         database: Option<&Database>,
     ) -> Result<ProcessOutcome> {
+        // A kept file the database already has, unchanged since: skip the read and hash
+        let signature = file_signature(path).await;
+        if let Some(signature) = signature {
+            let known = self
+                .known_unchanged
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(path)
+                .is_some_and(|s| *s == signature);
+            if known {
+                debug!("File already processed (unchanged): {}", path.display());
+                return Ok(ProcessOutcome::AlreadyUploaded);
+            }
+        }
+
         // Check if already processed using checksum if database is available
         if let Some(db) = database {
             let checksum = if self.is_magnet_file(path) {
@@ -418,6 +442,12 @@ impl TorrentWatchCore {
                         .lock()
                         .unwrap_or_else(|e| e.into_inner());
                     processed.insert(path.to_path_buf());
+                    if let Some(signature) = signature {
+                        self.known_unchanged
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(path.to_path_buf(), signature);
+                    }
                     return Ok(ProcessOutcome::AlreadyUploaded);
                 }
             }
@@ -1144,29 +1174,7 @@ impl TorrentWatchCore {
 
     /// Find all .torrent and .magnet files in a directory (non-recursive)
     pub fn find_torrent_files(&self, dir: &Path) -> Result<Vec<PathBuf>> {
-        let mut torrent_files = Vec::new();
-
-        debug!(
-            "Searching for .torrent and .magnet files in: {}",
-            dir.display()
-        );
-
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_file() && (self.is_torrent_file(&path) || self.is_magnet_file(&path)) {
-                debug!("Found torrent/magnet file: {}", path.display());
-                torrent_files.push(path);
-            }
-        }
-
-        debug!(
-            "Found {} torrent/magnet files in {}",
-            torrent_files.len(),
-            dir.display()
-        );
-        Ok(torrent_files)
+        list_watch_files(dir)
     }
 
     /// Check if a path is a .torrent file
@@ -1198,7 +1206,11 @@ impl TorrentWatchCore {
             .processed_files
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        processed.clear()
+        processed.clear();
+        self.known_unchanged
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     /// Get count of processed files
@@ -1334,6 +1346,46 @@ async fn shutdown_signal() {
     {
         let _ = tokio::signal::ctrl_c().await;
     }
+}
+
+/// Size and modified time of a file, to tell whether it changed since it was last seen
+async fn file_signature(path: &Path) -> Option<(u64, std::time::SystemTime)> {
+    let meta = tokio::fs::metadata(path).await.ok()?;
+    Some((meta.len(), meta.modified().ok()?))
+}
+
+/// A `.torrent` or `.magnet` name, by extension only (no stat)
+fn has_watch_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("torrent") || e.eq_ignore_ascii_case("magnet"))
+}
+
+/// The `.torrent` and `.magnet` files of a directory (non-recursive)
+fn list_watch_files(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut torrent_files = Vec::new();
+
+    debug!(
+        "Searching for .torrent and .magnet files in: {}",
+        dir.display()
+    );
+
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+
+        // The extension first: only a candidate costs a stat
+        if has_watch_extension(&path) && path.is_file() {
+            debug!("Found torrent/magnet file: {}", path.display());
+            torrent_files.push(path);
+        }
+    }
+
+    debug!(
+        "Found {} torrent/magnet files in {}",
+        torrent_files.len(),
+        dir.display()
+    );
+    Ok(torrent_files)
 }
 
 /// Calculate SHA-256 checksum of file content, read in chunks so a large file is not held

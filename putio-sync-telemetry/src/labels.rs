@@ -58,6 +58,8 @@ label_enum!(
     ApiOutcome {
         Success => "success",
         ClientError => "client_error",
+        RateLimited => "rate_limited",
+        Unauthorized => "unauthorized",
         ServerError => "server_error",
         NetworkError => "network_error",
     }
@@ -69,6 +71,17 @@ label_enum!(
         Network => "network",
         ServerError => "server_error",
         RateLimited => "rate_limited",
+    }
+);
+
+label_enum!(
+    /// Why a sync run failed.
+    SyncFailReason {
+        Auth => "auth",
+        Network => "network",
+        RateLimited => "rate_limited",
+        Database => "database",
+        Other => "other",
     }
 );
 
@@ -156,6 +169,16 @@ label_enum!(
         Io => "io",
         Integrity => "integrity",
         Other => "other",
+    }
+);
+
+label_enum!(
+    /// Why a download attempt was retried inside one download.
+    DownloadRetryReason {
+        Network => "network",
+        Timeout => "timeout",
+        Stall => "stall",
+        ServerError => "server_error",
     }
 );
 
