@@ -2,6 +2,8 @@
 //!
 //! Timestamps are SQLite's `YYYY-MM-DD HH:MM:SS` in UTC, as in the other tables.
 
+use std::collections::HashMap;
+
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use crate::model::{AttemptResult, ItemState, SkipReason, Stage, StepKind, StepState};
@@ -301,6 +303,30 @@ impl Store {
                 .map(item)
                 .collect(),
         )
+    }
+
+    /// The keys of the items in `state`
+    pub async fn keys_in_state(&self, state: ItemState) -> Result<Vec<String>> {
+        sqlx::query_scalar("SELECT key FROM pipeline_items WHERE state = ?")
+            .bind(state.as_str())
+            .fetch_all(&self.pool)
+            .await
+    }
+
+    /// The steps of every item that is not finished, by item key, in step order
+    pub async fn steps_of_open_items(&self) -> Result<HashMap<String, Vec<StepRow>>> {
+        let rows = sqlx::query(
+            "SELECT s.* FROM pipeline_steps s JOIN pipeline_items i ON i.key = s.item_key \
+             WHERE i.state NOT IN ('done', 'done_with_warnings', 'failed', 'cancelled', 'skipped') \
+             ORDER BY s.id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut by_item: HashMap<String, Vec<StepRow>> = HashMap::new();
+        for row in rows.iter().map(step) {
+            by_item.entry(row.item_key.clone()).or_default().push(row);
+        }
+        Ok(by_item)
     }
 
     /// Move an item to a stage and state; a terminal state also stamps `finished_at`
@@ -804,6 +830,32 @@ mod tests {
         assert_eq!(rows[0].state, StepState::Done);
         assert_eq!(rows[1].name, "tidy");
         assert!(rows[1].changes_files && rows[1].required);
+    }
+
+    #[tokio::test]
+    async fn batch_reads_return_the_warned_keys_and_only_open_items_steps() {
+        let (store, _dir) = store().await;
+        for key in ["a", "b", "c"] {
+            store.insert_item(&new_item(key), &steps()).await.unwrap();
+        }
+        store
+            .set_item("a", Stage::PostProcessing, ItemState::DoneWithWarnings)
+            .await
+            .unwrap();
+        store
+            .set_item("b", Stage::PostProcessing, ItemState::Done)
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .keys_in_state(ItemState::DoneWithWarnings)
+                .await
+                .unwrap(),
+            ["a"]
+        );
+        let open = store.steps_of_open_items().await.unwrap();
+        assert_eq!(open.keys().collect::<Vec<_>>(), ["c"]);
+        assert_eq!(open["c"], store.steps("c").await.unwrap());
     }
 
     #[tokio::test]

@@ -148,6 +148,9 @@ enum Payload {
     Torrent(Vec<u8>),
 }
 
+/// How long a category's Put.io folder id is trusted before it is listed again
+const CATEGORY_FOLDER_TTL: Duration = Duration::from_secs(300);
+
 /// The *arr download client
 pub struct ArrService {
     client: Arc<PutioApiClient>,
@@ -170,6 +173,8 @@ pub struct ArrService {
     blocklist_lock: Mutex<()>,
     /// One discovery at a time (feature 018, R9)
     discovery: Mutex<()>,
+    /// Put.io folder ids by category, to skip the folder listing on each add
+    category_folders: std::sync::Mutex<HashMap<String, (i64, Instant)>>,
     /// What each saved application has for putio-sync, by [`url_key`] (feature 018, R4)
     clients: std::sync::RwLock<HashMap<String, ClientInfo>>,
     /// When each pending item was first missing from the *arr's queue; a restart starts
@@ -208,6 +213,7 @@ impl ArrService {
             last_refresh: Mutex::new(None),
             blocklist_lock: Mutex::new(()),
             discovery: Mutex::new(()),
+            category_folders: std::sync::Mutex::new(HashMap::new()),
             clients: std::sync::RwLock::new(HashMap::new()),
             not_found_since: Mutex::new(HashMap::new()),
             not_found_window: NOT_FOUND_WINDOW,
@@ -527,7 +533,7 @@ impl ArrService {
         category: &str,
         payload: Payload,
     ) -> Result<putio_sync_client::Transfer, ArrError> {
-        let parent = self.category_folder(category).await?;
+        let parent = self.cached_category_folder(category).await?;
         let added = match payload {
             Payload::Magnet(magnet) => {
                 self.client
@@ -540,7 +546,34 @@ impl ArrService {
                     .await
             }
         };
-        added.map_err(|e| ArrError::Refused(error_chain(&e)))
+        added.map_err(|e| {
+            // The folder may be gone: look it up again next time
+            self.category_folders
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(category);
+            ArrError::Refused(error_chain(&e))
+        })
+    }
+
+    /// [`Self::category_folder`], remembered for [`CATEGORY_FOLDER_TTL`]
+    async fn cached_category_folder(&self, category: &str) -> Result<i64, ArrError> {
+        let known = self
+            .category_folders
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(category)
+            .filter(|(_, at)| at.elapsed() < CATEGORY_FOLDER_TTL)
+            .map(|(id, _)| *id);
+        if let Some(id) = known {
+            return Ok(id);
+        }
+        let id = self.category_folder(category).await?;
+        self.category_folders
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(category.to_string(), (id, Instant::now()));
+        Ok(id)
     }
 
     /// Whether a magnet missed in the caches is held and asked about again (043)
