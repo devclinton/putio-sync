@@ -8,7 +8,7 @@
 // opens a timeline of its stages and steps, with Retry and Skip on a failed step.
 
 import { get, post } from "../api.js";
-import { confirm, empty, fill, h, nasBanner, poll, setNasPaused, toast } from "../app.js";
+import { confirm, empty, fill, h, nasBanner, poll, refill, setNasPaused, toast } from "../app.js";
 import { bytes, dateTime, duration, percent, relative, speed, utc } from "../format.js";
 import { selection } from "../select.js";
 import { stepLine } from "../timeline.js";
@@ -194,7 +194,7 @@ function draw(force) {
   // The selection survives a poll for rows still listed and shown
   sel.reset(rows.filter(actionable).map((i) => i.key));
   // `fill` flattens the array; the DOM's replaceChildren would show it as text
-  fill(
+  refill(
     els.body,
     rows.length === 0
       ? empty("Nothing matches the filter", "Clear the name filter or choose Show all.")

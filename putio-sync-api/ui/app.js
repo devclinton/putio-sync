@@ -45,7 +45,7 @@ const TITLES = {
 };
 const PAGE_KEY = "putio-sync.page";
 const BACKOFF_MS = 10000;
-const TOAST_MS = 3000;
+const TOAST_MS = 6000;
 
 const view = document.getElementById("view");
 const banner = document.getElementById("banner");
@@ -90,6 +90,36 @@ export const docs = (page, id, text = "Docs") => h("a", { href: `https://devclin
 export function fill(el, ...children) {
   el.replaceChildren();
   append(el, children);
+}
+
+// Polled pages rebuild their DOM; `refill` is `fill` that keeps what the user was doing:
+// keyboard focus stays on the same control and `<details>` that were open stay open.
+// Controls are matched by `data-key`, id, aria-label or text, then by order among equals.
+const CONTROLS = "button, a[href], input, select, textarea, summary, [tabindex]";
+
+function keyed(root, selector, name) {
+  const seen = new Map();
+  return [...root.querySelectorAll(selector)].map((el) => {
+    const base = name(el);
+    const n = seen.get(base) || 0;
+    seen.set(base, n + 1);
+    return [`${base}#${n}`, el];
+  });
+}
+
+const controlName = (el) => el.dataset.key || el.id || el.getAttribute("aria-label") || `${el.tagName}:${(el.textContent || "").trim().slice(0, 60)}`;
+const detailsName = (el) => (el.querySelector("summary") ? el.querySelector("summary").textContent : "");
+
+export function refill(el, ...children) {
+  const active = document.activeElement;
+  const focused = active && el.contains(active) ? keyed(el, CONTROLS, controlName).find(([, c]) => c === active) : null;
+  const open = new Set(keyed(el, "details[open]", detailsName).map(([k]) => k));
+  fill(el, ...children);
+  if (open.size) for (const [k, d] of keyed(el, "details", detailsName)) if (open.has(k)) d.open = true;
+  if (focused) {
+    const again = keyed(el, CONTROLS, controlName).find(([k]) => k === focused[0]);
+    if (again && !again[1].disabled) again[1].focus({ preventScroll: true });
+  }
 }
 
 function append(el, children) {
@@ -334,7 +364,7 @@ document.addEventListener("visibilitychange", () => {
 // Toasts and confirmations
 
 /**
- * Show a short message. `kind` is "ok" (gone after 3 s) or "error" (stays until
+ * Show a short message. `kind` is "ok" (gone after 6 s) or "error" (stays until
  * dismissed). `detail` is an optional second line.
  */
 /** Copy `text`; falls back to a hidden textarea where the Clipboard API is missing
@@ -413,13 +443,14 @@ export function toastError(err) {
 
 /**
  * Ask before a destructive action. Resolves true when `verb` is chosen.
- * Cancel has the focus, so Enter or Escape keeps things as they are.
+ * The dismiss button ("Cancel" unless `dismiss` says otherwise) has the focus, so Enter or Escape keeps things as they are.
  */
-export function confirm({ title, text, verb }) {
+export function confirm({ title, text, verb, dismiss }) {
   const dialog = document.getElementById("confirm");
   document.getElementById("confirm-title").textContent = title;
   document.getElementById("confirm-text").textContent = text || "";
   document.getElementById("confirm-ok").textContent = verb || "Confirm";
+  document.getElementById("confirm-cancel").textContent = dismiss || "Cancel";
   dialog.returnValue = "cancel";
   return new Promise((resolve) => {
     dialog.addEventListener("close", () => resolve(dialog.returnValue === "ok"), {

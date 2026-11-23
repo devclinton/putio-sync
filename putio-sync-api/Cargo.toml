@@ -34,7 +34,7 @@ putio-sync-update = { path = "../putio-sync-update" }
 # Web framework
 axum = "0.7"
 tower = { version = "0.4", features = ["util"] }
-tower-http = { version = "0.5", features = ["trace"] }
+tower-http = { version = "0.5", features = ["trace", "compression-gzip"] }
 
 # Async runtime
 tokio = { workspace = true }

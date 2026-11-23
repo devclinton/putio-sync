@@ -8,7 +8,7 @@
 // name (globs with AND, OR and NOT) and sort by a heading; Select all takes what is shown.
 
 import { del, get, post } from "../api.js";
-import { confirm, copyText, empty, h, poll, toast } from "../app.js";
+import { confirm, copyText, empty, h, poll, refill, toast } from "../app.js";
 import { bytes, duration, percent, speed, utc } from "../format.js";
 import { listControls } from "../listctl.js";
 import { selection } from "../select.js";
@@ -299,7 +299,8 @@ function render(list) {
     sel.update();
     return;
   }
-  els.list.replaceChildren(
+  refill(
+    els.list,
     h("h2", { text: `Transfers (${ctl.filtering ? `${rows.length} of ${list.length}` : list.length})` }),
     sel.bar,
     h(
