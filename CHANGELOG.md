@@ -19,8 +19,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   install kind, OS, enabled feature names, bucketed files per day and library size, crash
   report count). The Settings Advanced card and `putio-sync usage-stats show` print the exact
   document; `GET/PUT /usage-stats` and `POST /usage-stats/reset-id` back them. A failed send
-  waits a day. `packaging/usage-stats-worker/` has a Cloudflare Worker that receives and
-  tallies it.
+  waits a day. A settings export leaves `[usage_stats]` out and an import ignores it, so a
+  shared file can't turn sending on. `packaging/usage-stats-worker/` has a Cloudflare Worker
+  that receives and tallies it.
 
 ### Security
 

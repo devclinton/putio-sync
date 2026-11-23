@@ -536,6 +536,8 @@ pub fn export_toml(config: &Config) -> CoreResult<String> {
     let mut table = settings_table(&masked(config))?;
     // Sign-in is a credential, like [auth] (feature 019)
     table.remove("sign_in");
+    // Sending usage stats is this install's own choice; a file never carries it (058)
+    table.remove("usage_stats");
     let body = toml::to_string_pretty(&table)
         .map_err(|e| CoreError::ConfigError(format!("Failed to serialize config: {e}")))?;
     Ok(format!("{EXPORT_HEADER}{body}"))
@@ -547,7 +549,8 @@ pub struct Import {
     /// The current config with the file's settings applied; credentials and `[arr]` are
     /// the current ones
     pub config: Config,
-    /// Parts of the file that were left out (`auth`, `arr`, `sign_in`, `api.auth_token`)
+    /// Parts of the file that were left out (`auth`, `arr`, `sign_in`, `usage_stats`,
+    /// `api.auth_token`)
     pub ignored: Vec<String>,
     /// Unknown or risky keys, as the doctor reports them
     pub unknown: Vec<ConfigWarning>,
@@ -566,7 +569,7 @@ pub fn import(current: &Config, text: &str) -> CoreResult<Import> {
     let mut file: toml::Table = text.parse().map_err(not_toml)?;
 
     let mut ignored = Vec::new();
-    for key in ["auth", "arr", "sign_in"] {
+    for key in ["auth", "arr", "sign_in", "usage_stats"] {
         if file.remove(key).is_some() {
             ignored.push(key.to_string());
         }
@@ -593,6 +596,7 @@ pub fn import(current: &Config, text: &str) -> CoreResult<Import> {
             })?;
     config.auth = current.auth.clone();
     config.arr = current.arr.clone();
+    config.usage_stats = current.usage_stats.clone();
     config.api.auth_token = current.api.auth_token.clone();
     // An exported file's masked hook values are the stored ones; a mask for a hook or
     // key this config lacks is refused
@@ -1033,6 +1037,16 @@ mod tests {
         assert!(changes.contains("hooks"));
         assert_no_secrets(&changes);
         assert!(!changes.contains("new-secret"));
+    }
+
+    #[test]
+    fn an_import_never_turns_usage_stats_on() {
+        let current = with_secrets();
+        let text = "[usage_stats]\nenabled = true\nendpoint = \"https://stats.example.com/v1\"\n";
+        let imported = import(&current, text).unwrap();
+        assert_eq!(imported.config.usage_stats, current.usage_stats);
+        assert_eq!(imported.ignored, ["usage_stats"]);
+        assert!(!export_toml(&current).unwrap().contains("usage_stats"));
     }
 
     #[test]
