@@ -173,6 +173,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - The download queue has an index on status and priority, so claiming and polling no longer scan the whole table; the daily maintenance also removes completed queue rows older than 7 days.
 - The local files page lists folders and sizes them on a blocking thread, so a slow disk no longer stalls the API; the Status page's held-magnet lookup reads only held items.
 - The Logs page's "after" cursor stops scanning older lines, so a busy log tail holds the log buffer for less time.
+- The CLI no longer prints a startup banner on every command (it broke cron mail and buried real errors), errors show their cause (`Error: Failed to load configuration: expected "=" ...`), a missing Put.io token says to run `putio-sync login` or `putio-sync setup`, and `--help` says which command to run (`daemon` for the sync, watcher and web UI; `server` is the API only).
+- New `putio-sync completions <bash|zsh|fish|elvish|powershell>` prints a shell completion script.
 - Watched .torrent and .magnet files stay in the folder after upload unless
   `delete_after_upload = true` or `archive_directory` is set, also when the config has no
   `[watch]` table.

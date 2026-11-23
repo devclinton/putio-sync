@@ -8,11 +8,11 @@ mod logging;
 // Import from library
 use putio_sync_cli::commands;
 
-use chrono::Utc;
 #[cfg(feature = "server")]
 use cli::ArchiveCommands;
 use cli::{Cli, Commands, QueueCommands, TransfersCommands};
 use putio_sync_core::config::{Config, ExistingFile};
+use std::io::Write;
 use tracing::{debug, error, info};
 
 // musl's malloc serialises on one lock, which hurts under the multi-threaded runtime
@@ -69,31 +69,26 @@ async fn run() {
     // Get version with commit info
     let version = get_version_with_commit();
 
-    // Initialize basic logging first for early debugging - these ALWAYS show
-    eprintln!("=== PUTIO-SYNC STARTUP DEBUG ===");
-    eprintln!("🚀 putio-sync {} starting up...", version);
-    eprintln!("⚙️  Built for: {}", std::env::consts::OS);
-    eprintln!("⚙️  Architecture: {}", std::env::consts::ARCH);
-    eprintln!(
-        "⚙️  Current time: {}",
-        Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-    );
-
-    // Force stdout/stderr flush
-    use std::io::Write;
-    let _ = std::io::stderr().flush();
-
-    eprintln!("🔧 Parsing command line arguments...");
     let args = match std::panic::catch_unwind(Cli::parse_args) {
-        Ok(args) => {
-            eprintln!("✅ Command line arguments parsed successfully");
-            args
-        }
+        Ok(args) => args,
         Err(_) => {
-            eprintln!("❌ Failed to parse command line arguments");
+            eprintln!("Error: failed to parse command line arguments");
             std::process::exit(1);
         }
     };
+
+    // Completions need no config, token or logging
+    if let Commands::Completions { shell } = &args.command {
+        use clap::CommandFactory;
+        clap_complete::generate(
+            *shell,
+            &mut Cli::command(),
+            "putio-sync",
+            &mut std::io::stdout(),
+        );
+        let _ = std::io::stdout().flush();
+        return;
+    }
 
     // Plugin checks need no config, token or logging (feature 059)
     #[cfg(feature = "plugins")]
@@ -102,33 +97,27 @@ async fn run() {
         std::process::exit(code);
     }
 
-    eprintln!("🔧 Loading configuration...");
-    // Load config early for logging configuration
+    // Load config early for logging configuration; what happened is logged once logging is up
+    let mut config_note = String::from("No config file given, using the built-in defaults");
     let mut config = if let Some(config_path) = args.config.as_ref() {
         match Config::load(config_path) {
             Ok(cfg) => {
-                eprintln!(
-                    "✅ Configuration loaded successfully from {}",
-                    config_path.display()
-                );
+                config_note = format!("Loaded config from {}", config_path.display());
                 cfg
             }
             Err(e) => {
                 eprintln!(
-                    "⚠️  Failed to load config from {}: {}",
+                    "Warning: failed to load config from {}: {:#}; using defaults",
                     config_path.display(),
                     e
                 );
-                eprintln!("⚠️  Using defaults");
                 Config::default()
             }
         }
     } else {
-        eprintln!("⚠️  No config file specified, using defaults");
         Config::default()
     };
 
-    eprintln!("🔧 Initializing logging system...");
     // Override log level based on verbosity flags
     if args.quiet {
         config.logging.level = "error".to_string();
@@ -154,32 +143,27 @@ async fn run() {
     if report_on_stdout {
         logging::init_stderr(&config.logging.level);
     } else if let Err(e) = putio_sync_core::logging::init_logging(&config.logging) {
-        eprintln!("⚠️  Failed to initialize logging: {}", e);
-        eprintln!("⚠️  Falling back to basic logging");
+        eprintln!("Warning: failed to initialize logging: {}", e);
+        eprintln!("Warning: falling back to basic logging");
         logging::init(args.verbose, args.quiet);
     }
 
-    eprintln!(
-        "✅ Logging initialized - level: {}, verbosity: {}, quiet: {}",
-        config.logging.level, args.verbose, args.quiet
-    );
-
     // Log startup information
     info!("putio-sync {}", version);
-    eprintln!("📋 Application version: {}", version);
-
-    if let Some(config_path) = &args.config {
-        debug!("Config path: {}", config_path.display());
-        eprintln!("📁 Explicit config path: {}", config_path.display());
-    } else {
-        eprintln!("📁 No explicit config path provided, will use defaults");
-    }
+    debug!("{}", config_note);
+    debug!(
+        "Built for {} {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
 
     debug!("Verbosity level: {}", args.verbose);
     debug!("Quiet mode: {}", args.quiet);
 
     // Handle commands
     let result = match args.command {
+        // Handled above, before config and logging
+        Commands::Completions { .. } => Ok(()),
         Commands::Login {
             no_save,
             no_browser,
@@ -431,7 +415,7 @@ async fn run() {
             delete_torrents,
         } => {
             // The effective settings are logged by execute_daemon once the config is loaded.
-            eprintln!("🔄 Entering daemon mode...");
+            debug!("Entering daemon mode");
 
             commands::execute_daemon(
                 download_interval,
@@ -537,11 +521,10 @@ async fn run() {
     };
 
     // Handle command execution errors
-    eprintln!("🏁 Command execution completed");
     if let Err(e) = result {
-        eprintln!("❌ Error occurred: {}", e);
-        error!("Error: {}", e);
+        // `{:#}` prints the whole cause chain, not just the outermost context
+        eprintln!("Error: {:#}", e);
+        error!("Error: {:#}", e);
         std::process::exit(1);
     }
-    eprintln!("✅ Program completed successfully");
 }

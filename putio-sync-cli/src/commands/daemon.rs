@@ -69,12 +69,13 @@ pub async fn execute_daemon(
 
     // Extract OAuth token from auth config
     let oauth_token = match auth.auth_method {
-        AuthMethod::Token => auth.token.ok_or_else(|| anyhow!("Token not configured"))?,
+        AuthMethod::Token => auth.token.ok_or_else(super::missing_token)?,
         AuthMethod::AppPassword => {
             // For app password, we'll need to create a client and get a session token
             // For now, return an error as daemon mode requires OAuth token
             return Err(anyhow!(
-                "Daemon mode requires OAuth token authentication. App password not supported yet."
+                "The daemon needs an OAuth token. Run 'putio-sync login' to get one; app passwords only \
+                 work with the list and download commands."
             ));
         }
     };
