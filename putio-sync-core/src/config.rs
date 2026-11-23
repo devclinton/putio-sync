@@ -36,6 +36,10 @@ fn default_verify_max_redownloads() -> u32 {
     DownloadConfig::DEFAULT_VERIFY_MAX_REDOWNLOADS
 }
 
+fn default_min_free_space_mb() -> u64 {
+    DownloadConfig::DEFAULT_MIN_FREE_SPACE_MB
+}
+
 fn default_verify_read_limit() -> u64 {
     DownloadConfig::DEFAULT_VERIFY_READ_LIMIT_MB
 }
@@ -1029,6 +1033,11 @@ pub struct DownloadConfig {
     /// "Verify everything" waits while the bandwidth schedule or an override pauses
     #[serde(default = "default_true")]
     pub verify_follow_bandwidth_pause: bool,
+    /// Hold new downloads while the download folder has less than this much free space,
+    /// in MB (1 MB = 1 048 576 bytes); a file that would take the free space below it
+    /// waits too. 0 turns the check off (default 5120, 5 GB)
+    #[serde(default = "default_min_free_space_mb")]
+    pub min_free_space_mb: u64,
     /// Maximum number of retry attempts for failed downloads (default: 3)
     pub max_retries: u32,
     /// Initial retry delay in seconds (doubles with each retry)
@@ -1247,6 +1256,7 @@ impl Default for DownloadConfig {
             verify_max_redownloads: Self::DEFAULT_VERIFY_MAX_REDOWNLOADS,
             verify_read_limit_mb_per_sec: Self::DEFAULT_VERIFY_READ_LIMIT_MB,
             verify_follow_bandwidth_pause: true,
+            min_free_space_mb: Self::DEFAULT_MIN_FREE_SPACE_MB,
             max_retries: 3,              // 3 retries by default
             retry_initial_delay_secs: 1, // Start with 1 second delay
             delete_empty_folders: true,  // Delete empty folders by default
@@ -1263,6 +1273,14 @@ impl DownloadConfig {
     pub const DEFAULT_VERIFY_MAX_REDOWNLOADS: u32 = 2;
     /// Largest `verify_max_redownloads`
     pub const MAX_VERIFY_REDOWNLOADS: u32 = 5;
+    /// Default `min_free_space_mb` (5 GB)
+    pub const DEFAULT_MIN_FREE_SPACE_MB: u64 = 5120;
+
+    /// `min_free_space_mb` in bytes (0 = the check is off)
+    pub fn min_free_space_bytes(&self) -> u64 {
+        self.min_free_space_mb.saturating_mul(1024 * 1024)
+    }
+
     /// Default `verify_read_limit_mb_per_sec`
     pub const DEFAULT_VERIFY_READ_LIMIT_MB: u64 = 50;
     /// Largest `verify_read_limit_mb_per_sec`
@@ -3310,6 +3328,7 @@ mod tests {
                 verify_max_redownloads: 2,
                 verify_read_limit_mb_per_sec: 50,
                 verify_follow_bandwidth_pause: true,
+                min_free_space_mb: 5120,
                 max_retries: 3,
                 retry_initial_delay_secs: 1,
                 delete_empty_folders: true,

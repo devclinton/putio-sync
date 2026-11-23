@@ -4,7 +4,7 @@
 
 import { arrRuntime, clearBandwidthOverride, get, setBandwidthOverride, syncNow } from "../api.js";
 import { describeSource, rate } from "../bandwidth.js";
-import { empty, h, nasBanner, poll, refill, toast, toastError } from "../app.js";
+import { empty, h, lowDiskBanner, nasBanner, poll, refill, toast, toastError } from "../app.js";
 import { bytes, duration, percent, relative } from "../format.js";
 import { storageNotice } from "../storage.js";
 import { BADGE, LABEL, STAGES } from "./active.js";
@@ -16,9 +16,11 @@ let syncButton = null;
 let summary = null;
 let grid = null;
 let banner = null;
+let diskBanner = null;
 
 export function mount(el) {
   banner = nasBanner(() => timer && timer.now());
+  diskBanner = lowDiskBanner();
   syncButton = h("button", { type: "button", class: "btn btn-primary", onclick: onSync }, "Sync now");
   summary = h("p", { class: "muted" }, "Loading…");
   grid = h("div", { class: "grid" });
@@ -26,6 +28,7 @@ export function mount(el) {
     h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Status" }), summary), syncButton),
     storageNotice(),
     banner.el,
+    diskBanner.el,
     grid,
   );
   timer = poll(refresh, REFRESH_MS);
@@ -76,6 +79,7 @@ function render(s, arr) {
   syncButton.textContent = syncing ? "Syncing…" : "Sync now";
 
   banner.update(Boolean(s.nas_paused));
+  diskBanner.update(s.low_disk, bytes);
   summary.replaceChildren(...headline(s));
   refill(
     grid,

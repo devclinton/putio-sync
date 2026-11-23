@@ -61,6 +61,8 @@ pub struct DownloadConfig {
     pub max_retries: u32,
     /// Initial delay for retries in seconds
     pub retry_initial_delay_secs: u64,
+    /// New downloads wait while free space (less the file) is under this; 0 = off
+    pub min_free_space_bytes: u64,
     /// Number of concurrent download workers
     pub workers: usize,
     /// Delete files from Put.io after successful download
@@ -141,6 +143,8 @@ impl Default for DownloadConfig {
             slow_limit_bytes_per_sec: DEFAULT_SLOW_LIMIT,
             max_retries: 3,
             retry_initial_delay_secs: 2,
+            min_free_space_bytes: putio_sync_core::config::DownloadConfig::DEFAULT_MIN_FREE_SPACE_MB
+                * 1024 * 1024,
             workers: 1,
             delete_after_download: false,
             stream_mp4: true,
@@ -167,6 +171,7 @@ impl From<&putio_sync_core::config::DownloadConfig> for DownloadConfig {
             slow_limit_bytes_per_sec: settings.slow_limit_bytes_per_sec,
             max_retries: settings.max_retries,
             retry_initial_delay_secs: settings.retry_initial_delay_secs,
+            min_free_space_bytes: settings.min_free_space_bytes(),
             workers: settings.workers,
             delete_after_download: settings.delete_after_download,
             stream_mp4: settings.stream_mp4,
@@ -228,6 +233,22 @@ impl Drop for StopGuard {
 }
 
 /// How long an idle worker waits for a wakeup before looking at the queue anyway
+/// Free space the download folder had when new downloads were last held back, and the
+/// floor it was under
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LowSpace {
+    pub free_bytes: u64,
+    pub min_free_bytes: u64,
+    /// Free space is above the floor, but the next file doesn't fit above it
+    pub file_too_big: bool,
+}
+
+/// Whether a download of `next_size` bytes must wait: the floor is on and free space,
+/// less the file, would fall below it. `next_size` is 0 when no file is chosen yet.
+pub fn below_free_space_floor(free: u64, min_free: u64, next_size: u64) -> bool {
+    min_free > 0 && free.saturating_sub(next_size) < min_free
+}
+
 const IDLE_POLL: Duration = Duration::from_secs(30);
 
 /// How many times a sync queues a transiently failed file again before it stays failed
@@ -633,6 +654,8 @@ pub struct DownloadManager {
     /// Wakes idle workers when rows are queued, resumed or retried; they also poll every
     /// `IDLE_POLL` in case a row was changed straight in the database
     work_notify: Arc<Notify>,
+    /// Set while new downloads are held back for lack of free space
+    low_space: Arc<Mutex<Option<LowSpace>>>,
     /// Transient failures per file id (retries used up on a flaky link): a later sync
     /// queues the row again, at most `MAX_SYNC_REQUEUES` times. In memory, so a restart
     /// starts the count again and the queue table needs no new column.
@@ -773,6 +796,7 @@ impl DownloadManager {
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
             work_notify: Arc::new(Notify::new()),
+            low_space: Arc::new(Mutex::new(None)),
             transient_failures: Arc::new(Mutex::new(HashMap::new())),
             manual_sync: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stop_signals: Arc::new(Mutex::new(HashMap::new())),
@@ -816,6 +840,7 @@ impl DownloadManager {
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
             work_notify: Arc::new(Notify::new()),
+            low_space: Arc::new(Mutex::new(None)),
             transient_failures: Arc::new(Mutex::new(HashMap::new())),
             manual_sync: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stop_signals: Arc::new(Mutex::new(HashMap::new())),
@@ -2768,6 +2793,11 @@ impl DownloadManager {
         // never waits on (and, with tokio's fair lock, never blocks) the other workers
         let config = self.config.read().await.clone();
 
+        // Not enough free space: claim nothing until it is back
+        if self.hold_for_space(&config, 0) {
+            return Ok(false);
+        }
+
         // Require database for queue-based downloads
         let db = self.database.as_ref().ok_or_else(|| {
             DownloadError::InternalError("Database required for queue processing".to_string())
@@ -2784,6 +2814,11 @@ impl DownloadManager {
             Some(item) => item,
             None => {
                 debug!("Queue is empty");
+                // Nothing is waiting for room any more
+                let mut state = locked(&self.low_space);
+                if state.is_some_and(|s| s.file_too_big) {
+                    *state = None;
+                }
                 return Ok(false);
             }
         };
@@ -2805,6 +2840,15 @@ impl DownloadManager {
         // The switch went on between the check above and the claim
         if self.nas_paused().await {
             self.unclaim(&[file_id]).await;
+            return Ok(false);
+        }
+
+        // The file would take the free space under the floor: back it goes, without
+        // waking the workers (the next idle poll looks again)
+        if self.hold_for_space(&config, queue_item.file_size.max(0) as u64) {
+            if let Err(e) = queue_repo.unclaim_files(&[file_id]).await {
+                warn!(file_id, error = %e, "Could not put the claimed file back in the queue");
+            }
             return Ok(false);
         }
 
@@ -2833,6 +2877,52 @@ impl DownloadManager {
                 )))
             }
         }
+    }
+
+    /// Whether a download of `next_size` bytes must wait for free space. Records the state
+    /// for `low_space`, warns once when it begins and logs when it ends. A folder whose
+    /// space can't be read doesn't hold anything back.
+    fn hold_for_space(&self, config: &DownloadConfig, next_size: u64) -> bool {
+        let min = config.min_free_space_bytes;
+        let free = if min == 0 {
+            None
+        } else {
+            putio_sync_telemetry::gauges::disk_usage(&config.target_directory)
+                .ok()
+                .map(|(free, _)| free)
+        };
+        let hold = free.is_some_and(|free| below_free_space_floor(free, min, next_size));
+        let mut state = locked(&self.low_space);
+        match (hold, free, state.is_some()) {
+            (true, Some(free), was_held) => {
+                if !was_held {
+                    warn!(
+                        free_bytes = free,
+                        min_free_bytes = min,
+                        "Low disk space: new downloads are on hold until free space is back"
+                    );
+                }
+                *state = Some(LowSpace {
+                    free_bytes: free,
+                    min_free_bytes: min,
+                    file_too_big: next_size > 0 && !below_free_space_floor(free, min, 0),
+                });
+            }
+            // The pre-claim check passing doesn't clear a state a too-big file set
+            (false, _, true) if next_size == 0 && state.is_some_and(|s| s.file_too_big) => {}
+            (false, _, true) => {
+                info!("Enough free space again: downloads resume");
+                *state = None;
+            }
+            _ => {}
+        }
+        hold
+    }
+
+    /// Set while new downloads are held back for lack of free space (`[download]
+    /// min_free_space_mb`)
+    pub fn low_space(&self) -> Option<LowSpace> {
+        *locked(&self.low_space)
     }
 
     /// Put claimed rows back to pending, logging a failure: a row that stays on
@@ -4168,6 +4258,25 @@ fn event_path(relative_dir: &str, name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn free_space_floor_decision() {
+        const GB: u64 = 1 << 30;
+        // Off
+        assert!(!below_free_space_floor(0, 0, 100 * GB));
+        // Plenty of room
+        assert!(!below_free_space_floor(50 * GB, 5 * GB, 0));
+        assert!(!below_free_space_floor(50 * GB, 5 * GB, 10 * GB));
+        // Under the floor already
+        assert!(below_free_space_floor(4 * GB, 5 * GB, 0));
+        // Exactly at the floor is fine; one byte under is not
+        assert!(!below_free_space_floor(5 * GB, 5 * GB, 0));
+        assert!(below_free_space_floor(5 * GB - 1, 5 * GB, 0));
+        // The next file would take it under (and a file bigger than the disk can't wrap)
+        assert!(below_free_space_floor(8 * GB, 5 * GB, 4 * GB));
+        assert!(!below_free_space_floor(8 * GB, 5 * GB, 3 * GB));
+        assert!(below_free_space_floor(GB, 5 * GB, 100 * GB));
+    }
 
     #[test]
     fn test_download_file_struct() {

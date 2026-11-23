@@ -30,6 +30,7 @@ const DOWNLOAD = {
     ["resume_enabled", "Resume", "Continue a partial download from where it stopped; off starts it again", "b"],
     ["delete_after_download", "Delete from Put.io", "Remove each file from Put.io once downloaded", "b"],
     ["delete_empty_folders", "Delete empty folders", "Remove Put.io folders left empty", "b"],
+    ["min_free_space_mb", "Minimum free space (MB)", "New downloads wait while the download folder has less free space; 0 turns it off", "n", 0],
     ["buffer_size_mb", "Buffer (MB)", "Write buffer per download", "n", 1],
     ["chunk_size_mb", "Chunk size (MB)", "Empty downloads each file in one request", "n?", 1],
     ["retry_initial_delay_secs", "First retry delay (s)", "Doubles on each retry", "n", 0],

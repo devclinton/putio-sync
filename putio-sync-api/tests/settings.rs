@@ -118,6 +118,7 @@ async fn download_settings_round_trip() {
             "max_retries",
             "retry_initial_delay_secs",
             "delete_empty_folders",
+            "min_free_space_mb",
             "bandwidth_schedule",
             "slow_limit_bytes_per_sec",
             "verify",

@@ -37,6 +37,10 @@ tracing = { workspace = true }
 # Errors
 thiserror = { workspace = true }
 
+# A rename that never replaces (renameat2 / renamex_np)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3.8"
 mockito = "1.2"

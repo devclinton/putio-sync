@@ -19,7 +19,7 @@ pub const AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(60);
 
 /// The key an address is counted under: IPv4 as is, IPv6 by its /64, since one host
 /// usually holds a whole /64 and could otherwise rotate addresses past the limit
-fn bucket(ip: IpAddr) -> IpAddr {
+pub(crate) fn bucket(ip: IpAddr) -> IpAddr {
     match ip.to_canonical() {
         IpAddr::V6(v6) => {
             let mut octets = v6.octets();

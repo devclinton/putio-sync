@@ -54,6 +54,9 @@ whitelist_patterns = "*.{mkv,mp4,avi,mov}"  # Only download video files
 # end = "07:00"             # an end before the start runs past midnight
 # limit = "unlimited"       # or "paused", or bytes per second
 
+# Hold new downloads when the download folder has less free space than this (MB); 0 = off
+# min_free_space_mb = 5120
+
 # Download verification: check each download against Put.io's CRC32 (or size)
 # verify = true
 # verify_max_redownloads = 2            # 0 to 5; then the download fails
