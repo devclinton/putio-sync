@@ -162,6 +162,8 @@ export function isText(text) {
   // CamelCase values (ByDate) and long unbroken tokens are code, not words
   if (/^[A-Z][a-z]+[A-Z]\w*$/.test(t) || (!/\s/.test(t) && t.length > 30)) return false;
   if (/^[A-Z]/.test(t)) return true;
+  // The product name starts a sentence (the crash notice's heading)
+  if (/^putio-sync [a-z]+ [a-z]+/.test(t)) return true;
   // lower case: several words, not all of them class names or identifiers
   const words = t.split(/\s+/);
   return words.length > 1 && !words.every((w) => CLASSY.test(w.replace(/,$/, "")) || /^[a-z]+[A-Z]\w*$/.test(w));

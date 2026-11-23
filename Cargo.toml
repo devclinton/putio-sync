@@ -73,15 +73,17 @@ clap = { version = "4.5", features = ["derive", "env"] }
 clap_complete = "4.5"
 
 # thin LTO and one codegen unit for the shipped binaries. Task panics are caught, so
-# panic stays "unwind". Debug info is already stripped by cargo's release default.
+# panic stays "unwind". Debug info is stripped but symbol names stay, so a crash report's
+# backtrace (feature 058) shows function names, not addresses.
 [profile.release]
 lto = "thin"
 codegen-units = 1
+strip = "debuginfo"
 
 # Proc macros and build scripts are never shipped, so don't strip them. On
 # macOS, Command Line Tools' ld-27106 (October 2026) leaves a stripped
 # proc-macro dylib that dlopen refuses ("mis-aligned LINKEDIT string pool"),
-# which breaks `cargo build --release`. Shipped binaries are still stripped.
+# which breaks `cargo build --release`. Shipped binaries keep their symbol names.
 [profile.release.build-override]
 strip = "none"
 
