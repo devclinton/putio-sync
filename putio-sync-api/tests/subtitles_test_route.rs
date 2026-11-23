@@ -88,7 +88,7 @@ async fn a_server_error_is_reported_with_status_and_scrubbed_message() {
     assert_eq!(body["ok"], false);
     assert_eq!(body["server"]["status"], 401);
     let error = body["server"]["error"].as_str().unwrap();
-    assert!(error.starts_with("HTTP 401"), "{error}");
+    assert_eq!(error, "The server answered HTTP 401");
     assert!(!body.to_string().contains(KEY), "{body}");
 }
 
@@ -115,11 +115,19 @@ async fn a_missing_or_invalid_url_is_a_400() {
 #[tokio::test]
 async fn a_masked_key_means_the_stored_key_and_never_comes_back() {
     let app = test_app().await;
+    let mut server = mockito::Server::new_async().await;
     {
         let mut config = app.state.config.write().await;
         config.subtitles.transcription.api_key = KEY.to_string();
+        config.subtitles.transcription.url = server.url();
     }
-    let mut server = mockito::Server::new_async().await;
+    // The stored key never follows another server
+    let (status, body) = test_with(
+        &app,
+        json!({"enabled": true, "url": "http://127.0.0.1:1", "api_key": "********"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     let m = server
         .mock("POST", Matcher::Any)
         .match_header("authorization", format!("Bearer {KEY}").as_str())
@@ -171,4 +179,71 @@ async fn a_found_ffmpeg_reports_its_path_and_version() {
     assert_eq!(body["ffmpeg"]["found"], true);
     assert_eq!(body["ffmpeg"]["version"], "9.9.9");
     assert_eq!(body["ffmpeg"]["path"], script.to_string_lossy().as_ref());
+}
+
+#[tokio::test]
+async fn a_saved_key_is_not_sent_to_another_server() {
+    let mut saved = mockito::Server::new_async().await;
+    let mut other = mockito::Server::new_async().await;
+    let never = other
+        .mock("POST", Matcher::Any)
+        .expect(0)
+        .create_async()
+        .await;
+    let saved_url = saved.url();
+    let hit = saved
+        .mock("POST", "/v1/audio/transcriptions")
+        .match_header("authorization", format!("Bearer {KEY}").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(json!({"language": "en", "text": "", "segments": []}).to_string())
+        .expect(1)
+        .create_async()
+        .await;
+    let app = common::test_app_with(|config| {
+        config.subtitles.transcription.enabled = true;
+        config.subtitles.transcription.url = saved_url.clone();
+        config.subtitles.transcription.api_key = KEY.to_string();
+    })
+    .await;
+    // Another server with the mask: refused, nothing is sent
+    let (status, body) = test_with(
+        &app,
+        json!({"enabled": true, "url": other.url(), "api_key": "********"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body.to_string().contains("Type the API key again"),
+        "{body}"
+    );
+    never.assert_async().await;
+    // The saved server with the mask still works
+    let (status, body) = test_with(
+        &app,
+        json!({"enabled": true, "url": saved_url, "api_key": "********"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["ok"], true, "{body}");
+    hit.assert_async().await;
+}
+
+#[tokio::test]
+async fn the_remote_error_body_is_not_echoed() {
+    let app = test_app().await;
+    let mut server = mockito::Server::new_async().await;
+    server
+        .mock("POST", Matcher::Any)
+        .with_status(500)
+        .with_body("internal-secret-detail")
+        .create_async()
+        .await;
+    let (_, body) = test_with(&app, json!({"enabled": true, "url": server.url()})).await;
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["server"]["error"], "The server answered HTTP 500");
+    assert!(
+        !body.to_string().contains("internal-secret-detail"),
+        "{body}"
+    );
 }

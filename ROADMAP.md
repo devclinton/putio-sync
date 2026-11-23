@@ -13,12 +13,15 @@ A short, skippable tour of each page on first visit, re-runnable from
 Settings. Help panels and tooltips explain each setting in plain words, with
 links to the guides from 016.
 
-### 016 Onboarding guides
+### 016 Onboarding guides (done)
 
-Getting-started guides for each way to run putio-sync (Unraid/Docker, snap,
-Homebrew, binary). Task guides for Radarr/Sonarr, folder rules, watch
-folders, metrics and Grafana, and troubleshooting with the doctor. They live
-in `docs/` and are linked from the UI.
+Setup guides for each platform (Unraid, TrueNAS SCALE, Raspberry Pi, Docker,
+macOS, Windows, Linux). Task guides for Radarr/Sonarr, folder rules, watch
+folders, the media server, metrics and Grafana, and troubleshooting with the
+doctor. Switching guides for qBittorrent, Transmission, Deluge and usenet
+clients. They are a Guides part of the docs site and are linked from the UI
+(setup wizard, settings, Doctor, Logs, command palette). Spec:
+`specs/016-onboarding-guides/`.
 
 ### 056 Usage profile in the setup wizard
 

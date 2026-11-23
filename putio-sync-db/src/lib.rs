@@ -127,6 +127,17 @@ impl Database {
 
         debug!("Opening database at: {}", path.display());
 
+        // Create the file 0600 first, so it is never world-readable
+        #[cfg(unix)]
+        if !path.exists() {
+            use std::os::unix::fs::OpenOptionsExt;
+            let _ = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path);
+        }
+
         // Create connection options
         // `filename` takes the path as it is; a `sqlite:` URL would cut it at a `?` or `#`
         let options = SqliteConnectOptions::new()
@@ -155,6 +166,7 @@ impl Database {
 
         // Run migrations
         db.migrate().await?;
+        restrict_permissions(path);
 
         info!("Database initialized at: {}", path.display());
 
@@ -739,6 +751,24 @@ impl Database {
     }
 }
 
+/// Set 0600 on the database file and its `-wal` and `-shm` files (Unix only; best effort)
+pub fn restrict_permissions(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for suffix in ["", "-wal", "-shm"] {
+            let mut name = path.as_os_str().to_owned();
+            name.push(suffix);
+            let file = std::path::PathBuf::from(name);
+            if file.exists() {
+                let _ = std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -752,6 +782,22 @@ mod tests {
         let db = Database::new(&db_path).await.unwrap();
         assert!(db_path.exists());
 
+        db.close().await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn database_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("private.db");
+        let db = Database::new(&db_path).await.unwrap();
+        for suffix in ["", "-wal", "-shm"] {
+            let mut name = db_path.as_os_str().to_owned();
+            name.push(suffix);
+            let mode = std::fs::metadata(&name).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{suffix}");
+        }
         db.close().await.unwrap();
     }
 

@@ -117,6 +117,14 @@ export function toSettings(row) {
   return out;
 }
 
+/** The names of the command hooks in `next` (settings entries) whose program or arguments are
+ *  new or differ from the same-named hook in `saved`. Saving these runs code as the daemon's
+ *  user, so the page asks first and sends `confirm_exec`. */
+export function changedCommands(saved, next) {
+  const known = new Map((saved || []).filter((x) => x.command).map((x) => [x.name, JSON.stringify(x.command)]));
+  return (next || []).filter((x) => x.command && known.get(x.name) !== JSON.stringify(x.command)).map((x) => x.name);
+}
+
 /** `rows` with the one at `i` moved by `delta` places (the order inside a stage is the list order); the same rows when it can't move. */
 export function moveRow(rows, i, delta) {
   const j = i + delta;

@@ -159,6 +159,9 @@ async fn put_subtitles(
     let settings = body(settings)?;
     let before = state.config.read().await.subtitles.clone();
     let mut changed = update(&state, subtitles_view, |config| {
+        let settings = settings
+            .try_unmasked(&config.subtitles)
+            .map_err(ApiError::BadRequest)?;
         config.subtitles = with_stored_key(settings, &config.subtitles);
         // Canonical keys for the mode maps are kept, not just checked
         config
@@ -287,18 +290,26 @@ async fn test_subtitles(
             .map_err(|e| ApiError::BadRequest(format!("invalid body: {e}")))?
     };
     let stored = state.config.read().await.subtitles.transcription.clone();
-    let mut cfg = parsed.transcription.unwrap_or_else(|| stored.clone());
-    if cfg.api_key == MASK {
-        cfg.api_key = stored.api_key;
-    }
+    let cfg = match parsed.transcription {
+        Some(t) => t.try_unmasked(&stored).map_err(ApiError::BadRequest)?,
+        None => stored,
+    };
     putio_sync_core::subtitles::check_url(&cfg.url).map_err(super::settings::invalid)?;
     let mut ffmpeg = ffmpeg_info(&cfg);
     if let Some(path) = &ffmpeg.path {
         ffmpeg.version = putio_sync_subtitles::audio::version(Path::new(path)).await;
     }
-    let server = putio_sync_subtitles::transcribe::Transcriber::new(&cfg)
+    let mut server = putio_sync_subtitles::transcribe::Transcriber::new(&cfg)
         .probe(putio_sync_subtitles::audio::test_tone_wav(3))
         .await;
+    if let Some(raw) = server.error.take() {
+        let problem = raw.starts_with("unreadable response").then_some("format");
+        server.error = Some(super::translation::fixed_error(
+            "Transcription",
+            problem,
+            &raw,
+        ));
+    }
     Ok(Json(TestAnswer {
         ok: server.ok,
         ffmpeg,

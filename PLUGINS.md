@@ -258,8 +258,11 @@ Settings runs `next` steps on its own for up to 10 minutes. While they run, a `c
 **Copy** button, and with `open_url` also **Copy and open**, which copies the code and opens the
 link in a new tab. Copying needs HTTPS or localhost; over plain http the page asks you to select
 the code (one click selects all of it) and press Ctrl+C. `on_action` and `health` run
-on a worker of their own, with the same sandbox and limits, and may call every host the
-plugin's settings need (approved or not, since the person is setting it up). One action or
+on a worker of their own, with the same sandbox and limits, and may call the hosts and
+folders the person approved, plus the ones in the form values sent with that call (the person
+is typing them in to set the plugin up). A fixed host or folder of the manifest needs its
+approval first, so a plugin that has not been approved gets no network or file access from an
+action either. One action or
 health check per plugin runs at a time. Values in `save` must be the plugin's own settings;
 they are checked like a Settings save and do not turn the plugin on.
 

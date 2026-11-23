@@ -1704,7 +1704,7 @@ impl ArrService {
 
         if delete_local {
             if let Some(name) = &item.output_name {
-                self.delete_output(&item.category, name).await;
+                self.delete_output(&item, name).await;
             }
         }
 
@@ -1722,15 +1722,59 @@ impl ArrService {
         Ok(())
     }
 
-    /// Delete `<target>/<category>/<name>`, only when it stays inside the target
-    async fn delete_output(&self, category: &str, name: &str) {
-        let Some(path) = output_path(&self.target, category, name) else {
+    /// Delete `<target>/<category>/<name>`, only when it stays inside the target and is
+    /// not the download folder, a category folder, the staging folder, or the same as
+    /// or above another item's output
+    async fn delete_output(&self, item: &ArrItem, name: &str) {
+        let Some(path) = output_path(&self.target, &item.category, name) else {
             warn!(
                 name,
                 "Refusing to delete an arr item outside the target directory"
             );
             return;
         };
+        let mut protected = Vec::new();
+        let settings = self.settings();
+        let mut categories: Vec<String> = settings
+            .servers
+            .iter()
+            .filter_map(|s| s.category.clone())
+            .collect();
+        match self.db.arr().categories().await {
+            Ok(used) => categories.extend(used),
+            Err(e) => {
+                warn!(error = %e, "Refusing to delete arr item data: categories unknown");
+                return;
+            }
+        }
+        match self.db.arr().list().await {
+            Ok(items) => {
+                for other in items.iter().filter(|o| o.hash != item.hash) {
+                    if let Some(out) = &other.output_name {
+                        protected.extend(output_path(&self.target, &other.category, out));
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "Refusing to delete arr item data: items unknown");
+                return;
+            }
+        }
+        for category in categories {
+            if let Some(c) = normalize_arr_category(&category) {
+                let mut dir = self.target.clone();
+                dir.extend(c.split('/').filter(|s| !s.is_empty()));
+                protected.push(dir.join(STAGING_DIR));
+                protected.push(dir);
+            }
+        }
+        if !delete_allowed(&self.target, &path, protected) {
+            warn!(
+                path = %path.display(),
+                "Refusing to delete arr item data: the folder is shared with other data"
+            );
+            return;
+        }
         let result = match tokio::fs::symlink_metadata(&path).await {
             Ok(meta) if meta.is_dir() => tokio::fs::remove_dir_all(&path).await,
             Ok(_) => tokio::fs::remove_file(&path).await,
@@ -1834,9 +1878,44 @@ fn output_path(target: &Path, category: &str, name: &str) -> Option<PathBuf> {
     path.starts_with(target).then_some(path)
 }
 
+/// Name of the staging folder the downloader keeps beside finished files
+const STAGING_DIR: &str = ".putio-sync-staging";
+
+/// Whether `path` may be removed: not the download folder, not a staging folder, and
+/// not equal to or above any path in `protected` (category folders, other items)
+fn delete_allowed(target: &Path, path: &Path, mut protected: Vec<PathBuf>) -> bool {
+    protected.push(target.to_path_buf());
+    protected.push(target.join(STAGING_DIR));
+    if path.file_name().is_some_and(|n| n == STAGING_DIR) {
+        return false;
+    }
+    !protected.iter().any(|p| p.starts_with(path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delete_refuses_shared_folders() {
+        let target = Path::new("/downloads");
+        let sonarr = PathBuf::from("/downloads/sonarr");
+        // A torrent named like the category folder, in an empty category
+        let path = output_path(target, "", "sonarr").unwrap();
+        assert!(!delete_allowed(target, &path, vec![sonarr.clone()]));
+        // The download folder and the staging folder
+        assert!(!delete_allowed(target, target, vec![]));
+        let staging = target.join(STAGING_DIR);
+        assert!(!delete_allowed(target, &staging, vec![]));
+        // Above another item's output
+        let other = PathBuf::from("/downloads/sonarr/Show");
+        assert!(!delete_allowed(target, &sonarr, vec![other.clone()]));
+        // Same as another item's output
+        assert!(!delete_allowed(target, &other, vec![other.clone()]));
+        // A plain item folder is fine
+        let own = output_path(target, "sonarr", "Show.S02").unwrap();
+        assert!(delete_allowed(target, &own, vec![sonarr, other]));
+    }
 
     #[test]
     fn output_paths_stay_inside() {

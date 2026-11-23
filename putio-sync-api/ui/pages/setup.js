@@ -2,7 +2,8 @@
 // while /auth/status says setup_required. Every /setup/* call carries the setup code
 // (kept in sessionStorage) or an API token; the Put.io token never comes back.
 
-import { fill, h, toast } from "../app.js";
+import { docs, fill, h, toast } from "../app.js";
+import { guideFor } from "../guides.js";
 import { bytes } from "../format.js";
 
 const CODE_KEY = "putio-sync.setup-code";
@@ -161,6 +162,7 @@ function unlockStep() {
   const input = h("input", { class: "input", type: "password", autocomplete: "one-time-code", autocapitalize: "characters", spellcheck: "false" });
   return [
     h("h1", { text: "Set up putio-sync" }),
+    h("p", { class: "muted small" }, docs("guides/index", "", "Setup guide")),
     h("p", { class: "muted" }, "Enter the setup code printed in the daemon's log or console. An existing API token works too."),
     form([field("Setup code", input), h("button", { type: "submit", class: "btn btn-primary", text: "Continue" })], async (err) => {
       const code = input.value.trim();
@@ -221,6 +223,8 @@ function putioStep() {
   });
   return [
     h("h2", { text: "Connect Put.io" }),
+    // setup mode has no /update; the session says how this was installed
+    h("p", { class: "muted small" }, docs(guideFor(s.install_kind), "", "Setup guide")),
     s.account ? account(s.account) : null,
     s.app_id_available ? [h("p", { class: "muted" }, "Link this install to your Put.io account without copying a token."), link, box] : null,
     s.app_id_available ? h("h3", { class: "sub", text: "Or paste a token" }) : appIdForm(s),

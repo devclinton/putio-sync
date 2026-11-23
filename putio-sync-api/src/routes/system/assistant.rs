@@ -44,6 +44,10 @@ pub struct Preview {
     /// Import only: parts of the file that were left out (credentials, `[arr]`)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignored: Option<Vec<String>>,
+    /// Import only: the file adds a command, an ffmpeg path or a plugins folder, so applying
+    /// it needs `confirm_exec: true`
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub needs_confirm_exec: bool,
     /// Import apply only: what was done
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -499,6 +503,9 @@ struct ImportBody {
     toml: String,
     #[serde(default)]
     apply: bool,
+    /// The person confirmed that the file may change what the daemon runs
+    #[serde(default)]
+    confirm_exec: bool,
 }
 
 /// The settings group a config section belongs to, for what applies live
@@ -551,9 +558,11 @@ async fn import_settings(
             .get(group_of(section))
             .is_some_and(|fields| fields.contains(&field));
     }
+    let runs_code = !assistant::exec_risks(&current, &imported.config).is_empty();
     let mut preview = Preview {
         valid: true,
-        risks: assistant::risks(&imported.config),
+        risks: assistant::risks_between(&current, &imported.config),
+        needs_confirm_exec: runs_code,
         unknown: Some(imported.unknown),
         ignored: Some(imported.ignored),
         ..Preview::default()
@@ -564,6 +573,13 @@ async fn import_settings(
         }
         preview.valid = false;
         preview.error = Some(reason(invalid(e)));
+    }
+
+    if request.apply && runs_code && !request.confirm_exec {
+        return Err(ApiError::BadRequest(
+            "This file adds or changes a hook command, the ffmpeg path or the plugins folder, which run code as the app's user. Send confirm_exec: true to import it."
+                .to_string(),
+        ));
     }
 
     if request.apply && preview.valid {

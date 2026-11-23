@@ -719,6 +719,7 @@ impl UpdateService {
         let path = installer::download(
             &self.inner.client,
             release,
+            self.snapshot().current,
             &name,
             &install.config_dir.join("updates"),
             &pubkey,

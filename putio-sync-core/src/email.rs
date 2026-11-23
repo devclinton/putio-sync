@@ -210,12 +210,29 @@ impl SmtpConfig {
         c
     }
 
-    /// Put the stored password back where `self` carries [`MASK`]
-    pub fn unmasked(mut self, current: &SmtpConfig) -> Self {
-        if self.password == MASK {
-            self.password = current.password.clone();
+    /// Put the stored password back where `self` carries [`MASK`], only when the server
+    /// (host and port) is the stored one. Otherwise the mask stays, so it never reaches
+    /// another server; use [`Self::try_unmasked`] to refuse instead.
+    pub fn unmasked(self, current: &SmtpConfig) -> Self {
+        match self.clone().try_unmasked(current) {
+            Ok(done) => done,
+            Err(_) => self,
         }
-        self
+    }
+
+    /// Like [`Self::unmasked`], but a masked password with a changed server is an error
+    pub fn try_unmasked(mut self, current: &SmtpConfig) -> Result<Self, String> {
+        if self.password == MASK && !current.password.is_empty() {
+            let same = self.host.trim().eq_ignore_ascii_case(current.host.trim())
+                && self.port() == current.port();
+            if !same {
+                return Err(crate::hooks::retype_message("password"));
+            }
+            self.password = current.password.clone();
+        } else if self.password == MASK {
+            self.password = String::new();
+        }
+        Ok(self)
     }
 }
 
@@ -332,5 +349,40 @@ mod tests {
         };
         assert_eq!(changed.unmasked(&stored).password, "new");
         assert_eq!(SmtpConfig::default().masked().password, "");
+    }
+
+    #[test]
+    fn a_masked_password_only_follows_the_same_server() {
+        let stored = SmtpConfig {
+            host: "smtp.example.com".to_string(),
+            password: "hunter2".to_string(),
+            ..ready()
+        };
+        let shown = stored.masked();
+        let moved = SmtpConfig {
+            host: "mail.evil.test".to_string(),
+            ..shown.clone()
+        };
+        let e = moved.clone().try_unmasked(&stored).unwrap_err();
+        assert!(e.contains("Type the password again"), "{e}");
+        // The lenient form never swaps the secret in
+        assert_eq!(moved.unmasked(&stored).password, MASK);
+        let other_port = SmtpConfig {
+            port: Some(2525),
+            ..shown.clone()
+        };
+        assert!(other_port.try_unmasked(&stored).is_err());
+        // Same server in another letter case, and a typed password, are fine
+        let same = SmtpConfig {
+            host: "SMTP.example.com".to_string(),
+            ..shown.clone()
+        };
+        assert_eq!(same.try_unmasked(&stored).unwrap().password, "hunter2");
+        let typed = SmtpConfig {
+            host: "mail.evil.test".to_string(),
+            password: "mine".to_string(),
+            ..shown
+        };
+        assert_eq!(typed.try_unmasked(&stored).unwrap().password, "mine");
     }
 }

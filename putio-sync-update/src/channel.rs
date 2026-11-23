@@ -34,6 +34,7 @@ pub enum Channel {
     Snap,
     Flatpak,
     Unraid,
+    TrueNas,
     CasaOs {
         image: String,
     },
@@ -251,6 +252,7 @@ impl Channel {
             "snap" => Self::Snap,
             "flatpak" => Self::Flatpak,
             "unraid" => Self::Unraid,
+            "truenas" => Self::TrueNas,
             "casaos" => Self::CasaOs {
                 image: probe.image(),
             },
@@ -273,6 +275,7 @@ impl Channel {
             Self::Snap => "snap",
             Self::Flatpak => "flatpak",
             Self::Unraid => "unraid",
+            Self::TrueNas => "truenas",
             Self::CasaOs { .. } => "casaos",
             Self::Umbrel => "umbrel",
             Self::Container { .. } => "container",
@@ -292,6 +295,7 @@ impl Channel {
             Self::Snap => "Snap".into(),
             Self::Flatpak => "Flatpak".into(),
             Self::Unraid => "Unraid".into(),
+            Self::TrueNas => "TrueNAS".into(),
             Self::CasaOs { .. } => "CasaOS".into(),
             Self::Umbrel => "Umbrel".into(),
             Self::Container {
@@ -364,6 +368,10 @@ impl Channel {
                     "In Unraid's Docker tab, choose Check for updates, then apply update for putio-sync."
                         .into(),
                 ),
+                ..Default::default()
+            },
+            Self::TrueNas => Instruction {
+                steps: Some("Update the app from TrueNAS Apps.".into()),
                 ..Default::default()
             },
             Self::CasaOs { image } => Instruction {
@@ -616,6 +624,7 @@ mod tests {
             "snap",
             "flatpak",
             "unraid",
+            "truenas",
             "casaos",
             "umbrel",
             "container",
@@ -651,6 +660,7 @@ mod tests {
             Channel::Snap,
             Channel::Flatpak,
             Channel::Unraid,
+            Channel::TrueNas,
             Channel::Umbrel,
             Channel::Homebrew,
             Channel::Deb,
@@ -744,6 +754,11 @@ mod tests {
             .steps
             .unwrap()
             .contains("Check for updates"));
+        assert!(Channel::TrueNas
+            .instruction(&to, "amd64")
+            .steps
+            .unwrap()
+            .contains("TrueNAS Apps"));
         assert!(Channel::Umbrel
             .instruction(&to, "amd64")
             .steps

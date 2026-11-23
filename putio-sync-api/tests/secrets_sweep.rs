@@ -1084,6 +1084,8 @@ async fn no_plex_token_in_responses_or_logs() {
         .create_async()
         .await;
     let url = plex.url();
+    // The form values the page sends with an action, so the plugin may reach them
+    let form = json!({"server": url.clone(), "plex_tv_url": url.clone()});
     let app = common::test_app_with(move |config| {
         config.plugins = vec![putio_sync_core::plugins::PluginSettings {
             name: "plex".to_string(),
@@ -1103,7 +1105,7 @@ async fn no_plex_token_in_responses_or_logs() {
     let first = body_json(
         app.post_json(
             "/plugins/action",
-            json!({"name": "plex", "action": "sign_in"}),
+            json!({"name": "plex", "action": "sign_in", "config": form}),
         )
         .await,
     )
@@ -1113,7 +1115,7 @@ async fn no_plex_token_in_responses_or_logs() {
     let response = app
         .post_json(
             "/plugins/action",
-            json!({"name": "plex", "action": "sign_in_poll", "input": next["input"]}),
+            json!({"name": "plex", "action": "sign_in_poll", "input": next["input"], "config": form}),
         )
         .await;
     assert_eq!(response.status(), StatusCode::OK);
