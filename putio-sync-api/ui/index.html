@@ -13,21 +13,23 @@
   <script type="module" src="/assets/app.js"></script>
 </head>
 <body>
+  <a class="skip" href="#view">Skip to content</a>
   <header class="topbar">
     <a class="brand" href="#/status">putio-sync</a>
     <button id="find" class="btn btn-quiet find" type="button" aria-label="Search"><span>Search</span><kbd translate="no"></kbd></button>
     <nav id="nav" aria-label="Pages">
       <a href="#/status" data-page="status">Status</a>
-      <a href="#/active" data-page="active">Active</a>
+      <a href="#/active" data-page="active" data-more>Active</a>
       <a href="#/queue" data-page="queue">Queue</a>
       <a href="#/putio" data-page="putio">Put.io</a>
-      <a href="#/files" data-page="files">Local files</a>
-      <a href="#/transfers" data-page="transfers">Transfers</a>
-      <a href="#/history" data-page="history">History</a>
-      <a href="#/stats" data-page="stats">Stats</a>
-      <a href="#/doctor" data-page="doctor">Doctor</a>
-      <a href="#/logs" data-page="logs">Logs</a>
+      <a href="#/files" data-page="files" data-more>Local files</a>
+      <a href="#/transfers" data-page="transfers" data-more>Transfers</a>
+      <a href="#/history" data-page="history" data-more>History</a>
+      <a href="#/stats" data-page="stats" data-more>Stats</a>
+      <a href="#/doctor" data-page="doctor" data-more>Doctor</a>
+      <a href="#/logs" data-page="logs" data-more>Logs</a>
       <a href="#/settings" data-page="settings">Settings</a>
+      <button id="more" class="more" type="button" aria-expanded="false" aria-controls="nav"><span>More</span></button>
     </nav>
     <div class="topbar-end">
       <button id="mode" class="btn btn-quiet mode" type="button" aria-label="Appearance: System"><span>System</span></button>
@@ -38,7 +40,7 @@
   </header>
 
   <div id="banner" class="banner" role="status" hidden>
-    Can't reach the daemon. Retrying every 10 seconds.
+    Can't reach putio-sync. It may be restarting. Retrying every 10 seconds; if this lasts, check the container is running and the address is right.
   </div>
 
   <main id="view" tabindex="-1">

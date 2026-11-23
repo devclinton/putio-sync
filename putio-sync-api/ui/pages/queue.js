@@ -56,6 +56,8 @@ export function mount(el, { query } = {}) {
     showing: h("p", { class: "muted", hidden: true }),
     switch: h("button", { type: "button", class: "btn", onclick: onSwitch }, "Pause local downloads"),
     clear: h("button", { type: "button", class: "btn", onclick: onClear }, "Clear completed"),
+    retryFailed: h("button", { type: "button", class: "btn", onclick: onRetryFailed }, "Retry failed"),
+    removeFailed: h("button", { type: "button", class: "btn", onclick: onRemoveFailed }, "Remove failed"),
     syncBtn: h("button", { type: "button", class: "btn btn-primary", onclick: onSync }, "Sync now"),
     downloads: h("section", { class: "card wide" }),
     queue: h("section", { class: "card wide" }),
@@ -71,7 +73,7 @@ export function mount(el, { query } = {}) {
       "div",
       { class: "page-head" },
       h("div", {}, h("h1", { text: "Queue" }), els.summary, els.sync, els.showing),
-      h("div", { class: "toolbar" }, els.switch, els.clear, els.syncBtn),
+      h("div", { class: "toolbar" }, els.switch, els.retryFailed, els.removeFailed, els.clear, els.syncBtn),
     ),
     h("div", { class: "stack" }, banner.el, els.downloads, els.held, els.queue),
   );
@@ -193,6 +195,56 @@ async function onClear() {
   if (ok) await act(els && els.clear, "clear completed items", () => post("/local/queue/clear"));
 }
 
+/** Apply `path(item)` to every failed item, one request each; says how many went through */
+async function eachFailed(button, verbed, what, path) {
+  const failed = items.filter((i) => state(i) === "failed");
+  if (button) button.disabled = true;
+  let done = 0;
+  let last = null;
+  for (const item of failed) {
+    try {
+      await post(path(item));
+      done += 1;
+    } catch (e) {
+      if (passUp(e)) break;
+      last = e;
+    }
+  }
+  const n = failed.length;
+  const some = `${verbed} ${done} of ${n} failed ${n === 1 ? "item" : "items"}`;
+  if (last) toast(`${some}. The rest could not be ${what}`, "error", reason(last));
+  else toast(some);
+  refresh();
+}
+
+async function onRetryFailed() {
+  const n = items.filter((i) => state(i) === "failed").length;
+  if (n === 0) {
+    toast("No failed items to retry");
+    return;
+  }
+  const ok = await confirm({
+    title: "Retry failed",
+    text: `Try ${n} failed ${n === 1 ? "item" : "items"} again?`,
+    verb: "Retry",
+  });
+  if (ok) await eachFailed(els && els.retryFailed, "Retrying", "retried", (i) => `/local/queue/${i.file_id}/retry`);
+}
+
+async function onRemoveFailed() {
+  const n = items.filter((i) => state(i) === "failed").length;
+  if (n === 0) {
+    toast("No failed items to remove");
+    return;
+  }
+  const ok = await confirm({
+    title: "Remove failed",
+    text: `Remove ${n} failed ${n === 1 ? "item" : "items"} from the queue? They stay on Put.io and are added again by the next sync unless a folder rule skips them.`,
+    verb: "Remove",
+  });
+  if (ok) await eachFailed(els && els.removeFailed, "Removed", "removed", (i) => `/local/queue/${i.file_id}/skip`);
+}
+
 async function onRemove(button, item) {
   const ok = await confirm({
     title: "Remove from the queue",
@@ -280,7 +332,11 @@ function renderSync(sync) {
 function renderQueue(res) {
   if (res && res.failed) {
     items = [];
-    els.summary.replaceChildren(h("span", { class: "error-text", text: `Queue unavailable: ${res.err.error}` }));
+    els.summary.replaceChildren(
+      h("span", { class: "error-text", text: `Queue unavailable: ${res.err.error}` }),
+      " ",
+      h("button", { type: "button", class: "btn btn-small", onclick: refresh }, "Retry"),
+    );
     setToolbar({});
     swap("queue", { error: res.err.error }, () => [
       h("h2", { text: "Queue" }),
@@ -330,6 +386,11 @@ function renderQueue(res) {
 
 function setToolbar(counts) {
   els.clear.disabled = !counts.completed;
+  const failed = counts.failed || 0;
+  els.retryFailed.textContent = failed ? `Retry failed (${failed})` : "Retry failed";
+  els.removeFailed.textContent = failed ? `Remove failed (${failed})` : "Remove failed";
+  els.retryFailed.disabled = !failed;
+  els.removeFailed.disabled = !failed;
 }
 
 function queueRow(item, index, last) {

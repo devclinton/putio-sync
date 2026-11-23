@@ -45,7 +45,11 @@ async function refresh() {
     data = await get("/status");
   } catch (e) {
     if (e.network || e.status === 401 || e.status === 429) throw e;
-    summary.replaceChildren(h("span", { class: "error-text", text: `Status unavailable: ${e.error}` }));
+    summary.replaceChildren(
+      h("span", { class: "error-text", text: `Status unavailable: ${e.error}` }),
+      " ",
+      h("button", { type: "button", class: "btn btn-small", onclick: () => timer && timer.now() }, "Retry"),
+    );
     return;
   }
   render(data, await arr);
@@ -106,15 +110,23 @@ function headline(s) {
     tone = "warn";
     text = "Waiting for the first sync";
   }
-  return [h("span", { class: `dot ${tone}` }), text];
+  const dot = h("span", { class: `dot ${tone}` });
+  if (r.putio === "failed" && r.database === "ok") {
+    return [dot, `${text}. See `, h("a", { href: "#/logs" }, "Logs"), " or run ", h("a", { href: "#/doctor" }, "Doctor"), "."];
+  }
+  return [dot, text];
 }
 
 function card(title, ...body) {
   return h("section", { class: "card" }, h("h2", { text: title }), ...body);
 }
 
+function unavailableText(reason) {
+  return reason ? `Unavailable: ${reason}` : "Not available yet. It fills in after the first sync.";
+}
+
 function unavailableCard(title, reason) {
-  return card(title, h("p", { class: "muted", text: `Unavailable: ${reason || "no data"}` }));
+  return card(title, h("p", { class: "muted", text: unavailableText(reason) }));
 }
 
 function kv(rows) {
@@ -180,7 +192,7 @@ function queueCard(q, reason) {
 /** The Active transfers card (feature 039): totals and the busiest few, linking to Active */
 function activeCard(a, reason) {
   const section = (...body) => h("section", { class: "card wide" }, h("h2", { text: "Active transfers" }), ...body);
-  if (!a) return section(h("p", { class: "muted", text: `Unavailable: ${reason || "no data"}` }));
+  if (!a) return section(h("p", { class: "muted", text: unavailableText(reason) }));
   if (a.total === 0) {
     return section(empty("Nothing is downloading right now", "Transfers you add on Put.io show up here until their files are downloaded."));
   }

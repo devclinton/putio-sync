@@ -112,7 +112,7 @@ function tokenForm(message) {
     if (!token) return { focus: input, text: "Enter the API token." };
     await login(token);
     return null;
-  }, input, "Token not accepted.");
+  }, input, "Token not accepted. Use the token shown at the end of setup, or the value of [api] auth_token in config.toml (PUTIO_SYNC_API_TOKEN in Docker).");
 }
 
 /** Add a submit button and handler to `form`: `attempt` signs in, or returns what to fix */

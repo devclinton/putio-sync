@@ -176,6 +176,7 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- Web UI errors say what to try next: a rejected token, the can't-reach banner, a failed last sync (links to Logs and Doctor), and Retry buttons on the Status and Queue summaries.
 - The web UI loads Stats, Doctor, Logs, Settings and Setup the first time they are opened, so the first page load is about 75 KB smaller.
 - The download queue has an index on status and priority, so claiming and polling no longer scan the whole table; the daily maintenance also removes completed queue rows older than 7 days.
 - The local files page lists folders and sizes them on a blocking thread, so a slow disk no longer stalls the API; the Status page's held-magnet lookup reads only held items.
@@ -214,6 +215,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   Use `[notifications.smtp]`, hooks or plugins.
 ### Added
 
+- The Queue page has `Retry failed (N)` and `Remove failed (N)` buttons, each with a confirm.
+- On phones the bottom bar shows Status, Queue, Put.io and Settings plus a More button for the other pages, with 44 px touch targets; the web UI has a skip link, and focus moves to the page after you change page.
 - Setup guides in the docs, one per platform: Unraid, TrueNAS SCALE, Raspberry Pi, Docker
   and Compose, macOS, Windows and Linux. Each ends with the same walk-through of the setup
   wizard and the first sync.
