@@ -42,6 +42,8 @@ fn service(settings: Vec<PluginSettings>, clock: &Clock) -> PluginsService {
         clock: clock.options(),
         data_dir: Some(data),
         download_dir: Some("/downloads".into()),
+        // The test servers listen on loopback
+        reach: Some(putio_sync_core::net_guard::Reach::Local),
         ..PluginsOptions::default()
     });
     let checked = plugins.check(&settings).unwrap();

@@ -22,6 +22,13 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   hostile endpoint cannot fill memory.
 - A resume of a download whose expected size is 0 no longer wraps the `Range` header.
 
+- Plugins can no longer fetch from loopback, link-local or cloud-metadata addresses (a plugin
+  host that resolves there is refused); private LAN addresses stay reachable for media
+  servers. Set `PUTIO_SYNC_ALLOW_LOCAL_FETCH=1` to allow loopback too.
+- WebAssembly plugins' `fd_write` caps its vector count and bytes and stops at the plugin
+  deadline; Lua plugins' `string.rep` and pattern functions have size and complexity caps, so
+  one long call can't hold a worker past its time limit.
+- Plugin registry archives count folder entries toward the 200-entry limit.
 - The API now refuses a request whose `Host` is not an IP address, `localhost`, a name with
   no dot, `*.local`, `*.ts.net`, the `public_url` host, or listed in the new
   `[api] allowed_hosts` (421), which stops DNS rebinding. Behind a reverse proxy that passes a

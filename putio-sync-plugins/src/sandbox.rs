@@ -18,6 +18,12 @@ pub type Deadline = Rc<Cell<Option<Instant>>>;
 // passed, so a script cannot catch the time limit and carry on. There is no coroutine
 // library: a coroutine does not inherit the instruction hook, so a loop in one would
 // never stop.
+//
+// The hook only fires between VM instructions, so one long C call (`string.rep`, a pattern
+// that backtracks) would run past the deadline. The string functions that can do that are
+// wrapped: `rep` caps its result and the pattern functions cap the subject and pattern
+// length and how many quantifiers a pattern has. Plain `string.find` is linear and only
+// has the subject cap lifted.
 const SETUP: &str = r#"
 local expired = ...
 local raw_pcall, raw_xpcall, raw_error = pcall, xpcall, error
@@ -32,6 +38,51 @@ loadfile = nil
 collectgarbage = nil
 print = nil
 string.dump = nil
+local MAX_REP, MAX_SUBJECT, MAX_PATTERN = 4194304, 1048576, 512
+local MAX_QUANT, MAX_LOOSE = 16, 8
+local raw_rep, raw_find, raw_match = string.rep, string.find, string.match
+local raw_gmatch, raw_gsub, raw_tostring, raw_type = string.gmatch, string.gsub, tostring, type
+local function text_len(v)
+  local t = raw_type(v)
+  if t == "string" then return #v end
+  if t == "number" then return #raw_tostring(v) end
+  return 0
+end
+local function guard_subject(s)
+  if text_len(s) > MAX_SUBJECT then raw_error("string too long to match", 3) end
+end
+local function guard_pattern(p)
+  if raw_type(p) ~= "string" then return end
+  if #p > MAX_PATTERN then raw_error("pattern too long", 3) end
+  local _, loose = raw_gsub(p, "[%*%+%-]", "")
+  local _, quant = raw_gsub(p, "[%*%+%-%?]", "")
+  if loose > MAX_LOOSE or quant > MAX_QUANT then raw_error("pattern too complex", 3) end
+end
+string.rep = function(s, n, sep)
+  if raw_type(n) == "number" and n > 1 then
+    if (text_len(s) + text_len(sep)) * n > MAX_REP then
+      raw_error("resulting string too large", 2)
+    end
+  end
+  return raw_rep(s, n, sep)
+end
+string.find = function(s, p, init, plain)
+  guard_subject(s)
+  if not plain then guard_pattern(p) end
+  return raw_find(s, p, init, plain)
+end
+string.match = function(s, p, init)
+  guard_subject(s) guard_pattern(p)
+  return raw_match(s, p, init)
+end
+string.gmatch = function(s, p, init)
+  guard_subject(s) guard_pattern(p)
+  return raw_gmatch(s, p, init)
+end
+string.gsub = function(s, p, repl, n)
+  guard_subject(s) guard_pattern(p)
+  return raw_gsub(s, p, repl, n)
+end
 local raw_load = load
 load = function(chunk, name, _mode, env)
   return raw_load(chunk, name, "t", env)
@@ -122,6 +173,60 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!(ok, 7);
+    }
+
+    #[test]
+    fn long_string_calls_are_capped() {
+        let (lua, _) = state();
+        let started = Instant::now();
+        let e = lua.load("return string.rep('x', 1e9)").exec().unwrap_err();
+        assert!(error_text(&e).contains("too large"), "{}", e);
+        let e = lua.load("return ('ab'):rep(3e6, ',')").exec().unwrap_err();
+        assert!(error_text(&e).contains("too large"), "{}", e);
+        let e = lua
+            .load("return ('a'):find(('a?'):rep(30) .. ('a'):rep(30))")
+            .exec()
+            .unwrap_err();
+        assert!(error_text(&e).contains("too complex"), "{}", e);
+        let e = lua
+            .load("return (('x'):rep(2e6)):gsub('x', 'y')")
+            .exec()
+            .unwrap_err();
+        assert!(error_text(&e).contains("too long"), "{}", e);
+        let e = lua
+            .load("return ('x'):match(('x'):rep(600))")
+            .exec()
+            .unwrap_err();
+        assert!(error_text(&e).contains("pattern too long"), "{}", e);
+        let e = lua
+            .load("for w in ('x'):gmatch('.-.-.-.-.-.-.-.-.-x') do end")
+            .exec()
+            .unwrap_err();
+        assert!(error_text(&e).contains("too complex"), "{}", e);
+        assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn normal_string_use_still_works() {
+        let (lua, _) = state();
+        let ok: bool = lua
+            .load(
+                r#"
+                assert(string.rep('ab', 3, ',') == 'ab,ab,ab' and ('x'):rep(0) == '')
+                assert(('/a//'):gsub('/+$', '') == '/a')
+                assert(('http://host:80/p'):match('^%a+://([^/:?#]+)') == 'host')
+                assert(('a.b_c'):gsub('[._]', ' ') == 'a b c')
+                local show, ep = ('Show Name S01E02'):match('^(.-)%s*([Ss]%d%d?[Ee]%d%d%d?)')
+                assert(show == 'Show Name' and ep == 'S01E02')
+                assert(('Movie (2019) x'):match('^(.-)%s+[%(%[]?([12][09]%d%d)[%)%]]?%f[%W]'))
+                assert(('x'):rep(1e6):find('y', 1, true) == nil)
+                local n = 0 for _ in ('a,b,c'):gmatch('[^,]+') do n = n + 1 end
+                assert(n == 3)
+                return true"#,
+            )
+            .eval()
+            .unwrap();
+        assert!(ok);
     }
 
     #[test]

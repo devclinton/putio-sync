@@ -55,6 +55,10 @@ const ENOSYS: i32 = 52;
 const EBADF: i32 = 8;
 const EINVAL: i32 = 28;
 const EFAULT: i32 = 21;
+/// The most iovecs one `fd_write` takes
+const MAX_IOVS: i32 = 1024;
+/// The most bytes one `fd_write` takes in total
+const MAX_WRITE_BYTES: u32 = 1024 * 1024;
 
 /// One engine for every plugin, with fuel on. Functions are compiled when the module loads:
 /// lazy compilation charges fuel on first call, and running out there cannot be resumed.
@@ -429,6 +433,18 @@ fn print_line(host: &Host, fd: usize, line: &[u8]) {
     );
 }
 
+/// The address of iovec `i` at `iovs`, or `None` when it does not fit in 32 bits
+fn iov_address(iovs: i32, i: i32) -> Option<i32> {
+    let offset = u32::try_from(i).ok()?.checked_mul(8)?;
+    (iovs as u32).checked_add(offset).map(|a| a as i32)
+}
+
+/// `total` plus an iovec length, or `None` when the length is negative or the sum passes the cap
+fn add_written(total: u32, len: i32) -> Option<u32> {
+    let len = u32::try_from(len).ok()?;
+    total.checked_add(len).filter(|sum| *sum <= MAX_WRITE_BYTES)
+}
+
 fn memory_of(caller: &Caller<'_, Data>) -> Result<Memory, Error> {
     caller
         .data()
@@ -519,21 +535,40 @@ fn define(linker: &mut Linker<Data>) -> Result<(), wasmi::errors::LinkerError> {
     linker.func_wrap(
         WASI,
         "fd_write",
-        |mut caller: Caller<'_, Data>, fd: i32, iovs: i32, count: i32, written: i32| -> i32 {
+        |mut caller: Caller<'_, Data>,
+         fd: i32,
+         iovs: i32,
+         count: i32,
+         written: i32|
+         -> Result<i32, Error> {
             if fd != 1 && fd != 2 {
-                return EBADF;
+                return Ok(EBADF);
+            }
+            // A negative count, or more vectors than any sane writer uses
+            if !(0..=MAX_IOVS).contains(&count) {
+                return Ok(EINVAL);
             }
             let mut total = 0u32;
-            for i in 0..count.max(0) {
-                let Ok(iov) = read(&caller, iovs + i * 8, 8, 8) else {
-                    return EFAULT;
+            for i in 0..count {
+                // Host work in a loop is not covered by fuel, so check the deadline here
+                if past(&caller.data().host) {
+                    return Err(Error::new(TIME_LIMIT));
+                }
+                let Some(at) = iov_address(iovs, i) else {
+                    return Ok(EINVAL);
                 };
-                let at = i32::from_le_bytes([iov[0], iov[1], iov[2], iov[3]]);
+                let Ok(iov) = read(&caller, at, 8, 8) else {
+                    return Ok(EFAULT);
+                };
+                let ptr = i32::from_le_bytes([iov[0], iov[1], iov[2], iov[3]]);
                 let len = i32::from_le_bytes([iov[4], iov[5], iov[6], iov[7]]);
-                let Ok(bytes) = read(&caller, at, len, 64 * 1024) else {
-                    return EFAULT;
+                let Some(sum) = add_written(total, len) else {
+                    return Ok(EINVAL);
                 };
-                total += bytes.len() as u32;
+                let Ok(bytes) = read(&caller, ptr, len, 64 * 1024) else {
+                    return Ok(EFAULT);
+                };
+                total = sum;
                 let index = fd as usize - 1;
                 let data = caller.data_mut();
                 for &b in &bytes {
@@ -545,11 +580,11 @@ fn define(linker: &mut Linker<Data>) -> Result<(), wasmi::errors::LinkerError> {
                     }
                 }
             }
-            if write(&mut caller, written, &total.to_le_bytes()) {
+            Ok(if write(&mut caller, written, &total.to_le_bytes()) {
                 0
             } else {
                 EFAULT
-            }
+            })
         },
     )?;
     linker.func_wrap(
@@ -710,5 +745,17 @@ mod tests {
         let mut cut = with.clone();
         cut.truncate(cut.len() - 3);
         assert!(manifest_section(&cut).is_err());
+    }
+
+    #[test]
+    fn fd_write_arithmetic_is_checked() {
+        assert_eq!(iov_address(16, 2), Some(32));
+        assert_eq!(iov_address(-8, 1), None);
+        assert_eq!(iov_address(0, -1), None);
+        assert_eq!(iov_address(i32::MAX, 1 << 30), None);
+        assert_eq!(add_written(0, 10), Some(10));
+        assert_eq!(add_written(0, -1), None);
+        assert_eq!(add_written(MAX_WRITE_BYTES, 1), None);
+        assert_eq!(add_written(u32::MAX, 1), None);
     }
 }
