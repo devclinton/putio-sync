@@ -281,13 +281,9 @@ fn display_csv(entries: &[HistoryDisplay]) -> Result<()> {
     Ok(())
 }
 
-/// Escape CSV field
+/// Escape CSV field (quoted, and defused against spreadsheet formula injection)
 fn escape_csv(field: &str) -> String {
-    if field.contains(',') || field.contains('"') || field.contains('\n') {
-        format!("\"{}\"", field.replace('"', "\"\""))
-    } else {
-        field.to_string()
-    }
+    putio_sync_core::csv_field::csv_field(field)
 }
 
 /// Format count with thousands separator
@@ -438,6 +434,7 @@ mod tests {
         assert_eq!(escape_csv("with,comma"), "\"with,comma\"");
         assert_eq!(escape_csv("with\"quote"), "\"with\"\"quote\"");
         assert_eq!(escape_csv("with\nline"), "\"with\nline\"");
+        assert_eq!(escape_csv("=SUM(A1)"), "'=SUM(A1)");
     }
 
     #[test]

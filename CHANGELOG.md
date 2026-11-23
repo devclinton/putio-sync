@@ -14,6 +14,14 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Security
 
+- Debug logs no longer print request or response headers (the Put.io bearer token, cookies) or
+  the query string of a download URL; the Authorization header is marked sensitive.
+- The CLI's `--csv` output and `history` CSV now defuse cells that start with `=`, `+`, `-`, `@`,
+  tab or carriage return, as the release export already did.
+- Subtitle downloads and error answers are read with a size limit (10 MiB and 64 KiB), so a
+  hostile endpoint cannot fill memory.
+- A resume of a download whose expected size is 0 no longer wraps the `Range` header.
+
 - Plugins can no longer fetch from loopback, link-local or cloud-metadata addresses (a plugin
   host that resolves there is refused); private LAN addresses stay reachable for media
   servers. Set `PUTIO_SYNC_ALLOW_LOCAL_FETCH=1` to allow loopback too.
@@ -168,6 +176,14 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- The web UI loads Stats, Doctor, Logs, Settings and Setup the first time they are opened, so the first page load is about 75 KB smaller.
+- The download queue has an index on status and priority, so claiming and polling no longer scan the whole table; the daily maintenance also removes completed queue rows older than 7 days.
+- The local files page lists folders and sizes them on a blocking thread, so a slow disk no longer stalls the API; the Status page's held-magnet lookup reads only held items.
+- The Logs page's "after" cursor stops scanning older lines, so a busy log tail holds the log buffer for less time.
+- The CLI no longer prints a startup banner on every command (it broke cron mail and buried real errors), errors show their cause (`Error: Failed to load configuration: expected "=" ...`), a missing Put.io token says to run `putio-sync login` or `putio-sync setup`, and `--help` says which command to run (`daemon` for the sync, watcher and web UI; `server` is the API only).
+- New `putio-sync completions <bash|zsh|fish|elvish|powershell>` prints a shell completion script.
+- Metrics: `putio_sync_api_requests_total` has new outcomes `rate_limited` (429) and `unauthorized` (401/403) instead of `client_error`; new `putio_sync_api_rate_limit` and `putio_sync_api_rate_limit_remaining` gauges from Put.io's `X-RateLimit-*` headers; new `putio_sync_download_retries_total{reason}` and `putio_sync_sync_failures_total{reason}` counters.
+- Logs: a stalled Put.io transfer is logged once at warn when it stalls (repeats at debug); the per-file "Processing", "verified" and "deleted" lines moved to debug, leaving one info line per downloaded file; "Sync complete" is info only when the pass queued, deleted, streamed or failed something.
 - Watched .torrent and .magnet files stay in the folder after upload unless
   `delete_after_upload = true` or `archive_directory` is set, also when the config has no
   `[watch]` table.

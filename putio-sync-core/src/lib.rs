@@ -16,6 +16,9 @@
 /// Put.io empty-folder cleanup service
 pub mod cleanup;
 
+/// One CSV field, quoted and defused against formula injection
+pub mod csv_field;
+
 /// Bandwidth schedules, limits and timed overrides (feature 032)
 pub mod bandwidth;
 

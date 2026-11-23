@@ -501,12 +501,18 @@ impl SubtitleSearch for OpenSubtitles {
                     file.status()
                 )));
             }
-            let bytes = file.bytes().await.map_err(|e| {
-                record("download", "error");
-                SearchError::Failed(describe(&e))
-            })?;
+            let bytes =
+                putio_sync_client::body::read_capped(file, putio_sync_client::body::MAX_SMALL_BODY)
+                    .await
+                    .map_err(|e| {
+                        record("download", "error");
+                        SearchError::Failed(match e {
+                            putio_sync_client::body::BodyError::Http(e) => describe(&e),
+                            e => e.to_string(),
+                        })
+                    })?;
             record("download", "ok");
-            Ok(bytes.to_vec())
+            Ok(bytes)
         })
     }
 
