@@ -48,6 +48,11 @@ const BACKOFF_MS = 10000;
 const TOAST_MS = 6000;
 
 const view = document.getElementById("view");
+// The skip link focuses the page without touching the hash, which the router reads as a route
+document.querySelector("a.skip")?.addEventListener("click", (event) => {
+  event.preventDefault();
+  view.focus();
+});
 const banner = document.getElementById("banner");
 
 let current = null;
@@ -162,9 +167,15 @@ function parse(hash) {
 
 /** Go to `hash` (e.g. "#/queue"); re-renders when it is already the current route. */
 export function navigate(hash) {
-  if (window.location.hash === hash) route();
+  if (window.location.hash === hash) {
+    focusNext = true;
+    route();
+  }
   else window.location.hash = hash;
 }
+
+// Set when the person changed page (not on first load or a poll), so the new page gets the focus
+let focusNext = false;
 
 function route() {
   if (setupMode) {
@@ -184,7 +195,10 @@ function route() {
   }
   remember(window.location.hash || "#/status");
   // A page with `update` shows another address of itself in place (Settings sections, 046)
-  if (current && current === page(name) && current.update) return void current.update({ path, query });
+  if (current && current === page(name) && current.update) {
+    focusNext = false;
+    return void current.update({ path, query });
+  }
   mount(name, { path, query });
   if (!crashChecked) {
     crashChecked = true;
@@ -234,6 +248,7 @@ function show(name, mod, params) {
     if (a.dataset.page === name) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
+  moreButton.classList.toggle("current", Boolean(document.querySelector('#nav a[data-more][aria-current="page"]')));
   currentName = name;
   showTitle();
   // Signed in by Tailscale only: there is nothing to sign out of here
@@ -245,7 +260,33 @@ function show(name, mod, params) {
   enter();
   current = mod;
   current.mount(view, params);
+  closeMore();
+  // Keyboard and screen-reader users land on the new page, not on the link they used
+  if (focusNext) view.focus({ preventScroll: true });
+  focusNext = false;
 }
+
+// Phones: the bar shows four pages and a More button that opens the rest
+const nav = document.getElementById("nav");
+const moreButton = document.getElementById("more");
+function closeMore(restoreFocus) {
+  nav.classList.remove("more-open");
+  moreButton.setAttribute("aria-expanded", "false");
+  if (restoreFocus) moreButton.focus();
+}
+moreButton.addEventListener("click", () => {
+  const open = !nav.classList.contains("more-open");
+  nav.classList.toggle("more-open", open);
+  moreButton.setAttribute("aria-expanded", String(open));
+  if (open) nav.querySelector("a[data-more]").focus();
+});
+nav.addEventListener("click", (ev) => ev.target.closest("a") && closeMore());
+nav.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && nav.classList.contains("more-open")) closeMore(true);
+});
+document.addEventListener("click", (ev) => {
+  if (nav.classList.contains("more-open") && !nav.contains(ev.target)) closeMore();
+});
 
 function showTitle() {
   document.title = `${tr(TITLES[currentName])} · putio-sync`;
@@ -507,6 +548,7 @@ document.getElementById("signout").addEventListener("click", async () => {
   showLogin({ reason: "Signed out." });
 });
 
+window.addEventListener("hashchange", () => (focusNext = true));
 window.addEventListener("hashchange", route);
 // The command palette (061) loads on first use; leaving a page by the back button closes it
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
