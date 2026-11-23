@@ -3,7 +3,15 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MAX_BODY, tally, validate } from "../../../packaging/usage-stats-worker/validate.js";
+import { MAX_BODY, MAX_VALUES, readLimited, tally, validate } from "../../../packaging/usage-stats-worker/validate.js";
+import worker from "../../../packaging/usage-stats-worker/worker.js";
+
+const kv = () => {
+  const m = new Map();
+  return { get: async (k, t) => (m.has(k) ? (t === "json" ? JSON.parse(m.get(k)) : m.get(k)) : null), put: async (k, v) => void m.set(k, v), m };
+};
+const post = (body, headers = {}) => new Request("https://x/", { method: "POST", headers: { "content-type": "application/json", "content-length": String(new TextEncoder().encode(body).length), ...headers }, body });
+const streamOf = (bytes) => new ReadableStream({ start(c) { c.enqueue(bytes); c.close(); } });
 
 const good = () => ({
   schema: 1,
@@ -70,4 +78,52 @@ test("a tally adds one to each count", () => {
   assert.deepEqual(twice, { "os:linux": 2, "installs:all": 1 });
   assert.deepEqual(once, { "os:linux": 1, "installs:all": 1 });
   assert.equal(MAX_BODY, 4096);
+});
+
+test("an oversized body is refused with and without Content-Length", async () => {
+  const env = { STATS: kv() };
+  const big = JSON.stringify({ pad: "a".repeat(MAX_BODY) });
+  let res = await worker.fetch(post(big), env);
+  assert.equal(res.status, 413);
+  const stream = new Request("https://x/", { method: "POST", headers: { "content-type": "application/json" }, body: streamOf(new TextEncoder().encode(big)), duplex: "half" });
+  assert.equal(stream.headers.get("content-length"), null);
+  res = await worker.fetch(stream, env);
+  assert.equal(res.status, 411);
+  // a lying Content-Length is caught by the byte-limited reader
+  res = await worker.fetch(post(big, { "content-length": "10" }), env);
+  assert.equal(res.status, 413);
+  assert.equal(await readLimited(new Request("https://x/", { method: "POST", body: big })), null);
+  assert.equal(env.STATS.m.size, 0);
+});
+
+test("the limit counts bytes, not characters", async () => {
+  const bytes = (n) => new TextEncoder().encode("é".repeat(n / 2));
+  const mk = (b) => new Request("https://x/", { method: "POST", body: streamOf(b), duplex: "half" });
+  assert.equal((await readLimited(mk(bytes(MAX_BODY)))).length, MAX_BODY / 2);
+  assert.equal(await readLimited(mk(bytes(MAX_BODY + 2))), null);
+  // 3000 characters is under 4096 as text but 6000 bytes
+  const text = "é".repeat(3000);
+  assert.ok(text.length < MAX_BODY);
+  assert.equal((await worker.fetch(post(text), { STATS: kv() })).status, 413);
+});
+
+test("new versions past the cap fold into other", () => {
+  const counts = (i) => [["version", `1.0.${i}`], ["os", "linux"]];
+  let day = {};
+  for (let i = 0; i < MAX_VALUES + 50; i++) day = tally(day, counts(i));
+  const versions = Object.keys(day).filter((k) => k.startsWith("version:"));
+  assert.equal(versions.length, MAX_VALUES + 1);
+  assert.equal(day["version:other"], 50);
+  assert.equal(day["os:linux"], MAX_VALUES + 50);
+  day = tally(day, counts(0));
+  assert.equal(day["version:1.0.0"], 2);
+  assert.equal(validate({ ...good(), version: "1.2.3-rc.1" }).ok, true);
+  assert.equal(validate({ ...good(), version: "1.2.3-" + "a".repeat(30) }).ok, false);
+});
+
+test("/summary is 404 unless PUBLIC_SUMMARY=1", async () => {
+  const get = () => new Request("https://x/summary");
+  assert.equal((await worker.fetch(get(), { STATS: kv() })).status, 404);
+  assert.equal((await worker.fetch(get(), { STATS: kv(), PUBLIC_SUMMARY: "0" })).status, 404);
+  assert.equal((await worker.fetch(get(), { STATS: kv(), PUBLIC_SUMMARY: "1" })).status, 200);
 });

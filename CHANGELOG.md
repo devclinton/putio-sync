@@ -12,6 +12,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Usage stats receiver Worker: the 4 KB limit now counts bytes and stops reading early (411 without
+  `Content-Length`), each field keeps at most 200 distinct values a day, `/summary` is off unless
+  `PUBLIC_SUMMARY=1`, and the README covers limits and rate limiting.
+
 ### Added
 
 - Anonymous usage stats (058, part 2), off by default. With `[usage_stats] enabled = true` and
