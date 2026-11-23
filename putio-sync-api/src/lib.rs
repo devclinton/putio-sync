@@ -502,6 +502,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/releases", routes::releases::router())
         .nest("/whats-new", routes::system::whats_new::router())
         .nest("/update", routes::system::update::router())
+        .nest("/crash-reports", routes::system::crash::router())
         .nest("/tailscale", routes::system::tailscale::router())
         .nest("/logs", routes::system::logs::router())
         .nest("/media-server", routes::system::media_server::router())
