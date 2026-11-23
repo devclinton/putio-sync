@@ -80,7 +80,8 @@ pub async fn add_transfer(
         let temp_file_path = temp_dir.join(format!("upload_{}.torrent", uuid::Uuid::new_v4()));
 
         std::fs::write(&temp_file_path, file_bytes).map_err(|e| {
-            ApiError::InternalError(format!("Failed to write temporary file: {}", e))
+            tracing::warn!(error = %e, "Failed to write the uploaded torrent to a temporary file");
+            ApiError::InternalError("Failed to store the uploaded file".to_string())
         })?;
 
         // Upload the file

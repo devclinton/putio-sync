@@ -6,7 +6,7 @@
 
 import { get, post } from "../api.js";
 import { confirm, copyText, h, toast, toastError } from "../app.js";
-import { bytes, relative } from "../format.js";
+import { bytes, httpsUrl, relative } from "../format.js";
 
 const POLL_MS = 2000;
 const RESTART_WAIT_MS = 3 * 60 * 1000;
@@ -90,7 +90,7 @@ function updateNow(u, a, reload, problem) {
       } else if (e.error === "not_writable") {
         problem.replaceChildren(
           h("p", { class: "error-text" }, "putio-sync can't replace itself: ", h("code", { text: body.path }), " isn't writable by the user it runs as."),
-          h("p", {}, "Download the new version from the ", h("a", { href: a.url, target: "_blank", rel: "noopener", text: "release page" }), " and replace the binary by hand."),
+          h("p", {}, "Download the new version from the ", httpsUrl(a.url) ? h("a", { href: a.url, target: "_blank", rel: "noopener", text: "release page" }) : "release page", " and replace the binary by hand."),
         );
         button.remove();
       } else if (e.error === "in_progress") {
@@ -116,7 +116,7 @@ function command(text) {
  * alternative, then any steps. These channels never get an Update button (FR-010). */
 function howTo(i, releaseUrl) {
   return [
-    i.link && i.link !== releaseUrl ? h("p", {}, h("a", { href: i.link, target: "_blank", rel: "noopener", text: `Download ${i.link.split("/").pop()}` })) : null,
+    httpsUrl(i.link) && i.link !== releaseUrl ? h("p", {}, h("a", { href: i.link, target: "_blank", rel: "noopener", text: `Download ${i.link.split("/").pop()}` })) : null,
     i.commands.map(command),
     i.alternatives.length ? h("p", { class: "muted", text: "Or pin the new version:" }) : null,
     i.alternatives.map(command),
@@ -156,7 +156,7 @@ export function updateCard(u, reload) {
   if (a) {
     const dismiss = h("button", { type: "button", class: "btn" }, "Dismiss");
     dismiss.onclick = busy(dismiss, () => post("/update/dismiss", { version: a.version }));
-    actions.unshift(h("a", { class: "btn btn-primary", href: a.url, target: "_blank", rel: "noopener", text: "Release page" }), dismiss);
+    actions.unshift(...(httpsUrl(a.url) ? [h("a", { class: "btn btn-primary", href: a.url, target: "_blank", rel: "noopener", text: "Release page" })] : []), dismiss);
   }
   const c = u.check;
   const last = c.last_attempt_at ? `Last checked ${relative(c.last_attempt_at)}.` : "Not checked yet.";

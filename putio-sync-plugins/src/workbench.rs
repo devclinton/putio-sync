@@ -533,6 +533,8 @@ impl PluginsService {
                 problems,
             }));
         };
+        // A dry run sends nothing (the host list only shapes what it records), and a real
+        // run keeps the approved hosts and folders `spec_for` left
         if !request.real {
             spec.allowed = spec
                 .manifest

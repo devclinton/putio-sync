@@ -85,6 +85,9 @@ pub mod pattern;
 /// Question the Radarr/Sonarr view asks the processing pipeline (feature 038)
 pub mod pipeline_gate;
 
+/// Which addresses a fetch on someone else's say-so may reach (plugin URLs, .torrent URLs)
+pub mod net_guard;
+
 /// Shortened forms of values that may carry secrets (feature 027)
 pub mod redact;
 

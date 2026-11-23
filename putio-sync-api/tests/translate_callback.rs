@@ -210,6 +210,22 @@ async fn a_body_over_4_mib_is_413() {
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
 }
 
+/// A token that cannot be ours is refused (404) before the body is read, so a big body
+/// does not reach the size check
+#[tokio::test]
+async fn a_malformed_token_is_404_before_the_body_is_read() {
+    let mut app = test_app().await;
+    let _ = parked(&mut app, "manual:1").await;
+    let (status, _) = post(
+        &app,
+        "nothex",
+        "text/plain",
+        vec![b'a'; 4 * 1024 * 1024 + 1],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn the_token_never_appears_in_a_log_line() {
     let logs = captured_logs();

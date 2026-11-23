@@ -583,6 +583,8 @@ After installation:
 2. **Browse files**: `putio-sync files list`
 3. **Download**: `putio-sync download`
 4. **View help**: `putio-sync --help`
+5. **Follow a guide**: the [guides](https://devclinton.github.io/putio-sync/docs/guides/index.html)
+   walk through setup on each platform, then adding Radarr, Sonarr and more.
 
 See the main [README.md](README.md) for usage examples and features.
 

@@ -4,7 +4,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{body_json, test_app, TestApp};
+use common::{body_json, test_app, test_app_with, TestApp};
 use mockito::Matcher;
 use serde_json::{json, Value};
 
@@ -269,4 +269,113 @@ async fn a_callback_without_a_base_url_is_400() {
         )
         .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_saved_chat_key_is_not_sent_to_another_server() {
+    let mut saved = mockito::Server::new_async().await;
+    let mut other = mockito::Server::new_async().await;
+    let never = other
+        .mock("POST", Matcher::Any)
+        .expect(0)
+        .create_async()
+        .await;
+    let saved_url = saved.url();
+    let app = test_app_with(|config| {
+        config.translation.kind = putio_sync_core::translation::TranslatorKind::Chat;
+        config.translation.chat.base_url = saved_url.clone();
+        config.translation.chat.model = "m".to_string();
+        config.translation.chat.api_key = KEY.to_string();
+    })
+    .await;
+    let (status, body) = test_with(
+        &app,
+        json!({"base_url": other.url(), "model": "m", "api_key": "********"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body.to_string().contains("Type the API key again"),
+        "{body}"
+    );
+    never.assert_async().await;
+    // The saved server with the mask works
+    let hit = saved
+        .mock("POST", "/v1/chat/completions")
+        .match_header("authorization", format!("Bearer {KEY}").as_str())
+        .with_status(200)
+        .with_body(completion("1| a\n2| b"))
+        .expect(1)
+        .create_async()
+        .await;
+    let (status, body) = test_with(
+        &app,
+        json!({"base_url": saved_url, "model": "m", "api_key": "********"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["ok"], true, "{body}");
+    hit.assert_async().await;
+}
+
+#[tokio::test]
+async fn a_saved_callback_header_is_not_sent_to_another_service() {
+    let mut other = mockito::Server::new_async().await;
+    let never = other
+        .mock("POST", Matcher::Any)
+        .expect(0)
+        .create_async()
+        .await;
+    let app = test_app_with(|config| {
+        config.translation.kind = putio_sync_core::translation::TranslatorKind::Callback;
+        config.translation.callback.url = "http://svc.lan/translate".to_string();
+        config.translation.callback.callback_base_url = "http://127.0.0.1:9".to_string();
+        config
+            .translation
+            .callback
+            .headers
+            .insert("Authorization".into(), "Bearer saved-header".into());
+    })
+    .await;
+    let response = app
+        .post_json(
+            "/settings/translation/test",
+            json!({"translation": {"kind": "callback", "callback": {
+                "url": other.url(), "callback_base_url": "http://127.0.0.1:9",
+                "headers": {"Authorization": "********"}}}}),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    never.assert_async().await;
+}
+
+#[tokio::test]
+async fn the_remote_error_body_is_not_echoed() {
+    let app = test_app().await;
+    let mut server = mockito::Server::new_async().await;
+    server
+        .mock("POST", "/v1/chat/completions")
+        .with_status(500)
+        .with_body("{\"error\":{\"message\":\"internal-secret-detail\"}}")
+        .create_async()
+        .await;
+    let (_, body) = test_with(&app, json!({"base_url": server.url(), "model": "m"})).await;
+    assert_eq!(body["error"], "The server answered HTTP 500", "{body}");
+    assert!(
+        !body.to_string().contains("internal-secret-detail"),
+        "{body}"
+    );
+
+    let mut svc = mockito::Server::new_async().await;
+    svc.mock("POST", Matcher::Any)
+        .with_status(500)
+        .with_body("internal-secret-detail")
+        .create_async()
+        .await;
+    let (_, body) = test_callback(&app, &svc.url(), "http://127.0.0.1:9").await;
+    assert_eq!(body["error"], "The server answered HTTP 500", "{body}");
+    assert!(
+        !body.to_string().contains("internal-secret-detail"),
+        "{body}"
+    );
 }

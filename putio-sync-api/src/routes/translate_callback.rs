@@ -43,6 +43,13 @@ pub async fn callback(
     let Some(pipeline) = state.pipeline.clone() else {
         return unknown();
     };
+    // Check the token before reading the body: a token that cannot be ours never makes
+    // the server buffer up to MAX_BODY
+    if !putio_sync_translation::callback::is_well_formed(&token) {
+        let failures = state.limiter.record_failure(ip);
+        warn!(ip = %ip, failures, "Translation callback refused");
+        return unknown();
+    }
     let content_type = request
         .headers()
         .get(header::CONTENT_TYPE)

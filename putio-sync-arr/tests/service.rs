@@ -45,6 +45,8 @@ struct Harness {
 
 impl Harness {
     async fn new() -> Self {
+        // The indexers here are on loopback, which a .torrent fetch refuses unless told
+        std::env::set_var("PUTIO_SYNC_ALLOW_LOCAL_FETCH", "1");
         let putio = mockito::Server::new_async().await;
         let dir = tempfile::tempdir().unwrap();
         let db = Arc::new(

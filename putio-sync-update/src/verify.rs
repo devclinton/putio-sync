@@ -4,6 +4,7 @@
 //! checked against that list before it is decoded, and the binary it makes against the
 //! list's `.bin` line, so a swap only ever installs bytes the release key vouched for.
 
+use crate::version::Version;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
@@ -101,8 +102,14 @@ impl Sums {
 }
 
 /// Verify `sums` against its `.minisig` and `pubkey` (the public key file or its base64
-/// line), then parse it
-pub fn verify_list(sums: &[u8], minisig: &str, pubkey: &str) -> Result<Sums, VerifyError> {
+/// line), then parse it. The signed trusted comment must be `putio-sync <version>`
+/// (release-binaries.yml), so a list signed for another release is refused.
+pub fn verify_list(
+    sums: &[u8],
+    minisig: &str,
+    pubkey: &str,
+    version: Version,
+) -> Result<Sums, VerifyError> {
     let key_line = pubkey
         .lines()
         .map(str::trim)
@@ -119,6 +126,12 @@ pub fn verify_list(sums: &[u8], minisig: &str, pubkey: &str) -> Result<Sums, Ver
         .map_err(|e| VerifyError::Signature(e.to_string()))?;
     key.verify(sums, &signature, false)
         .map_err(|e| VerifyError::Signature(e.to_string()))?;
+    let want = format!("putio-sync {version}");
+    if signature.trusted_comment() != want {
+        return Err(VerifyError::Signature(format!(
+            "SHA256SUMS was signed for another release, not {version}"
+        )));
+    }
     let text = std::str::from_utf8(sums)
         .map_err(|_| VerifyError::Signature("SHA256SUMS is not text".into()))?;
     Ok(Sums::parse(text))
@@ -148,13 +161,18 @@ pub(crate) mod tests {
 
     /// Sign `data` with the test key (slow: the key is password-protected, so it is read once)
     pub fn sign(data: &[u8]) -> String {
+        sign_comment(data, "putio-sync 0.4.0")
+    }
+
+    /// Like [`sign`], with another trusted comment
+    pub fn sign_comment(data: &[u8], comment: &str) -> String {
         use std::sync::OnceLock;
         static KEY: OnceLock<minisign::SecretKey> = OnceLock::new();
         let key = KEY.get_or_init(|| {
             let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/minisign-test.key");
             minisign::SecretKey::from_file(path, Some("putio-sync-test".into())).unwrap()
         });
-        minisign::sign(None, key, data, Some("putio-sync test"), None)
+        minisign::sign(None, key, data, Some(comment), None)
             .unwrap()
             .into_string()
     }
@@ -191,10 +209,28 @@ pub(crate) mod tests {
         );
     }
 
+    fn v04() -> Version {
+        "0.4.0".parse().unwrap()
+    }
+
+    /// A list signed for another release (a replayed older one) is refused
+    #[test]
+    fn verify_list_binds_the_release_version() {
+        let list = line(b"a", "a.xz");
+        let old = sign_comment(list.as_bytes(), "putio-sync 0.3.0");
+        let err = verify_list(list.as_bytes(), &old, TEST_PUBKEY, v04()).unwrap_err();
+        assert!(matches!(err, VerifyError::Signature(_)), "{err:?}");
+        let none = sign_comment(list.as_bytes(), "putio-sync test");
+        assert!(verify_list(list.as_bytes(), &none, TEST_PUBKEY, v04()).is_err());
+        let good = sign_comment(list.as_bytes(), "putio-sync 0.4.0");
+        assert!(verify_list(list.as_bytes(), &good, TEST_PUBKEY, v04()).is_ok());
+    }
+
     #[test]
     fn verify_list_accepts_the_test_key() {
         let list = line(b"a", "a.xz");
-        let sums = verify_list(list.as_bytes(), &sign(list.as_bytes()), TEST_PUBKEY).unwrap();
+        let sums =
+            verify_list(list.as_bytes(), &sign(list.as_bytes()), TEST_PUBKEY, v04()).unwrap();
         assert!(sums.check(b"a", "a.xz").is_ok());
     }
 
@@ -203,7 +239,10 @@ pub(crate) mod tests {
         let list = line(b"a", "a.xz");
         let good = sign(list.as_bytes());
         let refused = |sums: &[u8], sig: &str, key: &str| {
-            matches!(verify_list(sums, sig, key), Err(VerifyError::Signature(_)))
+            matches!(
+                verify_list(sums, sig, key, v04()),
+                Err(VerifyError::Signature(_))
+            )
         };
         // missing
         assert!(refused(list.as_bytes(), "", TEST_PUBKEY));

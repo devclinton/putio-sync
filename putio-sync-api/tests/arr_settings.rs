@@ -599,7 +599,10 @@ async fn saved_application_test_results() {
 
     let wrong_app = body_json(app.post_json(&test(2), json!({})).await).await;
     assert_eq!(wrong_app["reason"], "not_arr");
-    assert_eq!(wrong_app["detail"], "not Radarr: found Sonarr");
+    assert_eq!(
+        wrong_app["detail"],
+        "The server did not answer like Radarr or Sonarr"
+    );
 
     let no_key = body_json(app.post_json(&test(3), json!({})).await).await;
     assert_eq!(no_key["reason"], "no_api_key");
@@ -819,11 +822,42 @@ async fn applications_are_added_edited_and_deleted() {
     }
     assert_eq!(file_config(&app).arr.servers.len(), 1);
 
-    // An empty key keeps the saved one
+    // An empty key keeps the saved one while the server is the same
+    let mut rename = body("");
+    rename["name"] = json!("Films");
+    let response = app
+        .req(
+            Method::PUT,
+            "/arr/applications/0",
+            Some(&app.token),
+            Some(rename),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        file_config(&app).arr.servers[0].api_key.as_deref(),
+        Some(ARR_KEY)
+    );
+    // A new scheme and URL base with no key typed would send the saved key elsewhere
     let mut edit = body("");
     edit["name"] = json!("Films");
     edit["ssl"] = json!(true);
     edit["url_base"] = json!("radarr");
+    let refused = app
+        .req(
+            Method::PUT,
+            "/arr/applications/0",
+            Some(&app.token),
+            Some(edit.clone()),
+        )
+        .await;
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert!(body_text(refused).await.contains("Type the API key again"));
+    assert_eq!(
+        file_config(&app).arr.servers[0].url,
+        format!("http://127.0.0.1:{}", port)
+    );
+    edit["api_key"] = json!(ARR_KEY);
     let response = app
         .req(
             Method::PUT,
@@ -1340,4 +1374,65 @@ async fn a_recommended_setting_is_turned_on() {
             .status(),
         StatusCode::BAD_REQUEST
     );
+}
+
+#[tokio::test]
+async fn form_test_does_not_send_the_saved_key_to_another_server() {
+    let mut arr = mockito::Server::new_async().await;
+    let never = arr.mock("GET", Matcher::Any).expect(0).create_async().await;
+    let url = arr.url();
+    let port = port_of(&url);
+    let app = test_app_with(|config| {
+        config.arr.servers = vec![server(
+            ArrKind::Radarr,
+            format!("http://127.0.0.1:{port}/radarr"),
+            Some(ARR_KEY),
+            "radarr",
+        )];
+    })
+    .await;
+    let form = |extra: Value| {
+        let mut body = json!({"kind": "radarr", "host": "127.0.0.1", "port": port,
+                              "ssl": false, "url_base": "radarr", "api_key": "", "index": 0});
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        body
+    };
+    for (what, change) in [
+        ("host", json!({"host": "localhost"})),
+        ("port", json!({"port": port.wrapping_add(1)})),
+        ("scheme", json!({"ssl": true})),
+        ("url base", json!({"url_base": "other"})),
+    ] {
+        let response = app.post_json("/arr/applications/test", form(change)).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{what}");
+        assert!(
+            body_text(response).await.contains("Type the API key again"),
+            "{what}"
+        );
+    }
+    never.assert_async().await;
+}
+
+#[tokio::test]
+async fn a_failed_application_test_shows_a_fixed_message() {
+    let mut arr = mockito::Server::new_async().await;
+    arr.mock("GET", "/api/v3/system/status")
+        .with_status(500)
+        .with_body("internal-secret-detail")
+        .create_async()
+        .await;
+    let app = test_app().await;
+    let body = body_json(
+        app.post_json(
+            "/arr/applications/test",
+            json!({"kind": "radarr", "host": "127.0.0.1", "port": port_of(&arr.url()),
+                   "api_key": ARR_KEY}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["detail"], "The server answered HTTP 500");
 }
