@@ -25,6 +25,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Security
 
+- Crash reports no longer carry file names, library paths or IP addresses: absolute paths,
+  IP addresses and long token-like strings are replaced, the last 50 log lines drop their
+  fields, and quoted text and file names in log messages are blanked. Source-code locations in
+  the backtrace stay.
 - Debug logs no longer print request or response headers (the Put.io bearer token, cookies) or
   the query string of a download URL; the Authorization header is marked sensitive.
 - The CLI's `--csv` output and `history` CSV now defuse cells that start with `=`, `+`, `-`, `@`,

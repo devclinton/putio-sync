@@ -2835,8 +2835,10 @@ anywhere else.
 **Crash reports** are never sent by putio-sync. When it panics, it writes a file to
 `crash-reports/` next to the config file (the 10 newest are kept): version, how it was
 installed, OS and architecture, uptime, the thread, the panic message, a backtrace and the last
-50 log lines, with tokens, passwords and the home folder masked the same way the Logs page
-does. If it was killed with no chance to write one (out of memory, `SIGKILL`, a container
+50 log lines (without their fields). Tokens, passwords and the home folder are masked the same
+way the Logs page does, absolute paths become `<path>`, IP addresses `<ip>` (not `127.0.0.1`
+or `::1`), long token-like strings `<redacted>`, and quoted text and file names in log lines
+are blanked. Source-code locations in the backtrace stay. If it was killed with no chance to write one (out of memory, `SIGKILL`, a container
 restart), the next start notes "stopped without a report".
 
 The next time you open the web UI it says **putio-sync stopped unexpectedly** and shows the
