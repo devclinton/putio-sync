@@ -370,7 +370,10 @@ impl PutioApiClient {
         let result = self
             .upload_client
             .post(url)
-            .header(reqwest::header::AUTHORIZATION, auth_header)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                crate::client::sensitive(auth_header)?,
+            )
             .multipart(form)
             .send()
             .await;
@@ -383,16 +386,10 @@ impl PutioApiClient {
 
         let status = response.status();
 
-        // Get response headers for debugging
-        let headers = response.headers().clone();
         tracing::debug!("Upload response status: {}", status);
-        tracing::debug!("Upload response headers: {:?}", headers);
 
         if !status.is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = crate::body::read_error_text(response, "Unknown error").await;
             tracing::error!("Upload failed with status {}: {}", status, error_text);
             return Err(crate::error::ClientError::ApiError(format!(
                 "Failed to upload file: {} - {}",

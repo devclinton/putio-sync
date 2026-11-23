@@ -163,6 +163,18 @@ impl From<VerifyError> for PrepareError {
     }
 }
 
+/// Refuse a release that is not newer than the running version (a replayed old release)
+pub fn require_newer(release: &ReleaseInfo, running: Version) -> Result<(), PrepareError> {
+    if release.version > running {
+        return Ok(());
+    }
+    Err(VerifyError::Download(format!(
+        "release {} is not newer than the running {running}",
+        release.version
+    ))
+    .into())
+}
+
 /// The release's `SHA256SUMS`, checked against its signature and `pubkey`
 pub async fn signed_sums(
     client: &reqwest::Client,
@@ -175,7 +187,12 @@ pub async fn signed_sums(
         None => Vec::new(),
     };
     let signature = String::from_utf8_lossy(&signature);
-    Ok(verify::verify_list(&sums, &signature, pubkey)?)
+    Ok(verify::verify_list(
+        &sums,
+        &signature,
+        pubkey,
+        release.version,
+    )?)
 }
 
 /// Download, check and decode the update to `release` for `target` (T031):
@@ -197,6 +214,7 @@ pub async fn prepare(
     pubkey: &str,
     progress: &Progress,
 ) -> Result<PreparedBinary, PrepareError> {
+    require_newer(release, running)?;
     let sums = signed_sums(client, release, pubkey).await?;
     let plan = plan(release, running, target)
         .ok_or_else(|| PrepareError::Missing(target.full(release.version)))?;

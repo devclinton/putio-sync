@@ -26,6 +26,8 @@ const NETWORK = {
   id: "network",
   key: "network",
   title: "Network",
+  guide: "guides/metrics-grafana",
+  guideText: "Metrics guide",
   fields: [
     ["api_bind", "API addresses", "One per line: ip:port, [ipv6]:port, interface:port or tailnet:port (after a restart)", "l"],
     ["metrics_bind", "Metrics addresses", "One per line, same forms; must not share an address with the API (after a restart)", "l"],
@@ -98,10 +100,13 @@ function backupCard(remount) {
   });
   apply.addEventListener("click", async () => {
     const n = last ? last.changes.length : 0;
-    if (!(await confirm({ title: "Import these settings?", text: `${n} setting${n === 1 ? "" : "s"} will change and be saved to the config file.`, verb: "Import" }))) return;
+    const runs = Boolean(last && last.needs_confirm_exec);
+    const what = `${n} setting${n === 1 ? "" : "s"} will change and be saved to the config file.`;
+    const warn = " This file adds or changes a hook command, the ffmpeg path or the plugins folder, so it makes putio-sync run programs as its user. Only import a file you trust.";
+    if (!(await confirm({ title: "Import these settings?", text: runs ? what + warn : what, verb: "Import" }))) return;
     apply.disabled = true;
     try {
-      const p = await importSettings(text.value, true);
+      const p = await importSettings(text.value, true, runs);
       toast(p.message || "Imported");
       remount();
     } catch (e) {

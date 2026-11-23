@@ -27,6 +27,7 @@ use axum::{
 };
 use base64::Engine;
 use futures_util::StreamExt;
+use putio_sync_core::net_guard::{self, GuardedResolver, Reach};
 use putio_sync_plugins::action::ActionResult;
 use putio_sync_plugins::discover::MAX_WASM_BYTES;
 use putio_sync_plugins::install::{InstallError, Package};
@@ -35,6 +36,7 @@ use putio_sync_plugins::registry::{Listing, Preview, RegistryError};
 use putio_sync_plugins::{CallError, PluginRun, PluginStatus, TestError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::sync::Arc;
 
 pub use crate::AppState;
 
@@ -404,29 +406,53 @@ async fn fetch(url: &str) -> Result<Package, ApiError> {
     Ok(Package::Files { manifest, entry })
 }
 
-/// The bytes at `url`: http or https, same-host redirects only, within the size and time
-/// limits
+/// Why a redirect hop from `previous` to `next` is refused, or `None` to follow it: too
+/// many hops, another host, a step from https down to http, or an address `reach` refuses
+fn refuse_hop(
+    previous: &[reqwest::Url],
+    next: &reqwest::Url,
+    host: &Option<String>,
+    reach: Reach,
+) -> Option<String> {
+    if previous.len() > MAX_REDIRECTS {
+        Some("too many redirects".to_string())
+    } else if next.host_str().map(str::to_string) != *host {
+        Some("redirected to another host".to_string())
+    } else if previous.iter().any(|u| u.scheme() == "https") && next.scheme() != "https" {
+        Some("redirected from https to http".to_string())
+    } else {
+        net_guard::check_url(next, reach)
+            .err()
+            .map(|e| format!("address not allowed: {}", e))
+    }
+}
+
+/// The bytes at `url`: http or https, same-host redirects only (never from https down to
+/// http), an address that is public unless `PUTIO_SYNC_ALLOW_LOCAL_FETCH` opts in, and
+/// within the size and time limits. The name is resolved by a guarded resolver, so the
+/// address checked is the one connected to.
 async fn download(url: &str) -> Result<Vec<u8>, ApiError> {
     let parsed =
         reqwest::Url::parse(url).map_err(|e| ApiError::BadRequest(format!("url: {}", e)))?;
     if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
         return Err(ApiError::BadRequest("url: only http and https".to_string()));
     }
+    let failed = |e: String| ApiError::Unprocessable(format!("cannot download {}: {}", url, e));
+    let reach = Reach::or_opt_in(Reach::Public);
+    net_guard::check_url(&parsed, reach)
+        .map_err(|e| failed(format!("address not allowed: {}", e)))?;
     let host = parsed.host_str().map(str::to_string);
     let client = reqwest::Client::builder()
         .timeout(DOWNLOAD_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
-            if attempt.previous().len() > MAX_REDIRECTS {
-                attempt.error("too many redirects")
-            } else if attempt.url().host_str().map(str::to_string) != host {
-                attempt.error("redirected to another host")
-            } else {
-                attempt.follow()
-            }
-        }))
+        .dns_resolver(Arc::new(GuardedResolver::new(reach)))
+        .redirect(reqwest::redirect::Policy::custom(
+            move |attempt| match refuse_hop(attempt.previous(), attempt.url(), &host, reach) {
+                Some(why) => attempt.error(why),
+                None => attempt.follow(),
+            },
+        ))
         .build()
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let failed = |e: String| ApiError::Unprocessable(format!("cannot download {}: {}", url, e));
     let response = client
         .get(parsed.clone())
         .send()
@@ -454,5 +480,61 @@ fn without_url(e: reqwest::Error) -> String {
     match source {
         Some(source) if !text.contains(&source) => format!("{}: {}", text, source),
         _ => text,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn url(s: &str) -> reqwest::Url {
+        reqwest::Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn a_redirect_hop_stays_on_the_host_on_https_and_on_allowed_addresses() {
+        let host = Some("plugins.example".to_string());
+        let hop = |from: &[&str], to: &str, reach| {
+            let from: Vec<_> = from.iter().map(|u| url(u)).collect();
+            refuse_hop(&from, &url(to), &host, reach)
+        };
+        let first = ["https://plugins.example/a"];
+        assert_eq!(
+            hop(&first, "https://plugins.example/b", Reach::Public),
+            None
+        );
+        assert!(hop(&first, "http://plugins.example/b", Reach::Public)
+            .unwrap()
+            .contains("https to http"));
+        assert!(hop(&first, "https://other.example/b", Reach::Public)
+            .unwrap()
+            .contains("another host"));
+        // An http start may stay http
+        assert_eq!(
+            hop(
+                &["http://plugins.example/a"],
+                "http://plugins.example/b",
+                Reach::Public
+            ),
+            None
+        );
+        // A literal address on the host's own name is still checked
+        let ip_host = Some("169.254.169.254".to_string());
+        let refused = refuse_hop(
+            &[url("http://169.254.169.254/a")],
+            &url("http://169.254.169.254/b"),
+            &ip_host,
+            Reach::Local,
+        );
+        assert!(refused.unwrap().contains("not allowed"));
+        let many: Vec<_> = (0..5).map(|_| url("https://plugins.example/a")).collect();
+        assert!(refuse_hop(
+            &many,
+            &url("https://plugins.example/b"),
+            &host,
+            Reach::Public
+        )
+        .unwrap()
+        .contains("too many"));
     }
 }

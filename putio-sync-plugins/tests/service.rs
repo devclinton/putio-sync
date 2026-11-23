@@ -70,6 +70,7 @@ fn service(dir: &Path, data: &Path, settings: Vec<PluginSettings>) -> PluginsSer
         settings,
         clock: None,
         download_dir: None,
+        reach: Some(putio_sync_core::net_guard::Reach::Local),
     })
 }
 

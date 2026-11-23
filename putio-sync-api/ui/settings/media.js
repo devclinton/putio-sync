@@ -8,6 +8,7 @@ const MEDIA = {
   id: "media-server",
   key: "media-server",
   title: "Media server",
+  guide: "guides/media-server",
   fields: [
     ["enabled", "Media server", "Show your files to TVs and players on the home network (DLNA / UPnP)", "b"],
     ["name", "Name", "What players show; up to 64 characters", "s"],

@@ -5,7 +5,7 @@
 // module's level for 30 minutes or until restart. Values that name an item link to it.
 
 import { del, get, getToken, put } from "../api.js";
-import { fill, h, toast, toastError } from "../app.js";
+import { docs, fill, h, toast, toastError } from "../app.js";
 import { dateTime } from "../format.js";
 
 const KEYS = ["level", "target", "q"];
@@ -66,7 +66,7 @@ export function mount(el, params = {}) {
     levels: h("section", { class: "card" }),
   };
   el.append(
-    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Logs" }), els.summary)),
+    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Logs" }), els.summary, h("p", { class: "small" }, docs("guides/troubleshooting", "", "Troubleshooting guide")))),
     h(
       "div",
       { class: "stack" },

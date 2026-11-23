@@ -529,6 +529,12 @@ CREATE INDEX IF NOT EXISTS idx_translation_callbacks_due ON translation_callback
 CREATE INDEX IF NOT EXISTS idx_translation_callbacks_step ON translation_callbacks(step_id);
 CREATE INDEX IF NOT EXISTS idx_subtitle_provenance_created ON subtitle_provenance(created_at);
 
+-- The download queue: the claim and the polls filter on status and order by priority, then age
+CREATE INDEX IF NOT EXISTS idx_queue_status_order ON download_queue(status, priority DESC, created_at);
+
+-- *arr items by state (the status counts and the held-magnet lookup)
+CREATE INDEX IF NOT EXISTS idx_arr_items_state ON arr_items(state);
+
 -- Index for finding downloads by file_id
 CREATE INDEX IF NOT EXISTS idx_downloads_file_id ON downloads(file_id);
 
@@ -589,6 +595,8 @@ mod tests {
     fn test_indexes_contain_create_index() {
         assert!(CREATE_INDEXES.contains("CREATE INDEX"));
         assert!(CREATE_INDEXES.contains("idx_downloads_file_id"));
+        assert!(CREATE_INDEXES.contains("idx_queue_status_order"));
+        assert!(CREATE_INDEXES.contains("idx_arr_items_state"));
         assert!(CREATE_INDEXES.contains("idx_downloads_status"));
         assert!(CREATE_INDEXES.contains("idx_history_timestamp"));
         assert!(CREATE_INDEXES.contains("idx_history_action"));

@@ -495,6 +495,20 @@ impl<'a> QueueRepository<'a> {
         Ok(result.rows_affected() as usize)
     }
 
+    /// Delete completed rows not touched for `keep_days` days. A finished download is
+    /// removed from the queue at once and kept in `downloads`; a completed row only
+    /// survives from an older version or a failed removal, and nothing reads it.
+    pub async fn prune_completed(&self, keep_days: i64) -> DbResult<u64> {
+        let result = sqlx::query(
+            "DELETE FROM download_queue WHERE status = 'completed' AND updated_at < datetime('now', ?)",
+        )
+        .bind(format!("-{keep_days} days"))
+        .execute(self.pool)
+        .await
+        .map_err(tracked(DbOp::Queue, "Failed to prune completed queue rows"))?;
+        Ok(result.rows_affected())
+    }
+
     /// Row counts for the states that have a queue gauge
     pub async fn counts_by_status(&self) -> DbResult<Vec<(String, i64)>> {
         sqlx::query_as::<_, (String, i64)>(

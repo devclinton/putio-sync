@@ -2,7 +2,7 @@
 // deletes previews first and asks; the others apply to what the preview lists.
 
 import { get, post } from "../api.js";
-import { confirm, h, poll, refill, toast, toastError } from "../app.js";
+import { confirm, docs, h, poll, refill, toast, toastError } from "../app.js";
 import { dateTime, relative } from "../format.js";
 import { linkParts } from "../settings/sections.js";
 
@@ -35,7 +35,7 @@ export function mount(el) {
     body: h("div", { class: "stack doctor" }),
   };
   el.append(
-    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Doctor" }), els.summary), h("div", { class: "toolbar" }, els.run)),
+    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Doctor" }), els.summary, h("p", { class: "small" }, docs("guides/troubleshooting", "", "Troubleshooting guide"))), h("div", { class: "toolbar" }, els.run)),
     els.body,
   );
   poller = poll(load, REFRESH_MS);

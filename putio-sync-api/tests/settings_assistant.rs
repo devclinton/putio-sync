@@ -503,3 +503,69 @@ async fn plugin_secrets_are_masked_in_export_and_kept_on_import() {
         .unwrap();
     assert_eq!(ntfy.state, putio_sync_plugins::PluginState::Enabled);
 }
+
+#[tokio::test]
+async fn import_needs_confirm_exec_to_add_a_command_or_change_what_runs() {
+    let app = test_app().await;
+    let program = if cfg!(windows) {
+        r"C:\\Windows\\System32\\whoami.exe"
+    } else {
+        "/bin/true"
+    };
+    for text in [
+        format!("[[hooks]]\nname = \"x\"\nevents = [\"*\"]\ncommand = [\"{program}\"]\n"),
+        "[subtitles.transcription]\nffmpeg_path = \"/tmp/ffmpeg\"\n".to_string(),
+        "plugins_dir = \"/tmp/plugins\"\n".to_string(),
+    ] {
+        // A preview says so and writes nothing
+        let (status, preview) = post(
+            &app,
+            "/settings/import",
+            json!({"toml": text, "apply": false}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{preview}");
+        assert_eq!(preview["needs_confirm_exec"], true, "{preview}");
+        let danger = preview["risks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["level"] == "danger" && r["id"].as_str().unwrap().starts_with("exec_"));
+        assert!(danger, "{preview}");
+
+        let before = serde_json::to_string(&*app.state.config.read().await).unwrap();
+        let (status, refused) = post(
+            &app,
+            "/settings/import",
+            json!({"toml": text, "apply": true}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert!(
+            refused["error"].as_str().unwrap().contains("confirm_exec"),
+            "{refused}"
+        );
+        let after = serde_json::to_string(&*app.state.config.read().await).unwrap();
+        assert_eq!(before, after, "a refused import changes nothing");
+    }
+
+    let text = format!("[[hooks]]\nname = \"x\"\nevents = [\"*\"]\ncommand = [\"{program}\"]\n");
+    let (status, applied) = post(
+        &app,
+        "/settings/import",
+        json!({"toml": text, "apply": true, "confirm_exec": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(app.state.config.read().await.hooks.len(), 1);
+
+    // The same file again changes nothing, so it needs no confirmation
+    let (status, again) = post(
+        &app,
+        "/settings/import",
+        json!({"toml": text, "apply": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert!(again.get("needs_confirm_exec").is_none(), "{again}");
+}

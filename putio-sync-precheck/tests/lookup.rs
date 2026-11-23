@@ -9,7 +9,21 @@ use putio_sync_precheck::lookup::{self, Lookup, Missed};
 use putio_sync_precheck::metainfo::info_hash;
 use putio_sync_telemetry::LookupResult;
 
-use putio_sync_precheck::fetch::{client, fetch, FetchError, Fetched, MAX_TORRENT_BYTES};
+use putio_sync_core::net_guard::Reach;
+use putio_sync_precheck::fetch::{client_with, fetch_with, FetchError, Fetched, MAX_TORRENT_BYTES};
+
+/// Test servers are on loopback, which the default client refuses (see fetch_guard.rs)
+async fn fetch(
+    http: &reqwest::Client,
+    url: &str,
+    deadline: tokio::time::Instant,
+) -> Result<Fetched, FetchError> {
+    fetch_with(http, url, deadline, Reach::Local).await
+}
+
+fn client() -> reqwest::Client {
+    client_with(Reach::Local)
+}
 use tokio::time::Instant;
 
 fn deadline() -> Instant {

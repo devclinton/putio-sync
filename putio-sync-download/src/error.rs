@@ -1,6 +1,6 @@
 //! Error types for download operations
 
-use putio_sync_telemetry::FailReason;
+use putio_sync_telemetry::{DownloadRetryReason, FailReason, SyncFailReason};
 use thiserror::Error;
 
 /// Download operation errors
@@ -117,6 +117,70 @@ impl DownloadError {
         }
     }
 
+    /// Metric reason for a failed sync run: the token or permissions (401/403), Put.io's
+    /// rate limit, the network, the database, or anything else
+    pub fn sync_fail_reason(&self) -> SyncFailReason {
+        use putio_sync_client::error::ClientError;
+        let by_status = |status: Option<u16>| match status {
+            Some(401 | 403) => SyncFailReason::Auth,
+            Some(429) => SyncFailReason::RateLimited,
+            _ => SyncFailReason::Other,
+        };
+        match self {
+            DownloadError::DbError(_) => SyncFailReason::Database,
+            DownloadError::HttpError(e) => match e.status() {
+                Some(s) => by_status(Some(s.as_u16())),
+                None => SyncFailReason::Network,
+            },
+            DownloadError::ApiError(msg) => by_status(status_in_message(msg)),
+            DownloadError::ClientError(e) => match e {
+                ClientError::AuthError(_) => SyncFailReason::Auth,
+                ClientError::HttpError(e) => match e.status() {
+                    Some(s) => by_status(Some(s.as_u16())),
+                    None => SyncFailReason::Network,
+                },
+                ClientError::ApiError(_) if e.is_unauthorized() => SyncFailReason::Auth,
+                ClientError::ApiError(msg) if msg.starts_with("Access forbidden") => {
+                    SyncFailReason::Auth
+                }
+                ClientError::ApiError(msg) if msg.starts_with("Rate limit exceeded") => {
+                    SyncFailReason::RateLimited
+                }
+                ClientError::ApiError(msg) => by_status(status_in_message(msg)),
+                ClientError::IoError(_) => SyncFailReason::Network,
+                _ => SyncFailReason::Other,
+            },
+            _ => SyncFailReason::Other,
+        }
+    }
+
+    /// Metric reason for retrying a download after this error: a stall, a timeout
+    /// (including 408), a server error (5xx, 429), else a network or I/O failure
+    pub fn retry_reason(&self) -> DownloadRetryReason {
+        let status_of = |e: &reqwest::Error| e.status().map(|s| s.as_u16());
+        let by_status = |status: Option<u16>| match status {
+            Some(408) => Some(DownloadRetryReason::Timeout),
+            Some(s) if s >= 500 || s == 429 => Some(DownloadRetryReason::ServerError),
+            _ => None,
+        };
+        match self {
+            DownloadError::ApiError(msg) if msg.starts_with("Download stalled") => {
+                DownloadRetryReason::Stall
+            }
+            DownloadError::ApiError(msg) => {
+                by_status(status_in_message(msg)).unwrap_or(DownloadRetryReason::Network)
+            }
+            DownloadError::HttpError(e) if e.is_timeout() => DownloadRetryReason::Timeout,
+            DownloadError::HttpError(e) => {
+                by_status(status_of(e)).unwrap_or(DownloadRetryReason::Network)
+            }
+            DownloadError::IoError(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                DownloadRetryReason::Timeout
+            }
+            _ => DownloadRetryReason::Network,
+        }
+    }
+
     /// Metric reason for a failed download
     pub fn fail_reason(&self) -> FailReason {
         match self {
@@ -144,6 +208,72 @@ impl DownloadError {
 mod tests {
     use super::*;
     use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn sync_fail_reason_maps_auth_rate_limit_network_and_database() {
+        use putio_sync_client::error::ClientError;
+        use SyncFailReason::*;
+        let client = |e: ClientError| DownloadError::ClientError(e);
+        assert_eq!(
+            client(ClientError::ApiError(
+                "Authentication failed. Invalid or expired token.".into()
+            ))
+            .sync_fail_reason(),
+            Auth
+        );
+        assert_eq!(
+            client(ClientError::AuthError("x".into())).sync_fail_reason(),
+            Auth
+        );
+        assert_eq!(
+            client(ClientError::ApiError(
+                "Access forbidden. Check your permissions.".into()
+            ))
+            .sync_fail_reason(),
+            Auth
+        );
+        assert_eq!(
+            client(ClientError::ApiError(
+                "Rate limit exceeded. Please try again later.".into()
+            ))
+            .sync_fail_reason(),
+            RateLimited
+        );
+        let io = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "r");
+        assert_eq!(client(ClientError::IoError(io)).sync_fail_reason(), Network);
+        assert_eq!(
+            DownloadError::ApiError("HTTP error 429 Too Many Requests: x".into())
+                .sync_fail_reason(),
+            RateLimited
+        );
+        assert_eq!(
+            DownloadError::InternalError("x".into()).sync_fail_reason(),
+            Other
+        );
+    }
+
+    #[test]
+    fn retry_reason_maps_stalls_timeouts_and_server_errors() {
+        let api = |m: &str| DownloadError::ApiError(m.to_string());
+        use DownloadRetryReason::*;
+        assert_eq!(
+            api("Download stalled - no data received for 60 seconds").retry_reason(),
+            Stall
+        );
+        assert_eq!(
+            api("HTTP error 408 Request Timeout: x").retry_reason(),
+            Timeout
+        );
+        assert_eq!(
+            api("HTTP error 503 Service Unavailable: x").retry_reason(),
+            ServerError
+        );
+        assert_eq!(api("Incomplete download").retry_reason(), Network);
+        let timed_out = DownloadError::IoError(Error::new(ErrorKind::TimedOut, "t"));
+        assert_eq!(timed_out.retry_reason(), Timeout);
+        let reset = DownloadError::IoError(Error::new(ErrorKind::ConnectionReset, "r"));
+        assert_eq!(reset.retry_reason(), Network);
+    }
 
     #[test]
     fn client_errors_are_permanent_but_timeouts_and_server_errors_are_not() {

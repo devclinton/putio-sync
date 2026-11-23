@@ -228,6 +228,7 @@ main { max-width: 1160px; margin: 0 auto; padding: 40px 40px 80px; outline: none
 
 .card > h2, .card > form > h2 { margin-bottom: 14px; }
 .stack > .card > h2 { margin-bottom: 10px; }
+.card > h2 + .guide-link, .card > form > h2 + .guide-link { margin: -8px 0 12px; }
 .card p { margin: 0 0 6px; }
 
 /* Settings sections (feature 046): a side list from 900 px, a row of pills below */

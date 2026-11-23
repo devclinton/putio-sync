@@ -26,11 +26,7 @@ pub fn format_csv(files: &[FileEntry]) -> String {
 }
 
 fn escape_csv(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    } else {
-        s.to_string()
-    }
+    putio_sync_core::csv_field::csv_field(s)
 }
 
 #[cfg(test)]
@@ -71,5 +67,11 @@ mod tests {
         assert_eq!(escape_csv("simple"), "simple");
         assert_eq!(escape_csv("with,comma"), "\"with,comma\"");
         assert_eq!(escape_csv("with\"quote"), "\"with\"\"quote\"");
+    }
+
+    #[test]
+    fn a_formula_file_name_is_defused() {
+        let csv = format_csv(&[create_test_file(1, "=HYPERLINK(\"http://x\")")]);
+        assert!(csv.contains("\"'=HYPERLINK("), "{csv}");
     }
 }

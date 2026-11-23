@@ -21,7 +21,9 @@ buckets (s): 1, 5, 15, 60, 300, 900, 1800, 3600, 7200. Sync buckets (s): 1, 5, 1
 
 | Name | Type | Labels | Meaning |
 |---|---|---|---|
-| `putio_sync_api_requests_total` | counter | `operation`, `outcome` | Each HTTP attempt to Put.io, retries included |
+| `putio_sync_api_requests_total` | counter | `operation`, `outcome` | Each HTTP attempt to Put.io, retries included; `outcome` is `success`, `client_error`, `rate_limited`, `unauthorized`, `server_error` or `network_error` |
+| `putio_sync_api_rate_limit` | gauge | — | Put.io request quota from the last `X-RateLimit-Limit` header |
+| `putio_sync_api_rate_limit_remaining` | gauge | — | Requests left, from the last `X-RateLimit-Remaining` header |
 | `putio_sync_api_retries_total` | counter | `reason` | Each retry scheduled by the retry policy |
 | `putio_sync_api_request_duration_seconds` | H | — | Latency of each attempt |
 | `putio_sync_api_operation_duration_seconds` | H | `operation` | **detailed only.** Latency per operation |
@@ -31,6 +33,7 @@ buckets (s): 1, 5, 15, 60, 300, 900, 1800, 3600, 7200. Sync buckets (s): 1, 5, 1
 | Name | Type | Labels | Meaning |
 |---|---|---|---|
 | `putio_sync_sync_runs_total` | counter | `result` | Completed sync runs |
+| `putio_sync_sync_failures_total` | counter | `reason` | Failed sync runs: `auth`, `network`, `rate_limited`, `database`, `other` |
 | `putio_sync_sync_duration_seconds` | H | — | Duration of each sync run |
 | `putio_sync_last_sync_duration_seconds` | gauge | — | Duration of the latest run |
 | `putio_sync_last_success_timestamp_seconds` | gauge | — | Unix time the last successful run finished; absent until the first one |
@@ -47,6 +50,7 @@ buckets (s): 1, 5, 15, 60, 300, 900, 1800, 3600, 7200. Sync buckets (s): 1, 5, 1
 | `putio_sync_download_workers` | gauge | — | Configured worker count |
 | `putio_sync_downloads_completed_total` | counter | — | Downloads verified and renamed into place |
 | `putio_sync_downloads_failed_total` | counter | `reason` | Downloads that ended in failure |
+| `putio_sync_download_retries_total` | counter | `reason` | Retries inside a download: `network`, `timeout`, `stall`, `server_error` |
 | `putio_sync_downloaded_bytes_total` | counter | — | Bytes written to disk; `rate()` gives throughput |
 | `putio_sync_download_duration_seconds` | H | — | Time per completed download |
 | `putio_sync_transfers_stalled` | gauge | — | Put.io transfers stalled at the last check (feature 007) |

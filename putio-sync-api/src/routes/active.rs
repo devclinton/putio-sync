@@ -127,8 +127,9 @@ pub async fn get_active(State(state): State<AppState>) -> ApiResult<Json<ActiveR
         .map(finished_item)
         .collect();
     if let Some(pipeline) = &state.pipeline {
+        let warned = pipeline.warning_keys().await;
         for item in &mut recently_finished {
-            item.warnings = pipeline.has_warnings(&item.key).await;
+            item.warnings = warned.contains(&item.key);
         }
     }
     let pipeline = with_processing(&state, pipeline).await;
@@ -149,8 +150,7 @@ async fn with_processing(state: &AppState, view: Pipeline) -> serde_json::Value 
     let Some(pipeline) = &state.pipeline else {
         return value;
     };
-    let summaries = pipeline.summaries().await;
-    let processing = pipeline.processing_items().await;
+    let (summaries, processing) = pipeline.active_rows().await;
     let step = |key: &str| {
         summaries
             .get(key)

@@ -107,7 +107,7 @@ async fn a_chunk_is_cut_and_its_file_goes_away_with_the_guard() {
     assert!(path.exists());
     let args = std::fs::read_to_string(&log).unwrap();
     assert!(
-        args.contains("-ss 600.000 -t 300.000 -i /m/Movie.mkv"),
+        args.contains("-ss 600.000 -t 300.000 -protocol_whitelist file -i file:/m/Movie.mkv"),
         "{args}"
     );
     assert!(args.contains("-map 0:a:0"), "{args}");

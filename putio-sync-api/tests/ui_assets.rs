@@ -18,8 +18,17 @@ fn asset_refs(text: &str) -> Vec<String> {
 /// Relative module imports (`from "./x.js"`, `from "../x.js"`) in `text`, resolved
 /// against the asset path `base` (e.g. `/assets/pages/status.js`)
 fn imports(base: &str, text: &str) -> Vec<String> {
+    specs(base, text, "from \"")
+}
+
+/// `import("./x.js")` loads: pages fetched on first use
+fn lazy_imports(base: &str, text: &str) -> Vec<String> {
+    specs(base, text, "import(\"")
+}
+
+fn specs(base: &str, text: &str, marker: &str) -> Vec<String> {
     let dir = &base[..base.rfind('/').unwrap()];
-    text.split("from \"")
+    text.split(marker)
         .skip(1)
         .filter_map(|rest| rest.split('"').next())
         .filter(|spec| spec.starts_with("./") || spec.starts_with("../"))
@@ -45,6 +54,15 @@ async fn public_get(app: &TestApp, path: &str) -> axum::response::Response {
 
 /// Every asset reachable from the index, through script imports
 async fn all_assets(app: &TestApp) -> BTreeSet<String> {
+    reachable(app, false).await
+}
+
+/// Also through `import()`, so pages loaded on first use count
+async fn every_asset(app: &TestApp) -> BTreeSet<String> {
+    reachable(app, true).await
+}
+
+async fn reachable(app: &TestApp, lazy: bool) -> BTreeSet<String> {
     let index = body_text(public_get(app, "/").await).await;
     let mut seen = BTreeSet::new();
     let mut todo = asset_refs(&index);
@@ -55,6 +73,9 @@ async fn all_assets(app: &TestApp) -> BTreeSet<String> {
         if path.ends_with(".js") {
             let text = body_text(public_get(app, &path).await).await;
             todo.extend(imports(&path, &text));
+            if lazy {
+                todo.extend(lazy_imports(&path, &text));
+            }
         }
     }
     seen
@@ -75,7 +96,7 @@ async fn index_served_public() {
 #[tokio::test]
 async fn every_referenced_asset_resolves() {
     let app = test_app().await;
-    let assets = all_assets(&app).await;
+    let assets = every_asset(&app).await;
     for page in [
         "status",
         "queue",

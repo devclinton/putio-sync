@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use putio_sync_core::config::Config;
 use putio_sync_core::events::{self, Event, EventType, Payload, PluginTest};
+use putio_sync_core::net_guard::{GuardedResolver, Reach};
 use putio_sync_core::plugins::{dir_for, PluginRegistryConfig, PluginSettings};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -222,6 +223,10 @@ pub struct PluginsOptions {
     pub clock: Option<Clock>,
     /// `putio.download_dir`
     pub download_dir: Option<PathBuf>,
+    /// How far plugin HTTP requests may reach: the private LAN (media servers, ntfy and the
+    /// like live there) when `None`, or everything but cloud metadata when
+    /// `PUTIO_SYNC_ALLOW_LOCAL_FETCH` is set. Loopback and link-local are otherwise refused
+    pub reach: Option<Reach>,
 }
 
 struct State {
@@ -236,6 +241,7 @@ struct State {
 
 struct Inner {
     state: Mutex<State>,
+    reach: Reach,
     data_dir: Option<PathBuf>,
     clock: Clock,
     history: History,
@@ -355,6 +361,9 @@ impl PluginsService {
     ///
     /// [`start`]: PluginsService::start
     pub fn new(options: PluginsOptions) -> PluginsService {
+        let reach = options
+            .reach
+            .unwrap_or_else(|| Reach::or_opt_in(Reach::Lan));
         if let Some(dir) = &options.dir {
             let cleaned = crate::install::clean_leftovers(dir);
             if cleaned > 0 {
@@ -373,6 +382,7 @@ impl PluginsService {
                     env: None,
                 }),
                 data_dir: options.data_dir.clone(),
+                reach,
                 clock: options.clock.unwrap_or_else(system_clock),
                 history: History::default(),
                 stores: Default::default(),
@@ -389,12 +399,14 @@ impl PluginsService {
     fn env(&self, handle: tokio::runtime::Handle) -> Env {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .dns_resolver(Arc::new(GuardedResolver::new(self.inner.reach)))
             .user_agent(format!("putio-sync/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .unwrap_or_default();
         Env {
             data_dir: self.inner.data_dir.clone(),
             client,
+            reach: self.inner.reach,
             handle,
             clock: self.inner.clock.clone(),
             history: self.inner.history.clone(),
@@ -977,6 +989,7 @@ impl PluginsService {
             settings: config.plugins.clone(),
             clock: None,
             download_dir: Some(config.download.target_directory.clone()),
+            reach: None,
         })
     }
 
@@ -1077,8 +1090,9 @@ impl PluginsService {
 
     /// Run settings action `id` of `name` (031) with `input`. `overrides` are unsaved
     /// form values that are not secret (`null` clears one) and count for this call only.
-    /// The plugin may call every host its settings need, approved or not: the person is
-    /// setting it up. One action or health check per plugin at a time.
+    /// The plugin gets the hosts and folders the person approved, plus the ones in the
+    /// unsaved form values of this call (the person is typing them in to set it up). A
+    /// fixed host or folder of the manifest needs its approval first. One action or health check per plugin at a time.
     pub async fn action(
         &self,
         name: &str,
@@ -1091,6 +1105,10 @@ impl PluginsService {
         if !manifest.has_action(id) {
             return Err(CallError::NoAction);
         }
+        let mut typed = overrides.clone();
+        typed.retain(|key, _| !manifest.config.iter().any(|f| &f.key == key && f.secret));
+        let typed_hosts: HashSet<String> = manifest.hosts_from_values(&typed).into_iter().collect();
+        let typed_paths: HashSet<String> = manifest.paths_from_values(&typed).into_iter().collect();
         let mut merged = saved.clone();
         for (key, value) in overrides {
             if manifest.config.iter().any(|f| f.key == key && f.secret) {
@@ -1105,8 +1123,16 @@ impl PluginsService {
         manifest.check_values(&merged).map_err(CallError::Broken)?;
         let _busy = self.begin(name)?;
         let spec = Spec {
-            allowed: manifest.hosts_needed(&merged).into_iter().collect(),
-            paths: manifest.paths_needed(&merged),
+            allowed: manifest
+                .hosts_needed(&merged)
+                .into_iter()
+                .filter(|h| saved.approved_hosts.contains(h) || typed_hosts.contains(h))
+                .collect(),
+            paths: manifest
+                .paths_needed(&merged)
+                .into_iter()
+                .filter(|p| saved.approved_paths.contains(p) || typed_paths.contains(p))
+                .collect(),
             manifest: manifest.clone(),
             script: found.script.clone(),
             wasm: found.wasm.clone(),

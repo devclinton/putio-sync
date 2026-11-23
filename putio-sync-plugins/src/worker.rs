@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use chrono::{SecondsFormat, Utc};
 use mlua::{Function, Lua, Table, Value as LuaValue};
 use putio_sync_core::events::Event;
+use putio_sync_core::net_guard::Reach;
 use putio_sync_core::plugins::PluginSettings;
 use putio_sync_core::sync_hooks::Hook;
 use serde::{Deserialize, Serialize};
@@ -117,6 +118,8 @@ pub struct Env {
     pub data_dir: Option<PathBuf>,
     /// HTTP client, redirects off
     pub client: reqwest::Client,
+    /// How far plugin requests may reach
+    pub reach: Reach,
     /// The runtime HTTP calls run on
     pub handle: tokio::runtime::Handle,
     /// `putio.time.now()`
@@ -549,6 +552,7 @@ impl Worker {
             http: m.permissions.http.any().then(|| Http {
                 allowed: spec.allowed.clone(),
                 client: self.env.client.clone(),
+                reach: self.env.reach,
                 handle: self.env.handle.clone(),
                 tap: self.env.tap.clone(),
             }),

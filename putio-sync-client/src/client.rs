@@ -71,13 +71,31 @@ impl RetryPolicy {
     }
 }
 
-/// Outcome class of one HTTP attempt. Every 4xx, 429 included, is a client error.
+/// Outcome class of one HTTP attempt: 429 is `rate_limited`, 401 and 403 are
+/// `unauthorized`, every other 4xx is a client error.
 pub(crate) fn attempt_outcome(result: &reqwest::Result<Response>) -> ApiOutcome {
     match result {
         Ok(r) if r.status().is_success() => ApiOutcome::Success,
         Ok(r) if r.status().is_server_error() => ApiOutcome::ServerError,
+        Ok(r) if r.status() == StatusCode::TOO_MANY_REQUESTS => ApiOutcome::RateLimited,
+        Ok(r) if matches!(r.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) => {
+            ApiOutcome::Unauthorized
+        }
         Ok(_) => ApiOutcome::ClientError,
         Err(_) => ApiOutcome::NetworkError,
+    }
+}
+
+/// Export Put.io's request quota when the response carries both `X-RateLimit-*` headers.
+fn record_rate_limit(headers: &header::HeaderMap) {
+    let num = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<u64>().ok())
+    };
+    if let Some((limit, remaining)) = num("x-ratelimit-limit").zip(num("x-ratelimit-remaining")) {
+        api::record_rate_limit(limit, remaining);
     }
 }
 
@@ -389,7 +407,10 @@ impl PutioApiClient {
     /// A request builder with authentication headers set
     pub fn authenticated_request(&self, url: &str) -> ClientResult<reqwest::RequestBuilder> {
         let auth_header = self.get_auth_header()?;
-        Ok(self.client.get(url).header("Authorization", auth_header))
+        Ok(self
+            .client
+            .get(url)
+            .header(header::AUTHORIZATION, sensitive(auth_header)?))
     }
 
     /// The HTTP client for file downloads: connect and read timeouts, no total timeout.
@@ -415,14 +436,17 @@ impl PutioApiClient {
         url: &str,
     ) -> ClientResult<reqwest::RequestBuilder> {
         let auth_header = self.get_auth_header()?;
-        debug!("Creating authenticated download request for URL: {}", url);
+        debug!(
+            "Creating authenticated download request for {}",
+            loggable_url(url)
+        );
         debug!("Auth method: {:?}", self.auth_method);
         // Note: Not logging auth header value for security
 
         Ok(self
             .download_client
             .get(url)
-            .header("Authorization", auth_header))
+            .header(header::AUTHORIZATION, sensitive(auth_header)?))
     }
 
     /// Create an authenticated HEAD request builder for checking file metadata
@@ -438,7 +462,10 @@ impl PutioApiClient {
     /// A request builder with authentication headers set
     pub fn authenticated_head_request(&self, url: &str) -> ClientResult<reqwest::RequestBuilder> {
         let auth_header = self.get_auth_header()?;
-        Ok(self.client.head(url).header("Authorization", auth_header))
+        Ok(self
+            .client
+            .head(url)
+            .header(header::AUTHORIZATION, sensitive(auth_header)?))
     }
 
     /// Generate the appropriate Authorization header based on auth method
@@ -485,14 +512,14 @@ impl PutioApiClient {
     /// Response body deserialized as type T
     pub(crate) async fn get<T: DeserializeOwned>(&self, path: &str) -> ClientResult<T> {
         let url = format!("{}{}", self.base_url, path);
-        debug!("GET request to: {}", url);
+        debug!("GET request to: {}", loggable_url(&url));
 
         let auth_header = self.get_auth_header()?;
 
         let request = self
             .client
             .get(&url)
-            .header(header::AUTHORIZATION, auth_header)
+            .header(header::AUTHORIZATION, sensitive(auth_header)?)
             .build()
             .map_err(ClientError::HttpError)?;
 
@@ -515,14 +542,14 @@ impl PutioApiClient {
         body: &B,
     ) -> ClientResult<T> {
         let url = format!("{}{}", self.base_url, path);
-        debug!("POST request to: {}", url);
+        debug!("POST request to: {}", loggable_url(&url));
 
         let auth_header = self.get_auth_header()?;
 
         let request = self
             .client
             .post(&url)
-            .header(header::AUTHORIZATION, auth_header)
+            .header(header::AUTHORIZATION, sensitive(auth_header)?)
             .header(header::CONTENT_TYPE, "application/json")
             .json(body)
             .build()
@@ -539,14 +566,14 @@ impl PutioApiClient {
         body: &B,
     ) -> ClientResult<T> {
         let url = format!("{}{}", self.base_url, path);
-        debug!("POST (read-only) request to: {}", url);
+        debug!("POST (read-only) request to: {}", loggable_url(&url));
 
         let auth_header = self.get_auth_header()?;
 
         let request = self
             .client
             .post(&url)
-            .header(header::AUTHORIZATION, auth_header)
+            .header(header::AUTHORIZATION, sensitive(auth_header)?)
             .header(header::CONTENT_TYPE, "application/json")
             .json(body)
             .build()
@@ -591,7 +618,7 @@ impl PutioApiClient {
 
         loop {
             attempt += 1;
-            trace!("Attempt {} for {}", attempt, url);
+            trace!("Attempt {} for {}", attempt, loggable_url(url.as_str()));
 
             // Clone the request for retry attempts
             let req = request.try_clone().ok_or_else(|| {
@@ -601,6 +628,9 @@ impl PutioApiClient {
             let started = Instant::now();
             let result = self.client.execute(req).await;
             api::record_attempt(op, attempt_outcome(&result), started.elapsed());
+            if let Ok(response) = &result {
+                record_rate_limit(response.headers());
+            }
 
             let (delay, error, reason) = match result {
                 Ok(response) => {
@@ -686,10 +716,7 @@ impl PutioApiClient {
         response: Response,
     ) -> ClientResult<T> {
         let status = response.status();
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unable to read error body".to_string());
+        let body = crate::body::read_error_text(response, "Unable to read error body").await;
 
         trace!("Error response body: {}", body);
 
@@ -707,8 +734,62 @@ impl PutioApiClient {
     }
 }
 
+/// The Authorization header value marked sensitive, so reqwest's Debug output and HTTP/2
+/// HPACK never show the token
+pub fn sensitive(value: String) -> ClientResult<header::HeaderValue> {
+    let mut value = header::HeaderValue::from_str(&value)
+        .map_err(|_| ClientError::AuthError("The credentials hold an invalid character".into()))?;
+    value.set_sensitive(true);
+    Ok(value)
+}
+
+/// A URL as it is safe to log: scheme, host, port and path. The query string and any
+/// user info are dropped because they can hold signed tokens.
+pub fn loggable_url(url: &str) -> String {
+    match reqwest::Url::parse(url) {
+        Ok(u) => {
+            let port = u.port().map(|p| format!(":{p}")).unwrap_or_default();
+            format!(
+                "{}://{}{}{}",
+                u.scheme(),
+                u.host_str().unwrap_or(""),
+                port,
+                u.path()
+            )
+        }
+        Err(_) => "<invalid url>".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn loggable_url_drops_query_and_user_info() {
+        assert_eq!(
+            super::loggable_url(
+                "https://user:pw@cdn.put.io:8443/v1/f/1?oauth_token=SECRET&x=1#frag"
+            ),
+            "https://cdn.put.io:8443/v1/f/1"
+        );
+        assert_eq!(
+            super::loggable_url("not a url?token=SECRET"),
+            "<invalid url>"
+        );
+    }
+
+    #[test]
+    fn the_authorization_value_is_sensitive_in_debug_output() {
+        let v = super::sensitive("Bearer SECRET".to_string()).unwrap();
+        assert!(v.is_sensitive());
+        assert!(!format!("{v:?}").contains("SECRET"));
+        let req = reqwest::Client::new()
+            .get("http://localhost/")
+            .header(reqwest::header::AUTHORIZATION, v)
+            .build()
+            .unwrap();
+        assert!(!format!("{:?}", req.headers()).contains("SECRET"));
+    }
+
     use super::*;
     use crate::auth::AuthConfig;
     use mockito::{Server, ServerGuard};

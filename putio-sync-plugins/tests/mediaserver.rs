@@ -42,6 +42,8 @@ fn service(settings: Vec<PluginSettings>, clock: &Clock) -> PluginsService {
         clock: clock.options(),
         data_dir: Some(data),
         download_dir: Some("/downloads".into()),
+        // The test servers listen on loopback
+        reach: Some(putio_sync_core::net_guard::Reach::Local),
         ..PluginsOptions::default()
     });
     let checked = plugins.check(&settings).unwrap();
@@ -60,6 +62,14 @@ fn plugin(name: &str, enabled: bool, config: Value, secrets: &[(&str, &str)]) ->
             .collect(),
         ..PluginSettings::default()
     }
+}
+
+/// The form values the page sends with an action: the person is setting the plugin up
+fn typed(server: &ServerGuard) -> Map<String, Value> {
+    let mut form = Map::new();
+    form.insert("server".to_string(), json!(server.url()));
+    form.insert("plex_tv_url".to_string(), json!(server.url()));
+    form
 }
 
 fn plex(server: &ServerGuard, extra: Value) -> PluginSettings {
@@ -334,7 +344,7 @@ async fn plex_sign_in_saves_the_token_and_shows_it_nowhere() {
     let plugins = service(vec![settings], &clock);
 
     let first = plugins
-        .action("plex", "sign_in", json!({}), Map::new())
+        .action("plex", "sign_in", json!({}), typed(&server))
         .await
         .unwrap();
     pin.assert_async().await;
@@ -347,7 +357,7 @@ async fn plex_sign_in_saves_the_token_and_shows_it_nowhere() {
     assert_eq!(next.action, "sign_in_poll");
 
     let again = plugins
-        .action("plex", &next.action, next.input.clone(), Map::new())
+        .action("plex", &next.action, next.input.clone(), typed(&server))
         .await
         .unwrap();
     assert!(!again.result.done);
@@ -378,7 +388,7 @@ async fn plex_sign_in_saves_the_token_and_shows_it_nowhere() {
             "plex",
             "sign_in_poll",
             again.result.next.unwrap().input,
-            Map::new(),
+            typed(&server),
         )
         .await
         .unwrap();
@@ -399,7 +409,7 @@ async fn plex_sign_in_saves_the_token_and_shows_it_nowhere() {
         .create_async()
         .await;
     let expired = plugins
-        .action("plex", "sign_in_poll", expired_input, Map::new())
+        .action("plex", "sign_in_poll", expired_input, typed(&server))
         .await
         .unwrap();
     assert!(expired.result.done);
@@ -435,7 +445,7 @@ async fn plex_lists_servers_and_libraries_to_pick_from() {
     let plugins = service(vec![settings], &clock);
 
     let servers = plugins
-        .action("plex", "load_servers", json!({}), Map::new())
+        .action("plex", "load_servers", json!({}), typed(&server))
         .await
         .unwrap();
     let choices = servers.result.choices.unwrap();
@@ -450,7 +460,7 @@ async fn plex_lists_servers_and_libraries_to_pick_from() {
     );
 
     let libraries = plugins
-        .action("plex", "load_libraries", json!({}), Map::new())
+        .action("plex", "load_libraries", json!({}), typed(&server))
         .await
         .unwrap();
     let labels: Vec<(String, String)> = libraries
