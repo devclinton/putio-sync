@@ -15,7 +15,7 @@ putio-sync-telemetry = { path = "../putio-sync-telemetry" }
 
 # HTTP server and streaming
 axum = "0.7"
-tower = { version = "0.4", features = ["util"] }
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs"] }
 http-body-util = "0.1"
 futures-util = "0.3"
