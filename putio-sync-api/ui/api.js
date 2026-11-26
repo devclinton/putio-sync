@@ -115,6 +115,7 @@ export const put = (path, body) => request("PUT", path, body);
 // Configuration assistant (feature 015)
 export const settingsAssistant = () => get("/settings/assistant");
 export const previewSettings = (group, body) => post(`/settings/${group}/preview`, body);
+export const settingsStatus = () => get("/settings/status");
 export const exportSettings = () => get("/settings/export");
 export const importSettings = (toml, apply, confirm_exec = false) => post("/settings/import", { toml, apply, confirm_exec });
 export const del = (path) => request("DELETE", path);

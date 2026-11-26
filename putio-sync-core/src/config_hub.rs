@@ -50,19 +50,22 @@ pub struct HubStatus {
 #[derive(Debug)]
 pub struct ConfigHub {
     tx: watch::Sender<Snapshot>,
+    startup: Arc<Config>,
     status: Mutex<HubStatus>,
 }
 
 impl ConfigHub {
     /// A hub whose first snapshot (generation 0) is `config`, from [`Source::Startup`]
     pub fn new(config: Config) -> Self {
+        let startup = Arc::new(config);
         let (tx, _) = watch::channel(Snapshot {
-            config: Arc::new(config),
+            config: startup.clone(),
             generation: 0,
             source: Source::Startup,
         });
         Self {
             tx,
+            startup,
             status: Mutex::new(HubStatus {
                 last_error: None,
                 applied_at: Some(SystemTime::now()),
@@ -73,6 +76,17 @@ impl ConfigHub {
     /// The running config
     pub fn current(&self) -> Arc<Config> {
         self.tx.borrow().config.clone()
+    }
+
+    /// The config the process started with
+    pub fn startup(&self) -> Arc<Config> {
+        self.startup.clone()
+    }
+
+    /// Saved settings that differ from startup and apply only after a restart, as
+    /// `section.key` ([`crate::restart::pending`])
+    pub fn pending_restart(&self) -> Vec<String> {
+        crate::restart::pending(&self.startup, &self.current())
     }
 
     /// The running snapshot
@@ -271,6 +285,19 @@ mod tests {
         hub.publish(Config::default(), Source::Api);
         assert!(hub.status().last_error.is_none());
         assert!(hub.status().applied_at.is_some());
+    }
+
+    #[test]
+    fn pending_restart_compares_with_startup() {
+        let hub = ConfigHub::new(Config::default());
+        assert!(hub.pending_restart().is_empty());
+        let mut config = Config::default();
+        config.metrics.enabled = !config.metrics.enabled;
+        hub.publish(config, Source::File);
+        assert_eq!(hub.pending_restart(), vec!["metrics.enabled"]);
+        // Put back as it was: nothing waits for a restart
+        hub.publish(Config::default(), Source::Api);
+        assert!(hub.pending_restart().is_empty());
     }
 
     #[test]

@@ -416,6 +416,7 @@ pub async fn execute_daemon(
             )
             .with_stall_tracker(daemon.stall_tracker())
             .with_hub(hub.clone())
+            .with_watch_interval_pinned(pins.watch_interval.is_some())
             .on_daemon();
             let state = match &cleanup {
                 Some(cleanup) => state.with_cleanup(cleanup.clone()),
