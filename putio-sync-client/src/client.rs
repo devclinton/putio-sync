@@ -192,7 +192,8 @@ pub struct PutioApiClient {
     pub(crate) base_url: String,
     pub(crate) upload_url: String,
     auth_method: AuthMethod,
-    token: Option<String>,
+    /// Swapped by [`Self::set_token`] while the client is shared
+    token: std::sync::RwLock<Option<String>>,
     username: Option<String>,
     password: Option<String>,
     retry_policy: RetryPolicy,
@@ -245,7 +246,7 @@ impl PutioApiClient {
             upload_url: upload_url_for(&base_url),
             base_url,
             auth_method: auth_config.auth_method,
-            token: auth_config.token,
+            token: std::sync::RwLock::new(auth_config.token),
             username: auth_config.username,
             password: auth_config.password,
             retry_policy: RetryPolicy::default(),
@@ -296,7 +297,7 @@ impl PutioApiClient {
             upload_url: upload_url_for(&base_url),
             base_url,
             auth_method: AuthMethod::Token,
-            token: Some(token),
+            token: std::sync::RwLock::new(Some(token)),
             username: None,
             password: None,
             retry_policy: RetryPolicy::default(),
@@ -357,7 +358,7 @@ impl PutioApiClient {
             upload_url: upload_url_for(&base_url),
             base_url,
             auth_method: AuthMethod::AppPassword,
-            token: None,
+            token: std::sync::RwLock::new(None),
             username: Some(username),
             password: Some(password),
             retry_policy: RetryPolicy::default(),
@@ -468,6 +469,18 @@ impl PutioApiClient {
             .header(header::AUTHORIZATION, sensitive(auth_header)?))
     }
 
+    /// Use `token` for every request built from now on. For a client shared by the daemon's services, so a new `[auth] token`
+    /// applies without a restart. True when it differs from the token in use. Only
+    /// [`AuthMethod::Token`] clients send it.
+    pub fn set_token(&self, token: String) -> bool {
+        let mut current = self.token.write().unwrap_or_else(|e| e.into_inner());
+        if current.as_deref() == Some(token.as_str()) {
+            return false;
+        }
+        *current = Some(token);
+        true
+    }
+
     /// Generate the appropriate Authorization header based on auth method
     ///
     /// # Returns
@@ -476,7 +489,8 @@ impl PutioApiClient {
     pub fn get_auth_header(&self) -> ClientResult<String> {
         match self.auth_method {
             AuthMethod::Token => {
-                let token = self.token.as_ref().ok_or_else(|| {
+                let token = self.token.read().unwrap_or_else(|e| e.into_inner());
+                let token = token.as_ref().ok_or_else(|| {
                     ClientError::AuthError("Token is required for Token authentication".to_string())
                 })?;
                 Ok(format!("Bearer {}", token))
@@ -803,7 +817,7 @@ mod tests {
         let client = PutioApiClient::new("test_token".to_string());
         assert_eq!(client.base_url, DEFAULT_BASE_URL);
         assert_eq!(client.auth_method, AuthMethod::Token);
-        assert_eq!(client.token.as_ref().unwrap(), "test_token");
+        assert_eq!(client.token.read().unwrap().as_deref(), Some("test_token"));
         assert!(client.username.is_none());
         assert!(client.password.is_none());
     }
@@ -856,7 +870,7 @@ mod tests {
             PutioApiClient::with_base_url("test_token".to_string(), custom_url.to_string());
         assert_eq!(client.base_url, custom_url);
         assert_eq!(client.auth_method, AuthMethod::Token);
-        assert_eq!(client.token.as_ref().unwrap(), "test_token");
+        assert_eq!(client.token.read().unwrap().as_deref(), Some("test_token"));
     }
 
     #[tokio::test]
@@ -869,7 +883,7 @@ mod tests {
         assert_eq!(client.auth_method, AuthMethod::AppPassword);
         assert_eq!(client.username.as_ref().unwrap(), "user@example.com");
         assert_eq!(client.password.as_ref().unwrap(), "app_password");
-        assert!(client.token.is_none());
+        assert!(client.token.read().unwrap().is_none());
     }
 
     #[tokio::test]
@@ -878,7 +892,7 @@ mod tests {
         let client = PutioApiClient::from_auth_config(auth);
         assert_eq!(client.base_url, DEFAULT_BASE_URL);
         assert_eq!(client.auth_method, AuthMethod::Token);
-        assert_eq!(client.token.as_ref().unwrap(), "test_token");
+        assert_eq!(client.token.read().unwrap().as_deref(), Some("test_token"));
     }
 
     #[tokio::test]
@@ -892,6 +906,14 @@ mod tests {
         assert_eq!(client.auth_method, AuthMethod::AppPassword);
         assert_eq!(client.username.as_ref().unwrap(), "user@example.com");
         assert_eq!(client.password.as_ref().unwrap(), "app_password");
+    }
+
+    #[test]
+    fn set_token_swaps_the_header() {
+        let client = PutioApiClient::new("old".to_string());
+        assert!(!client.set_token("old".to_string()));
+        assert!(client.set_token("new".to_string()));
+        assert_eq!(client.get_auth_header().unwrap(), "Bearer new");
     }
 
     #[tokio::test]

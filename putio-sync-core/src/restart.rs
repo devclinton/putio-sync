@@ -9,8 +9,6 @@ use crate::config::Config;
 /// Config sections, and the keys in each, that are read only at startup. An empty key
 /// list means every key in the section.
 pub const RESTART_ONLY: &[(&str, &[&str])] = &[
-    // The Put.io token the client was built with
-    ("auth", &[]),
     ("database", &[]),
     // Whether the API listens at all, and the remote API a client mode talks to. Where it
     // listens (`bind`, `[tailscale] tailnet_only`) and all of `[metrics]` apply live;
@@ -94,6 +92,8 @@ mod tests {
         running.metrics.enabled = !started.metrics.enabled;
         running.metrics.bind = crate::listen::BindList::from("127.0.0.1:9999");
         running.tailscale.tailnet_only = true;
+        // So does the Put.io token (part 4)
+        running.auth = Some(crate::config::AuthConfig::with_token("new".to_string()));
         assert!(pending(&started, &running).is_empty());
     }
 
@@ -108,16 +108,6 @@ mod tests {
             pending(&started, &running),
             vec!["api.enabled", "api.url", "logging.console_enabled"]
         );
-    }
-
-    #[test]
-    fn a_changed_token_is_named_but_not_shown() {
-        let started = Config::from_toml("[auth]\ntoken = \"old-secret\"\n").unwrap();
-        let running = Config::from_toml("[auth]\ntoken = \"new-secret\"\n").unwrap();
-        let names = pending(&started, &running);
-        assert_eq!(names, vec!["auth.token"]);
-        let none = Config::default();
-        assert_eq!(pending(&none, &running), vec!["auth"]);
     }
 
     #[test]
@@ -141,7 +131,8 @@ mod tests {
         assert!(!needs_restart("api", "bind"));
         assert!(!needs_restart("metrics", "enabled"));
         assert!(!needs_restart("tailscale", "tailnet_only"));
-        assert!(needs_restart("auth", "anything"));
+        assert!(!needs_restart("auth", "token"));
+        assert!(needs_restart("database", "anything"));
         assert!(!needs_restart("api", "allowed_hosts"));
         assert!(!needs_restart("watch", "refresh_cycle"));
     }

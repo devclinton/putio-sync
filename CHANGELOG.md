@@ -35,6 +35,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   changing its `path` or `detail` apply without a restart, from a save or a hand edit. New
   addresses are bound before the old ones close. Settings and `POST /settings/network/check`
   (new `applies_now`) say so; `server` still binds once.
+- Hot reload (part 4): under `daemon`, a new `[auth] token` (from `putio-sync login`, a save or
+  a hand edit) applies from the next Put.io request, with no restart. `[auth]` is no longer
+  listed under **Restart to apply**.
 - Usage stats receiver Worker: the 4 KB limit now counts bytes and stops reading early (411 without
   `Content-Length`), each field keeps at most 200 distinct values a day, `/summary` is off unless
   `PUBLIC_SUMMARY=1`, and the README covers limits and rate limiting.
