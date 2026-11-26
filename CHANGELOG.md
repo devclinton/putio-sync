@@ -17,6 +17,7 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - Dependencies: sqlx 0.9, argon2 0.6 and sysinfo 0.40. Every query that builds its SQL at run
   time is now marked as checked (only fixed column lists, `?` placeholders and quoted paths go
   into the text; values are bound). Password hashes saved by earlier versions still verify.
+- Dependencies: wasmi 2.0.3, since 2.0.2 was yanked.
 - Usage stats receiver Worker: the 4 KB limit now counts bytes and stops reading early (411 without
   `Content-Length`), each field keeps at most 200 distinct values a day, `/summary` is off unless
   `PUBLIC_SUMMARY=1`, and the README covers limits and rate limiting.
