@@ -25,6 +25,9 @@ pub mod bandwidth;
 /// Configuration management
 pub mod config;
 
+/// The running config, shared by publish and subscribe, and the watcher of its file
+pub mod config_hub;
+
 /// Where the state database lives, and its move out of the download folder
 pub mod database;
 

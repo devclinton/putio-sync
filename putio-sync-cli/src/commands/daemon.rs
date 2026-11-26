@@ -5,7 +5,7 @@
 use anyhow::{anyhow, Context, Result};
 use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::{AuthMethod, Config, ExistingFile};
-use putio_sync_daemon::{DaemonConfig, PutioDaemon};
+use putio_sync_daemon::{DaemonConfig, Pins, PutioDaemon};
 use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadConfig;
 use putio_sync_hooks::HooksService;
@@ -22,8 +22,8 @@ use tracing::{info, warn};
 /// then delegates to PutioDaemon for execution.
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_daemon(
-    download_interval: u64,
-    watch_interval: u64,
+    download_interval: Option<u64>,
+    watch_interval: Option<u64>,
     watch_paths: Vec<PathBuf>,
     filter: Option<String>,
     on_existing: Option<ExistingFile>,
@@ -68,6 +68,12 @@ pub async fn execute_daemon(
     info!("Loading configuration from: {}", config_file_path.display());
     let config = Config::load(&config_file_path)
         .context("Failed to load configuration. Have you run 'putio-sync login'?")?;
+
+    // Invalid settings only warn for now (a release from now they will stop the start);
+    // a reload of the file refuses them and keeps the running config
+    if let Err(e) = config.validate() {
+        warn!(error = %e, "The configuration has a setting that will be refused in a future release; fix it in the config file");
+    }
 
     let auth = config.auth.clone().ok_or_else(|| {
         anyhow!("No authentication credentials found. Please run 'putio-sync login' first.")
@@ -119,14 +125,19 @@ pub async fn execute_daemon(
     // Moves a 0.2.x database out of the download folder on the first start
     let database_path = putio_sync_core::database::prepare(&config, Some(&config_file_path)).await;
 
+    // --watch-interval and --download-interval pin their interval over the config file's
+    let pins = Pins {
+        watch_interval,
+        download_interval,
+    };
+
     // Create daemon configuration
     let mut daemon_config = daemon_config(
         &config,
         database_path,
         oauth_token,
         watch_dirs,
-        watch_interval,
-        download_interval,
+        pins,
         parent_id,
     );
     // --on-existing / --skip-existing for this run; folder rules still win per folder
@@ -143,14 +154,17 @@ pub async fn execute_daemon(
     )
     .await?;
 
-    // Reload [logging] when the config file changes (FR-016)
-    putio_sync_core::config::spawn_reload_poller(
+    // Hand edits of the config file reach the running services (FR-016): the hub holds
+    // the running config, the watcher below publishes valid edits, and the subscribers
+    // (the API's, once it exists, and the daemon's) apply them
+    let hub = Arc::new(putio_sync_core::config_hub::ConfigHub::new(
+        super::daemon_runtime_config(config.clone()).context("Failed to read the API settings")?,
+    ));
+    putio_sync_core::config_hub::spawn_file_watcher(
         config_file_path.clone(),
-        std::time::Duration::from_secs(30),
-        |logging| {
-            let _ = putio_sync_core::logging::apply_level(&logging);
-            putio_sync_core::log_capture::set_capacity(logging.buffer_lines);
-        },
+        std::time::Duration::from_secs(2),
+        hub.clone(),
+        super::daemon_reload,
     );
 
     info!("Daemon configuration:");
@@ -166,10 +180,23 @@ pub async fn execute_daemon(
     for path in &daemon_config.watch_dirs {
         info!("    - {}", path.display());
     }
-    info!("  Watch interval: {}s", daemon_config.watch_interval);
     info!(
-        "  Put.io sync interval: {}s",
-        daemon_config.download_interval
+        "  Watch interval: {}s{}",
+        daemon_config.watch_interval,
+        if watch_interval.is_some() {
+            " (--watch-interval)"
+        } else {
+            ""
+        }
+    );
+    info!(
+        "  Put.io sync interval: {}s{}",
+        daemon_config.download_interval,
+        if download_interval.is_some() {
+            " (--download-interval)"
+        } else {
+            ""
+        }
     );
     info!("  Download workers: {}", download.workers);
     info!("  Buffer size: {}MB", download.buffer_size_mb);
@@ -388,6 +415,7 @@ pub async fn execute_daemon(
                 daemon.get_file_watcher(),
             )
             .with_stall_tracker(daemon.stall_tracker())
+            .with_hub(hub.clone())
             .on_daemon();
             let state = match &cleanup {
                 Some(cleanup) => state.with_cleanup(cleanup.clone()),
@@ -415,10 +443,21 @@ pub async fn execute_daemon(
                 Some(organiser) => state.with_organiser(organiser.clone()),
                 None => state,
             };
+            putio_sync_api::live::spawn_config_subscriber(state.clone());
             crate::api_listener::start(&config, state).await?;
         }
         _ => warn!("API listener not started: no local download manager (api.enabled is set)"),
     }
+    // The daemon's loops follow every published config, whoever published it
+    let handle = daemon.handle().with_pins(pins);
+    let mut published = hub.subscribe();
+    tokio::spawn(async move {
+        while published.changed().await.is_ok() {
+            let snapshot = published.borrow_and_update().clone();
+            handle.apply(&snapshot.config).await;
+        }
+    });
+
     // Healthy: keep this version
     putio_sync_update::trial::commit(&config_dir);
 
@@ -489,8 +528,7 @@ fn daemon_config(
     database_path: PathBuf,
     oauth_token: String,
     watch_dirs: Vec<PathBuf>,
-    watch_interval: u64,
-    download_interval: u64,
+    pins: Pins,
     parent_id: Option<i64>,
 ) -> DaemonConfig {
     DaemonConfig {
@@ -498,8 +536,16 @@ fn daemon_config(
         database_path: Some(database_path),
         download: DownloadConfig::from(&config.download),
         watch_dirs,
-        watch_interval,
-        download_interval,
+        // `watch.refresh_cycle` and `sync.interval_secs` follow the config live, unless
+        // a flag pins them
+        watch_interval: pins
+            .watch_interval
+            .unwrap_or_else(|| u64::from(config.watch.refresh_cycle))
+            .max(1),
+        download_interval: pins
+            .download_interval
+            .unwrap_or(config.sync.interval_secs)
+            .max(1),
         parent_id,
         delete_after_upload: config.watch.delete_after_upload,
         archive_dir: config.watch.archive_directory.clone(),
@@ -533,8 +579,7 @@ mod tests {
             PathBuf::from("/config/.putiosync.db"),
             "t".to_string(),
             vec![],
-            60,
-            300,
+            Pins::default(),
             None,
         );
         assert_eq!(
@@ -542,6 +587,66 @@ mod tests {
             std::time::Duration::from_secs(12 * 3600)
         );
         assert_eq!(daemon.stall_check_interval, 120);
+    }
+
+    /// The intervals come from `watch.refresh_cycle` and `sync.interval_secs`; a flag
+    /// pins its own and leaves the other to the config
+    #[test]
+    fn daemon_config_intervals_follow_the_config_unless_pinned() {
+        let mut config = Config::default();
+        config.watch.refresh_cycle = 20;
+        config.sync.interval_secs = 90;
+        let build = |pins| {
+            daemon_config(
+                &config,
+                PathBuf::from("/config/.putiosync.db"),
+                "t".to_string(),
+                vec![],
+                pins,
+                None,
+            )
+        };
+        let from_config = build(Pins::default());
+        assert_eq!(from_config.watch_interval, 20);
+        assert_eq!(from_config.download_interval, 90);
+
+        let pinned = build(Pins {
+            watch_interval: Some(45),
+            download_interval: None,
+        });
+        assert_eq!(pinned.watch_interval, 45);
+        assert_eq!(pinned.download_interval, 90);
+        let pinned = build(Pins {
+            watch_interval: None,
+            download_interval: Some(120),
+        });
+        assert_eq!(pinned.watch_interval, 20);
+        assert_eq!(pinned.download_interval, 120);
+
+        // A refresh cycle of 0 (which validation refuses) never makes a busy loop
+        let mut zero = Config::default();
+        zero.watch.refresh_cycle = 0;
+        let daemon = daemon_config(
+            &zero,
+            PathBuf::from("/config/.putiosync.db"),
+            "t".to_string(),
+            vec![],
+            Pins::default(),
+            None,
+        );
+        assert_eq!(daemon.watch_interval, 1);
+    }
+
+    /// A reload refuses what startup validation refuses, so a bad hand edit never
+    /// replaces the running config
+    #[test]
+    fn a_reload_refuses_an_invalid_config() {
+        assert!(super::super::daemon_reload(Config::default()).is_ok());
+        assert!(super::super::server_reload(Config::default()).is_ok());
+        let mut config = Config::default();
+        config.sync.interval_secs = 1;
+        assert!(super::super::daemon_reload(config.clone()).is_err());
+        assert!(super::super::server_reload(config).is_err());
     }
 
     /// `[precheck]` reaches the watch folders' release check (042 US4)
@@ -554,8 +659,7 @@ mod tests {
             PathBuf::from("/config/.putiosync.db"),
             "t".to_string(),
             vec![],
-            60,
-            300,
+            Pins::default(),
             None,
         );
         assert!(daemon.precheck.is_some_and(|p| p.dry_run));
@@ -582,8 +686,7 @@ mod tests {
             PathBuf::from("/config/.putiosync.db"),
             "t".to_string(),
             vec![],
-            60,
-            300,
+            Pins::default(),
             None,
         );
         assert_eq!(

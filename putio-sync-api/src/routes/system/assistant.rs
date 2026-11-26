@@ -8,7 +8,7 @@
 //! The group previews (`POST /settings/{group}/preview`) are in `settings.rs`, next to
 //! the PUTs they share their code with.
 
-use super::settings::{body, groups, invalid, push_watcher, AppState};
+use super::settings::{body, groups, invalid, AppState};
 use crate::error::ApiError;
 use axum::{
     extract::{rejection::JsonRejection, State},
@@ -535,7 +535,7 @@ async fn import_settings(
 
     // The write lock is held from the merge to the save when applying, so a save in
     // between cannot be lost
-    let mut config = state.config.write().await;
+    let config = state.config.write().await;
     let imported = assistant::import(&config, &request.toml).map_err(invalid)?;
     let live: BTreeMap<_, _> = groups(&state, &config)
         .into_iter()
@@ -593,31 +593,11 @@ async fn import_settings(
                 .save_keeping_file_credentials(path.as_ref())
                 .map_err(|e| ApiError::InternalError(format!("Failed to persist config: {}", e)))?;
         }
-        state.doctor.configure(&candidate);
-        putio_sync_core::log_redact::set_secrets(candidate.secret_values());
-        state.cleanup.configure(&candidate);
-        state.storage.configure(&candidate);
-        state.hooks.configure(candidate.hooks.clone());
-        state.email.configure(candidate.notifications.smtp.clone());
-        if let Some(pipeline) = &state.pipeline {
-            pipeline.configure(&candidate);
-        }
-        state.plugins.configure(candidate.plugins.clone());
-        let plugins_dir = putio_sync_core::plugins::dir_for(
-            candidate.plugins_dir.as_deref(),
-            state
-                .config_path
-                .as_deref()
-                .map(std::path::PathBuf::as_path),
-        );
-        if plugins_dir != state.plugins.dir() {
-            state.plugins.set_dir(plugins_dir);
-        }
-        let download = crate::extract_download_config(&candidate);
-        *config = candidate;
         drop(config);
-        push_watcher(&state).await;
-        state.download_manager.update_config(download).await;
+        state
+            .hub
+            .publish(candidate.clone(), putio_sync_core::config_hub::Source::Api);
+        crate::live::apply_config(&state, candidate).await;
         tracing::info!(changes = changes.len(), "settings imported");
 
         let restart: Vec<&str> = changes

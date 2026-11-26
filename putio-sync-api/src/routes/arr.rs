@@ -298,6 +298,9 @@ async fn save_arr(
     }
     putio_sync_core::log_redact::set_secrets(candidate.secret_values());
     *config = candidate;
+    state
+        .hub
+        .publish(config.clone(), putio_sync_core::config_hub::Source::Api);
     Ok(resolved)
 }
 

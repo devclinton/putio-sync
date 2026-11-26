@@ -1224,7 +1224,7 @@ daemon's download manager and watcher:
 |---|---|---|
 | Logging | `level`, `module_filters`, within 10 s (ignored while `RUST_LOG` is set) | `console_format`, `console_enabled`, `file_*` |
 | Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`, `slow_limit_bytes_per_sec` (running downloads too), `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `min_free_space_mb`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, `verify`, `verify_max_redownloads`, `verify_read_limit_mb_per_sec`, `verify_follow_bandwidth_pause`, for the next download or verify run | `target_directory` (new downloads go there at once, but the disk figures stay on the startup folder), and the rest of the group |
-| Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan, if the daemon started with at least one watch folder | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; with no watch folder at startup, everything. `refresh_cycle` is unused: the daemon scans on `--watch-interval` |
+| Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; `refresh_cycle` (the daemon follows it live unless `--watch-interval` pins it) |
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Release check | — | everything |
 | Notifications | `smtp` (email), at once | nothing: the legacy `enabled`, `backend`, `webhook_url`, `email` still parse but are ignored |
@@ -2382,9 +2382,11 @@ Everything else is set in `config.toml` (see Method 3): `download.delete_after_d
 filtering, `watch.archive_directory` to move torrent/magnet files after processing, and
 `watch.delete_after_upload = true` to delete them.
 
-> **Daemon flag support:** `--download-interval` sets how often Put.io is synced (default
-> 300 s), and `--watch-interval` sets how often watch folders are scanned and the queue is
-> worked. `--on-existing` and `--skip-existing` apply. `--filter`, `--delete-after`, `--delete-empty-folders`,
+> **Daemon flag support:** `--download-interval` sets how often Put.io is synced and
+> `--watch-interval` how often watch folders are scanned. Without a flag they follow
+> `sync.interval_secs` (default 300, at least 10) and `watch.refresh_cycle` (default 60)
+> in the config file, and a change to either, by hand or in Settings, applies within
+> seconds; a flag pins its interval for the run. `--on-existing` and `--skip-existing` apply. `--filter`, `--delete-after`, `--delete-empty-folders`,
 > `--watch-only`, `--download-only`, `--archive-dir` and `--delete-torrents` are deprecated:
 > they are hidden from `--help`, still accepted so old scripts run, and ignored with a
 > warning at startup that names the `config.toml` key to use

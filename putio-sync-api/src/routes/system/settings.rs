@@ -97,6 +97,11 @@ pub(crate) async fn update<V: Serialize>(
     state.doctor.configure(&candidate);
     putio_sync_core::log_redact::set_secrets(candidate.secret_values());
     *config = candidate;
+    // The routes apply the group they saved; the hub tells the daemon's loops and keeps
+    // the file watcher from taking this write for a hand edit
+    state
+        .hub
+        .publish(config.clone(), putio_sync_core::config_hub::Source::Api);
     Ok(changed)
 }
 

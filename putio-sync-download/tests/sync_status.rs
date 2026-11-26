@@ -127,3 +127,46 @@ async fn request_sync_wakes_the_loop() {
     task.abort();
     list.assert_async().await;
 }
+
+/// A changed interval reaches a running sync loop: from 3600 s to 1 s, the next sync comes
+/// within seconds, with no restart and no "sync now"
+#[tokio::test(flavor = "multi_thread")]
+async fn the_sync_interval_can_change_while_the_loop_runs() {
+    let mut server = mockito::Server::new_async().await;
+    let list = server
+        .mock("GET", "/files/list?parent_id=0")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(EMPTY_ROOT)
+        .expect_at_least(2)
+        .create_async()
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let manager = manager(&server, &dir).await;
+
+    let (interval, rx) = tokio::sync::watch::channel(3600);
+    let looping = manager.clone();
+    let task = tokio::spawn(async move { looping.run_sync_loop_live(rx).await });
+
+    wait_for_outcome(&manager).await;
+    let first = manager.sync_status().await;
+    assert_eq!(first.interval, Some(Duration::from_secs(3600)));
+
+    interval.send(1).unwrap();
+    let mut second = false;
+    for _ in 0..100 {
+        let status = manager.sync_status().await;
+        if !status.in_progress && status.last_finished_at > first.last_finished_at {
+            second = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    task.abort();
+    assert!(second, "no second sync after the interval changed");
+    assert_eq!(
+        manager.sync_status().await.interval,
+        Some(Duration::from_secs(1))
+    );
+    list.assert_async().await;
+}

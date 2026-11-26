@@ -3263,13 +3263,26 @@ impl DownloadManager {
     ///
     /// * `interval_secs` - How often to sync in seconds
     pub async fn run_sync_loop(&self, interval_secs: u64) {
-        info!(
-            "Starting Put.io sync loop with interval: {}s",
-            interval_secs
-        );
-        let interval = std::time::Duration::from_secs(interval_secs);
-        self.sync_status.write().await.schedule(interval);
+        // The sender stays here, so the interval never changes
+        let (tx, rx) = tokio::sync::watch::channel(interval_secs);
+        let _keep = tx;
+        self.run_sync_loop_live(rx).await;
+    }
+
+    /// [`run_sync_loop`](Self::run_sync_loop) with an interval that can change while it
+    /// runs: each wait uses the latest value, and a change during a wait restarts the
+    /// count against the new interval (measured from the start of the wait, so a shorter
+    /// interval can end the wait at once). Dropping the sender freezes the interval.
+    pub async fn run_sync_loop_live(&self, mut interval_secs: tokio::sync::watch::Receiver<u64>) {
+        let secs = |rx: &mut tokio::sync::watch::Receiver<u64>| (*rx.borrow_and_update()).max(1);
+        let first = secs(&mut interval_secs);
+        info!("Starting Put.io sync loop with interval: {}s", first);
+        self.sync_status
+            .write()
+            .await
+            .schedule(std::time::Duration::from_secs(first));
         let mut cycle = 0;
+        let mut sender_gone = false;
 
         loop {
             cycle += 1;
@@ -3296,10 +3309,31 @@ impl DownloadManager {
 
             // "Sync now" wakes the loop early; request_sync refuses while a sync runs,
             // so no wake-up is stored during one
-            tokio::select! {
-                _ = tokio::time::sleep(interval) => {}
-                _ = self.sync_notify.notified() => {
-                    debug!("Sync requested");
+            let started = tokio::time::Instant::now();
+            loop {
+                let wait = std::time::Duration::from_secs(secs(&mut interval_secs));
+                self.sync_status.write().await.schedule(wait);
+                tokio::select! {
+                    _ = tokio::time::sleep_until(started + wait) => break,
+                    _ = self.sync_notify.notified() => {
+                        debug!("Sync requested");
+                        break;
+                    }
+                    changed = async {
+                        if sender_gone {
+                            std::future::pending().await
+                        } else {
+                            interval_secs.changed().await
+                        }
+                    } => {
+                        match changed {
+                            Ok(()) => info!(
+                                "Put.io sync interval is now {}s",
+                                (*interval_secs.borrow()).max(1)
+                            ),
+                            Err(_) => sender_gone = true,
+                        }
+                    }
                 }
             }
         }
