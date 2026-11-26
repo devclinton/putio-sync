@@ -138,6 +138,10 @@ name = "metrics_e2e"
 required-features = ["server"]
 
 [[test]]
+name = "metrics_live"
+required-features = ["server"]
+
+[[test]]
 name = "plugins_check"
 required-features = ["plugins"]
 

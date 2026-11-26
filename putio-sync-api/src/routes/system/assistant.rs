@@ -270,11 +270,11 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
         &[
             (
                 "api_bind",
-                "Addresses the API and web UI listen on (after a restart)",
+                "Addresses the API and web UI listen on (under daemon, moves when saved)",
             ),
             (
                 "metrics_bind",
-                "Addresses /metrics listens on (after a restart)",
+                "Addresses /metrics listens on (under daemon, moves when saved)",
             ),
         ],
     ),
@@ -348,7 +348,7 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
         &[
             (
                 "tailnet_only",
-                "Listens on the Tailscale address only, so the LAN can't reach the API (after a restart)",
+                "Listens on the Tailscale address only, so the LAN can't reach the API (daemon, applies when saved)",
             ),
             (
                 "identity_sign_in",

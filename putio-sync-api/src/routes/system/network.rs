@@ -230,7 +230,8 @@ fn nothing_now(api: &[ListenAddr], gives: &[Gives]) -> Option<ApiError> {
 /// PUT /settings/network
 ///
 /// Refused unless at least one API entry gives an address now, so a save can't leave
-/// putio-sync with nothing to listen on after a restart.
+/// putio-sync with nothing to listen on. Under `daemon` both listeners move as soon as
+/// the save is published (hot reload, part 3).
 async fn update_network_settings(
     State(state): State<AppState>,
     settings: Result<Json<NetworkSettings>, JsonRejection>,
@@ -273,7 +274,10 @@ async fn update_network_settings(
         );
     }
     Ok(Json(SuccessResponse {
-        message: saved_message("Network", &changed, &[], "", &notes),
+        message: {
+            let (live, when) = live_network(&state);
+            saved_message("Network", &changed, live, when, &notes)
+        },
     }))
 }
 
@@ -283,7 +287,7 @@ async fn preview_network(
     settings: Result<Json<NetworkSettings>, JsonRejection>,
 ) -> Result<Json<super::assistant::Preview>, ApiError> {
     let settings = body(settings)?;
-    Ok(preview(&state, network_view, (&[], ""), |c| {
+    Ok(preview(&state, network_view, live_network(&state), |c| {
         apply_network(settings, c)
     })
     .await)
@@ -300,6 +304,8 @@ pub struct NetworkCheck {
     pub this_page: &'static str,
     pub listened_on: Option<String>,
     pub ui_at: Vec<String>,
+    /// True when a save moves the listeners now; false when they move at the next start
+    pub applies_now: bool,
     pub warnings: Vec<String>,
 }
 
@@ -319,8 +325,10 @@ async fn check_network(
         .get(header::HOST)
         .and_then(|h| h.to_str().ok())
         .map(host_name);
+    let applies_now = !live_network(&state).0.is_empty();
     let refused = |e: ApiError| NetworkCheck {
         valid: false,
+        applies_now,
         error: Some(error_text(e)),
         this_page: "unknown",
         listened_on: listened_on.map(|a| a.to_string()),
@@ -363,7 +371,19 @@ async fn check_network(
         api: entry_views(&assessed.api, assessed.api_gives),
         metrics: entry_views(&metrics, metrics_gives),
         warnings,
+        applies_now,
     }))
+}
+
+/// Network fields applied without a restart, and when: under `daemon` the listeners
+/// follow each published config; `server` binds its addresses once
+pub(crate) fn live_network(state: &AppState) -> (&'static [&'static str], &'static str) {
+    match state.engine {
+        Engine::Daemon if state.listen_flags.is_none() => {
+            (&["api_bind", "metrics_bind"], "Applies now")
+        }
+        _ => (&[], ""),
+    }
 }
 
 fn error_text(e: ApiError) -> String {

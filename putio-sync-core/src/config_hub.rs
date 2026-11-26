@@ -292,9 +292,9 @@ mod tests {
         let hub = ConfigHub::new(Config::default());
         assert!(hub.pending_restart().is_empty());
         let mut config = Config::default();
-        config.metrics.enabled = !config.metrics.enabled;
+        config.logging.console_enabled = !config.logging.console_enabled;
         hub.publish(config, Source::File);
-        assert_eq!(hub.pending_restart(), vec!["metrics.enabled"]);
+        assert_eq!(hub.pending_restart(), vec!["logging.console_enabled"]);
         // Put back as it was: nothing waits for a restart
         hub.publish(Config::default(), Source::Api);
         assert!(hub.pending_restart().is_empty());

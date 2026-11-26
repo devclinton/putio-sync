@@ -222,7 +222,7 @@ pub(crate) fn groups(state: &AppState, current: &Config) -> Vec<GroupInfo> {
             json(serde_json::to_value(super::network::network_view(
                 &defaults,
             ))),
-            (&[], ""),
+            super::network::live_network(state),
         ),
         group(
             "logging",
@@ -1842,7 +1842,8 @@ async fn get_tailscale_settings(
 /// PUT /settings/tailscale
 ///
 /// Turning `tailnet_only` on is refused unless Tailscale gives a tailnet address now,
-/// so a save can't leave the daemon with nothing to listen on after a restart.
+/// so a save can't leave the daemon with nothing to listen on. Under `daemon` the API
+/// moves to the tailnet address (or back) as soon as the save is published.
 async fn update_tailscale_settings(
     State(state): State<AppState>,
     settings: Result<Json<TailscaleSettings>, JsonRejection>,
@@ -1878,14 +1879,11 @@ async fn update_tailscale_settings(
     }
 
     let mut notes = Vec::new();
-    if changed.iter().any(|c| c == "tailnet_only") {
-        notes.push(match state.engine {
-            Engine::Daemon => "Restart putio-sync to change the address it listens on.".to_string(),
-            Engine::Server => {
-                "Listening on the tailnet only applies under `daemon`; `server` uses its --bind."
-                    .to_string()
-            }
-        });
+    if changed.iter().any(|c| c == "tailnet_only") && state.engine == Engine::Server {
+        notes.push(
+            "Listening on the tailnet only applies under `daemon`; `server` uses its --bind."
+                .to_string(),
+        );
     }
     let (live, when) = live_tailscale(&state);
 
@@ -1958,11 +1956,18 @@ fn apply_tailscale(settings: TailscaleSettings, config: &mut Config) -> Result<(
 }
 
 /// Tailscale fields applied without a restart, and when
-pub(crate) fn live_tailscale(_state: &AppState) -> (&'static [&'static str], &'static str) {
-    (
-        &["identity_sign_in", "allowed_users", "socket"],
-        "Applies now",
-    )
+pub(crate) fn live_tailscale(state: &AppState) -> (&'static [&'static str], &'static str) {
+    let live: &'static [&'static str] = match state.engine {
+        // The API listener follows tailnet_only (hot reload, part 3)
+        Engine::Daemon => &[
+            "identity_sign_in",
+            "allowed_users",
+            "socket",
+            "tailnet_only",
+        ],
+        Engine::Server => &["identity_sign_in", "allowed_users", "socket"],
+    };
+    (live, "Applies now")
 }
 
 /// Get the release check settings and what they come to per folder

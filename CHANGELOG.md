@@ -30,6 +30,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   restart, from the new `GET /settings/status`. One list in core says which settings need a
   restart. Watcher saves under `daemon`, including `enabled` and `delete_after_upload`, now
   apply at the next scan, and logging saves apply at once.
+- Hot reload (part 3): under `daemon`, the API and metrics listeners follow the config. A new
+  `[api] bind` or `[metrics] bind`, `tailscale.tailnet_only`, and turning metrics on or off or
+  changing its `path` or `detail` apply without a restart, from a save or a hand edit. New
+  addresses are bound before the old ones close. Settings and `POST /settings/network/check`
+  (new `applies_now`) say so; `server` still binds once.
 - Usage stats receiver Worker: the 4 KB limit now counts bytes and stops reading early (411 without
   `Content-Length`), each field keeps at most 200 distinct values a day, `/summary` is off unless
   `PUBLIC_SUMMARY=1`, and the README covers limits and rate limiting.

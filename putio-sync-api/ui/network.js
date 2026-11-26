@@ -1,10 +1,12 @@
 // Network settings (feature 037): what putio-sync listens on now, entry by entry, under
 // the group's two lists. Before a save the lists are checked on the server; when the new
 // API list would cut this page off, or nobody can tell, the save asks first and says
-// where the UI will be.
+// where the UI will be. Under `daemon` the listeners move as soon as the save applies;
+// `server` binds once, so there it is after a restart.
 
 import { get, post } from "./api.js";
 import { confirm, fill, h } from "./app.js";
+import { checkText } from "./network_check.js";
 
 const reason = (e) => (e && (e.error || e.message)) || String(e);
 
@@ -36,7 +38,13 @@ export function networkExtra() {
       l.metrics.enabled ? h("p", { class: "muted small", text: "Metrics:" }) : h("p", { class: "muted small", text: "Metrics are off." }),
       l.metrics.enabled ? list(l.metrics.entries) : null,
       ...notes.map((n) => h("p", { class: "muted small", text: n })),
-      h("p", { class: "muted small", text: "Entries: ip:port, [ipv6]:port, interface:port (e.g. eth0:15432) or tailnet:port. Changes apply after a restart." }),
+      h("p", {
+        class: "muted small",
+        text:
+          l.engine === "daemon" && !l.server_flags
+            ? "Entries: ip:port, [ipv6]:port, interface:port (e.g. eth0:15432) or tailnet:port. Changes apply when saved."
+            : "Entries: ip:port, [ipv6]:port, interface:port (e.g. eth0:15432) or tailnet:port. Changes apply after a restart.",
+      }),
     );
   };
   load();
@@ -57,12 +65,5 @@ export async function networkBeforeSave(body, data) {
   const warn = (c.warnings || []).join(" ");
   if (same(body.api_bind || [], data.api_bind || []) && !warn) return true;
   if (c.this_page === "kept" && !warn) return true;
-  const at = c.ui_at && c.ui_at.length ? ` After a restart the UI is at ${c.ui_at.join(", ")}.` : "";
-  const text =
-    c.this_page === "cut_off"
-      ? `This page came in on ${c.listened_on}, which the new list doesn't listen on: after a restart it won't reach putio-sync.${at}`
-      : c.this_page === "unknown"
-        ? `putio-sync can't tell whether this page will still reach it after a restart.${at}`
-        : at.trim();
-  return confirm({ title: "Save these listen addresses?", text: [text, warn].filter(Boolean).join(" "), verb: "Save" });
+  return confirm({ title: "Save these listen addresses?", text: [checkText(c), warn].filter(Boolean).join(" "), verb: "Save" });
 }

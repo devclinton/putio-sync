@@ -4,8 +4,12 @@
 //! 037): every listed address, interface and tailnet entries followed as their addresses
 //! change. With `[tailscale] tailnet_only` (feature 036) the list is the tailnet address
 //! on each port. An entry with no address waits; nothing falls back to another address.
+//!
+//! [`ApiListener::apply`] follows a published config (hot reload, part 3): a new
+//! `[api] bind` or `[tailscale] tailnet_only` moves the listener without a restart.
+//! `[api] listen` itself is read only at startup.
 
-use putio_sync_api::listen::{Bound, Supervisor};
+use putio_sync_api::listen::{Bound, ListenerHandle, Supervisor};
 use putio_sync_api::{router, spawn_arr_refresh, AppState};
 use putio_sync_core::config::Config;
 use putio_sync_core::error::CoreError;
@@ -15,13 +19,43 @@ use tracing::{info, warn};
 /// How long `start` waits for a first address before returning
 const FIRST_BIND: Duration = Duration::from_secs(2);
 
+/// The running API listener
+pub struct ApiListener {
+    handle: ListenerHandle,
+}
+
+impl ApiListener {
+    /// What it holds now
+    pub fn bound(&self) -> Bound {
+        self.handle.bound.clone()
+    }
+
+    /// Listen where `config` says: its `[api] bind` (or `PUTIO_SYNC_API_BIND`) with
+    /// `tailnet_only` applied. An invalid list is logged and changes nothing.
+    pub fn apply(&self, config: &Config) {
+        match config.api_listen() {
+            Ok(entries) => {
+                let shown: Vec<String> = entries.iter().map(ToString::to_string).collect();
+                if self.handle.set_entries(entries) {
+                    info!(
+                        bind = %shown.join(", "),
+                        tailnet_only = config.tailscale.tailnet_only,
+                        "API addresses changed"
+                    );
+                }
+            }
+            Err(e) => warn!(error = %e, "API addresses not applied"),
+        }
+    }
+}
+
 /// Start the listener for `state` when `[api] listen` is on.
 ///
 /// The resolved token (env override applied) is written into the state's config, so
-/// the auth middleware sees it. Returns what the listener holds (filled in the
+/// the auth middleware sees it. Returns the listener (its addresses filled in the
 /// background), or `None` when `[api] listen` is off. A bind failure is logged and
 /// retried, and the daemon carries on (FR-004); an invalid setting is an error.
-pub async fn start(config: &Config, state: AppState) -> Result<Option<Bound>, CoreError> {
+pub async fn start(config: &Config, state: AppState) -> Result<Option<ApiListener>, CoreError> {
     let resolved = config.resolve_api()?;
     let settings = resolved.value;
     let source = resolved.source;
@@ -59,7 +93,7 @@ pub async fn start(config: &Config, state: AppState) -> Result<Option<Bound>, Co
         source = ?source,
         "API listener enabled"
     );
-    Ok(Some(bound))
+    Ok(Some(ApiListener { handle }))
 }
 
 // The fake tailscaled listens on a unix socket

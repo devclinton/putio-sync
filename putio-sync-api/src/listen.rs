@@ -5,6 +5,11 @@
 //! no longer gives. Interface and tailnet entries are checked again every second for the
 //! first 5 minutes and every 30 s after; a list of fixed addresses that all bound stops
 //! checking. An entry with no address waits: nothing ever falls back to another address.
+//!
+//! [`ListenerHandle::set_entries`] changes the list while it runs (hot reload, part 3).
+//! New addresses are bound before the old ones close, so a move to a free port never
+//! leaves a gap; an address that can't be bound until an old one closes (the same port
+//! on an overlapping address) is bound right after.
 
 use axum::{Extension, Router};
 use putio_sync_core::listen::ListenAddr;
@@ -131,10 +136,28 @@ pub struct ListenerHandle {
     /// What it listens on now
     pub bound: Bound,
     stop: watch::Sender<bool>,
+    entries: watch::Sender<Vec<ListenAddr>>,
     task: JoinHandle<()>,
 }
 
 impl ListenerHandle {
+    /// Listen on `entries` from now on: addresses no entry gives any more close, new
+    /// ones are bound. True when the list changed.
+    pub fn set_entries(&self, entries: Vec<ListenAddr>) -> bool {
+        self.entries.send_if_modified(|now| {
+            if *now == entries {
+                return false;
+            }
+            *now = entries;
+            true
+        })
+    }
+
+    /// The entries it listens on
+    pub fn entries(&self) -> Vec<ListenAddr> {
+        self.entries.borrow().clone()
+    }
+
     /// Wait up to `timeout` for a first bound address
     pub async fn first_bound(&self, timeout: Duration) -> Option<SocketAddr> {
         let until = Instant::now() + timeout;
@@ -193,16 +216,21 @@ impl Supervisor {
         schedule: Schedule,
     ) -> ListenerHandle {
         let (stop, stopped) = watch::channel(false);
+        let (entries, listed) = watch::channel(entries);
         let run = Run {
             name,
-            entries,
             resolver,
             router,
             bound: bound.clone(),
             schedule,
         };
-        let task = tokio::spawn(run.run(stopped));
-        ListenerHandle { bound, stop, task }
+        let task = tokio::spawn(run.run(stopped, listed));
+        ListenerHandle {
+            bound,
+            stop,
+            entries,
+            task,
+        }
     }
 }
 
@@ -215,7 +243,6 @@ struct Serving {
 
 struct Run {
     name: &'static str,
-    entries: Vec<ListenAddr>,
     resolver: Resolver,
     router: Router,
     bound: Bound,
@@ -223,19 +250,25 @@ struct Run {
 }
 
 impl Run {
-    async fn run(self, mut stopped: watch::Receiver<bool>) {
+    async fn run(
+        self,
+        mut stopped: watch::Receiver<bool>,
+        mut listed: watch::Receiver<Vec<ListenAddr>>,
+    ) {
         let name = self.name;
-        let started = Instant::now();
-        let dynamic = self.entries.iter().any(ListenAddr::is_dynamic);
+        let mut entries = listed.borrow_and_update().clone();
+        let mut started = Instant::now();
         let mut serving: HashMap<SocketAddr, Serving> = HashMap::new();
-        let mut waiting: Vec<Option<String>> = vec![None; self.entries.len()];
+        let mut waiting: Vec<Option<String>> = vec![None; entries.len()];
         let mut bind_errors: HashMap<SocketAddr, String> = HashMap::new();
         let mut long_wait_logged = false;
+        let mut list_open = true;
 
         loop {
-            let gives = (self.resolver)(self.entries.clone()).await;
+            let dynamic = entries.iter().any(ListenAddr::is_dynamic);
+            let gives = (self.resolver)(entries.clone()).await;
             let mut wanted: Vec<SocketAddr> = Vec::new();
-            for (i, (entry, g)) in self.entries.iter().zip(&gives).enumerate() {
+            for (i, (entry, g)) in entries.iter().zip(&gives).enumerate() {
                 match g {
                     Gives::Addrs(addrs) => {
                         if waiting[i].take().is_some() {
@@ -256,37 +289,28 @@ impl Run {
                 }
             }
 
-            // Close what no entry gives any more
+            // Bind what is new before closing what went, so a move never leaves a gap;
+            // what only binds once an old address closes is tried again after
             let gone: Vec<SocketAddr> = serving
                 .keys()
                 .filter(|a| !wanted.contains(a))
                 .copied()
                 .collect();
+            let mut failed = self.bind_new(&wanted, &mut serving);
             for addr in gone {
                 if let Some(s) = serving.remove(&addr) {
                     let _ = s.stop.send(true);
                     info!(listener = name, addr = %s.local, "{name}: stopped listening on {}", s.local);
                 }
             }
-            // Bind what is new
-            for addr in &wanted {
-                if serving.contains_key(addr) {
-                    continue;
-                }
-                match bind_one(*addr) {
-                    Ok(listener) => {
-                        bind_errors.remove(addr);
-                        let local = listener.local_addr().unwrap_or(*addr);
-                        serving.insert(*addr, serve(listener, local, self.router.clone()));
-                        info!(listener = name, addr = %local, "{name} listening on {local}");
-                    }
-                    Err(e) => {
-                        let msg = e.to_string();
-                        if bind_errors.get(addr) != Some(&msg) {
-                            error!(listener = name, addr = %addr, error = %msg, "{name}: can't listen on {addr}; trying again");
-                            bind_errors.insert(*addr, msg);
-                        }
-                    }
+            if !failed.is_empty() {
+                failed = self.bind_new(&wanted, &mut serving);
+            }
+            bind_errors.retain(|a, _| failed.iter().any(|(f, _)| f == a));
+            for (addr, msg) in failed {
+                if bind_errors.get(&addr) != Some(&msg) {
+                    error!(listener = name, addr = %addr, error = %msg, "{name}: can't listen on {addr}; trying again");
+                    bind_errors.insert(addr, msg);
                 }
             }
             self.bound.set(
@@ -299,8 +323,7 @@ impl Run {
             let unbound = wanted.len() > serving.len() || waiting.iter().any(Option::is_some);
             if unbound && !long_wait_logged && started.elapsed() >= self.schedule.fast_for {
                 long_wait_logged = true;
-                let entries: Vec<String> = self
-                    .entries
+                let entries: Vec<String> = entries
                     .iter()
                     .zip(&waiting)
                     .filter(|(_, w)| w.is_some())
@@ -315,19 +338,28 @@ impl Run {
                 error!(listener = name, waiting = %entries.join(", "), "{name}: still not listening on {} after {} s; checking every {} s", entries.join(", "), self.schedule.fast_for.as_secs(), self.schedule.slow.as_secs());
             }
 
-            if !dynamic && !unbound {
-                // Fixed addresses, all bound: nothing will change until stopped
-                stop_asked(&mut stopped).await;
-                break;
-            }
             let tick = if started.elapsed() < self.schedule.fast_for {
                 self.schedule.fast
             } else {
                 self.schedule.slow
             };
+            // Fixed addresses, all bound: nothing changes until stopped or given a new list
+            let idle = !dynamic && !unbound;
             tokio::select! {
-                _ = tokio::time::sleep(tick) => {}
+                _ = tokio::time::sleep(tick), if !idle => {}
                 _ = stop_asked(&mut stopped) => break,
+                changed = listed.changed(), if list_open => {
+                    if changed.is_ok() {
+                        entries = listed.borrow_and_update().clone();
+                        info!(listener = name, entries = %entries.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "), "{name}: new list of addresses");
+                        waiting = vec![None; entries.len()];
+                        started = Instant::now();
+                        long_wait_logged = false;
+                    } else {
+                        // The handle was dropped: the list stays as it is
+                        list_open = false;
+                    }
+                }
             }
         }
 
@@ -337,6 +369,32 @@ impl Run {
         for (_, s) in serving {
             let _ = s.task.await;
         }
+    }
+}
+
+impl Run {
+    /// Bind each wanted address not served yet; the ones that failed, with why
+    fn bind_new(
+        &self,
+        wanted: &[SocketAddr],
+        serving: &mut HashMap<SocketAddr, Serving>,
+    ) -> Vec<(SocketAddr, String)> {
+        let name = self.name;
+        let mut failed = Vec::new();
+        for addr in wanted {
+            if serving.contains_key(addr) {
+                continue;
+            }
+            match bind_one(*addr) {
+                Ok(listener) => {
+                    let local = listener.local_addr().unwrap_or(*addr);
+                    serving.insert(*addr, serve(listener, local, self.router.clone()));
+                    info!(listener = name, addr = %local, "{name} listening on {local}");
+                }
+                Err(e) => failed.push((*addr, e.to_string())),
+            }
+        }
+        failed
     }
 }
 
@@ -574,6 +632,67 @@ mod tests {
         h.stop(Duration::from_secs(1)).await;
         assert!(bound.get().is_empty());
         assert!(std::net::TcpListener::bind(("127.0.0.1", port)).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_new_list_moves_the_listener_without_a_restart() {
+        let (a, b) = (free_port(), free_port());
+        let at = |p: u16| SocketAddr::from(([127, 0, 0, 1], p));
+        let h = Supervisor::spawn_with(
+            "Test",
+            vec![entry(&format!("127.0.0.1:{a}"))],
+            local_resolver(),
+            app(),
+            Bound::default(),
+            fast(),
+        );
+        h.first_bound(Duration::from_secs(2)).await.unwrap();
+        assert!(!h.set_entries(vec![entry(&format!("127.0.0.1:{a}"))]));
+        assert!(h.set_entries(vec![entry(&format!("127.0.0.1:{b}"))]));
+        until(|| h.bound.get() == vec![at(b)]).await;
+        assert_eq!(get_on(at(b)).await.unwrap(), at(b).to_string());
+        assert!(get_on(at(a)).await.is_none());
+        assert_eq!(h.entries(), vec![entry(&format!("127.0.0.1:{b}"))]);
+        h.stop(Duration::from_secs(1)).await;
+    }
+
+    #[tokio::test]
+    async fn a_new_address_on_the_same_port_takes_over() {
+        let port = free_port();
+        let h = Supervisor::spawn_with(
+            "Test",
+            vec![entry(&format!("0.0.0.0:{port}"))],
+            local_resolver(),
+            app(),
+            Bound::default(),
+            fast(),
+        );
+        h.first_bound(Duration::from_secs(2)).await.unwrap();
+        h.set_entries(vec![entry(&format!("127.0.0.1:{port}"))]);
+        let loopback = SocketAddr::from(([127, 0, 0, 1], port));
+        until(|| h.bound.get() == vec![loopback]).await;
+        assert_eq!(get_on(loopback).await.unwrap(), loopback.to_string());
+        h.stop(Duration::from_secs(1)).await;
+    }
+
+    #[tokio::test]
+    async fn a_busy_new_port_keeps_trying_and_frees_the_old_one() {
+        let (old, new) = (free_port(), free_port());
+        let busy = std::net::TcpListener::bind(("127.0.0.1", new)).unwrap();
+        let h = Supervisor::spawn_with(
+            "Test",
+            vec![entry(&format!("127.0.0.1:{old}"))],
+            local_resolver(),
+            app(),
+            Bound::default(),
+            fast(),
+        );
+        h.first_bound(Duration::from_secs(2)).await.unwrap();
+        h.set_entries(vec![entry(&format!("127.0.0.1:{new}"))]);
+        until(|| h.bound.get().is_empty()).await;
+        drop(busy);
+        until(|| h.bound.get() == vec![SocketAddr::from(([127, 0, 0, 1], new))]).await;
+        h.stop(Duration::from_secs(1)).await;
     }
 
     #[tokio::test]

@@ -1,7 +1,7 @@
 // Tailscale settings (feature 036): what Tailscale says about this machine (state, MagicDNS
 // name, the addresses that open putio-sync over the tailnet, hints), under the group's
 // fields. "Allow me" fills the allowed users with this machine's Tailscale login; turning
-// "tailnet only" on asks first, since the LAN loses the API after a restart.
+// "tailnet only" on asks first, since the LAN loses the API as soon as it applies.
 
 import { get } from "./api.js";
 import { confirm, fill, h } from "./app.js";
@@ -67,7 +67,7 @@ export function tailscaleBeforeSave(body, data) {
   if (!body.tailnet_only || data.tailnet_only) return Promise.resolve(true);
   return confirm({
     title: "Listen on the tailnet only?",
-    text: "After a restart, putio-sync answers only on its Tailscale address. Devices on the LAN that aren't on the tailnet lose the API and this page. If Tailscale is down at start, putio-sync waits for it instead of listening elsewhere.",
+    text: "Once saved, putio-sync answers only on its Tailscale address. Devices on the LAN that aren't on the tailnet lose the API and this page. If Tailscale is down, putio-sync waits for it instead of listening elsewhere.",
     verb: "Listen on the tailnet only",
   });
 }

@@ -4,7 +4,7 @@
 mod common;
 
 use axum::http::{Method, StatusCode};
-use common::{body_json, test_app, test_app_with, TestApp, API_TOKEN};
+use common::{body_json, test_app, test_app_with, test_daemon_app, TestApp, API_TOKEN};
 use putio_sync_api::listen::{Bound, Supervisor};
 use putio_sync_api::router;
 use putio_sync_core::listen::ListenAddr;
@@ -187,6 +187,35 @@ async fn settings_round_trip() {
         toml::Value::Array(vec!["127.0.0.1:15432".into(), "[::1]:15432".into()])
     );
     assert_eq!(file["metrics"]["bind"], toml::Value::from("127.0.0.1:9742"));
+}
+
+#[tokio::test]
+async fn under_daemon_a_save_applies_now() {
+    let app = test_daemon_app(false).await;
+    let body = json!({ "api_bind": ["127.0.0.1:15432"], "metrics_bind": ["127.0.0.1:9742"] });
+    let check = body_json(app.post_json("/settings/network/check", body.clone()).await).await;
+    assert_eq!(check["applies_now"], true, "{check}");
+    let (status, response) = put(&app, body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let message = response["message"].as_str().unwrap();
+    assert!(
+        message.contains("Applies now: api_bind, metrics_bind."),
+        "{message}"
+    );
+    assert!(!message.contains("restart"), "{message}");
+
+    // `server` binds once
+    let server = test_app().await;
+    let check = body_json(
+        server
+            .post_json(
+                "/settings/network/check",
+                json!({ "api_bind": ["127.0.0.1:15432"], "metrics_bind": ["127.0.0.1:9742"] }),
+            )
+            .await,
+    )
+    .await;
+    assert_eq!(check["applies_now"], false, "{check}");
 }
 
 #[tokio::test]
