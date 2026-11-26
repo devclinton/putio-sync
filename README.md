@@ -2447,11 +2447,13 @@ or the API is; a new `workers` value scales the pool as described below. An edit
 doesn't parse or validate is refused: the running settings stay, the error is logged once,
 and the Settings page shows it until the file is fixed.
 
-A few settings are read only at startup: `[auth]`, `[database]`, `[precheck]`,
+A few settings are read only at startup: `[database]`, `[precheck]`,
 `api.enabled`, `api.url`, `api.listen` and the logging outputs (`file_enabled`,
 `file_path`, `console_enabled`, `console_format`). Under `daemon` the listeners follow the
 file: `api.bind`, `tailscale.tailnet_only` and all of `[metrics]` apply live (see
-[Listen addresses](#listen-addresses)). When a save
+[Listen addresses](#listen-addresses)). A new `[auth] token`, for example from
+`putio-sync login`, is used from the next Put.io request; a config without a token keeps
+the one in use. `server` keeps the credentials it started with. When a save
 or an edit changes one of them, the Settings page lists it under **Restart to apply** until
 the next restart. `GET /settings/status` gives the same: `generation`, `source` (`startup`,
 `api` or `file`), `applied_at`, `last_error` and `pending_restart`.

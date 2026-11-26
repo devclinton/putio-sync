@@ -3,6 +3,7 @@
 //! Delegates to the putio-sync-daemon crate for full daemon functionality
 
 use anyhow::{anyhow, Context, Result};
+use putio_sync_client::PutioApiClient;
 use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::{AuthMethod, Config, ExistingFile};
 use putio_sync_daemon::{DaemonConfig, Pins, PutioDaemon};
@@ -455,10 +456,14 @@ pub async fn execute_daemon(
     // The daemon's loops and both listeners follow every published config, whoever
     // published it
     let handle = daemon.handle().with_pins(pins);
+    let putio = daemon.get_client();
     let mut published = hub.subscribe();
     tokio::spawn(async move {
         while published.changed().await.is_ok() {
             let snapshot = published.borrow_and_update().clone();
+            if let Some(client) = &putio {
+                apply_token(client, &snapshot.config);
+            }
             handle.apply(&snapshot.config).await;
             if let Some(api) = &api {
                 api.apply(&snapshot.config);
@@ -530,6 +535,27 @@ fn start_trial(config_dir: &std::path::Path) -> Option<TrialGuard> {
     Some(TrialGuard(config_dir.to_path_buf()))
 }
 
+/// Give the daemon's shared Put.io client the config's `[auth] token`, so every service
+/// uses a new token from its next request. A config without a token keeps the one in use.
+fn apply_token(client: &PutioApiClient, config: &Config) {
+    let token = config
+        .auth
+        .as_ref()
+        .filter(|auth| auth.auth_method == AuthMethod::Token)
+        .and_then(|auth| auth.token.clone())
+        .filter(|token| !token.trim().is_empty());
+    match token {
+        Some(token) => {
+            if client.set_token(token) {
+                info!("Put.io token changed; using the new one");
+            }
+        }
+        None => warn!(
+            "Put.io token not applied: the config has no [auth] token; keeping the one in use"
+        ),
+    }
+}
+
 /// The daemon's configuration from `config.toml` and the CLI arguments. Every
 /// `[download]` setting goes through the shared `DownloadConfig::from` conversion.
 fn daemon_config(
@@ -576,6 +602,18 @@ fn daemon_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A new `[auth] token` reaches the shared client; a config without one keeps it
+    #[test]
+    fn apply_token_follows_the_config() {
+        let client = PutioApiClient::new("old".to_string());
+        let with = |text: &str| Config::from_toml(text).unwrap();
+        apply_token(&client, &with("[auth]\ntoken = \"new\"\n"));
+        assert_eq!(client.get_auth_header().unwrap(), "Bearer new");
+        apply_token(&client, &Config::default());
+        apply_token(&client, &with("[auth]\ntoken = \"\"\n"));
+        assert_eq!(client.get_auth_header().unwrap(), "Bearer new");
+    }
 
     /// `[transfers]` reaches the daemon's stall check (feature 007)
     #[test]
