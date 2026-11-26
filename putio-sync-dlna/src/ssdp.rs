@@ -109,6 +109,25 @@ pub fn notification_types(uuid: &str) -> Vec<String> {
     ]
 }
 
+/// Device type prefix of a MediaServer search
+const MEDIA_SERVER: &str = "urn:schemas-upnp-org:device:MediaServer:";
+
+/// The types to answer a search for `st` with. Some TVs only search for `MediaServer:2`
+/// to `:4`; the description still says what this server is, so they get an answer too.
+fn search_targets(all: &[String], st: &str) -> Vec<String> {
+    if st == "ssdp:all" {
+        return all.to_vec();
+    }
+    let newer_media_server = st
+        .strip_prefix(MEDIA_SERVER)
+        .and_then(|v| v.parse::<u8>().ok())
+        .is_some_and(|v| (2..=4).contains(&v));
+    if newer_media_server {
+        return vec![st.to_string()];
+    }
+    all.iter().filter(|nt| *nt == st).cloned().collect()
+}
+
 fn usn(uuid: &str, nt: &str) -> String {
     if nt == format!("uuid:{uuid}") {
         nt.to_string()
@@ -313,11 +332,7 @@ async fn reply(
     (st, mx): (String, u64),
 ) {
     let all = notification_types(&cfg.uuid);
-    let wanted: Vec<&String> = if st == "ssdp:all" {
-        all.iter().collect()
-    } else {
-        all.iter().filter(|nt| **nt == st).collect()
-    };
+    let wanted: Vec<String> = search_targets(&all, &st);
     if wanted.is_empty() {
         return;
     }
@@ -331,7 +346,7 @@ async fn reply(
 LOCATION: http://{iface}:{}/description.xml\r\nSERVER: {}\r\nST: {nt}\r\nUSN: {}\r\n\r\n",
             cfg.port,
             server_header(),
-            usn(&cfg.uuid, nt)
+            usn(&cfg.uuid, &nt)
         );
         let outcome = match socket.send_to(msg.as_bytes(), to).await {
             Ok(_) => Outcome::Ok,
@@ -431,5 +446,16 @@ mod tests {
             Ipv4Addr::new(10, 0, 1, 5),
             m
         ));
+    }
+
+    #[test]
+    fn newer_media_server_searches_are_answered() {
+        let all = notification_types("u");
+        let ms = |v: u8| format!("urn:schemas-upnp-org:device:MediaServer:{v}");
+        assert_eq!(search_targets(&all, &ms(1)), [ms(1)]);
+        assert_eq!(search_targets(&all, &ms(3)), [ms(3)]);
+        assert!(search_targets(&all, &ms(5)).is_empty());
+        assert!(search_targets(&all, "urn:schemas-upnp-org:device:MediaRenderer:1").is_empty());
+        assert_eq!(search_targets(&all, "ssdp:all").len(), all.len());
     }
 }

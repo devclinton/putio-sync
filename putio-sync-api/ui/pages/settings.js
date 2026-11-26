@@ -98,7 +98,7 @@ export function mount(el, params) {
     for (const s of SECTIONS) {
       const p = panels[s.id];
       const cards = Object.entries(state).filter(([id]) => cardSection[id] === s.id);
-      const problems = cards.filter(([, v]) => v.problem).length + risks.filter((r) => sectionOfKey(r.keys[0] || "") === s.id).length;
+      const problems = cards.filter(([, v]) => v.problem).length + risks.filter((r) => r.level !== "info" && sectionOfKey(r.keys[0] || "") === s.id).length;
       const dirty = cards.some(([, v]) => v.dirty);
       p.mark.hidden = !dirty;
       p.count.hidden = !problems;

@@ -835,6 +835,7 @@
  "Not scheduled": "Tidak dijadualkan",
  "Not set up: no putio-sync client there ({0}{1})": "Tidak disediakan: tiada klien putio-sync di sana ({0}{1})",
  "Note": "nota",
+ "Note:": "Nota:",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "Tiada apa-apa telah dihantar. Semak laporan di bawah untuk nama dan laluan yang tidak mahu anda kongsi, kemudian laporkannya di GitHub jika mahu.",
  "Nothing has finished recently": "Tiada apa yang selesai baru-baru ini",
  "Nothing in this folder": "Tiada apa-apa dalam folder ini",

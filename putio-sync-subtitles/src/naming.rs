@@ -94,7 +94,8 @@ pub fn sidecar_path(video: &Path, slot: &Slot) -> PathBuf {
 /// Subtitle sidecars of `video`: same directory, name starts with the video stem and a dot,
 /// a subtitle extension, and a dot-separated token that is a language. `forced` and
 /// `sdh`/`hi`/`cc` tokens make it a forced or SDH file, and a `whisper` token a transcription
-/// kept beside a download; none of them counts as the main one. (`hi` alone is Hindi.)
+/// kept beside a download; none of them counts as the main one. (`hi` alone is Hindi.) A
+/// sidecar with no language word (`Movie.srt`) is a main one in `und`.
 pub fn existing_sidecars(video: &Path) -> Vec<Existing> {
     let Some(dir) = video.parent() else {
         return Vec::new();
@@ -115,6 +116,15 @@ pub fn existing_sidecars(video: &Path) -> Vec<Existing> {
             continue;
         }
         let end = lower.len() - ext.len() - 1;
+        // `Movie.srt`: a subtitle with no language word is the main one, language unknown
+        if end + 1 == prefix.len() {
+            out.push(Existing {
+                language: "und".to_string(),
+                kind: SlotKind::Main,
+                path,
+            });
+            continue;
+        }
         if end < prefix.len() {
             continue;
         }
@@ -298,9 +308,11 @@ mod tests {
                 ("es".to_string(), SlotKind::Main),
                 ("fr".to_string(), SlotKind::Forced),
                 ("hi".to_string(), SlotKind::Main),
+                ("und".to_string(), SlotKind::Main),
             ]
         );
         assert!(has_slot(&found, &Slot::main("en")));
+        assert!(has_slot(&found, &Slot::main("und")));
         assert!(!has_slot(&found, &Slot::main("fr")));
         assert!(has_slot(
             &found,

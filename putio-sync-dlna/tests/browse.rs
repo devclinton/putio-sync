@@ -212,3 +212,34 @@ async fn a_watch_folder_shows_its_name_not_its_server_path() {
     let meta = f.get("/description.xml").await.text().await.unwrap();
     assert!(!meta.contains("modelNumber"), "{meta}");
 }
+
+#[tokio::test]
+async fn a_finished_download_changes_the_system_update_id() {
+    use putio_sync_core::events::{self, EventType};
+    use putio_sync_dlna::soap;
+    let f = Fixture::start(&["downloads"]).await;
+    let id = || async {
+        common::soap_call(&f.base(), "/ctl/cds", soap::CDS, "GetSystemUpdateID", "")
+            .await
+            .arg("Id")
+            .parse::<u32>()
+            .unwrap()
+    };
+    let first = id().await;
+    f.server.content_changed();
+    let second = id().await;
+    assert!(second > first, "{first} then {second}");
+    let finished = events::samples()
+        .into_iter()
+        .find(|p| p.event_type() == EventType::DownloadFinished)
+        .unwrap();
+    events::emit(finished);
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while id().await == second {
+        assert!(
+            std::time::Instant::now() < until,
+            "the event changed nothing"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}

@@ -74,7 +74,10 @@ async fn dispatch(
                 .get("delete-local-data")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let ids = parse_ids(args.get("ids")).unwrap_or_default();
+            // Without ids, Transmission removes nothing; never read it as "remove all"
+            let ids = parse_ids(args.get("ids"))
+                .filter(|ids| !ids.is_empty())
+                .ok_or_else(|| "torrent-remove needs ids".to_string())?;
             let hashes = service.resolve(&ids).await.map_err(|e| internal(&e))?;
             for hash in hashes {
                 service

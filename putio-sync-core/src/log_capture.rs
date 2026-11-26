@@ -195,16 +195,26 @@ impl LogBuffer {
         seq
     }
 
-    /// The newest `limit` matching lines, oldest first
+    /// Matching lines, oldest first. Without `after`, the newest `limit`; with it, the first
+    /// `limit` after that seq, so a client paging forward from its cursor misses none.
     pub fn query(&self, query: &LogQuery) -> Vec<Arc<LogLine>> {
         let ring = self.ring();
         let limit = query.limit.unwrap_or(ring.capacity).min(ring.capacity);
+        if let Some(after) = query.after {
+            // Seqs rise along the ring, so the lines after the cursor are one run at the end
+            let start = ring.lines.partition_point(|line| line.seq <= after);
+            return ring
+                .lines
+                .range(start..)
+                .filter(|line| line.matches(query))
+                .take(limit)
+                .cloned()
+                .collect();
+        }
         let mut out: Vec<Arc<LogLine>> = ring
             .lines
             .iter()
             .rev()
-            // Seqs rise along the ring, so the first line at or below `after` ends the scan
-            .take_while(|line| query.after.is_none_or(|after| line.seq > after))
             .filter(|line| line.matches(query))
             .take(limit)
             .cloned()
@@ -394,6 +404,39 @@ mod tests {
 
     fn leaked(capacity: usize) -> &'static LogBuffer {
         Box::leak(Box::new(LogBuffer::new(capacity)))
+    }
+
+    #[test]
+    fn after_and_limit_page_forward_from_the_cursor() {
+        let buffer = LogBuffer::new(100);
+        for i in 1..=10 {
+            buffer.push(line("INFO", "a", &format!("n{i}")));
+        }
+        let page = |after, limit| -> Vec<String> {
+            buffer
+                .query(&LogQuery {
+                    after: Some(after),
+                    limit: Some(limit),
+                    ..Default::default()
+                })
+                .iter()
+                .map(|l| l.message.clone())
+                .collect()
+        };
+        assert_eq!(page(2, 3), ["n3", "n4", "n5"]);
+        assert_eq!(page(5, 3), ["n6", "n7", "n8"]);
+        assert_eq!(page(8, 3), ["n9", "n10"]);
+        assert!(page(10, 3).is_empty());
+        // Without a cursor, the newest lines
+        let newest: Vec<String> = buffer
+            .query(&LogQuery {
+                limit: Some(2),
+                ..Default::default()
+            })
+            .iter()
+            .map(|l| l.message.clone())
+            .collect();
+        assert_eq!(newest, ["n9", "n10"]);
     }
 
     #[test]

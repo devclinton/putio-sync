@@ -22,6 +22,13 @@ use message::{Grouper, Message};
 const QUEUE_LIMIT: usize = 100;
 /// How often closed grouping windows are summarised
 const TICK: Duration = Duration::from_secs(15);
+/// Waits before each new try of an email the server did not take: a mail server that is
+/// restarting or briefly unreachable still gets the message
+const RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_secs(30),
+    Duration::from_secs(120),
+    Duration::from_secs(600),
+];
 
 /// The last email sent or tried
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -57,6 +64,8 @@ struct Inner {
     started: AtomicBool,
     /// Woken when a grouping window opens, so the ticker can sleep while none is
     window_opened: tokio::sync::Notify,
+    /// [`RETRY_DELAYS`]; shorter in tests
+    retry_delays: RwLock<Vec<Duration>>,
 }
 
 /// Sends the chosen events as email. Cheap to clone.
@@ -89,6 +98,7 @@ impl EmailService {
                 waiting: Mutex::new(Some(waiting)),
                 started: AtomicBool::new(false),
                 window_opened: tokio::sync::Notify::new(),
+                retry_delays: RwLock::new(RETRY_DELAYS.to_vec()),
             }),
         }
     }
@@ -124,12 +134,52 @@ impl EmailService {
         let sender = self.clone();
         tokio::spawn(async move {
             while let Some(message) = waiting.recv().await {
-                let config = sender.config();
-                if config.enabled {
-                    let _ = sender.deliver(&config, &message).await;
-                }
+                sender.deliver_with_retries(&message).await;
             }
         });
+    }
+
+    /// Wait `delays` between tries instead of 30 s, 2 min and 10 min. For tests.
+    #[doc(hidden)]
+    pub fn set_retry_delays(&self, delays: Vec<Duration>) {
+        *self
+            .inner
+            .retry_delays
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = delays;
+    }
+
+    /// Send `message`, trying again after each of the retry delays while it fails. The
+    /// settings are read before each try, so turning email off stops the retries.
+    async fn deliver_with_retries(&self, message: &Message) {
+        let delays = self
+            .inner
+            .retry_delays
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let mut delays = delays.into_iter();
+        loop {
+            let config = self.config();
+            if !config.enabled {
+                return;
+            }
+            let last = delays.len() == 0;
+            match self.attempt(&config, message).await {
+                Ok(()) => return self.record(message, Ok(())),
+                Err(e) if last => return self.record(message, Err(e)),
+                Err(e) => {
+                    let wait = delays.next().unwrap_or_default();
+                    tracing::info!(
+                        subject = %message.title,
+                        error = %e,
+                        retry_in_secs = wait.as_secs(),
+                        "email notification failed; will try again"
+                    );
+                    tokio::time::sleep(wait).await;
+                }
+            }
+        }
     }
 
     /// Replace the settings; open grouping windows keep their start
@@ -221,7 +271,15 @@ impl EmailService {
         }
     }
 
+    /// Send once and record the outcome
     async fn deliver(&self, config: &SmtpConfig, message: &Message) -> Result<(), String> {
+        let result = self.attempt(config, message).await;
+        self.record(message, result.clone());
+        result
+    }
+
+    /// One try, not recorded
+    async fn attempt(&self, config: &SmtpConfig, message: &Message) -> Result<(), String> {
         let host = self
             .inner
             .host
@@ -233,7 +291,11 @@ impl EmailService {
         } else {
             format!("{}\n\nSent by putio-sync on {}.\n", message.text, host)
         };
-        let result = smtp::send(config, &message.title, &body).await;
+        smtp::send(config, &message.title, &body).await
+    }
+
+    /// Count a sent or failed email and keep it as the last delivery
+    fn record(&self, message: &Message, result: Result<(), String>) {
         let mut status = self.status_mut();
         match &result {
             Ok(()) => status.sent += 1,
@@ -245,9 +307,8 @@ impl EmailService {
         status.last = Some(Delivery {
             at: Utc::now(),
             subject: message.title.clone(),
-            error: result.as_ref().err().cloned(),
+            error: result.err(),
         });
-        result
     }
 
     fn status_mut(&self) -> std::sync::MutexGuard<'_, EmailStatus> {

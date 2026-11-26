@@ -835,6 +835,7 @@
  "Not scheduled": "Inte schemalagd",
  "Not set up: no putio-sync client there ({0}{1})": "Inte inställt upp: ingen putio-sync-klient finns där ({0}{1})",
  "Note": "anteckning",
+ "Note:": "Obs:",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "Inget har skickats. Titta igenom rapporten nedan efter namn och sökvägar du hellre inte delar, och rapportera den sedan på GitHub om du vill.",
  "Nothing has finished recently": "Ingenting har slutförts nyligen",
  "Nothing in this folder": "Ingenting i den här mappen",

@@ -835,6 +835,7 @@
  "Not scheduled": "スケジュールされていない",
  "Not set up: no putio-sync client there ({0}{1})": "設定されていない：そこにはputio-syncクライアントがありません（{0}{1}）",
  "Note": "ノート",
+ "Note:": "注：",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "何も送信されていません。共有したくない名前やパスがないか下のレポートを確認し、よければGitHubで報告してください。",
  "Nothing has finished recently": "最近何も終わっていません。",
  "Nothing in this folder": "このフォルダには何もありません。",

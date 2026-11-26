@@ -835,6 +835,7 @@
  "Not scheduled": "غير محدد الموعد",
  "Not set up: no putio-sync client there ({0}{1})": "غير مُفعّل: لا يوجد عميل putio-sync هناك ({0}{1})",
  "Note": "ملاحظة",
+ "Note:": "ملاحظة:",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "لم يتم إرسال أي شيء. راجع التقرير أدناه بحثًا عن أسماء ومسارات لا ترغب في مشاركتها، ثم أبلغ عنه على GitHub إن رغبت.",
  "Nothing has finished recently": "لم ينتهِ شيء مؤخرًا",
  "Nothing in this folder": "لا شيء في هذه المجلدات",

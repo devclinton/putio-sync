@@ -542,7 +542,12 @@ impl StorageService {
         if file.is_shared {
             return Err("shared".into());
         }
-        if unfinished.contains(&c.id) || file.parent_id.is_some_and(|p| unfinished.contains(&p)) {
+        // The planner protected every folder above an unfinished transfer's files; do the same
+        // with the transfers as they are now
+        if unfinished.contains(&c.id)
+            || file.parent_id.is_some_and(|p| unfinished.contains(&p))
+            || c.ancestors.iter().any(|a| unfinished.contains(a))
+        {
             return Err("part of an unfinished transfer".into());
         }
         if queued.contains(&c.id) {

@@ -835,6 +835,7 @@
  "Not scheduled": "Ikke planlagt",
  "Not set up: no putio-sync client there ({0}{1})": "Ikke satt opp: ingen putio-sync-klient der ({0}{1})",
  "Note": "antegnelse",
+ "Note:": "Merk:",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "Ingenting er sendt. Se gjennom rapporten nedenfor etter navn og stier du helst ikke vil dele, og meld den deretter på GitHub hvis du vil.",
  "Nothing has finished recently": "Ingenting er ferdig nylig",
  "Nothing in this folder": "Ingenting i denne mappen",

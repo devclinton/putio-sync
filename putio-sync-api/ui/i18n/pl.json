@@ -835,6 +835,7 @@
  "Not scheduled": "Nie zaplanowane",
  "Not set up: no putio-sync client there ({0}{1})": "Nie skonfigurowane: nie ma tam klienta putio-sync ({0}{1})",
  "Note": "Uwaga",
+ "Note:": "Uwaga:",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "Nic nie zostało wysłane. Sprawdź poniższy raport pod kątem nazw i ścieżek, których wolisz nie udostępniać, a potem zgłoś go na GitHubie, jeśli chcesz.",
  "Nothing has finished recently": "Nic nie skończyło się ostatnio",
  "Nothing in this folder": "Nic w tym folderze",

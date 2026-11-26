@@ -835,6 +835,7 @@
  "Not scheduled": "未安排",
  "Not set up: no putio-sync client there ({0}{1})": "未设置：没有putio-sync客户端（{0}{1}）",
  "Note": "备注",
+ "Note:": "注意：",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "尚未发送任何内容。请查看下方报告，确认其中没有不想分享的名称和路径，然后可按需在 GitHub 上提交报告。",
  "Nothing has finished recently": "最近什么都没有完成",
  "Nothing in this folder": "这个文件夹里没有东西",

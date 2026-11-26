@@ -19,8 +19,16 @@ export const assistant = (fresh = false) => (fresh || !assist ? (assist = settin
 export const reason = (e) => (e.details ? `${e.error}: ${e.details}` : e.error || String(e));
 export const quiet = (e) => e.status === 401 || e.status === 429;
 
+const RISK_LOOK = {
+  danger: ["error-text", "Danger: "],
+  warning: ["warn-text", "Warning: "],
+  info: ["muted", "Note: "],
+};
 export const riskList = (risks) =>
-  risks.map((r) => h("p", { class: r.level === "danger" ? "error-text" : "warn-text" }, h("strong", { text: r.level === "danger" ? "Danger: " : "Warning: " }), r.message));
+  risks.map((r) => {
+    const [cls, label] = RISK_LOOK[r.level] || RISK_LOOK.warning;
+    return h("p", { class: cls }, h("strong", { text: label }), r.message);
+  });
 
 const shown = (v) => {
   const item = (x) => (x && typeof x === "object" ? ("days" in x ? describeEntry(x) : JSON.stringify(x)) : x);

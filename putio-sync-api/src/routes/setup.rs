@@ -244,8 +244,17 @@ pub struct FolderBody {
     create: bool,
 }
 
+/// The folder a person typed: `~` and `~/x` are their home folder. Anything else is kept as
+/// typed, so a relative path is refused by the check rather than resolved against the
+/// daemon's working directory.
 fn absolute(path: &str) -> PathBuf {
-    PathBuf::from(path.trim())
+    let path = path.trim();
+    if path == "~" || path.starts_with("~/") {
+        if let Ok(expanded) = putio_sync_core::path_utils::expand_path(path) {
+            return expanded;
+        }
+    }
+    PathBuf::from(path)
 }
 
 /// POST /setup/folder/check
@@ -546,11 +555,14 @@ pub async fn finish(State(state): State<SetupState>) -> Result<Response, ApiErro
     let created = (!state.api_token_configured()).then(new_api_token);
     choices.api_token = created.clone();
     let config = validate(&session.base, &choices, session.arr.as_ref())?;
-    if let Some(dir) = &choices.download_dir {
+    let watch = choices.watch_dir.clone().flatten();
+    for (what, dir) in [("download", &choices.download_dir), ("watch", &watch)] {
+        let Some(dir) = dir else { continue };
+        // The watch folder was only checked as creatable; make it now, as the download one
         let check = check_folder(dir, None, true);
         if !check.usable() || !Path::new(dir).is_dir() {
             return Err(ApiError::BadRequest(format!(
-                "The download folder {} can't be used: {}",
+                "The {what} folder {} can't be used: {}",
                 dir.display(),
                 check.error.unwrap_or_else(|| "not writable".into())
             )));

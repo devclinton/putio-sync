@@ -117,6 +117,48 @@ pub fn all_protocol_info() -> Vec<String> {
     mimes.iter().map(|m| protocol_info(m)).collect()
 }
 
+/// Names in the order people expect on a TV: case ignored and runs of digits compared as
+/// numbers, so `Episode 2` comes before `Episode 10`
+pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (a, b) = (a.to_lowercase(), b.to_lowercase());
+    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (x.peek().copied(), y.peek().copied()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(c), Some(d)) if c.is_ascii_digit() && d.is_ascii_digit() => {
+                let take = |it: &mut std::iter::Peekable<std::str::Chars<'_>>| {
+                    let mut run = String::new();
+                    while let Some(c) = it.next_if(char::is_ascii_digit) {
+                        run.push(c);
+                    }
+                    run
+                };
+                let (m, n) = (take(&mut x), take(&mut y));
+                let (m_trim, n_trim) = (m.trim_start_matches('0'), n.trim_start_matches('0'));
+                let by_value = m_trim
+                    .len()
+                    .cmp(&n_trim.len())
+                    .then_with(|| m_trim.cmp(n_trim))
+                    // `01` and `1` are equal in value; the shorter goes first
+                    .then_with(|| m.len().cmp(&n.len()));
+                if by_value != Ordering::Equal {
+                    return by_value;
+                }
+            }
+            (Some(c), Some(d)) => {
+                if c != d {
+                    return c.cmp(&d);
+                }
+                x.next();
+                y.next();
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +208,27 @@ mod tests {
         let mut sorted = all.clone();
         sorted.dedup();
         assert_eq!(sorted.len(), all.len());
+    }
+
+    #[test]
+    fn natural_order_compares_numbers_by_value() {
+        let mut names = vec![
+            "Episode 10.mkv",
+            "episode 2.mkv",
+            "Episode 1.mkv",
+            "Extras",
+            "Episode 02.mkv",
+        ];
+        names.sort_by(|a, b| super::natural_cmp(a, b));
+        assert_eq!(
+            names,
+            [
+                "Episode 1.mkv",
+                "episode 2.mkv",
+                "Episode 02.mkv",
+                "Episode 10.mkv",
+                "Extras"
+            ]
+        );
     }
 }

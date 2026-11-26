@@ -40,9 +40,14 @@ pub fn is_video(name: &str) -> bool {
             .is_some_and(|e| VIDEO_EXTS.contains(&e))
 }
 
-/// Whether the file or a folder above it (relative to the item) is named like a sample
+/// Whether the file or a folder above it (relative to the item) is named like a sample: a
+/// whole `sample` or `samples` word, so `Samples/x.mkv` and `Film.SAMPLE.mkv` are, and
+/// `Sampler.S01E01.mkv` is not
 pub fn is_sample(relative_path: &str) -> bool {
-    relative_path.to_lowercase().contains("sample")
+    relative_path
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|word| word == "sample" || word == "samples")
 }
 
 /// What a scan found
@@ -501,6 +506,25 @@ mod tests {
         ]);
         assert_eq!(scan.videos, ["S01/E01.MP4", "S01/E02.mkv"]);
         assert_eq!(scan.skipped, 3);
+    }
+
+    #[test]
+    fn sample_is_a_whole_word() {
+        for p in [
+            "Sample/clip.mkv",
+            "Film.SAMPLE.mkv",
+            "Samples/a.mkv",
+            "x/sample-x.mkv",
+        ] {
+            assert!(is_sample(p), "{p}");
+        }
+        for p in [
+            "Sampler.S01E01.mkv",
+            "Resampled.mkv",
+            "Sampling Show/E01.mkv",
+        ] {
+            assert!(!is_sample(p), "{p}");
+        }
     }
 
     #[test]
