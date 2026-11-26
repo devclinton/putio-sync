@@ -835,6 +835,7 @@
  "Not scheduled": "ไม่ได้กำหนดเวลา",
  "Not set up: no putio-sync client there ({0}{1})": "ยังไม่ได้ตั้งค่า: ไม่มีคลาเอนต์ putio-sync ที่นั่น ({0}{1})",
  "Note": "หมายเหตุ",
+ "Note:": "หมายเหตุ:",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "ยังไม่มีการส่งอะไรออกไป ตรวจสอบรายงานด้านล่างว่ามีชื่อและพาธที่คุณไม่ต้องการแชร์หรือไม่ แล้วรายงานบน GitHub หากต้องการ",
  "Nothing has finished recently": "ไม่มีอะไรเสร็จสิ้นเมื่อเร็วๆ นี้",
  "Nothing in this folder": "ไม่มีอะไรในโฟลเดอร์นี้",

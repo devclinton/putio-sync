@@ -22,7 +22,11 @@ struct Seen {
 
 /// A server that takes every message and offers no STARTTLS. Returns its port.
 async fn server() -> (u16, Arc<Mutex<Seen>>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    serve(TcpListener::bind("127.0.0.1:0").await.unwrap())
+}
+
+/// The fake server on `listener`
+fn serve(listener: TcpListener) -> (u16, Arc<Mutex<Seen>>) {
     let port = listener.local_addr().unwrap().port();
     let seen = Arc::new(Mutex::new(Seen::default()));
     let shared = seen.clone();
@@ -203,4 +207,24 @@ async fn the_test_email_reports_failure() {
     let status = email.status();
     assert_eq!(status.failed, 1);
     assert_eq!(status.last.unwrap().error, Some(error));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_email_is_tried_again() {
+    let _turn = SERIAL.lock().await;
+    // Nothing listens yet: the first try fails
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let email = EmailService::new(config(port, SmtpSecurity::None));
+    email.set_retry_delays(vec![Duration::from_millis(600), Duration::from_millis(600)]);
+    email.start();
+    events::emit(finished("Late file"));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let (_, seen) = serve(TcpListener::bind(("127.0.0.1", port)).await.unwrap());
+    wait_for("the retried email", || email.status().sent == 1).await;
+    // One message, counted once; the failed try is not a failure
+    assert_eq!(email.status().failed, 0);
+    assert!(seen.lock().unwrap().messages[0].contains("Late file"));
 }

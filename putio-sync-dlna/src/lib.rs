@@ -34,7 +34,7 @@ use putio_sync_core::listen::ListenAddr;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use stream_local::Active;
@@ -61,6 +61,7 @@ pub struct SharedRoot {
 }
 
 /// What requests are answered from; swapped whole on each settings apply
+#[derive(Clone)]
 pub struct Shared {
     pub name: String,
     pub roots: Vec<SharedRoot>,
@@ -216,10 +217,19 @@ struct Inner {
     /// Media streams that may run at once
     stream_slots: Arc<tokio::sync::Semaphore>,
     players: Mutex<HashMap<IpAddr, Instant>>,
+    /// The last config applied, for the interface check
+    last_config: Mutex<Option<Config>>,
+    /// The addresses the last apply planned; a change starts the server again
+    planned: Mutex<Option<Vec<Ipv4Addr>>>,
+    /// The background tasks (event listener, interface check) are running
+    background: AtomicBool,
 }
 
 /// Most media streams at once (each Put.io stream also uses upstream bandwidth)
 const MAX_STREAMS: usize = 16;
+/// How often the network interfaces are looked at again, so an address that changes (DHCP)
+/// or a LAN that comes up after start is picked up
+const REPLAN_EVERY: Duration = Duration::from_secs(60);
 
 /// The media server handle
 #[derive(Clone)]
@@ -394,6 +404,9 @@ impl MediaServer {
                 active: Arc::new(AtomicUsize::new(0)),
                 stream_slots: Arc::new(tokio::sync::Semaphore::new(MAX_STREAMS)),
                 players: Mutex::new(HashMap::new()),
+                last_config: Mutex::new(None),
+                planned: Mutex::new(None),
+                background: AtomicBool::new(false),
             }),
         }
     }
@@ -498,9 +511,88 @@ impl MediaServer {
         }
     }
 
+    /// Something under the shared folders changed (a download finished, files were
+    /// organised): a new SystemUpdateID, so players that poll it browse again
+    pub fn content_changed(&self) {
+        let mut shared = self.inner.shared.write().unwrap_or_else(|e| e.into_inner());
+        let mut next = (**shared).clone();
+        next.update_id = self.inner.update_id.fetch_add(1, Ordering::Relaxed) + 1;
+        *shared = Arc::new(next);
+    }
+
+    /// Start the event listener and the interface check once; they end with the server
+    fn start_background(&self) {
+        if self.inner.background.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let weak = Arc::downgrade(&self.inner);
+        let mut rx = putio_sync_core::events::subscribe();
+        tokio::spawn(async move {
+            use putio_sync_core::events::EventType;
+            use tokio::sync::broadcast::error::RecvError;
+            loop {
+                let changed = match rx.recv().await {
+                    Ok(event) => matches!(
+                        event.event_type(),
+                        EventType::DownloadFinished | EventType::PipelineCompleted
+                    ),
+                    // Missed some: one of them may have been a change
+                    Err(RecvError::Lagged(_)) => true,
+                    Err(RecvError::Closed) => return,
+                };
+                let Some(inner) = weak.upgrade() else { return };
+                if changed {
+                    MediaServer { inner }.content_changed();
+                }
+            }
+        });
+        let weak = Arc::downgrade(&self.inner);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(REPLAN_EVERY).await;
+                let Some(inner) = weak.upgrade() else { return };
+                MediaServer { inner }.replan().await;
+            }
+        });
+    }
+
+    /// Apply the last config again when the interfaces it would bind have changed
+    async fn replan(&self) {
+        let config = self
+            .inner
+            .last_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let Some(config) = config else { return };
+        let Ok(dlna) = config.resolve_dlna() else {
+            return;
+        };
+        if !dlna.enabled {
+            return;
+        }
+        let now = bind_plan(&dlna).ok().map(|p| p.addrs);
+        let before = self
+            .inner
+            .planned
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if now != before {
+            tracing::info!(before = ?before, now = ?now, "network interfaces changed; DLNA media server starts again");
+            self.update(&config).await;
+        }
+    }
+
     /// Apply a config: start, rebind, change what is shared, or stop. Never fails the
     /// caller: a problem is the `failed` state with its reason.
     pub async fn update(&self, config: &Config) {
+        self.start_background();
+        *self
+            .inner
+            .last_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(config.clone());
         let mut running = self.inner.running.lock().await;
         let dlna = match config.resolve_dlna() {
             Ok(d) => d,
@@ -518,7 +610,10 @@ impl MediaServer {
             self.set_status(State::Off, None, Vec::new());
             return;
         }
-        let plan = match bind_plan(&dlna) {
+        let plan = bind_plan(&dlna);
+        *self.inner.planned.lock().unwrap_or_else(|e| e.into_inner()) =
+            plan.as_ref().ok().map(|p| p.addrs.clone());
+        let plan = match plan {
             Ok(p) => p,
             Err(reason) => {
                 self.stop_locked(&mut running).await;

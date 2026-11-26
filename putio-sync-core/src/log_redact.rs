@@ -121,6 +121,8 @@ fn harmless(value: &str) -> bool {
     let v = value.trim().trim_matches('"');
     v.is_empty()
         || v == MASK
+        // A count such as `tokens: 5`; longer numbers may be a PIN or a key
+        || (v.len() < MIN_SECRET && v.chars().all(|c| c.is_ascii_digit()))
         || ["true", "false", "none", "null"]
             .iter()
             .any(|w| v.eq_ignore_ascii_case(w))
@@ -206,7 +208,7 @@ fn value_after(text: &str, from: usize) -> Option<(usize, usize)> {
             .find(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '&' | ')' | '"' | '\''))
             .map_or(text.len(), |at| from + at)
     };
-    let end = word_end(start);
+    let mut end = word_end(start);
     if end == start {
         return None;
     }
@@ -219,8 +221,22 @@ fn value_after(text: &str, from: usize) -> Option<(usize, usize)> {
         let next = end + 1;
         let next_end = word_end(next);
         if next_end > next {
-            return Some((start, next_end));
+            end = next_end;
         }
+    }
+    // An unquoted secret may have spaces (`password: correct horse battery`): take the
+    // words that follow on the same line, up to punctuation or the next `key=` / `key:`.
+    // A harmless first word (`true`, a count) is the whole value.
+    while !harmless(&text[start..end]) && text[end..].starts_with(' ') {
+        let next = end + 1;
+        let next_end = word_end(next);
+        let word = &text[next..next_end];
+        let plain =
+            word.chars().next().is_some_and(|c| c.is_alphanumeric()) && !word.contains(['=', ':']);
+        if !plain {
+            break;
+        }
+        end = next_end;
     }
     Some((start, end))
 }
@@ -377,9 +393,23 @@ mod tests {
             ("{\"authorization\": \"Bearer zz-top\"}", "zz-top"),
             ("PUTIO_CLIENT_SECRET=cs-value", "cs-value"),
             ("client_secret = 'cs-value'", "cs-value"),
+            ("password: correct horse battery", "horse battery"),
+            ("password=123456", "123456"),
         ] {
             assert_masked(line, secret);
         }
+    }
+
+    #[test]
+    fn a_multi_word_secret_stops_at_the_next_key() {
+        assert_eq!(
+            redact("login password=correct horse user=bob, retry"),
+            format!("login password={MASK} user=bob, retry")
+        );
+        assert_eq!(
+            redact("AuthConfig { token: abc def }"),
+            format!("AuthConfig {{ token: {MASK} }}")
+        );
     }
 
     #[test]
@@ -396,6 +426,8 @@ mod tests {
             "token_present=false",
             "at 12:30:05 file_id=42 size=10",
             "Log level changed old=info new=debug",
+            "translated tokens: 512 of 4096",
+            "has_token = true for this run",
         ] {
             assert_eq!(redact(line), line);
         }

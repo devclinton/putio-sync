@@ -182,7 +182,7 @@ impl PutioRoot {
         entries.sort_by(|a, b| {
             b.is_folder
                 .cmp(&a.is_folder)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                .then_with(|| media::natural_cmp(&a.name, &b.name))
         });
         self.remember(&entries);
         let list = Arc::new(entries);

@@ -835,6 +835,7 @@
  "Not scheduled": "Not scheduled",
  "Not set up: no putio-sync client there ({0}{1})": "Not set up: no putio-sync client there ({0}{1})",
  "Note": "Note",
+ "Note:": "Note:",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.",
  "Nothing has finished recently": "Nothing has finished recently",
  "Nothing in this folder": "Nothing in this folder",

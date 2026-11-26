@@ -835,6 +835,7 @@
  "Not scheduled": "일정이 잡혀 있지 않음",
  "Not set up: no putio-sync client there ({0}{1})": "설정되지 않음: 거기에 putio-sync 클라이언트가 없습니다 ({0}{1})",
  "Note": "메모",
+ "Note:": "참고:",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "아무것도 전송되지 않았습니다. 아래 보고서에서 공유하고 싶지 않은 이름이나 경로가 없는지 확인한 뒤, 원하시면 GitHub에 보고하세요.",
  "Nothing has finished recently": "최근에 아무것도 끝난 적이 없습니다.",
  "Nothing in this folder": "이 폴더에 아무것도 없습니다.",

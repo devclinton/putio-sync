@@ -244,7 +244,7 @@ fn list_dir(dir: &Path, root: &Path) -> std::io::Result<Vec<Entry>> {
     out.sort_by(|a, b| {
         b.is_dir
             .cmp(&a.is_dir)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| media::natural_cmp(&a.name, &b.name))
             .then_with(|| a.name.cmp(&b.name))
     });
     Ok(out)

@@ -835,6 +835,7 @@
  "Not scheduled": "Planlanmadı",
  "Not set up: no putio-sync client there ({0}{1})": "Kurulamadı: orada no putio-sync istemcisi yok ({0}{1})",
  "Note": "not",
+ "Note:": "Not:",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "Hiçbir şey gönderilmedi. Aşağıdaki raporda paylaşmak istemediğiniz ad ve yollar olup olmadığını kontrol edin, isterseniz sonra GitHub'da bildirin.",
  "Nothing has finished recently": "Son zamanlarda hiçbir şey bitmedi",
  "Nothing in this folder": "Bu klasörde hiçbir şey yok",

@@ -268,18 +268,28 @@ pub fn movie_target(root: &str, name: &str, folder: &str) -> Option<Target> {
     })
 }
 
-/// `name.ext` gives `("name", ".ext")`; a name without a short extension gives `(name, "")`
+/// `name.ext` gives `("name", ".ext")`; a name without a short extension gives `(name, "")`.
+/// A quality tag such as `.720p`, `.1080i` or `.2160` is part of the name, not an extension.
 fn split_extension(name: &str) -> (&str, &str) {
     match name.rfind('.') {
         Some(at)
             if at > 0
                 && (2..=6).contains(&(name.len() - at))
-                && name[at + 1..].chars().all(|c| c.is_ascii_alphanumeric()) =>
+                && name[at + 1..].chars().all(|c| c.is_ascii_alphanumeric())
+                && !is_quality_tag(&name[at + 1..]) =>
         {
             (&name[..at], &name[at..])
         }
         _ => (name, ""),
     }
+}
+
+/// `720p`, `1080i`, `2160`: digits, optionally followed by `p` or `i`
+fn is_quality_tag(word: &str) -> bool {
+    let digits = word.trim_end_matches(['p', 'P', 'i', 'I']);
+    !digits.is_empty()
+        && word.len() - digits.len() <= 1
+        && digits.chars().all(|c| c.is_ascii_digit())
 }
 
 /// A subtitle's `Show.S01E02.en` gives `("Show.S01E02", ".en")`, so players still pair it
@@ -690,6 +700,21 @@ mod tests {
         assert_eq!(t.name, "Show_ Part - S01E02 - Who_.mkv");
         let t = tv_target("", "Show.S01E02.mkv", "").unwrap();
         assert_eq!(t.folder, "Show/Season 01");
+    }
+
+    #[test]
+    fn quality_tag_is_not_an_extension() {
+        assert_eq!(
+            split_extension("Show.S01E02.720p"),
+            ("Show.S01E02.720p", "")
+        );
+        assert_eq!(
+            split_extension("Show.S01E02.1080i"),
+            ("Show.S01E02.1080i", "")
+        );
+        assert_eq!(split_extension("Film.2160"), ("Film.2160", ""));
+        assert_eq!(split_extension("Film.720p.mp4"), ("Film.720p", ".mp4"));
+        assert_eq!(split_extension("clip.m4v"), ("clip", ".m4v"));
     }
 
     #[test]

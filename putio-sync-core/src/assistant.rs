@@ -22,6 +22,8 @@ pub enum Level {
     Danger,
     /// Can cause loops, load or noise
     Warning,
+    /// Worth knowing, not a problem (a hook turned off on purpose)
+    Info,
 }
 
 /// A risky combination of settings
@@ -227,17 +229,33 @@ pub fn risks_in(config: &Config, host: &Host) -> Vec<Risk> {
         .iter()
         .filter(|r| r.delete_blocked == Some(true))
     {
-        let include = rules.resolve(&rule.path).include.value;
-        if !include.is_empty() {
+        let effective = rules.resolve(&rule.path);
+        let (include, exclude) = (effective.include.value, effective.exclude.value);
+        let message = match (include.is_empty(), exclude.is_empty()) {
+            (true, true) => None,
+            (false, true) => Some(format!(
+                "Files under {} that don't match `{}` are deleted from Put.io at each sync.",
+                rule.path,
+                include.as_str()
+            )),
+            (true, false) => Some(format!(
+                "Files under {} that match `{}` are deleted from Put.io at each sync.",
+                rule.path,
+                exclude.as_str()
+            )),
+            (false, false) => Some(format!(
+                "Files under {} that don't match `{}`, or that match `{}`, are deleted from Put.io at each sync.",
+                rule.path,
+                include.as_str(),
+                exclude.as_str()
+            )),
+        };
+        if let Some(message) = message {
             add(
                 "delete_unmatched",
                 Level::Warning,
                 &["download.rules"],
-                format!(
-                    "Files under {} that don't match `{}` are deleted from Put.io at each sync.",
-                    rule.path,
-                    include.as_str()
-                ),
+                message,
             );
         }
     }
@@ -259,7 +277,7 @@ pub fn risks_in(config: &Config, host: &Host) -> Vec<Risk> {
         if !hook.enabled {
             add(
                 "hook_disabled",
-                Level::Warning,
+                Level::Info,
                 &["hooks"],
                 format!("Hook {} is turned off, so it gets no events.", hook.name),
             );
@@ -710,6 +728,19 @@ mod tests {
         );
         config.download.rules[0].include = Some(String::new());
         assert!(ids(&config, &h).is_empty(), "the rule clears it");
+        config.download.rules[0].exclude = Some("*.nfo".into());
+        let found = risks_in(&config, &h);
+        assert_eq!(
+            found[0].message,
+            "Files under Movies that match `*.nfo` are deleted from Put.io at each sync."
+        );
+        config.download.rules[0].include = None;
+        let found = risks_in(&config, &h);
+        assert_eq!(
+            found[0].message,
+            "Files under Movies that don't match `*.mkv`, or that match `*.nfo`, are deleted \
+             from Put.io at each sync."
+        );
     }
 
     #[test]
@@ -947,9 +978,10 @@ mod tests {
         config.notifications.backend = crate::config::NotificationBackend::Webhook;
         let risks = risks_in(&config, &host(temp.path()));
         let ids: Vec<_> = risks.iter().map(|r| r.id).collect();
-        let mut expected = vec!["hook_disabled", "hook_plain_http", "notifications_unused"];
+        // The disabled hook is only a note, so it comes after the warnings
+        let mut expected = vec!["hook_plain_http", "notifications_unused", "hook_disabled"];
         if cfg!(unix) {
-            expected.insert(2, "hook_shared_dir");
+            expected.insert(1, "hook_shared_dir");
         }
         assert_eq!(ids, expected);
         let plain = risks.iter().find(|r| r.id == "hook_plain_http").unwrap();

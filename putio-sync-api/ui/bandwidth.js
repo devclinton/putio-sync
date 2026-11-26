@@ -50,7 +50,9 @@ export function describeEntry(entry) {
 export function rowFromEntry(entry) {
   const limit = entry.limit;
   const kind = limit === "unlimited" || limit === "paused" ? limit : "rate";
-  return { days: entry.days, start: entry.start, end: entry.end, kind, mbs: kind === "rate" ? toMBs(limit) : "" };
+  const rate = kind === "rate";
+  // `bytes` keeps the saved value: "1.23" MB/s shown for 1290000 must not save as 1289748
+  return { days: entry.days, start: entry.start, end: entry.end, kind, mbs: rate ? toMBs(limit) : "", bytes: rate ? Number(limit) : null };
 }
 
 /**
@@ -60,6 +62,10 @@ export function rowFromEntry(entry) {
 export function entryFromRow(row) {
   const entry = { days: row.days.trim(), start: row.start.trim(), end: row.end.trim() };
   if (row.kind !== "rate") return { ...entry, limit: row.kind };
+  // The rate was not edited: send the saved bytes, not the rounded MB/s shown
+  if (Number.isFinite(row.bytes) && row.bytes > 0 && String(row.mbs).trim() === toMBs(row.bytes)) {
+    return { ...entry, limit: row.bytes };
+  }
   const bytes = fromMBs(row.mbs);
   return { ...entry, limit: bytes ?? String(row.mbs).trim() };
 }

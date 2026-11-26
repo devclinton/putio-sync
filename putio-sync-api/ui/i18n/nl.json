@@ -835,6 +835,7 @@
  "Not scheduled": "Niet gepland",
  "Not set up: no putio-sync client there ({0}{1})": "Niet ingesteld: er is geen putio-sync-klant aanwezig ({0}{1})",
  "Note": "notitie",
+ "Note:": "Opmerking:",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "Er is niets verzonden. Controleer het rapport hieronder op namen en paden die je liever niet deelt en meld het daarna eventueel op GitHub.",
  "Nothing has finished recently": "Er is onlangs niets afgerond",
  "Nothing in this folder": "Niets in deze map",

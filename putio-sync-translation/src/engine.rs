@@ -40,6 +40,10 @@ pub struct Job<'a> {
 }
 
 fn language_name(code: &str) -> String {
+    if code == "und" {
+        // A sidecar without a language word (`Movie.srt`); the model can tell what it is
+        return "an unknown language".to_string();
+    }
     lang::name(code).unwrap_or_else(|| code.to_string())
 }
 

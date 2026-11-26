@@ -461,8 +461,8 @@ async fn finish_saves_once_and_creates_the_api_token() {
         .await;
     let s = setup_with(None, Some(&server.url()));
     let downloads = s.dir.path().join("downloads");
-    let watch = s.dir.path().join("watch");
-    std::fs::create_dir(&watch).unwrap();
+    // Not there yet: finish makes it, as it makes the download folder
+    let watch = s.dir.path().join("watch").join("inbox");
     s.gated(
         Method::POST,
         "/setup/putio/token",
@@ -520,7 +520,8 @@ async fn finish_saves_once_and_creates_the_api_token() {
     assert_eq!(saved.download.preset.as_deref(), Some("video"));
     assert_eq!(saved.download.rules[0].preset.as_deref(), Some("audio"));
     assert!(saved.watch.enabled);
-    assert_eq!(saved.watch.paths, vec![watch]);
+    assert_eq!(saved.watch.paths, vec![watch.clone()]);
+    assert!(watch.is_dir());
     assert!(saved.metrics.enabled);
     assert_eq!(saved.putio.app_id.as_deref(), Some("4242"));
     assert_eq!(saved.api.auth_token.as_deref(), Some(api_token.as_str()));

@@ -46,6 +46,15 @@ test("rows round-trip entries", () => {
   assert.deepEqual(rowFromEntry({ days: "daily", start: "01:00", end: "07:00", limit: 1048576 }).mbs, "1");
 });
 
+test("an unedited rate keeps its exact bytes", () => {
+  const entry = { days: "daily", start: "01:00", end: "07:00", limit: 1290000 };
+  const row = rowFromEntry(entry);
+  assert.equal(row.mbs, "1.23");
+  assert.deepEqual(entryFromRow(row), entry);
+  row.mbs = "2";
+  assert.equal(entryFromRow(row).limit, 2097152);
+});
+
 test("a bad rate is sent as typed so the save names it", () => {
   const row = { days: " daily ", start: "01:00", end: "07:00", kind: "rate", mbs: "fast" };
   assert.deepEqual(entryFromRow(row), { days: "daily", start: "01:00", end: "07:00", limit: "fast" });

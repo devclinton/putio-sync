@@ -835,6 +835,7 @@
  "Not scheduled": "Ei ajoitettu",
  "Not set up: no putio-sync client there ({0}{1})": "Ei asetettu: siellä ei ole putio-sync-asiakas ({0}{1})",
  "Note": "viesti",
+ "Note:": "Huomautus:",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "Mitään ei ole lähetetty. Tarkista alla oleva raportti nimien ja polkujen varalta, joita et halua jakaa, ja ilmoita siitä sitten GitHubissa, jos haluat.",
  "Nothing has finished recently": "Mikään ei ole viime aikoina valmis.",
  "Nothing in this folder": "Tässä kansiossa ei ole mitään",

@@ -835,6 +835,7 @@
  "Not scheduled": "Не запланировано",
  "Not set up: no putio-sync client there ({0}{1})": "Не настроено: там нет клиента putio-sync ({0}{1})",
  "Note": "Примечание",
+ "Note:": "Примечание:",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "Ничего не отправлено. Проверьте отчёт ниже на имена и пути, которыми вы не хотите делиться, затем при желании сообщите о проблеме на GitHub.",
  "Nothing has finished recently": "Несколько не закончилось недавним временем",
  "Nothing in this folder": "Ничего в этом папке",

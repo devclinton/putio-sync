@@ -835,6 +835,7 @@
  "Not scheduled": "Không được lên lịch",
  "Not set up: no putio-sync client there ({0}{1})": "Chưa được thiết lập: không có trình đồng bộ putio-sync ở đó ({0}{1})",
  "Note": "Ghi chú",
+ "Note:": "Lưu ý:",
  "Nothing has been sent. Check the report below for names and paths you would rather not share, then report it on GitHub if you like.": "Chưa có gì được gửi. Hãy xem báo cáo bên dưới để tìm tên và đường dẫn bạn không muốn chia sẻ, rồi báo cáo trên GitHub nếu muốn.",
  "Nothing has finished recently": "Không có gì kết thúc gần đây",
  "Nothing in this folder": "Không có gì trong thư mục này",

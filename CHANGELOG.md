@@ -37,6 +37,38 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 - Diagnostics report the free space of the disk the working directory is on, by the longest
   matching mount point, instead of the first disk whose mount point matched (often `/`).
+- Email notifications try again after 30 seconds, 2 minutes and 10 minutes when the mail server
+  doesn't take a message; it counts as failed only after the last try, and turning email off
+  stops the retries.
+- Setup wizard: a watch folder that doesn't exist yet is created on Finish (it was saved but
+  never made), unticking "skip" on a folder clears a skip the config already had, `~` in a
+  folder path means the home folder, and Windows is told to start a path with a drive.
+- Settings warnings: a folder rule that deletes blocked files now warns when a "Never download"
+  pattern is what blocks them, not only an "Only download" one. A hook that is turned off is a
+  note, not a warning, and no longer counts as a problem on the section.
+- Bandwidth schedule: saving the settings no longer rounds an unedited rate to the MB/s shown
+  (1290000 bytes/s stayed 1290000, not 1289748).
+- The Transmission RPC for Radarr and Sonarr refuses `torrent-remove` without ids instead of
+  answering success.
+- Config files accept the API's spelling of `progress_style`, `sort_order` and the notification
+  backend (`"ByDate"`, `"PerFile"`, `"None"`) as well as the documented one.
+- Organise: a quality tag at the end of a name (`Show.S01E02.720p`) is no longer taken as the
+  file's extension.
+- DLNA: players see new downloads and organised files without a restart (SystemUpdateID changes
+  when a download finishes or a pipeline completes), the server rebinds within a minute when the
+  network address changes or the LAN comes up late, folders sort numbers by value (`Episode 2`
+  before `Episode 10`), and TVs that only search for `MediaServer:2` to `:4` find it.
+- Subtitles: a sample is a whole `sample` or `samples` word in the path, so `Sampler.S01E01.mkv`
+  gets subtitles; a `Movie.srt` without a language word counts as an existing subtitle (language
+  unknown) and can be translated from.
+- Language codes `nb`/`nob` (Bokmål, filed as Norwegian), `ga`/`gle` (Irish), `fil` (Filipino) and
+  OpenSubtitles' `pob` (Brazilian Portuguese) are recognised.
+- Logs page: with a cursor, `GET /logs?after=N&limit=M` returns the first M lines after N, so a
+  client paging forward misses none (it returned the newest M).
+- Log redaction: a secret with spaces after `password:` or `token=` is masked whole, not just
+  its first word, and a small count such as `tokens: 5` is left readable.
+- Storage cleanup checks every folder above a file against the unfinished transfers again just
+  before deleting, as the plan did, not only its parent folder.
 - The free-space hold no longer blocks smaller files behind one that doesn't fit, or flips the
   big file's status on every poll: rows that don't fit stay pending and the next one that fits
   runs. Running downloads' unwritten bytes now count against the floor, so several workers can't

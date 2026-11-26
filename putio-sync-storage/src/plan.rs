@@ -20,6 +20,10 @@ pub struct Candidate {
     /// Put.io `created_at`, the date the file was added
     pub created_at: Option<String>,
     pub local_path: String,
+    /// Folder ids above the file, nearest first, without the root. The delete step checks
+    /// each against the transfers again, as the planner did.
+    #[serde(skip)]
+    pub ancestors: Vec<i64>,
 }
 
 /// What the planner decides from
@@ -89,6 +93,19 @@ fn protected(files: &[WalkedFile], unfinished: &HashSet<i64>) -> HashSet<i64> {
 /// `local_size` answers the size of a local file, or `None` when it is missing.
 pub fn eligible(inputs: &Inputs<'_>, local_size: impl Fn(&str) -> Option<u64>) -> Vec<Candidate> {
     let protected = protected(inputs.files, inputs.unfinished);
+    let by_id: HashMap<i64, &WalkedFile> = inputs.files.iter().map(|f| (f.id, f)).collect();
+    let ancestors = |file: &WalkedFile| {
+        let mut out = Vec::new();
+        let mut id = file.parent_id;
+        while id != 0 && out.len() < 256 && !out.contains(&id) {
+            out.push(id);
+            match by_id.get(&id) {
+                Some(entry) if entry.parent_id != id => id = entry.parent_id,
+                _ => break,
+            }
+        }
+        out
+    };
     let mut out: Vec<Candidate> = inputs
         .files
         .iter()
@@ -104,6 +121,7 @@ pub fn eligible(inputs: &Inputs<'_>, local_size: impl Fn(&str) -> Option<u64>) -
                 size: f.size,
                 created_at: f.created_at.clone(),
                 local_path,
+                ancestors: ancestors(f),
             })
         })
         .collect();
@@ -239,6 +257,26 @@ mod tests {
     }
 
     #[test]
+    fn candidates_carry_every_folder_above_them() {
+        let fx = Fixture::new(vec![
+            walked(30, 0, 0, true, None),
+            walked(31, 30, 0, true, None),
+            walked(1, 31, 10, false, None),
+            walked(2, 0, 10, false, None),
+        ]);
+        let inputs = Inputs {
+            files: &fx.files,
+            completed: &fx.completed,
+            queued: &fx.queued,
+            unfinished: &fx.unfinished,
+        };
+        let mut c = eligible(&inputs, |p| fx.local.get(p).copied());
+        c.sort_by_key(|c| c.id);
+        assert_eq!(c[0].ancestors, vec![31, 30]);
+        assert!(c[1].ancestors.is_empty(), "the root is not listed");
+    }
+
+    #[test]
     fn any_matching_record_counts() {
         let mut fx = Fixture::new(vec![walked(1, 0, 10, false, None)]);
         fx.completed
@@ -295,6 +333,7 @@ mod tests {
             size,
             created_at: None,
             local_path: String::new(),
+            ancestors: Vec::new(),
         }
     }
 

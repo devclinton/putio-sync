@@ -234,7 +234,11 @@ pub fn check_folder(path: &Path, putio_used: Option<u64>, create: bool) -> Folde
         ..FolderCheck::default()
     };
     if !path.is_absolute() {
-        check.error = Some("Use a full path, starting with /".to_string());
+        check.error = Some(if cfg!(windows) {
+            "Use a full path, starting with a drive such as C:\\".to_string()
+        } else {
+            "Use a full path, starting with /".to_string()
+        });
         return check;
     }
     if create && !path.exists() {
@@ -504,6 +508,19 @@ impl SetupChoices {
         }
         for choice in &self.folders {
             if choice.preset.is_none() && !choice.skip {
+                // Unticking "skip" clears a skip the config already had; a rule left with
+                // nothing else in it goes
+                if let Ok(path) = normalize_path(&choice.path) {
+                    config.download.rules.retain_mut(|r| {
+                        if r.skip != Some(true)
+                            || normalize_path(&r.path).ok().as_deref() != Some(path.as_str())
+                        {
+                            return true;
+                        }
+                        r.skip = None;
+                        !r.is_empty()
+                    });
+                }
                 continue;
             }
             let path = normalize_path(&choice.path)?;
@@ -599,6 +616,40 @@ mod tests {
         };
         config.download.target_directory = dir.join("dl");
         config
+    }
+
+    #[test]
+    fn unticking_skip_clears_a_skip_from_the_config() {
+        let mut config = Config::default();
+        config.download.rules = vec![
+            FolderRule {
+                path: "Junk".to_string(),
+                skip: Some(true),
+                ..FolderRule::default()
+            },
+            FolderRule {
+                path: "Old".to_string(),
+                skip: Some(true),
+                delete_blocked: Some(true),
+                ..FolderRule::default()
+            },
+        ];
+        let choices = SetupChoices {
+            folders: ["/Junk", "/Old"]
+                .map(|p| FolderChoice {
+                    path: p.to_string(),
+                    preset: None,
+                    skip: false,
+                })
+                .into(),
+            ..SetupChoices::default()
+        };
+        choices.apply(&mut config).unwrap();
+        // `Junk` had only the skip, so it goes; `Old` keeps its other setting
+        assert_eq!(config.download.rules.len(), 1);
+        assert_eq!(config.download.rules[0].path, "Old");
+        assert_eq!(config.download.rules[0].skip, None);
+        assert_eq!(config.download.rules[0].delete_blocked, Some(true));
     }
 
     #[test]

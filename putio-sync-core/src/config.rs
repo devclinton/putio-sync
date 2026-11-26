@@ -943,14 +943,19 @@ pub struct SyncConfig {
 pub enum ProgressStyle {
     /// One bar per file + overall progress bar
     #[default]
+    #[serde(alias = "PerFile")]
     PerFile,
     /// Overall progress only
+    #[serde(alias = "Overall")]
     Overall,
     /// Individual file progress only
+    #[serde(alias = "Individual")]
     Individual,
     /// Rotate between files and overall
+    #[serde(alias = "Rotating")]
     Rotating,
     /// No progress bars
+    #[serde(alias = "None")]
     None,
 }
 
@@ -960,12 +965,16 @@ pub enum ProgressStyle {
 pub enum SortOrder {
     /// Sort by date (default)
     #[default]
+    #[serde(alias = "ByDate")]
     ByDate,
     /// Sort by filename
+    #[serde(alias = "ByName")]
     ByName,
     /// Sort by file extension
+    #[serde(alias = "ByExtension")]
     ByExtension,
     /// Sort by file size
+    #[serde(alias = "BySize")]
     BySize,
 }
 
@@ -1095,10 +1104,13 @@ pub struct WatchConfig {
 pub enum NotificationBackend {
     /// No notifications
     #[default]
+    #[serde(alias = "None")]
     None,
     /// Webhook notifications (ignored: use a hook)
+    #[serde(alias = "Webhook")]
     Webhook,
     /// Email notifications (ignored: use `[notifications.smtp]`)
+    #[serde(alias = "Email")]
     Email,
 }
 
@@ -3113,6 +3125,39 @@ fn toml_error_summary(contents: &str, error: &toml::de::Error) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn enums_accept_the_api_casing_too() {
+        use super::{NotificationBackend, ProgressStyle, SortOrder};
+        #[derive(serde::Deserialize)]
+        struct Row<T> {
+            v: T,
+        }
+        fn read<T: serde::de::DeserializeOwned>(v: &str) -> T {
+            toml::from_str::<Row<T>>(&format!("v = \"{v}\"")).unwrap().v
+        }
+        assert_eq!(read::<SortOrder>("by-date"), SortOrder::ByDate);
+        assert_eq!(read::<SortOrder>("BySize"), SortOrder::BySize);
+        assert_eq!(read::<ProgressStyle>("PerFile"), ProgressStyle::PerFile);
+        assert_eq!(read::<ProgressStyle>("None"), ProgressStyle::None);
+        assert_eq!(
+            read::<NotificationBackend>("None"),
+            NotificationBackend::None
+        );
+        assert_eq!(
+            read::<NotificationBackend>("email"),
+            NotificationBackend::Email
+        );
+        // Files are still written in the documented spelling
+        assert_eq!(
+            toml::to_string(&std::collections::BTreeMap::from([(
+                "v",
+                SortOrder::ByDate
+            )]))
+            .unwrap(),
+            "v = \"by-date\"\n"
+        );
+    }
+
     #[test]
     fn buffer_size_is_capped() {
         let mut config = super::Config::default();
