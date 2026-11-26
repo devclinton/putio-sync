@@ -182,7 +182,7 @@ impl<'a> HistoryRepository<'a> {
             "SELECT * FROM download_history WHERE 1=1{filter} \
              ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?"
         );
-        let mut q = sqlx::query_as::<_, DownloadHistory>(&sql);
+        let mut q = sqlx::query_as::<_, DownloadHistory>(sqlx::AssertSqlSafe(sql.as_str()));
         for binding in bindings {
             q = q.bind(binding);
         }
@@ -253,7 +253,7 @@ impl<'a> HistoryRepository<'a> {
 
         query.push_str(" ORDER BY timestamp DESC LIMIT ? OFFSET ?");
 
-        let mut q = sqlx::query_as::<_, DownloadHistory>(&query);
+        let mut q = sqlx::query_as::<_, DownloadHistory>(sqlx::AssertSqlSafe(query.as_str()));
         for binding in &bindings {
             q = q.bind(binding);
         }
@@ -276,7 +276,7 @@ impl<'a> HistoryRepository<'a> {
     pub async fn count(&self, action: Option<HistoryAction>, name: Option<&str>) -> DbResult<i64> {
         let (filter, bindings) = filters(action, name);
         let sql = format!("SELECT COUNT(*) FROM download_history WHERE 1=1{filter}");
-        let mut q = sqlx::query_as::<_, (i64,)>(&sql);
+        let mut q = sqlx::query_as::<_, (i64,)>(sqlx::AssertSqlSafe(sql.as_str()));
         for binding in bindings {
             q = q.bind(binding);
         }

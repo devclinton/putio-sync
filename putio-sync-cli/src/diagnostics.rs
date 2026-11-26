@@ -490,10 +490,12 @@ impl DiagnosticsCollector {
 
         // Get disk space information for the working directory
         let disk_space_mb = std::env::current_dir().ok().and_then(|cwd| {
-            let disks = Disks::new_with_refreshed_list();
-            disks
-                .iter()
-                .find(|disk| cwd.starts_with(disk.mount_point()))
+            let disks = Disks::new_with_refreshed_list().ok()?;
+            // The longest matching mount point is the disk cwd lives on; "/" matches everything
+            (&disks)
+                .into_iter()
+                .filter(|disk| cwd.starts_with(disk.mount_point()))
+                .max_by_key(|disk| disk.mount_point().as_os_str().len())
                 .map(|disk| disk.available_space() / 1024 / 1024) // Convert bytes to MB
         });
 
@@ -501,12 +503,12 @@ impl DiagnosticsCollector {
         let memory_usage_mb = {
             use sysinfo::ProcessesToUpdate;
 
-            let mut sys = System::new();
-            let pid = sysinfo::Pid::from_u32(std::process::id());
-            sys.refresh_processes(ProcessesToUpdate::Some(&[pid]));
-
-            sys.process(pid)
-                .map(|process| process.memory() / 1024 / 1024) // Convert bytes to MB
+            System::new().ok().and_then(|mut sys| {
+                let pid = sysinfo::Pid::from_u32(std::process::id());
+                sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
+                sys.process(pid)
+                    .map(|process| process.memory() / 1024 / 1024) // Convert bytes to MB
+            })
         };
 
         EnvironmentInfo {

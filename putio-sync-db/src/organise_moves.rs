@@ -130,7 +130,7 @@ impl<'a> OrganiseMovesRepository<'a> {
     /// One move
     pub async fn get(&self, file_id: i64) -> DbResult<Option<OrganiseMove>> {
         let sql = format!("SELECT {COLUMNS} FROM organise_moves WHERE file_id = ?");
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(file_id)
             .fetch_optional(self.pool)
             .await
@@ -143,7 +143,7 @@ impl<'a> OrganiseMovesRepository<'a> {
         let sql = format!(
             "SELECT {COLUMNS} FROM organise_moves ORDER BY updated_at DESC, file_id DESC LIMIT ?"
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(limit)
             .fetch_all(self.pool)
             .await
@@ -227,7 +227,7 @@ impl<'a> OrganiseMovesRepository<'a> {
         for chunk in file_ids.chunks(500) {
             let marks = vec!["?"; chunk.len()].join(",");
             let sql = format!("DELETE FROM organise_moves WHERE file_id IN ({marks})");
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
             for id in chunk {
                 query = query.bind(id);
             }

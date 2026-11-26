@@ -493,11 +493,11 @@ impl Store {
         )
         .execute(&self.pool)
         .await?;
-        let n = sqlx::query(&format!(
+        let n = sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE pipeline_steps SET state = 'interrupted' WHERE state = 'running' \
              AND kind IN {RESTARTABLE} AND id NOT IN \
              (SELECT step_id FROM translation_callbacks WHERE state = 'waiting')"
-        ))
+        )))
         .execute(&self.pool)
         .await?
         .rows_affected();

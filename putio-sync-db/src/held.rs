@@ -127,7 +127,7 @@ impl<'a> HeldRepository<'a> {
             "SELECT {COLUMNS} FROM held_magnets WHERE next_at <= ? AND source != ? \
              ORDER BY next_at, held_at LIMIT ?"
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(now)
             .bind(WATCH)
             .bind(limit)
@@ -157,7 +157,7 @@ impl<'a> HeldRepository<'a> {
     /// One held magnet
     pub async fn get(&self, hash: &str) -> DbResult<Option<Held>> {
         let sql = format!("SELECT {COLUMNS} FROM held_magnets WHERE hash = ?");
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(hash)
             .fetch_optional(self.pool)
             .await
@@ -168,7 +168,7 @@ impl<'a> HeldRepository<'a> {
     /// Every held magnet, the oldest first
     pub async fn list(&self) -> DbResult<Vec<Held>> {
         let sql = format!("SELECT {COLUMNS} FROM held_magnets ORDER BY held_at, hash");
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .fetch_all(self.pool)
             .await
             .map_err(tracked(DbOp::Other, "Failed to list held magnets"))?;
@@ -180,7 +180,7 @@ impl<'a> HeldRepository<'a> {
         let sql = format!(
             "SELECT {COLUMNS} FROM held_magnets WHERE source = ? AND watch_folder = ? ORDER BY held_at, hash"
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(WATCH)
             .bind(watch_folder)
             .fetch_all(self.pool)
@@ -198,7 +198,7 @@ impl<'a> HeldRepository<'a> {
             .await
             .map_err(tracked(DbOp::Other, "Failed to end hold"))?;
         let sql = format!("DELETE FROM held_magnets WHERE hash = ? RETURNING {COLUMNS}");
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(hash)
             .fetch_optional(&mut *tx)
             .await

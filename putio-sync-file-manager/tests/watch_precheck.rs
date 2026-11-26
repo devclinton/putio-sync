@@ -430,10 +430,12 @@ fn drop_magnet(f: &Fixture, file: &str, bytes: &[u8]) -> String {
 /// Make the held magnets due now; `ran_out` also ends their time
 async fn make_due(f: &Fixture, ran_out: bool) {
     let until = if ran_out { ", until_at = 0" } else { "" };
-    sqlx::query(&format!("UPDATE held_magnets SET next_at = 0{until}"))
-        .execute(f.db.pool())
-        .await
-        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE held_magnets SET next_at = 0{until}"
+    )))
+    .execute(f.db.pool())
+    .await
+    .unwrap();
 }
 
 async fn hold_ends(f: &Fixture) -> Vec<String> {

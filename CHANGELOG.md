@@ -14,6 +14,9 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- Dependencies: sqlx 0.9, argon2 0.6 and sysinfo 0.40. Every query that builds its SQL at run
+  time is now marked as checked (only fixed column lists, `?` placeholders and quoted paths go
+  into the text; values are bound). Password hashes saved by earlier versions still verify.
 - Usage stats receiver Worker: the 4 KB limit now counts bytes and stops reading early (411 without
   `Content-Length`), each field keeps at most 200 distinct values a day, `/summary` is off unless
   `PUBLIC_SUMMARY=1`, and the README covers limits and rate limiting.
@@ -31,6 +34,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- Diagnostics report the free space of the disk the working directory is on, by the longest
+  matching mount point, instead of the first disk whose mount point matched (often `/`).
 - The free-space hold no longer blocks smaller files behind one that doesn't fit, or flips the
   big file's status on every poll: rows that don't fit stay pending and the next one that fits
   runs. Running downloads' unwritten bytes now count against the floor, so several workers can't
