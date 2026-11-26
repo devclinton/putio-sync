@@ -520,19 +520,28 @@ async fn daemon_watcher_messages() {
 
     let current = get_ok(&app, path).await["delete_after_upload"] == json!(true);
     let text = message(&app, path, "delete_after_upload", json!(!current)).await;
-    assert!(
-        text.contains("Needs a restart: delete_after_upload"),
-        "{text}"
-    );
+    assert!(text.contains("next scan: delete_after_upload"), "{text}");
+    assert!(!text.contains("restart"), "{text}");
 
+    // The daemon follows refresh_cycle, unless --watch-interval pins the interval
     let text = message(&app, path, "refresh_cycle", json!(42)).await;
+    assert!(text.contains("next scan: refresh_cycle"), "{text}");
+    assert!(!text.contains("--watch-interval"), "{text}");
+}
+
+#[tokio::test]
+async fn a_pinned_watch_interval_is_named() {
+    let mut app = test_daemon_app(true).await;
+    app.state = app.state.clone().with_watch_interval_pinned(true);
+    app.router = putio_sync_api::router(app.state.clone());
+    let text = message(&app, "/settings/watcher", "refresh_cycle", json!(43)).await;
     assert!(text.contains("--watch-interval"), "{text}");
 }
 
 #[tokio::test]
 async fn watcher_messages_without_a_live_watcher() {
-    // Daemon started with no watch folder, and `server`: everything needs a restart
-    for app in [test_daemon_app(false).await, test_app().await] {
+    // `server` has no watch loop: everything needs a restart
+    for app in [test_app().await] {
         let path = "/settings/watcher";
         let text = message(&app, path, "parent_folder_id", json!(7)).await;
         assert!(text.contains("Needs a restart: parent_folder_id"), "{text}");
@@ -549,7 +558,7 @@ async fn logging_messages() {
     if std::env::var_os("RUST_LOG").is_some() {
         assert!(text.contains("ignored while RUST_LOG is set"), "{text}");
     } else {
-        assert!(text.contains("within 10 seconds: level"), "{text}");
+        assert!(text.contains("Applies now: level"), "{text}");
         assert!(!text.contains("restart"), "{text}");
     }
 
@@ -566,7 +575,7 @@ async fn notification_messages() {
 }
 
 /// `POST /local/watcher/start|stop` save only the flag: they keep the file's tokens too,
-/// and say a restart is needed
+/// and under `daemon` say it applies at the next scan
 #[tokio::test]
 async fn watcher_start_stop_keep_tokens_and_say_restart() {
     let app = test_daemon_app(true).await;
@@ -580,7 +589,7 @@ async fn watcher_start_stop_keep_tokens_and_say_restart() {
         assert_eq!(response.status(), StatusCode::OK, "{path}");
         let body = body_json(response).await;
         let text = body["message"].as_str().unwrap_or_default();
-        assert!(text.contains("restart"), "{path}: {text}");
+        assert!(text.contains("applies at the next scan"), "{path}: {text}");
 
         let config = saved(&app);
         assert_eq!(config.watch.enabled, enabled, "{path}");

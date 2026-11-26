@@ -10,6 +10,8 @@ import { entryText } from "../settings/catalog.js";
 import { settingsCatalog } from "../settings/groups.js";
 import { SECTIONS, fieldId, sectionOf, sectionOfKey, settingsHref } from "../settings/sections.js";
 import { assistant, riskList } from "../settings/form.js";
+import { POLL_MS, noticeParts } from "../settings/reload.js";
+import { settingsStatus } from "../api.js";
 import * as general from "../settings/general.js";
 import * as putio from "../settings/putio.js";
 import * as downloads from "../settings/downloads.js";
@@ -39,6 +41,7 @@ export function mount(el, params) {
   const state = {};
   const cardSection = Object.fromEntries(SECTIONS.flatMap((s) => s.cards.map(([id]) => [id, s.id])));
   const riskBox = h("section", { class: "card", role: "status", hidden: true });
+  const reloadBox = h("section", { class: "notice reload-status", role: "status", "aria-live": "polite", hidden: true });
   let risks = [];
   let jumpTimer = 0;
   const ctx = {
@@ -49,7 +52,10 @@ export function mount(el, params) {
       state[id] = { ...state[id], ...patch };
       marks();
     },
-    onSaved: () => showRisks(),
+    onSaved: () => {
+      showRisks();
+      showReload();
+    },
     remount: () => {
       unmount();
       el.replaceChildren();
@@ -127,6 +133,34 @@ export function mount(el, params) {
     riskBox.replaceChildren(h("h2", { text: "Warnings" }), ...nodes);
     marks();
   }
+
+  // A refused hand edit of the config file, and saved settings that wait for a restart
+  async function showReload() {
+    let status;
+    try {
+      status = await settingsStatus();
+    } catch {
+      return;
+    }
+    if (mine !== seq) return;
+    const parts = noticeParts(status);
+    reloadBox.hidden = !parts;
+    if (!parts) return void reloadBox.replaceChildren();
+    const lines = [];
+    if (parts.error) {
+      lines.push(
+        h("p", {}, h("strong", { text: "The last edit to the config file was refused." }), " ", h("span", { text: "The settings from before it are still running. Fix the file and save it again." })),
+        h("p", {}, h("code", { text: parts.error })),
+      );
+    }
+    if (parts.pending.length) {
+      const links = parts.pending.flatMap((key, i) => [i ? ", " : null, h("a", { href: settingsHref(sectionOfKey(key), key) }, h("code", { text: key }))]);
+      lines.push(h("p", {}, h("strong", { text: "Restart to apply:" }), " ", ...links));
+    }
+    reloadBox.replaceChildren(...lines);
+  }
+  const poll = setInterval(showReload, POLL_MS);
+  ctx.cleanup.push(() => clearInterval(poll));
 
   // Search the settings catalog (061), the same list the command palette uses
   const results = h("ul", { class: "search-results", hidden: true });
@@ -213,15 +247,17 @@ export function mount(el, params) {
     h(
       "div",
       { class: "page-head" },
-      h("div", {}, h("h1", { text: "Settings" }), h("p", { class: "muted", text: "Saved to the config file. Each save says whether it applies now or after a restart." })),
+      h("div", {}, h("h1", { text: "Settings" }), h("p", { class: "muted", text: "Saved to the config file. Most settings apply at once; each save names any that wait for a restart." })),
       h("div", { class: "settings-search" }, search, results),
     ),
+    reloadBox,
     riskBox,
     h("div", { class: "settings-layout" }, h("nav", { class: "settings-nav", "aria-label": "Settings sections" }, nav), h("div", {}, SECTIONS.map((s) => panels[s.id].node))),
   );
   page = { params, ctx, show };
   show(params);
   showRisks();
+  showReload();
 }
 
 /** Another section or field of Settings: shown in place, so unsaved input stays */

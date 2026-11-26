@@ -25,6 +25,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   refused: the running settings stay, and the error is logged once per distinct file content.
   A settings import now also applies logging, Tailscale, organiser, updates, DLNA and
   arr settings at once. The daemon warns, for one release, when the config fails validation.
+- Hot reload (part 2): the Settings page shows a banner when a hand edit of the config file
+  was refused (the earlier settings keep running) and lists saved settings that wait for a
+  restart, from the new `GET /settings/status`. One list in core says which settings need a
+  restart. Watcher saves under `daemon`, including `enabled` and `delete_after_upload`, now
+  apply at the next scan, and logging saves apply at once.
 - Usage stats receiver Worker: the 4 KB limit now counts bytes and stops reading early (411 without
   `Content-Length`), each field keeps at most 200 distinct values a day, `/summary` is off unless
   `PUBLIC_SUMMARY=1`, and the README covers limits and rate limiting.

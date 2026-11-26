@@ -214,6 +214,11 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
         include_bytes!("../ui/settings/plugin_install.js"),
     ),
     (
+        "settings/reload.js",
+        JS,
+        include_bytes!("../ui/settings/reload.js"),
+    ),
+    (
         "settings/registry.js",
         JS,
         include_bytes!("../ui/settings/registry.js"),

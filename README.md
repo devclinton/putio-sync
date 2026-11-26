@@ -1222,9 +1222,9 @@ daemon's download manager and watcher:
 
 | Group | Applies live | Needs a restart |
 |---|---|---|
-| Logging | `level`, `module_filters`, within 10 s (ignored while `RUST_LOG` is set) | `console_format`, `console_enabled`, `file_*` |
+| Logging | `level`, `module_filters`, `buffer_lines`, at once (level and filters are ignored while `RUST_LOG` is set) | `console_format`, `console_enabled`, `file_*` |
 | Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`, `slow_limit_bytes_per_sec` (running downloads too), `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `min_free_space_mb`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, `verify`, `verify_max_redownloads`, `verify_read_limit_mb_per_sec`, `verify_follow_bandwidth_pause`, for the next download or verify run | `target_directory` (new downloads go there at once, but the disk figures stay on the startup folder), and the rest of the group |
-| Watcher | `paths`, `parent_folder_id`, `archive_directory`, at the next scan | `enabled` (also the watcher Start/Stop endpoints, which only save the flag), `delete_after_upload`; `refresh_cycle` (the daemon follows it live unless `--watch-interval` pins it) |
+| Watcher | everything, at the next scan (also the watcher Start/Stop endpoints); `refresh_cycle` unless `--watch-interval` pins it | — |
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Release check | — | everything |
 | Notifications | `smtp` (email), at once | nothing: the legacy `enabled`, `backend`, `webhook_url`, `email` still parse but are ignored |
@@ -1370,6 +1370,7 @@ addresses, for a plugin server or an indexer on the same machine.
 | `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck,tailscale,network,hooks,plugins}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
 | `POST /settings/{group}/preview` | The group's PUT body → `{"valid", "error", "changes": [{"key", "before", "after", "live"}], "when", "risks"}`; writes nothing |
 | `POST /settings/notifications/test` | Body: the `smtp` object from `GET /settings/notifications` (a masked password means the saved one). Sends a test email now, on or off, and answers `{"ok": true}` or `{"ok": false, "error": "..."}`; 422 for settings that do not validate. The `notifications` GET adds a read-only `smtp_status`: sent and failed counts since start and the last email |
+| `GET /settings/status` | How the running config was applied: `generation`, `source` (`startup`, `api`, `file`), `applied_at`, `last_error` (why the last hand edit of `config.toml` was refused) and `pending_restart` (`section.key` of saved settings that wait for a restart) |
 | `GET /settings/assistant` | Per group: what each field affects, the fields that apply live, the defaults; and the risks of the running config |
 | `GET /settings/export` | The settings as a TOML file, without `[auth]`, `api.auth_token` and `[arr]` |
 | `POST /settings/import` | `{"toml": "...", "apply": false, "confirm_exec"?}` → a preview with `changes` (dotted keys), `risks`, `unknown` and `ignored`; with `true`, saves it and adds `message`. A file that adds or changes a hook command, `subtitles.transcription.ffmpeg_path` or `plugins_dir` shows a danger risk and `needs_confirm_exec`, and applying it needs `"confirm_exec": true`. 400 for invalid TOML (line number only), a refused config, a file over 1 MB or a missing `confirm_exec` |
@@ -2425,13 +2426,19 @@ INFO Removed already-uploaded watch file path=/watch/Series.magnet
 
 #### Live configuration changes
 
-Only `[logging] level`, `module_filters` and `buffer_lines` are re-read from `config.toml` while running
-(see [Verbosity](#verbosity)). Everything else in the file needs a restart. Some download
-and watcher settings can also be changed at runtime from the web UI or the API
-(`PUT /settings/download`, `PUT /settings/watcher`); a new `workers` value there scales
-the pool as described below. `PUT /settings/logging` saves to `config.toml`, so its level
-change is picked up the same way. [Settings from the UI](#settings-from-the-ui) lists what
-applies live and what needs a restart.
+`daemon` and `server` look at `config.toml` every 2 seconds. A hand edit that parses and
+passes validation is applied to the running services, the same way a save from the web UI
+or the API is; a new `workers` value scales the pool as described below. An edit that
+doesn't parse or validate is refused: the running settings stay, the error is logged once,
+and the Settings page shows it until the file is fixed.
+
+A few settings are read only at startup: `[auth]`, `[database]`, `[metrics]`, `[precheck]`,
+`api.enabled`, `api.url`, `api.listen`, `api.bind`, the logging outputs (`file_enabled`,
+`file_path`, `console_enabled`, `console_format`) and `tailscale.tailnet_only`. When a save
+or an edit changes one of them, the Settings page lists it under **Restart to apply** until
+the next restart. `GET /settings/status` gives the same: `generation`, `source` (`startup`,
+`api` or `file`), `applied_at`, `last_error` and `pending_restart`.
+[Settings from the UI](#settings-from-the-ui) lists, per group, what applies live.
 
 At startup, `daemon` and `server` (its API and its `--download` thread) give the download
 manager every `[download]` setting it has: `target_directory`, `workers`,

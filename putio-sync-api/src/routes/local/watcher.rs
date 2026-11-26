@@ -179,7 +179,14 @@ async fn set_enabled(state: &AppState, enabled: bool) -> Result<Json<SuccessResp
     info!("File watcher {verb} ({persisted})");
 
     Ok(Json(SuccessResponse {
-        message: format!("File watcher {verb} and {persisted}; takes effect after a restart."),
+        message: match state.engine {
+            crate::Engine::Daemon => {
+                format!("File watcher {verb} and {persisted}; applies at the next scan.")
+            }
+            crate::Engine::Server => {
+                format!("File watcher {verb} and {persisted}; takes effect after a restart.")
+            }
+        },
     }))
 }
 

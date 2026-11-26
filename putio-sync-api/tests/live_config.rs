@@ -140,3 +140,50 @@ async fn an_import_applies_and_publishes() {
     assert_eq!(app.state.hub.current().download.workers, before);
     assert_eq!(app.state.hub.snapshot().generation, generation + 2);
 }
+
+#[tokio::test]
+async fn the_status_route_shows_a_refused_edit_and_what_waits_for_a_restart() {
+    let app = test_daemon_app(true).await;
+    let status = common::body_json(app.get("/settings/status").await).await;
+    assert_eq!(status["source"], "startup");
+    assert_eq!(status["pending_restart"], json!([]));
+    assert!(status["last_error"].is_null());
+    assert!(status["applied_at"].is_string());
+
+    // A hand edit that changes a live setting and a restart-only one
+    let mut edited = (*app.state.hub.current()).clone();
+    edited.watch.refresh_cycle += 1;
+    edited.metrics.enabled = !edited.metrics.enabled;
+    app.state.hub.publish(edited, Source::File);
+    let status = common::body_json(app.get("/settings/status").await).await;
+    assert_eq!(status["source"], "file");
+    assert_eq!(status["generation"], 1);
+    assert_eq!(status["pending_restart"], json!(["metrics.enabled"]));
+
+    app.state.hub.set_error("expected `=` (line 3, column 5)");
+    let status = common::body_json(app.get("/settings/status").await).await;
+    assert_eq!(status["last_error"], "expected `=` (line 3, column 5)");
+}
+
+#[tokio::test]
+async fn a_watcher_save_says_it_applies_at_the_next_scan() {
+    let app = test_daemon_app(true).await;
+    let mut body = common::body_json(app.get("/settings/watcher").await).await;
+    body["refresh_cycle"] = json!(body["refresh_cycle"].as_u64().unwrap() + 4);
+    body["delete_after_upload"] = json!(!body["delete_after_upload"].as_bool().unwrap());
+    let response = app
+        .req(
+            Method::PUT,
+            "/settings/watcher",
+            Some(&app.token),
+            Some(body),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let message = common::body_json(response).await["message"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(message.contains("Applies at the next scan"), "{message}");
+    assert!(!message.contains("restart"), "{message}");
+}

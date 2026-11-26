@@ -73,9 +73,9 @@ pub fn extract_download_config(config: &Config) -> DownloadConfig {
 /// This state is shared across all route handlers and provides access to
 /// all core services: database, download manager, API client, and configuration.
 ///
-/// Note: `PUT /settings/logging` only saves the file; the config poller started by
-/// `daemon`/`server` applies `level` and `module_filters` from it. Other logging
-/// settings need a restart.
+/// Note: a settings save is published to [`AppState::hub`]; the config subscriber
+/// ([`live::spawn_config_subscriber`]) applies `[logging]` level and filters from it.
+/// What still needs a restart is listed in [`putio_sync_core::restart::RESTART_ONLY`].
 #[derive(Clone)]
 pub struct AppState {
     /// Application configuration (wrapped in RwLock for settings updates)
@@ -105,6 +105,9 @@ pub struct AppState {
     /// Whether a config reload poller applies `[logging]` level changes from the file.
     /// Both commands start one exactly when the config file exists at startup.
     pub logging_reload: bool,
+    /// Whether `--watch-interval` pins the daemon's scan interval over
+    /// `watch.refresh_cycle`
+    pub watch_interval_pinned: bool,
     /// Empty-folder cleanup; under `daemon`, the same service runs the daily cleanup
     pub cleanup: Arc<EmptyFolderCleanup>,
     /// Put.io storage (feature 033); under `daemon`, the same service refreshes the
@@ -233,6 +236,7 @@ impl AppState {
             doctor,
             engine: Engine::Server,
             logging_reload,
+            watch_interval_pinned: false,
             config: Arc::new(RwLock::new(config)),
             config_path: config_path.map(Arc::new),
             client,
@@ -318,6 +322,12 @@ impl AppState {
     /// Mark the state as running on the daemon's own engine (`api_listener::start`)
     pub fn on_daemon(mut self) -> AppState {
         self.engine = Engine::Daemon;
+        self
+    }
+
+    /// Record that `--watch-interval` pins the daemon's scan interval
+    pub fn with_watch_interval_pinned(mut self, pinned: bool) -> AppState {
+        self.watch_interval_pinned = pinned;
         self
     }
 

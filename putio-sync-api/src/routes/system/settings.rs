@@ -287,6 +287,43 @@ pub(crate) async fn push_watcher(state: &AppState) {
     }
 }
 
+/// How the running config came to be, for the settings page's banner
+#[derive(Debug, Serialize)]
+pub struct ReloadStatus {
+    /// 0 at startup, then one more for each save or hand edit applied
+    pub generation: u64,
+    /// Who applied the running config: `startup`, `api` (a save) or `file` (a hand edit)
+    pub source: &'static str,
+    /// When the running config was applied (RFC 3339)
+    pub applied_at: Option<String>,
+    /// Why the last hand edit of the config file was refused; the running settings are kept
+    pub last_error: Option<String>,
+    /// Saved settings that apply only after a restart, as `section.key`
+    pub pending_restart: Vec<String>,
+}
+
+/// How the last reload went and what waits for a restart
+///
+/// GET /settings/status
+async fn get_reload_status(State(state): State<AppState>) -> Json<ReloadStatus> {
+    use putio_sync_core::config_hub::Source;
+    let snapshot = state.hub.snapshot();
+    let status = state.hub.status();
+    Json(ReloadStatus {
+        generation: snapshot.generation,
+        source: match snapshot.source {
+            Source::Startup => "startup",
+            Source::Api => "api",
+            Source::File => "file",
+        },
+        applied_at: status
+            .applied_at
+            .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()),
+        last_error: status.last_error,
+        pending_restart: state.hub.pending_restart(),
+    })
+}
+
 /// The save message (FR-018): which changed fields apply now and which need a restart.
 ///
 /// `live` lists the fields this engine applies without a restart and `when` says when
@@ -680,6 +717,7 @@ pub struct PrecheckView {
 /// Create the settings router
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/status", get(get_reload_status))
         .route("/download", get(get_download_settings))
         .route("/download", put(update_download_settings))
         .route("/watcher", get(get_watcher_config))
@@ -887,10 +925,17 @@ const DOWNLOAD_LIVE: &[&str] = &[
     "verify_follow_bandwidth_pause",
 ];
 
-/// Watcher fields a shared watcher picks up at its next scan
-const WATCHER_LIVE: &[&str] = &["paths", "parent_folder_id", "archive_directory"];
+/// Watcher fields the daemon's watcher and watch loop pick up at the next scan
+const WATCHER_LIVE: &[&str] = &[
+    "enabled",
+    "paths",
+    "refresh_cycle",
+    "parent_folder_id",
+    "archive_directory",
+    "delete_after_upload",
+];
 
-/// Logging fields the config reload poller applies
+/// Logging fields applied when the config is published
 const LOGGING_LIVE: &[&str] = &["level", "module_filters", "buffer_lines"];
 
 fn download_view(config: &Config) -> DownloadSettings {
@@ -1210,23 +1255,14 @@ async fn update_watcher_config(
     state.cleanup.configure(&*state.config.read().await);
 
     let mut notes = Vec::new();
-    match (state.engine, state.file_watcher.is_some()) {
-        (Engine::Daemon, true) => {
-            if take(&mut changed, "refresh_cycle") {
-                notes.push(
-                    "refresh_cycle is saved, but the daemon scans on --watch-interval.".to_string(),
-                );
-            }
-        }
-        (Engine::Daemon, false) => {
-            if !changed.is_empty() {
-                notes.push(
-                    "The daemon started without a watch folder, so the watcher picks up changes only after a restart."
-                        .to_string(),
-                );
-            }
-        }
-        (Engine::Server, _) => {}
+    if state.engine == Engine::Daemon
+        && state.watch_interval_pinned
+        && take(&mut changed, "refresh_cycle")
+    {
+        notes.push(
+            "refresh_cycle is saved, but --watch-interval sets how often the daemon scans."
+                .to_string(),
+        );
     }
     let (live, when) = live_watcher(&state);
 
@@ -1246,12 +1282,12 @@ fn apply_watcher(watcher: WatcherConfig, config: &mut Config) -> Result<(), ApiE
     Ok(())
 }
 
-/// Watcher fields applied without a restart, and when: only a watcher shared with the
-/// daemon picks changes up
+/// Watcher fields applied without a restart, and when: the daemon's watcher follows the
+/// config; the server has no watch loop
 pub(crate) fn live_watcher(state: &AppState) -> (&'static [&'static str], &'static str) {
-    let live: &'static [&'static str] = match (state.engine, state.file_watcher.is_some()) {
-        (Engine::Daemon, true) => WATCHER_LIVE,
-        _ => &[],
+    let live: &'static [&'static str] = match state.engine {
+        Engine::Daemon => WATCHER_LIVE,
+        Engine::Server => &[],
     };
     (live, "Applies at the next scan")
 }
@@ -1311,9 +1347,10 @@ fn apply_logging(settings: LoggingSettings, config: &mut Config) -> Result<(), A
     putio_sync_core::logging::validate_filters(&config.logging).map_err(invalid)
 }
 
-/// Logging fields applied without a restart, and when. The config reload poller
-/// (feature 003) applies level and module_filters from the saved file, unless RUST_LOG is
-/// set; it runs only if the file existed at startup.
+/// Logging fields applied without a restart, and when. The config subscriber applies
+/// level and module_filters as soon as a save is published, unless RUST_LOG is set or the
+/// file didn't exist at startup. The outputs need a restart
+/// ([`putio_sync_core::restart::RESTART_ONLY`]).
 pub(crate) fn live_logging(state: &AppState) -> (&'static [&'static str], &'static str) {
     let live: &'static [&'static str] =
         if !state.logging_reload || std::env::var_os("RUST_LOG").is_some() {
@@ -1321,7 +1358,7 @@ pub(crate) fn live_logging(state: &AppState) -> (&'static [&'static str], &'stat
         } else {
             LOGGING_LIVE
         };
-    (live, "Applies within 10 seconds")
+    (live, "Applies now")
 }
 
 /// Get notification settings
