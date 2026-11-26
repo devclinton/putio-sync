@@ -12,10 +12,10 @@ pub const RESTART_ONLY: &[(&str, &[&str])] = &[
     // The Put.io token the client was built with
     ("auth", &[]),
     ("database", &[]),
-    // The /metrics listener
-    ("metrics", &[]),
-    // The API listener; auth_token and allowed_hosts are read on each request
-    ("api", &["enabled", "url", "listen", "bind"]),
+    // Whether the API listens at all, and the remote API a client mode talks to. Where it
+    // listens (`bind`, `[tailscale] tailnet_only`) and all of `[metrics]` apply live;
+    // auth_token and allowed_hosts are read on each request
+    ("api", &["enabled", "url", "listen"]),
     // Where logs go; the level and filters apply live
     (
         "logging",
@@ -28,8 +28,6 @@ pub const RESTART_ONLY: &[(&str, &[&str])] = &[
     ),
     // The watch folders' release check, given to the daemon at startup
     ("precheck", &[]),
-    // Which addresses the API listens on
-    ("tailscale", &["tailnet_only"]),
 ];
 
 /// True when `section.key` is read only at startup
@@ -39,25 +37,13 @@ pub fn needs_restart(section: &str, key: &str) -> bool {
         .any(|(s, keys)| *s == section && (keys.is_empty() || keys.contains(&key)))
 }
 
-/// `config` with defaults written out where an unset key and its default mean the same,
-/// so a save that writes the default down isn't taken for a change
-fn effective(config: &Config) -> Config {
-    let mut config = config.clone();
-    if config.api.bind.is_none() {
-        config.api.bind = Some(crate::listen::BindList::from(
-            crate::config::DEFAULT_API_BIND,
-        ));
-    }
-    config
-}
-
 /// The restart-only settings that differ between `started` (the config the process
 /// started with) and `running` (the one it runs on now), as `section.key`, sorted. A
 /// whole section that appeared or went away is named alone. Never holds values.
 pub fn pending(started: &Config, running: &Config) -> Vec<String> {
     let (Ok(started), Ok(running)) = (
-        toml::Table::try_from(effective(started)),
-        toml::Table::try_from(effective(running)),
+        toml::Table::try_from(started),
+        toml::Table::try_from(running),
     ) else {
         return Vec::new();
     };
@@ -103,6 +89,11 @@ mod tests {
         running.watch.refresh_cycle += 5;
         running.logging.level = "debug".to_string();
         running.api.allowed_hosts = vec!["nas.lan".to_string()];
+        // The listeners move live (part 3)
+        running.api.bind = Some(crate::listen::BindList::from("127.0.0.1:15432"));
+        running.metrics.enabled = !started.metrics.enabled;
+        running.metrics.bind = crate::listen::BindList::from("127.0.0.1:9999");
+        running.tailscale.tailnet_only = true;
         assert!(pending(&started, &running).is_empty());
     }
 
@@ -111,28 +102,12 @@ mod tests {
         let started = Config::default();
         let mut running = Config::default();
         running.logging.console_enabled = !started.logging.console_enabled;
-        running.metrics.enabled = !started.metrics.enabled;
-        running.tailscale.tailnet_only = true;
+        running.api.enabled = !started.api.enabled;
+        running.api.url = Some("http://nas.lan:15432".to_string());
         assert_eq!(
             pending(&started, &running),
-            vec![
-                "logging.console_enabled",
-                "metrics.enabled",
-                "tailscale.tailnet_only"
-            ]
+            vec!["api.enabled", "api.url", "logging.console_enabled"]
         );
-    }
-
-    #[test]
-    fn writing_the_default_bind_down_is_not_a_change() {
-        let started = Config::default();
-        let mut running = Config::default();
-        running.api.bind = Some(crate::listen::BindList::from(
-            crate::config::DEFAULT_API_BIND,
-        ));
-        assert!(pending(&started, &running).is_empty());
-        running.api.bind = Some(crate::listen::BindList::from("127.0.0.1:15432"));
-        assert_eq!(pending(&started, &running), vec!["api.bind"]);
     }
 
     #[test]
@@ -158,11 +133,14 @@ mod tests {
             for key in *keys {
                 // Optional keys are left out when unset; a key that never serialises is a typo
                 let known = fields.contains_key(*key)
-                    || matches!((*section, *key), ("api", "url" | "listen" | "bind"));
+                    || matches!((*section, *key), ("api", "url" | "listen"));
                 assert!(known, "{section}.{key} isn't a config key");
             }
         }
-        assert!(needs_restart("api", "bind"));
+        assert!(needs_restart("api", "listen"));
+        assert!(!needs_restart("api", "bind"));
+        assert!(!needs_restart("metrics", "enabled"));
+        assert!(!needs_restart("tailscale", "tailnet_only"));
         assert!(needs_restart("auth", "anything"));
         assert!(!needs_restart("api", "allowed_hosts"));
         assert!(!needs_restart("watch", "refresh_cycle"));

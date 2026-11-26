@@ -153,12 +153,15 @@ async fn the_status_route_shows_a_refused_edit_and_what_waits_for_a_restart() {
     // A hand edit that changes a live setting and a restart-only one
     let mut edited = (*app.state.hub.current()).clone();
     edited.watch.refresh_cycle += 1;
-    edited.metrics.enabled = !edited.metrics.enabled;
+    edited.logging.console_enabled = !edited.logging.console_enabled;
     app.state.hub.publish(edited, Source::File);
     let status = common::body_json(app.get("/settings/status").await).await;
     assert_eq!(status["source"], "file");
     assert_eq!(status["generation"], 1);
-    assert_eq!(status["pending_restart"], json!(["metrics.enabled"]));
+    assert_eq!(
+        status["pending_restart"],
+        json!(["logging.console_enabled"])
+    );
 
     app.state.hub.set_error("expected `=` (line 3, column 5)");
     let status = common::body_json(app.get("/settings/status").await).await;

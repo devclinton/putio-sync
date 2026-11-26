@@ -306,12 +306,23 @@ async fn settings_round_trip() {
     assert_eq!(response.status(), StatusCode::OK);
 
     body["tailnet_only"] = json!(true);
-    let (status, response) = put(&app, body).await;
+    let (status, response) = put(&app, body.clone()).await;
     assert_eq!(status, StatusCode::OK, "{response}");
     assert!(
         response["message"].as_str().unwrap().contains("restart"),
         "{response}"
     );
+
+    // Under daemon the API listener follows it (hot reload, part 3)
+    let mut app = app;
+    app.state = app.state.clone().on_daemon();
+    app.router = router(app.state.clone());
+    body["tailnet_only"] = json!(false);
+    let (status, response) = put(&app, body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let message = response["message"].as_str().unwrap();
+    assert!(message.contains("Applies now: tailnet_only."), "{message}");
+    assert!(!message.contains("restart"), "{message}");
 }
 
 #[tokio::test]

@@ -55,6 +55,8 @@ async fn serves_without_db_then_reports_queue_and_disk() {
     )
     .await
     .unwrap()
+    .bound()
+    .first()
     .expect("listener started");
     tokio::task::yield_now().await;
 

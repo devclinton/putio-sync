@@ -779,6 +779,10 @@ variable wins when both are set.
 | `PUTIO_SYNC_METRICS_PATH` | `metrics.path` | starts with `/` | restart |
 | `PUTIO_SYNC_METRICS_DETAIL` | `metrics.detail` | `basic`, `detailed` | restart |
 
+The variables are read at startup. Under `daemon`, the `[metrics]` settings in the config
+file apply live when no variable overrides them: turning metrics on or off, a new `bind`
+list, `path` or `detail` takes effect as soon as the file or a save is applied.
+
 `logging.level` and `logging.module_filters` in the config file are live: putio-sync checks
 the file every 10 s and logs `Log level changed old=info new=debug source=Config`. An invalid
 level logs `Log level not changed` once and keeps the current one. An invalid value at
@@ -1143,8 +1147,10 @@ no token at all are refused but not counted.
 | `PUTIO_SYNC_API_LISTEN` | `api.listen` | `true`, `false`, `1`, `0` | `true` |
 | `PUTIO_SYNC_API_BIND` | `api.bind` | comma-separated addresses (see below) | `0.0.0.0:15432` |
 
-The variable wins over `config.toml`. All three need a restart. `listen` is read by
-`daemon` only; `bind` by both `daemon` and `server` (see [Listen addresses](#listen-addresses)).
+The variable wins over `config.toml`. The variables are read at startup. `listen` is read by
+`daemon` only, at startup; `bind` by both `daemon` and `server` (see [Listen addresses](#listen-addresses)).
+Under `daemon` a new `[api] bind` in the file or from Settings moves the listener at once,
+unless `PUTIO_SYNC_API_BIND` is set.
 Set `PUTIO_SYNC_API_LISTEN=0` to turn the listener off. If an address can't be bound,
 the daemon logs one `API listener failed to start` error, keeps syncing and tries again. With `[api] enabled = true`
 (downloads delegated to a remote API server) the daemon doesn't start its own listener.
@@ -1180,6 +1186,12 @@ is checked again (every second for 5 minutes, then every 30 seconds); putio-sync
 addresses. `PUTIO_SYNC_API_BIND` and `PUTIO_SYNC_METRICS_BIND` take a comma-separated
 list. `GET /listen` and Settings › Network and access › Network show each entry and what it listens on now,
 and the doctor's "Listening addresses" check warns about an entry with no address.
+
+Under `daemon`, a new list (in `config.toml` or from Settings) applies while it runs: new
+addresses are bound first, then the ones no entry gives any more close, so moving to a
+free port leaves no gap. An address that can only be bound once an old one closes (the same
+port on an overlapping address) is bound right after. Requests already in progress on a
+closed address finish. `server` binds its list once, at start.
 
 `server` listens on the same list (tailnet-only included) when no flag is given:
 
@@ -1228,13 +1240,15 @@ daemon's download manager and watcher:
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Release check | — | everything |
 | Notifications | `smtp` (email), at once | nothing: the legacy `enabled`, `backend`, `webhook_url`, `email` still parse but are ignored |
-| Network | — | everything (`api_bind`, `metrics_bind`); the UI asks first when the new list wouldn't reach the page you're on |
+| Network | `api_bind`, `metrics_bind`: the listeners move at once (the UI asks first when the new list wouldn't reach the page you're on) | — |
+| Tailscale | `identity_sign_in`, `allowed_users`, `socket`, `tailnet_only` (the API moves to the tailnet address, or back), at once | — |
 | Event hooks | everything, at once | — |
 | Plugins | everything, at once (a new `plugins_dir` is read on save) | — |
 
 Under `server`, the logging rows are the same (when the config file existed at
 startup). Download changes reach only the API's own download manager, not the
-`--download` background thread, and watcher and notification changes need a restart.
+`--download` background thread, and watcher, notification and network changes need a
+restart; `tailnet_only` applies only under `daemon`.
 The daily cleanup runs only under `daemon`; under `server`, `min_age_hours` and `nested`
 apply to manual runs.
 
@@ -1366,7 +1380,7 @@ addresses, for a plugin server or an indexer on the same machine.
 | `GET`/`PUT`/`DELETE /logs/level` | The level in effect and the Logs page's overrides; `PUT {"target"?, "level", "minutes"?}` sets one (no `minutes` keeps it until restart; 400 when invalid, 409 when this process can't change level); `DELETE ?target=<module>` reverts one, `?target=` the overall one, no query all |
 | `GET /tailscale` | What Tailscale says about this machine: `state` (`running`, `needs_login`, `stopped`, `starting`, `unreachable`, `not_found`), `via`, `version`, `dns_name`, `tailnet`, `magic_dns`, `addresses`, `https`, `userspace`, `owner_login`, `serve`; plus `urls` (the addresses that open putio-sync over the tailnet, HTTPS `serve` first), `hints`, `tailnet_bind` or `tailnet_bind_error`, `settings` and this request's `identity`. Never fails: a missing Tailscale is a state |
 | `GET /listen` | What this process listens on: `api` (`configured`, `effective`, `listening`, each entry with its `addresses` or why it is `waiting`, `port`, `tailnet_only`, `env_override`), `metrics` (the same, plus `enabled`), `engine` and `server_flags` (whether `server --bind/--port` replaced the list) |
-| `POST /settings/network/check` | The `network` PUT body → what each entry would listen on, `this_page` (`kept`, `cut_off` or `unknown`: whether the page you're on would still reach putio-sync), `listened_on`, `ui_at` and `warnings`; saves nothing |
+| `POST /settings/network/check` | The `network` PUT body → what each entry would listen on, `this_page` (`kept`, `cut_off` or `unknown`: whether the page you're on would still reach putio-sync), `listened_on`, `ui_at`, `warnings` and `applies_now` (true under `daemon`, where a save moves the listeners at once); saves nothing |
 | `GET`/`PUT /settings/{download,watcher,cleanup,logging,notifications,precheck,tailscale,network,hooks,plugins}` | Settings (see above). The `precheck` GET adds a read-only `effective` list: per category and watch folder, whether it's checked, the minimum size and the wanted types with the rule they come from |
 | `POST /settings/{group}/preview` | The group's PUT body → `{"valid", "error", "changes": [{"key", "before", "after", "live"}], "when", "risks"}`; writes nothing |
 | `POST /settings/notifications/test` | Body: the `smtp` object from `GET /settings/notifications` (a masked password means the saved one). Sends a test email now, on or off, and answers `{"ok": true}` or `{"ok": false, "error": "..."}`; 422 for settings that do not validate. The `notifications` GET adds a read-only `smtp_status`: sent and failed counts since start and the last email |
@@ -1576,7 +1590,7 @@ Tailscale can't serve it.
 [tailscale]
 identity_sign_in = true                # off by default
 allowed_users = ["alice@example.com"]  # empty lets nobody in
-tailnet_only = false                   # after a restart
+tailnet_only = false                   # daemon only; applies when saved
 ```
 
 ### Sign in with Tailscale
@@ -1605,7 +1619,8 @@ instead of `[api] bind`, so the LAN can't reach the API: it is the same as
 with other entries (see [Listen addresses](#listen-addresses)). If Tailscale isn't up
 when putio-sync starts, it keeps asking (every second for 5 minutes, then every 30
 seconds); it never falls back to another address. Saving it from Settings is refused when
-Tailscale has no address to give. `server --bind` replaces it.
+Tailscale has no address to give. Under `daemon`, turning it on or off moves the API at
+once. `server --bind` replaces it.
 With userspace networking (common in containers) there is no tailnet address to listen
 on: use `tailscale serve` instead.
 
@@ -2432,9 +2447,11 @@ or the API is; a new `workers` value scales the pool as described below. An edit
 doesn't parse or validate is refused: the running settings stay, the error is logged once,
 and the Settings page shows it until the file is fixed.
 
-A few settings are read only at startup: `[auth]`, `[database]`, `[metrics]`, `[precheck]`,
-`api.enabled`, `api.url`, `api.listen`, `api.bind`, the logging outputs (`file_enabled`,
-`file_path`, `console_enabled`, `console_format`) and `tailscale.tailnet_only`. When a save
+A few settings are read only at startup: `[auth]`, `[database]`, `[precheck]`,
+`api.enabled`, `api.url`, `api.listen` and the logging outputs (`file_enabled`,
+`file_path`, `console_enabled`, `console_format`). Under `daemon` the listeners follow the
+file: `api.bind`, `tailscale.tailnet_only` and all of `[metrics]` apply live (see
+[Listen addresses](#listen-addresses)). When a save
 or an edit changes one of them, the Settings page lists it under **Restart to apply** until
 the next restart. `GET /settings/status` gives the same: `generation`, `source` (`startup`,
 `api` or `file`), `applied_at`, `last_error` and `pending_restart`.

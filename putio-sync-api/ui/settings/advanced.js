@@ -15,7 +15,7 @@ const TAILSCALE = {
   fields: [
     ["identity_sign_in", "Tailscale sign-in", "Let the allowed Tailscale users in without the API token", "b"],
     ["allowed_users", "Allowed users", "Tailscale logins, one per line, e.g. alice@example.com", "l"],
-    ["tailnet_only", "Tailnet only", "Listen on the Tailscale address only, so the LAN can't reach the API (daemon, after a restart)", "b"],
+    ["tailnet_only", "Tailnet only", "Listen on the Tailscale address only, so the LAN can't reach the API (daemon only)", "b"],
     ["socket", "tailscaled socket", "Empty for the default; in Docker, mount the host's socket", "s?"],
   ],
   advanced: ["socket"],
@@ -29,8 +29,8 @@ const NETWORK = {
   guide: "guides/metrics-grafana",
   guideText: "Metrics guide",
   fields: [
-    ["api_bind", "API addresses", "One per line: ip:port, [ipv6]:port, interface:port or tailnet:port (after a restart)", "l"],
-    ["metrics_bind", "Metrics addresses", "One per line, same forms; must not share an address with the API (after a restart)", "l"],
+    ["api_bind", "API addresses", "One per line: ip:port, [ipv6]:port, interface:port or tailnet:port", "l"],
+    ["metrics_bind", "Metrics addresses", "One per line, same forms; must not share an address with the API", "l"],
   ],
   advanced: ["metrics_bind"],
   extra: networkExtra,

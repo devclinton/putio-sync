@@ -146,7 +146,7 @@ pub async fn execute_daemon(
     }
 
     let queue_db = Arc::new(OnceLock::new());
-    crate::telemetry::start(
+    let metrics = crate::telemetry::start(
         &config,
         queue_db.clone(),
         daemon_config.download.workers,
@@ -404,7 +404,7 @@ pub async fn execute_daemon(
 
     // API and web UI on the daemon's own engine (feature 004). Needs a local download
     // manager, so it is skipped when downloads are delegated to a remote API.
-    match (daemon.get_client(), daemon.get_download_manager()) {
+    let api = match (daemon.get_client(), daemon.get_download_manager()) {
         (Some(client), Some(download_manager)) => {
             let state = putio_sync_api::AppState::new(
                 config.clone(),
@@ -445,17 +445,25 @@ pub async fn execute_daemon(
                 None => state,
             };
             putio_sync_api::live::spawn_config_subscriber(state.clone());
-            crate::api_listener::start(&config, state).await?;
+            crate::api_listener::start(&config, state).await?
         }
-        _ => warn!("API listener not started: no local download manager (api.enabled is set)"),
-    }
-    // The daemon's loops follow every published config, whoever published it
+        _ => {
+            warn!("API listener not started: no local download manager (api.enabled is set)");
+            None
+        }
+    };
+    // The daemon's loops and both listeners follow every published config, whoever
+    // published it
     let handle = daemon.handle().with_pins(pins);
     let mut published = hub.subscribe();
     tokio::spawn(async move {
         while published.changed().await.is_ok() {
             let snapshot = published.borrow_and_update().clone();
             handle.apply(&snapshot.config).await;
+            if let Some(api) = &api {
+                api.apply(&snapshot.config);
+            }
+            metrics.apply(&snapshot.config).await;
         }
     });
 
