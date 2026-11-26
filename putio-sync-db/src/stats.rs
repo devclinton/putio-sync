@@ -114,7 +114,7 @@ impl<'a> StatsRepository<'a> {
             "#,
         );
 
-        let mut q = sqlx::query_as::<_, (String, i64, i64)>(&query);
+        let mut q = sqlx::query_as::<_, (String, i64, i64)>(sqlx::AssertSqlSafe(query.as_str()));
         for binding in &bindings {
             q = q.bind(binding);
         }
@@ -170,7 +170,7 @@ impl<'a> StatsRepository<'a> {
             bindings.push(until_date.to_string());
         }
 
-        let mut q = sqlx::query_as::<_, (i64, i64, i64)>(&query);
+        let mut q = sqlx::query_as::<_, (i64, i64, i64)>(sqlx::AssertSqlSafe(query.as_str()));
         for binding in &bindings {
             q = q.bind(binding);
         }

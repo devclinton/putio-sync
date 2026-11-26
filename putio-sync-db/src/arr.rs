@@ -218,11 +218,13 @@ impl<'a> ArrRepository<'a> {
 
     /// The item with this hash (lowercase hex)
     pub async fn get_by_hash(&self, hash: &str) -> DbResult<Option<ArrItem>> {
-        let row = sqlx::query(&format!("SELECT {COLUMNS} FROM arr_items WHERE hash = ?"))
-            .bind(hash)
-            .fetch_optional(self.pool)
-            .await
-            .map_err(tracked(DbOp::Other, "Failed to get arr item"))?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLUMNS} FROM arr_items WHERE hash = ?"
+        )))
+        .bind(hash)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to get arr item"))?;
         Ok(row.as_ref().map(item_from_row))
     }
 
@@ -232,7 +234,7 @@ impl<'a> ArrRepository<'a> {
             "SELECT {COLUMNS} FROM arr_items WHERE file_id = ? \
              OR hash IN (SELECT hash FROM arr_item_files WHERE file_id = ?) LIMIT 1"
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(file_id)
             .bind(file_id)
             .fetch_optional(self.pool)
@@ -251,7 +253,7 @@ impl<'a> ArrRepository<'a> {
             "SELECT file_id FROM arr_items WHERE file_id IN ({list}) \
              UNION SELECT file_id FROM arr_item_files WHERE file_id IN ({list})"
         );
-        let mut query = sqlx::query_scalar(&sql);
+        let mut query = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()));
         for _ in 0..2 {
             for id in file_ids {
                 query = query.bind(id);
@@ -265,20 +267,24 @@ impl<'a> ArrRepository<'a> {
 
     /// The item with this Transmission id
     pub async fn get_by_id(&self, id: i64) -> DbResult<Option<ArrItem>> {
-        let row = sqlx::query(&format!("SELECT {COLUMNS} FROM arr_items WHERE id = ?"))
-            .bind(id)
-            .fetch_optional(self.pool)
-            .await
-            .map_err(tracked(DbOp::Other, "Failed to get arr item"))?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLUMNS} FROM arr_items WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to get arr item"))?;
         Ok(row.as_ref().map(item_from_row))
     }
 
     /// Every item, oldest first
     pub async fn list(&self) -> DbResult<Vec<ArrItem>> {
-        let rows = sqlx::query(&format!("SELECT {COLUMNS} FROM arr_items ORDER BY id"))
-            .fetch_all(self.pool)
-            .await
-            .map_err(tracked(DbOp::Other, "Failed to list arr items"))?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLUMNS} FROM arr_items ORDER BY id"
+        )))
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to list arr items"))?;
         Ok(rows.iter().map(item_from_row).collect())
     }
 

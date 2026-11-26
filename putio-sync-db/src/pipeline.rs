@@ -402,7 +402,7 @@ pub(crate) async fn pipeline_files(
         )
         "#
     );
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
     for id in transfer_ids {
         query = query.bind(id);
     }
@@ -455,7 +455,7 @@ pub(crate) async fn transfer_origins(
         ORDER BY rank
         "#
     );
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
     for _ in 0..2 {
         for id in transfer_ids {
             query = query.bind(id);

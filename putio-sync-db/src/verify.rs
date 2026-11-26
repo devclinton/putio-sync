@@ -191,18 +191,20 @@ impl<'a> VerifyRepository<'a> {
             .await
             .map_err(tracked(DbOp::Other, CONTEXT))?;
         let old = "SELECT id FROM verify_runs ORDER BY id DESC LIMIT -1 OFFSET ?";
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM verify_problems WHERE run_id IN ({old})"
-        ))
+        )))
         .bind(keep)
         .execute(&mut *tx)
         .await
         .map_err(tracked(DbOp::Other, CONTEXT))?;
-        sqlx::query(&format!("DELETE FROM verify_runs WHERE id IN ({old})"))
-            .bind(keep)
-            .execute(&mut *tx)
-            .await
-            .map_err(tracked(DbOp::Other, CONTEXT))?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM verify_runs WHERE id IN ({old})"
+        )))
+        .bind(keep)
+        .execute(&mut *tx)
+        .await
+        .map_err(tracked(DbOp::Other, CONTEXT))?;
         tx.commit().await.map_err(tracked(DbOp::Other, CONTEXT))?;
         Ok(())
     }

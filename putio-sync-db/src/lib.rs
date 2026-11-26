@@ -197,7 +197,7 @@ impl Database {
     /// other connections write; the source is not changed (feature 041).
     pub async fn snapshot_to(&self, dest: &Path) -> DbResult<i64> {
         let quoted = dest.to_string_lossy().replace('\'', "''");
-        sqlx::query(&format!("VACUUM INTO '{quoted}'"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("VACUUM INTO '{quoted}'")))
             .execute(&self.pool)
             .await
             .map_err(tracked(DbOp::Other, "Failed to copy the database"))?;
@@ -358,7 +358,7 @@ impl Database {
              JOIN pipeline_items i ON i.key = f.item_key \
              WHERE f.file_id IN ({marks}) ORDER BY i.created_at, i.rowid"
         );
-        let mut query = sqlx::query_as::<_, (i64, String)>(&sql);
+        let mut query = sqlx::query_as::<_, (i64, String)>(sqlx::AssertSqlSafe(sql.as_str()));
         for id in file_ids {
             query = query.bind(id);
         }
@@ -670,10 +670,12 @@ impl Database {
                 sqlx::query("DROP TABLE IF EXISTS pipeline_steps_new")
                     .execute(&mut *conn)
                     .await?;
-                sqlx::query(&create_new).execute(&mut *conn).await?;
-                sqlx::query(&format!(
+                sqlx::query(sqlx::AssertSqlSafe(create_new.as_str()))
+                    .execute(&mut *conn)
+                    .await?;
+                sqlx::query(sqlx::AssertSqlSafe(format!(
                     "INSERT INTO pipeline_steps_new ({cols}) SELECT {cols} FROM pipeline_steps"
-                ))
+                )))
                 .execute(&mut *conn)
                 .await?;
                 sqlx::query("DROP TABLE pipeline_steps")
@@ -756,9 +758,9 @@ impl Database {
         if count > 0 {
             return Ok(());
         }
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "ALTER TABLE {table} ADD COLUMN {column} {declaration}"
-        ))
+        )))
         .execute(&self.pool)
         .await
         .map_err(tracked(DbOp::Migrate, "Failed to add column"))?;
@@ -977,7 +979,7 @@ mod tests {
         // A database from before feature 039, with a queued file
         let db = Database::new(&db_path).await.unwrap();
         for table in ["pipeline_holds", "daemon_flags", "pipeline_finished"] {
-            sqlx::query(&format!("DROP TABLE {table}"))
+            sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE {table}")))
                 .execute(db.pool())
                 .await
                 .unwrap();
@@ -990,7 +992,7 @@ mod tests {
 
         let db = Database::new(&db_path).await.unwrap();
         for table in ["pipeline_holds", "daemon_flags", "pipeline_finished"] {
-            let result = sqlx::query(&format!("SELECT COUNT(*) FROM {table}"))
+            let result = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
                 .fetch_one(db.pool())
                 .await;
             assert!(result.is_ok(), "{table} exists");
@@ -1036,10 +1038,11 @@ mod tests {
             .await
             .unwrap();
         for table in ["pipeline_steps", "pipeline_attempts", "pipeline_item_files"] {
-            let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
-                .fetch_one(pool)
-                .await
-                .unwrap();
+            let n: i64 =
+                sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+                    .fetch_one(pool)
+                    .await
+                    .unwrap();
             assert_eq!(n, 0, "{table} follows its item");
         }
         db.close().await.unwrap();
@@ -1070,7 +1073,7 @@ mod tests {
             .await
             .unwrap();
         for table in tables {
-            sqlx::query(&format!("DROP TABLE {table}"))
+            sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE {table}")))
                 .execute(db.pool())
                 .await
                 .unwrap();
@@ -1081,16 +1084,18 @@ mod tests {
             ("download_history", "local_path"),
             ("download_history", "outcome"),
         ] {
-            sqlx::query(&format!("ALTER TABLE {table} DROP COLUMN {column}"))
-                .execute(db.pool())
-                .await
-                .unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "ALTER TABLE {table} DROP COLUMN {column}"
+            )))
+            .execute(db.pool())
+            .await
+            .unwrap();
         }
         db.close().await.unwrap();
 
         let db = Database::new(&db_path).await.unwrap();
         for table in tables {
-            let result = sqlx::query(&format!("SELECT COUNT(*) FROM {table}"))
+            let result = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
                 .fetch_one(db.pool())
                 .await;
             assert!(result.is_ok(), "{table} exists");

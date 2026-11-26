@@ -170,7 +170,7 @@ impl<'a> StreamFilesRepository<'a> {
         for chunk in file_ids.chunks(500) {
             let marks = vec!["?"; chunk.len()].join(",");
             let sql = format!("DELETE FROM stream_files WHERE file_id IN ({marks})");
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
             for id in chunk {
                 query = query.bind(id);
             }

@@ -441,7 +441,8 @@ impl<'a> QueueRepository<'a> {
             "UPDATE download_queue SET status = ?, updated_at = CURRENT_TIMESTAMP \
              WHERE file_id IN ({placeholders}) AND {condition} RETURNING file_id"
         );
-        let mut query = sqlx::query_scalar::<_, i64>(&sql).bind(status.to_string());
+        let mut query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(status.to_string());
         for id in file_ids {
             query = query.bind(id);
         }

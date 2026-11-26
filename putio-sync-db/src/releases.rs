@@ -420,10 +420,10 @@ impl<'a> ReleasesRepository<'a> {
     /// `/releases/reports`)
     pub async fn reports(&self, range: RangePreset, now: i64) -> DbResult<Vec<ReportRow>> {
         let from = range.length().map_or(0, |l| now - l.num_seconds());
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {REPORT_COLUMNS} FROM release_reports \
              WHERE created_at >= datetime(?, 'unixepoch') ORDER BY created_at DESC, id DESC"
-        ))
+        )))
         .bind(from)
         .fetch_all(self.pool)
         .await
@@ -433,9 +433,9 @@ impl<'a> ReleasesRepository<'a> {
 
     /// One report
     pub async fn report(&self, id: i64) -> DbResult<Option<ReportRow>> {
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {REPORT_COLUMNS} FROM release_reports WHERE id = ?"
-        ))
+        )))
         .bind(id)
         .fetch_optional(self.pool)
         .await
@@ -456,7 +456,8 @@ impl<'a> ReleasesRepository<'a> {
         };
         if let Some((column, value)) = key {
             let sql = format!("SELECT id FROM release_reports WHERE kind = ? AND {column} = ? ORDER BY id DESC LIMIT 1");
-            let q = sqlx::query_scalar::<_, i64>(&sql).bind(flag.kind.as_str());
+            let q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str()))
+                .bind(flag.kind.as_str());
             let q = match value {
                 Key::Text(t) => q.bind(t),
                 Key::Int(i) => q.bind(i),
@@ -538,7 +539,7 @@ impl<'a> ReleasesRepository<'a> {
              WHERE kind != 'rejected' AND ({}) ORDER BY id",
             wheres.join(" OR ")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for h in arr_hashes {
             q = q.bind(h);
         }
@@ -1219,9 +1220,9 @@ mod tests {
             } else {
                 "created_at"
             };
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {table} SET {column} = datetime('now', '-401 days') WHERE id IN (?, ?)"
-            ))
+            )))
             .bind(old)
             .bind(pending)
             .execute(&db.pool)

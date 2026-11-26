@@ -10,7 +10,7 @@
 pub mod oauth;
 pub mod session;
 
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use argon2::Argon2;
 use axum::http::HeaderMap;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -65,9 +65,8 @@ pub fn random_token() -> String {
 /// An argon2id hash of `password` as a PHC string. Slow on purpose: call it off the
 /// async runtime (`spawn_blocking`).
 pub fn hash_password(password: &str) -> Result<String, String> {
-    let salt = SaltString::encode_b64(&random_bytes::<16>()).map_err(|e| e.to_string())?;
     Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password_with_salt(password.as_bytes(), &random_bytes::<16>())
         .map(|hash| hash.to_string())
         .map_err(|e| e.to_string())
 }
@@ -75,11 +74,9 @@ pub fn hash_password(password: &str) -> Result<String, String> {
 /// Whether `password` matches the PHC string `hash`. Slow on purpose, like
 /// [`hash_password`].
 pub fn verify_password(password: &str, hash: &str) -> bool {
-    PasswordHash::new(hash).is_ok_and(|parsed| {
-        Argon2::default()
-            .verify_password(password.as_bytes(), &parsed)
-            .is_ok()
-    })
+    Argon2::default()
+        .verify_password(password.as_bytes(), hash)
+        .is_ok()
 }
 
 /// A short fingerprint of the password hash: sessions and remembered Basic credentials
@@ -526,6 +523,13 @@ mod tests {
         assert!(!verify_password("wrong", &hash));
         assert!(!verify_password("correct horse", "not a hash"));
         assert_ne!(password_stamp(&hash), password_stamp("other"));
+    }
+
+    #[test]
+    fn hashes_saved_by_argon2_0_5_still_verify() {
+        let saved = "$argon2id$v=19$m=19456,t=2,p=1$cHV0aW8tc3luYy1zYWx0IQ$/plUXNIvJjuX+Ymri45Cnd+f8rHWFkYLIhZfehzjEak";
+        assert!(verify_password("correct horse", saved));
+        assert!(!verify_password("wrong", saved));
     }
 
     #[test]
