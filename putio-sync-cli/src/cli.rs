@@ -530,19 +530,17 @@ pub enum Commands {
         #[arg(
             long = "download-interval",
             value_name = "SECONDS",
-            default_value = "300",
-            help = "Download sync interval in seconds"
+            help = "Download sync interval in seconds; pins it over sync.interval_secs (default 300)"
         )]
-        download_interval: u64,
+        download_interval: Option<u64>,
 
         /// Watch check interval in seconds
         #[arg(
             long = "watch-interval",
             value_name = "SECONDS",
-            default_value = "60",
-            help = "Watch check interval in seconds"
+            help = "Watch check interval in seconds; pins it over watch.refresh_cycle (default 60)"
         )]
-        watch_interval: u64,
+        watch_interval: Option<u64>,
 
         /// Watch directories for .torrent files
         #[arg(

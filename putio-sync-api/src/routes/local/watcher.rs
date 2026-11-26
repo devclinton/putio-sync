@@ -147,8 +147,9 @@ async fn stop_watcher(State(state): State<AppState>) -> Result<Json<SuccessRespo
     set_enabled(&state, false).await
 }
 
-/// Save `watch.enabled`. Neither engine reads it after startup (the daemon's watch loop
-/// and `server --watch` both take it once), so the change applies after a restart. The
+/// Save `watch.enabled` and publish it; the daemon's watch loop follows it from the hub
+/// (the message still says restart: `server --watch` reads it once, and the settings
+/// text is PR 2's). The
 /// file keeps its own credentials, never an env-only API token.
 async fn set_enabled(state: &AppState, enabled: bool) -> Result<Json<SuccessResponse>, ApiError> {
     let mut config = state.config.write().await;
@@ -164,6 +165,11 @@ async fn set_enabled(state: &AppState, enabled: bool) -> Result<Json<SuccessResp
         }
     }
     *config = candidate;
+    // The daemon's watch loop follows `watch.enabled` from the hub
+    state
+        .hub
+        .publish(config.clone(), putio_sync_core::config_hub::Source::Api);
+    drop(config);
     let verb = if enabled { "enabled" } else { "disabled" };
     let persisted = if state.config_path.is_some() {
         "saved to the config file"

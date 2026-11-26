@@ -103,18 +103,6 @@ pub async fn execute_server(
     )
     .await?;
 
-    // Reload [logging] when the config file changes (FR-016); nothing to watch without one
-    if config_file_path.exists() {
-        putio_sync_core::config::spawn_reload_poller(
-            config_file_path.clone(),
-            std::time::Duration::from_secs(10),
-            |logging| {
-                let _ = putio_sync_core::logging::apply_level(&logging);
-                putio_sync_core::log_capture::set_capacity(logging.buffer_lines);
-            },
-        );
-    }
-
     let flags = bind.is_some() || port.is_some();
     let entries = server_listen(&config, bind.as_deref(), port)?;
     let shown = entries
@@ -154,6 +142,17 @@ pub async fn execute_server(
     .map_err(|e| anyhow!("Failed to create API app: {}", e))?
     .with_listening(bound.clone())
     .with_listen_flags(flags.then(|| entries.clone()));
+    // Hand edits of the config file reach the services the API holds (FR-016); nothing
+    // to watch without a file. Saves through the API publish to the same hub.
+    if config_file_path.exists() {
+        putio_sync_core::config_hub::spawn_file_watcher(
+            config_file_path.clone(),
+            Duration::from_secs(2),
+            state.hub.clone(),
+            super::server_reload,
+        );
+    }
+    putio_sync_api::live::spawn_config_subscriber(state.clone());
     // Hooks run off the event bus from here on (feature 027)
     state.hooks.start();
     // and so do plugins (feature 028)

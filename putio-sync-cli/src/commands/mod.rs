@@ -48,6 +48,42 @@ pub use setup::execute_setup;
 pub use stat::execute_stat;
 pub use status::{execute_debug, execute_health, execute_status};
 
+/// The config a running `daemon` holds for the API: `[api]` token resolved (the
+/// environment override wins over the file) when the API listens, as `api_listener::start`
+/// writes it into the state. The hub starts from this, so a hand edit of the file that
+/// changes nothing compares equal to it.
+#[cfg(feature = "server")]
+pub(crate) fn daemon_runtime_config(
+    mut config: putio_sync_core::config::Config,
+) -> putio_sync_core::error::CoreResult<putio_sync_core::config::Config> {
+    let api = config.resolve_api()?.value;
+    if api.listen {
+        config.api.auth_token = api.token;
+    }
+    Ok(config)
+}
+
+/// What a reload does to a config read from the file before it can be applied: the
+/// startup validation, then what `daemon` does to the config it holds. A config that
+/// fails is refused and the running one stays.
+#[cfg(feature = "server")]
+pub(crate) fn daemon_reload(
+    config: putio_sync_core::config::Config,
+) -> putio_sync_core::error::CoreResult<putio_sync_core::config::Config> {
+    config.validate()?;
+    daemon_runtime_config(config)
+}
+
+/// The same for `server`: the token applies in every case, the environment wins
+#[cfg(feature = "server")]
+pub(crate) fn server_reload(
+    mut config: putio_sync_core::config::Config,
+) -> putio_sync_core::error::CoreResult<putio_sync_core::config::Config> {
+    config.validate()?;
+    config.api.auth_token = config.resolve_api()?.value.token;
+    Ok(config)
+}
+
 /// The error for a missing OAuth token, with the next step (the same for every command)
 pub(crate) fn missing_token() -> anyhow::Error {
     anyhow::anyhow!(

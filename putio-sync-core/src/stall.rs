@@ -65,7 +65,8 @@ struct Record {
 /// Remembers per downloading transfer when its byte count last changed
 #[derive(Debug)]
 pub struct StallTracker {
-    threshold: Duration,
+    /// Whole seconds; changed live by [`StallTracker::set_threshold`]
+    threshold_secs: std::sync::atomic::AtomicU64,
     records: Mutex<HashMap<i64, Record>>,
     /// Stalled transfers already announced at warn level; dropped once a transfer is no
     /// longer stalled or has left the list
@@ -83,10 +84,24 @@ impl StallTracker {
     /// A tracker that calls a transfer stalled after `threshold` without new bytes
     pub fn new(threshold: Duration) -> Self {
         Self {
-            threshold,
+            threshold_secs: std::sync::atomic::AtomicU64::new(threshold.as_secs()),
             records: Mutex::new(HashMap::new()),
             announced: Mutex::new(std::collections::HashSet::new()),
         }
+    }
+
+    /// The time without new bytes after which a transfer is stalled
+    pub fn threshold(&self) -> Duration {
+        Duration::from_secs(
+            self.threshold_secs
+                .load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
+
+    /// Change the threshold; the next [`observe`](Self::observe) uses it
+    pub fn set_threshold(&self, threshold: Duration) {
+        self.threshold_secs
+            .store(threshold.as_secs(), std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Update from a full transfer list fetched at `now`; returns how many are stalled.
@@ -109,7 +124,7 @@ impl StallTracker {
                         .duration_since(record.changed_at)
                         .unwrap_or(Duration::ZERO);
                     let was_stalled = record.stall.is_some();
-                    record.stall = (still >= self.threshold).then(|| Stall {
+                    record.stall = (still >= self.threshold()).then(|| Stall {
                         since: record.changed_at,
                         reason: StallReason::of(transfer),
                     });
@@ -208,6 +223,17 @@ mod tests {
         assert_eq!(stall.since, at(0));
         assert_eq!(stall.reason, StallReason::NoProgress);
         assert_eq!(tracker.stalled_count(), 1);
+    }
+
+    #[test]
+    fn a_new_threshold_applies_to_the_next_observation() {
+        let tracker = StallTracker::new(6 * HOUR);
+        let t = transfer(1, "DOWNLOADING", 970);
+        tracker.observe(std::slice::from_ref(&t), at(0));
+        assert_eq!(tracker.observe(std::slice::from_ref(&t), at(2)), 0);
+        tracker.set_threshold(HOUR);
+        assert_eq!(tracker.threshold(), HOUR);
+        assert_eq!(tracker.observe(&[t], at(2)), 1);
     }
 
     #[test]

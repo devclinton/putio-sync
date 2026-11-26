@@ -23,7 +23,7 @@ use putio_sync_telemetry::{PipelineStage, PipelineState};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::RwLock;
+use tokio::sync::{watch, RwLock};
 use tracing::{debug, error, info, warn};
 
 /// Configuration for the daemon
@@ -163,6 +163,78 @@ pub struct PutioDaemon {
     media_server: Option<Arc<MediaServer>>,
     /// Stops the daemon the way Ctrl+C does, for an update's restart (feature 055)
     stop: Arc<tokio::sync::Notify>,
+    /// Bumped by [`DaemonHandle::apply`]: wakes the loops to read their settings again
+    reconfigured: Arc<watch::Sender<u64>>,
+    /// The Put.io sync interval the sync loop follows
+    sync_interval: Arc<watch::Sender<u64>>,
+}
+
+/// What `--watch-interval` and `--download-interval` pin, when given. A pinned interval
+/// is not changed by the config file or a settings save.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Pins {
+    /// Seconds between watch-folder scans, instead of `watch.refresh_cycle`
+    pub watch_interval: Option<u64>,
+    /// Seconds between Put.io syncs, instead of `sync.interval_secs`
+    pub download_interval: Option<u64>,
+}
+
+/// A way to change the running daemon's settings from outside it (the config hub's
+/// subscriber). Cheap to clone; stays valid while the daemon runs.
+#[derive(Clone)]
+pub struct DaemonHandle {
+    config: Arc<RwLock<DaemonConfig>>,
+    reconfigured: Arc<watch::Sender<u64>>,
+    sync_interval: Arc<watch::Sender<u64>>,
+    stall_tracker: Arc<StallTracker>,
+    pins: Pins,
+}
+
+impl DaemonHandle {
+    /// Pin the intervals the command line gave
+    pub fn with_pins(mut self, pins: Pins) -> Self {
+        self.pins = pins;
+        self
+    }
+
+    /// Take the settings the loops follow from `config`: whether watching is on, the
+    /// scan interval (`watch.refresh_cycle`), `delete_after_upload`, the archive folder,
+    /// the Put.io sync interval (`sync.interval_secs`), the stall threshold and check
+    /// interval and how long finished transfers stay listed. Then wake the loops, so a
+    /// shorter interval or a switch to "on" takes effect now.
+    ///
+    /// Not live here: the watch folder list and parent folder, which the file watcher
+    /// itself takes (the API's apply step hands them over), and the download settings.
+    pub async fn apply(&self, config: &putio_sync_core::config::Config) {
+        let sync_interval = {
+            let mut daemon = self.config.write().await;
+            daemon.watch_enabled = config.watch.enabled;
+            daemon.watch_interval = self
+                .pins
+                .watch_interval
+                .unwrap_or_else(|| u64::from(config.watch.refresh_cycle))
+                .max(1);
+            daemon.download_interval = self
+                .pins
+                .download_interval
+                .unwrap_or(config.sync.interval_secs)
+                .max(1);
+            daemon.delete_after_upload = config.watch.delete_after_upload;
+            daemon.archive_dir = config.watch.archive_directory.clone();
+            daemon.stall_threshold =
+                Duration::from_secs(config.transfers.stall_threshold_hours.saturating_mul(3600));
+            daemon.stall_check_interval = config.transfers.stall_check_interval_secs;
+            daemon.finished_retention_hours = config.transfers.finished_retention_hours;
+            self.stall_tracker.set_threshold(daemon.stall_threshold);
+            daemon.download_interval
+        };
+        self.sync_interval.send_if_modified(|current| {
+            let changed = *current != sync_interval;
+            *current = sync_interval;
+            changed
+        });
+        self.reconfigured.send_modify(|n| *n += 1);
+    }
 }
 
 impl PutioDaemon {
@@ -170,6 +242,7 @@ impl PutioDaemon {
     pub fn new(config: DaemonConfig) -> Self {
         Self {
             stall_tracker: Arc::new(StallTracker::new(config.stall_threshold)),
+            sync_interval: Arc::new(watch::channel(config.download_interval).0),
             config: Arc::new(RwLock::new(config)),
             client: None,
             database: None,
@@ -181,6 +254,18 @@ impl PutioDaemon {
             pipeline: None,
             media_server: None,
             stop: Arc::new(tokio::sync::Notify::new()),
+            reconfigured: Arc::new(watch::channel(0).0),
+        }
+    }
+
+    /// A handle for changing this daemon's settings while it runs
+    pub fn handle(&self) -> DaemonHandle {
+        DaemonHandle {
+            config: self.config.clone(),
+            reconfigured: self.reconfigured.clone(),
+            sync_interval: self.sync_interval.clone(),
+            stall_tracker: self.stall_tracker.clone(),
+            pins: Pins::default(),
         }
     }
 
@@ -301,31 +386,33 @@ impl PutioDaemon {
             info!("Download mode: Local");
         }
 
-        // Initialize file watcher (shared Arc for hot reload via API)
-        if !config.watch_dirs.is_empty() {
-            let file_watcher = TorrentWatcher::from_config(WatcherConfig {
-                archive_dir: config.archive_dir.clone(),
-                delete_after_upload: config.delete_after_upload,
-                ..WatcherConfig::new(
-                    config.watch_dirs.clone(),
-                    config.parent_id,
-                    config.watch_interval,
-                )
-            });
-            let file_watcher = Arc::new(match &config.precheck {
-                Some(precheck) => file_watcher.with_precheck(Arc::new(Prechecker::new(
-                    precheck.clone(),
-                    config.download.rules.clone(),
-                ))),
-                None => file_watcher,
-            });
-            self.file_watcher = Some(file_watcher);
+        // Initialize file watcher (shared Arc for hot reload via API). Always built: a
+        // folder added later is picked up by the next scan, and with none a scan does
+        // nothing.
+        let file_watcher = TorrentWatcher::from_config(WatcherConfig {
+            archive_dir: config.archive_dir.clone(),
+            delete_after_upload: config.delete_after_upload,
+            ..WatcherConfig::new(
+                config.watch_dirs.clone(),
+                config.parent_id,
+                config.watch_interval,
+            )
+        });
+        let file_watcher = Arc::new(match &config.precheck {
+            Some(precheck) => file_watcher.with_precheck(Arc::new(Prechecker::new(
+                precheck.clone(),
+                config.download.rules.clone(),
+            ))),
+            None => file_watcher,
+        });
+        self.file_watcher = Some(file_watcher);
+        if config.watch_dirs.is_empty() {
+            info!("No watch directories configured yet; the file watcher scans none");
+        } else {
             info!(
                 "File watcher initialized for {} directories",
                 config.watch_dirs.len()
             );
-        } else {
-            info!("No watch directories configured, file watching disabled");
         }
 
         info!("Daemon initialization complete");
@@ -350,27 +437,15 @@ impl PutioDaemon {
         // Spawn watch task if file watcher is configured
         let watch_task =
             if self.file_watcher.is_some() && self.client.is_some() && self.database.is_some() {
-                let config_guard = self.config.read().await;
-                let watch_interval = config_guard.watch_interval;
-                let delete_after_upload = config_guard.delete_after_upload;
-                drop(config_guard);
-
                 // Clone Arc (cheap) - watcher remains accessible for API hot reload
                 let watcher = self.file_watcher.clone().unwrap();
                 let client = self.client.clone().unwrap();
                 let database = self.database.clone().unwrap();
                 let config = self.config.clone();
+                let wake = self.reconfigured.subscribe();
 
                 Some(tokio::spawn(async move {
-                    Self::run_watch_loop(
-                        watcher,
-                        client,
-                        database,
-                        config,
-                        watch_interval,
-                        delete_after_upload,
-                    )
-                    .await;
+                    Self::run_watch_loop(watcher, client, database, config, wake).await;
                 }))
             } else {
                 info!("File watcher not configured, skipping watch task");
@@ -382,8 +457,8 @@ impl PutioDaemon {
             Some(DownloadMode::Local(_)) => {
                 // Clone Arc (cheap) - download manager remains accessible for API hot reload
                 if let Some(DownloadMode::Local(dm)) = &self.download_mode {
-                    let (sync_interval, worker_interval) =
-                        loop_intervals(&*self.config.read().await);
+                    let (_, worker_interval) = loop_intervals(&*self.config.read().await);
+                    let sync_interval = self.sync_interval.subscribe();
 
                     // Clone Arc for the two separate tasks (cheap operation)
                     let dm_sync = dm.clone();
@@ -402,10 +477,10 @@ impl PutioDaemon {
                     // Spawn the pipeline task (feature 039): the Active pipeline gauge
                     let dm_pipeline = dm.clone();
                     let tracker = self.stall_tracker.clone();
-                    let retention = self.config.read().await.finished_retention_hours;
+                    let config = self.config.clone();
                     let processing = self.pipeline.clone();
                     let pipeline_handle = tokio::spawn(async move {
-                        Self::run_pipeline_loop(dm_pipeline, tracker, retention, processing).await;
+                        Self::run_pipeline_loop(dm_pipeline, tracker, config, processing).await;
                     });
 
                     (
@@ -451,12 +526,13 @@ impl PutioDaemon {
             .clone()
             .map(|db| tokio::spawn(Self::run_db_maintenance(db)));
         // Spawn the stall check task (feature 007): flags Put.io transfers whose bytes stop
-        let interval = self.config.read().await.stall_check_interval;
         let stall_dm = self.get_download_manager();
         let stall_task = self.client.clone().map(|client| {
             let tracker = self.stall_tracker.clone();
+            let config = self.config.clone();
+            let wake = self.reconfigured.subscribe();
             tokio::spawn(async move {
-                Self::run_stall_loop(client, stall_dm, tracker, interval).await;
+                Self::run_stall_loop(client, stall_dm, tracker, config, wake).await;
             })
         });
 
@@ -563,7 +639,7 @@ impl PutioDaemon {
     async fn run_pipeline_loop(
         download_manager: Arc<DownloadManager>,
         tracker: Arc<StallTracker>,
-        retention_hours: u64,
+        config: Arc<RwLock<DaemonConfig>>,
         processing: Option<Arc<putio_sync_pipeline::Pipeline>>,
     ) {
         info!(
@@ -571,6 +647,8 @@ impl PutioDaemon {
             "Active pipeline task started"
         );
         loop {
+            // Read each tick: `transfers.finished_retention_hours` follows the config
+            let retention_hours = config.read().await.finished_retention_hours;
             let delay = match pipeline_step(
                 &download_manager,
                 &tracker,
@@ -624,12 +702,17 @@ impl PutioDaemon {
         client: Arc<PutioApiClient>,
         download_manager: Option<Arc<DownloadManager>>,
         tracker: Arc<StallTracker>,
-        interval_secs: u64,
+        config: Arc<RwLock<DaemonConfig>>,
+        mut wake: watch::Receiver<u64>,
     ) {
+        let interval_secs = config.read().await.stall_check_interval;
         info!(interval_secs, "Stall check task started");
-        let mut tick = tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
+        let mut first = true;
         loop {
-            tick.tick().await;
+            // The first check comes at once; the interval is read again for each wait
+            if !std::mem::take(&mut first) {
+                wait_for(&config, &mut wake, |c| c.stall_check_interval, |_| false).await;
+            }
             let result = match &download_manager {
                 Some(dm) => match dm.transfers_snapshot(PIPELINE_MAX_AGE).await {
                     Ok(snapshot) if snapshot.stale => {
@@ -657,74 +740,102 @@ impl PutioDaemon {
 
     /// Run the watch loop as an independent async task
     ///
-    /// Checks config.watch_enabled before each scan to support runtime start/stop via API
+    /// Reads `watch_enabled`, the interval and `delete_after_upload` from the shared
+    /// config every cycle, so the config file, a settings save and the watcher
+    /// Start/Stop endpoints all reach it without a restart.
     async fn run_watch_loop(
         watcher: Arc<TorrentWatcher>,
         client: Arc<PutioApiClient>,
         database: Arc<Database>,
         config: Arc<RwLock<DaemonConfig>>,
-        interval_secs: u64,
-        delete_after_upload: bool,
+        wake: watch::Receiver<u64>,
     ) {
+        Self::run_watch_cycles(config, wake, move |delete_after_upload| {
+            let (watcher, client, database) = (watcher.clone(), client.clone(), database.clone());
+            async move {
+                match watcher
+                    .scan_once(&client, delete_after_upload, Some(&database))
+                    .await
+                {
+                    Ok(stats) => {
+                        if stats.files_processed + stats.cleaned_up + stats.files_failed > 0 {
+                            info!(
+                                "Watch scan - found: {}, processed: {}, cleaned up: {}, skipped: {}, failed: {}",
+                                stats.files_found,
+                                stats.files_processed,
+                                stats.cleaned_up,
+                                stats.files_skipped,
+                                stats.files_failed
+                            );
+                        } else {
+                            debug!("Watch scan - found: {}, nothing to do", stats.files_found);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Error scanning watch directories: {}", e);
+                    }
+                }
+            }
+        })
+        .await;
+    }
+
+    /// The watch loop's timing, with the scan itself passed in (it is given
+    /// `delete_after_upload`)
+    async fn run_watch_cycles<F, Fut>(
+        config: Arc<RwLock<DaemonConfig>>,
+        mut wake: watch::Receiver<u64>,
+        scan: F,
+    ) where
+        F: Fn(bool) -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        let interval_secs = config.read().await.watch_interval;
         info!("Watch task started with interval: {}s", interval_secs);
-        let interval = tokio::time::Duration::from_secs(interval_secs);
         let mut cycle = 0;
 
         loop {
             cycle += 1;
-
-            // Check if watch_enabled in config (supports runtime start/stop via API)
-            let watch_enabled = {
+            let (enabled, delete_after_upload) = {
                 let cfg = config.read().await;
-                cfg.watch_enabled
+                (cfg.watch_enabled, cfg.delete_after_upload)
             };
 
-            if !watch_enabled {
+            if enabled {
+                debug!("Watch task cycle #{}", cycle);
+                scan(delete_after_upload).await;
+            } else {
                 debug!(
                     "Watch task cycle #{} - watcher disabled, skipping scan",
                     cycle
                 );
-                tokio::time::sleep(interval).await;
-                continue;
             }
 
-            debug!("Watch task cycle #{}", cycle);
-
-            // Scan watch directories for new torrent/magnet files
-            match watcher
-                .scan_once(&client, delete_after_upload, Some(&database))
-                .await
-            {
-                Ok(stats) => {
-                    if stats.files_processed + stats.cleaned_up + stats.files_failed > 0 {
-                        info!(
-                            "Watch scan - found: {}, processed: {}, cleaned up: {}, skipped: {}, failed: {}",
-                            stats.files_found,
-                            stats.files_processed,
-                            stats.cleaned_up,
-                            stats.files_skipped,
-                            stats.files_failed
-                        );
-                    } else {
-                        debug!("Watch scan - found: {}, nothing to do", stats.files_found);
-                    }
-                }
-                Err(e) => {
-                    error!("Error scanning watch directories: {}", e);
-                }
-            }
-
-            // Sleep for the interval
-            tokio::time::sleep(interval).await;
+            // Sleep for the interval, which can change meanwhile. Switching the watcher
+            // on ends the wait, so it starts at once.
+            wait_for(
+                &config,
+                &mut wake,
+                |c| c.watch_interval,
+                |c| c.watch_enabled && !enabled,
+            )
+            .await;
         }
     }
 
     /// Run the sync loop as an independent async task
     ///
-    /// Periodically syncs the file list from Put.io to the download queue
-    async fn run_sync_loop(download_manager: Arc<DownloadManager>, interval_secs: u64) {
-        info!("Put.io sync task started with interval: {}s", interval_secs);
-        download_manager.run_sync_loop(interval_secs).await;
+    /// Periodically syncs the file list from Put.io to the download queue, every
+    /// `interval_secs` as it stands at the time (`sync.interval_secs` follows the config)
+    async fn run_sync_loop(
+        download_manager: Arc<DownloadManager>,
+        interval_secs: watch::Receiver<u64>,
+    ) {
+        info!(
+            "Put.io sync task started with interval: {}s",
+            *interval_secs.borrow()
+        );
+        download_manager.run_sync_loop_live(interval_secs).await;
     }
 
     /// Run the download worker loop as an independent async task
@@ -836,6 +947,34 @@ impl PutioDaemon {
 }
 
 /// Wait for Ctrl+C, or SIGTERM on Unix (what `docker stop` sends)
+/// Wait out one interval: `interval` of the daemon's config, counted from now and read
+/// again whenever `wake` says the config changed (a shorter interval can end the wait at
+/// once). Also ends early when `early` says so after a change.
+async fn wait_for(
+    config: &RwLock<DaemonConfig>,
+    wake: &mut watch::Receiver<u64>,
+    interval: impl Fn(&DaemonConfig) -> u64,
+    early: impl Fn(&DaemonConfig) -> bool,
+) {
+    let started = tokio::time::Instant::now();
+    loop {
+        let wait = Duration::from_secs(interval(&*config.read().await).max(1));
+        tokio::select! {
+            () = tokio::time::sleep_until(started + wait) => return,
+            changed = wake.changed() => {
+                if changed.is_err() {
+                    // Nobody can change the settings any more: wait the rest out
+                    tokio::time::sleep_until(started + wait).await;
+                    return;
+                }
+                if early(&*config.read().await) {
+                    return;
+                }
+            }
+        }
+    }
+}
+
 async fn wait_for_signal() -> DaemonResult<()> {
     let ctrl_c = async {
         tokio::signal::ctrl_c().await.map_err(|e| {
@@ -1766,6 +1905,143 @@ mod tests {
         assert_eq!(loop_intervals(&config), (30, 60));
     }
 
+    fn settings(
+        f: impl FnOnce(&mut putio_sync_core::config::Config),
+    ) -> putio_sync_core::config::Config {
+        let mut config = putio_sync_core::config::Config::default();
+        config.watch.enabled = true;
+        f(&mut config);
+        config
+    }
+
+    /// A reconfigure writes what the loops read, wakes them, and moves the stall threshold
+    #[tokio::test]
+    async fn reconfigure_updates_the_settings_the_loops_read() {
+        let daemon = PutioDaemon::new(DaemonConfig::default());
+        let handle = daemon.handle();
+        let mut sync = daemon.sync_interval.subscribe();
+        let woken = daemon.reconfigured.subscribe();
+
+        handle
+            .apply(&settings(|c| {
+                c.watch.enabled = false;
+                c.watch.refresh_cycle = 15;
+                c.watch.delete_after_upload = true;
+                c.watch.archive_directory = Some(PathBuf::from("/archive"));
+                c.sync.interval_secs = 90;
+                c.transfers.stall_threshold_hours = 2;
+                c.transfers.stall_check_interval_secs = 30;
+                c.transfers.finished_retention_hours = 5;
+            }))
+            .await;
+
+        let config = daemon.get_config().await;
+        assert!(!config.watch_enabled);
+        assert_eq!(config.watch_interval, 15);
+        assert!(config.delete_after_upload);
+        assert_eq!(config.archive_dir, Some(PathBuf::from("/archive")));
+        assert_eq!(config.download_interval, 90);
+        assert_eq!(config.stall_check_interval, 30);
+        assert_eq!(config.finished_retention_hours, 5);
+        assert_eq!(
+            daemon.stall_tracker().threshold(),
+            Duration::from_secs(7200)
+        );
+        assert!(sync.has_changed().unwrap());
+        assert_eq!(*sync.borrow_and_update(), 90);
+        assert!(woken.has_changed().unwrap());
+    }
+
+    /// A flag-pinned interval wins over the config; the others still follow it
+    #[tokio::test]
+    async fn pinned_intervals_ignore_the_config() {
+        let daemon = PutioDaemon::new(DaemonConfig::default());
+        let handle = daemon.handle().with_pins(Pins {
+            watch_interval: Some(45),
+            download_interval: None,
+        });
+        handle
+            .apply(&settings(|c| {
+                c.watch.refresh_cycle = 15;
+                c.sync.interval_secs = 600;
+            }))
+            .await;
+        let config = daemon.get_config().await;
+        assert_eq!(config.watch_interval, 45);
+        assert_eq!(config.download_interval, 600);
+
+        let pinned = daemon.handle().with_pins(Pins {
+            watch_interval: None,
+            download_interval: Some(120),
+        });
+        pinned
+            .apply(&settings(|c| c.sync.interval_secs = 600))
+            .await;
+        assert_eq!(daemon.get_config().await.download_interval, 120);
+        assert_eq!(*daemon.sync_interval.subscribe().borrow(), 120);
+    }
+
+    /// The watch loop follows `watch_enabled`, the interval and `delete_after_upload` as
+    /// they change, with no restart
+    #[tokio::test(start_paused = true)]
+    async fn the_watch_loop_follows_the_live_config() {
+        use std::sync::Mutex;
+        let daemon = PutioDaemon::new(DaemonConfig {
+            watch_interval: 60,
+            ..Default::default()
+        });
+        let scans: Arc<Mutex<Vec<bool>>> = Arc::default();
+        let seen = scans.clone();
+        let task = tokio::spawn(PutioDaemon::run_watch_cycles(
+            daemon.config.clone(),
+            daemon.reconfigured.subscribe(),
+            move |delete| {
+                let seen = seen.clone();
+                async move { seen.lock().unwrap().push(delete) }
+            },
+        ));
+        let count = || scans.lock().unwrap().len();
+        let handle = daemon.handle();
+        let advance = |secs| tokio::time::sleep(Duration::from_secs(secs));
+
+        advance(1).await;
+        assert_eq!(count(), 1, "first scan at once");
+        advance(60).await;
+        assert_eq!(count(), 2, "then every 60 s");
+
+        // A shorter interval applies to the wait in progress
+        handle
+            .apply(&settings(|c| c.watch.refresh_cycle = 10))
+            .await;
+        advance(10).await;
+        assert_eq!(count(), 3);
+        advance(10).await;
+        assert_eq!(count(), 4);
+
+        // Off: no scans, whatever the interval
+        handle
+            .apply(&settings(|c| {
+                c.watch.refresh_cycle = 10;
+                c.watch.enabled = false;
+            }))
+            .await;
+        advance(35).await;
+        assert_eq!(count(), 4);
+
+        // On again: the scan starts at once, with the new delete_after_upload
+        handle
+            .apply(&settings(|c| {
+                c.watch.refresh_cycle = 10;
+                c.watch.enabled = true;
+                c.watch.delete_after_upload = true;
+            }))
+            .await;
+        advance(1).await;
+        assert_eq!(count(), 5);
+        assert_eq!(scans.lock().unwrap().last(), Some(&true));
+        task.abort();
+    }
+
     #[test]
     fn test_daemon_config_default() {
         let config = DaemonConfig::default();
@@ -1793,6 +2069,26 @@ mod tests {
         assert_eq!(started.archive_dir, Some(archive));
         assert_eq!(started.parent_id, Some(9));
         assert_eq!(started.watch_dirs, vec![dir.path().to_path_buf()]);
+    }
+
+    /// The watcher exists with no watch folder, so a folder added later is scanned; until
+    /// then a scan finds nothing and never calls Put.io
+    #[tokio::test]
+    async fn watcher_is_built_without_watch_folders() {
+        let mut daemon = PutioDaemon::new(DaemonConfig::default());
+        daemon.initialize().await.unwrap();
+        let watcher = daemon.get_file_watcher().expect("a watcher");
+        let client = daemon.get_client().unwrap();
+        let stats = watcher.scan_once(&client, false, None).await.unwrap();
+        assert_eq!(stats.files_found, 0);
+        assert_eq!(stats.files_failed, 0);
+
+        let dir = tempfile::tempdir().unwrap();
+        watcher.update_config(WatcherConfig::new(vec![dir.path().to_path_buf()], None, 60));
+        assert_eq!(
+            watcher.get_config().watch_dirs,
+            vec![dir.path().to_path_buf()]
+        );
     }
 
     /// Every download setting reaches the local download manager, not only the few the

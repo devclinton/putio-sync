@@ -935,6 +935,21 @@ pub struct SyncConfig {
     pub remote_parent_id: Option<i64>,
     /// Delete files from Put.io after successful download
     pub delete_after_download: bool,
+    /// Seconds between Put.io syncs by the daemon (default 300). Followed live; at
+    /// least [`MIN_SYNC_INTERVAL_SECS`]. `daemon --download-interval` overrides it.
+    #[serde(default = "default_sync_interval_secs")]
+    pub interval_secs: u64,
+}
+
+/// The shortest `sync.interval_secs`: each sync lists the Put.io folders, so a shorter
+/// interval only risks Put.io's rate limits
+pub const MIN_SYNC_INTERVAL_SECS: u64 = 10;
+
+/// The default `sync.interval_secs`
+pub const DEFAULT_SYNC_INTERVAL_SECS: u64 = 300;
+
+fn default_sync_interval_secs() -> u64 {
+    DEFAULT_SYNC_INTERVAL_SECS
 }
 
 /// Progress bar display style
@@ -1244,6 +1259,7 @@ impl Default for SyncConfig {
             local_path: PathBuf::from("./putio-downloads"),
             remote_parent_id: Some(0), // Root folder
             delete_after_download: false,
+            interval_secs: DEFAULT_SYNC_INTERVAL_SECS,
         }
     }
 }
@@ -1502,6 +1518,33 @@ impl Config {
         Ok(config)
     }
 
+    /// Parse `contents` as a config file: TOML, then paths expanded. Prints nothing; the
+    /// error names no file content, so no secret leaks into a log.
+    pub fn from_toml(contents: &str) -> CoreResult<Self> {
+        let mut config: Config = toml::from_str(contents)
+            .map_err(|e| CoreError::ConfigError(toml_error_summary(contents, &e)))?;
+        config.expand_paths()?;
+        for table in config.download.both_existing_keys() {
+            tracing::warn!(
+                table,
+                "Both on_existing and skip_existing are set; on_existing wins"
+            );
+        }
+        Ok(config)
+    }
+
+    /// Read the config file at `path` without printing: [`Config::load`] for a running
+    /// process, which logs through `tracing` instead.
+    pub fn read<P: AsRef<Path>>(path: P) -> CoreResult<Self> {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Err(CoreError::config_not_found(path));
+        }
+        let contents = fs::read_to_string(path)
+            .map_err(|e| CoreError::ConfigError(format!("Failed to read config file: {}", e)))?;
+        Self::from_toml(&contents)
+    }
+
     /// Save configuration to a file
     ///
     /// Creates the parent directory if it doesn't exist.
@@ -1718,6 +1761,12 @@ impl Config {
                     "remote_parent_id must be non-negative".to_string(),
                 ));
             }
+        }
+
+        if self.sync.interval_secs < MIN_SYNC_INTERVAL_SECS {
+            return Err(CoreError::ConfigError(format!(
+                "sync interval_secs must be at least {MIN_SYNC_INTERVAL_SECS} seconds"
+            )));
         }
 
         crate::rules::validate(&self.download.rules, &self.download.presets)?;
@@ -2825,67 +2874,6 @@ impl Config {
     }
 }
 
-/// Poll the config file and pass its `[logging]` section to `on_change` whenever the
-/// file's modified time or length changes.
-///
-/// Load and metadata errors are logged once per distinct file state, and polling carries
-/// on. Production uses a 10 s interval, so a level change applies within 30 s.
-pub fn spawn_reload_poller(
-    path: PathBuf,
-    interval: std::time::Duration,
-    on_change: impl Fn(crate::logging::LoggingConfig) + Send + 'static,
-) -> tokio::task::JoinHandle<()> {
-    type Stamp = Option<(std::time::SystemTime, u64)>;
-
-    async fn stamp(path: &Path) -> std::io::Result<Stamp> {
-        let meta = tokio::fs::metadata(path).await?;
-        Ok(Some((meta.modified()?, meta.len())))
-    }
-
-    tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(interval);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // The state at startup is the one already applied.
-        ticker.tick().await;
-        let mut last: Stamp = stamp(&path).await.unwrap_or(None);
-        let mut missing = false;
-
-        loop {
-            ticker.tick().await;
-            let current = match stamp(&path).await {
-                Ok(current) => current,
-                Err(e) => {
-                    if !missing {
-                        tracing::error!(path = %path.display(), error = %e, "Config file unreadable; logging settings not reloaded");
-                        missing = true;
-                    }
-                    last = None;
-                    continue;
-                }
-            };
-            if current == last {
-                continue;
-            }
-            last = current;
-            missing = false;
-
-            let loaded = {
-                let path = path.clone();
-                tokio::task::spawn_blocking(move || Config::load(&path)).await
-            };
-            match loaded {
-                Ok(Ok(config)) => on_change(config.logging),
-                Ok(Err(e)) => {
-                    tracing::error!(path = %path.display(), error = %e, "Config reload failed; logging settings not changed");
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "Config reload task failed");
-                }
-            }
-        }
-    })
-}
-
 /// `config` as a TOML table without the credentials (`[auth]`, `api.auth_token`), which
 /// the settings save never writes
 pub(crate) fn settings_table(config: &Config) -> CoreResult<toml::Table> {
@@ -3356,6 +3344,7 @@ mod tests {
                 local_path: PathBuf::from(crate::path_utils::test_abs("/tmp/putio")),
                 remote_parent_id: Some(0),
                 delete_after_download: true,
+                interval_secs: 300,
             },
             download: DownloadConfig {
                 workers: 3,
@@ -3551,6 +3540,26 @@ mod tests {
         assert_eq!(config.watch.paths.len(), 0);
         assert_eq!(config.watch.refresh_cycle, 60);
         assert_eq!(config.watch.parent_folder_id, Some(0));
+    }
+
+    #[test]
+    fn sync_interval_defaults_to_300_and_is_read_from_the_file() {
+        assert_eq!(Config::default().sync.interval_secs, 300);
+        // A `[sync]` table from an older file has no interval
+        let old = Config::from_toml("[sync]\nremote_parent_id = 0\n").unwrap();
+        assert_eq!(old.sync.interval_secs, 300);
+        let set = Config::from_toml("[sync]\ninterval_secs = 45\n").unwrap();
+        assert_eq!(set.sync.interval_secs, 45);
+    }
+
+    #[test]
+    fn sync_interval_must_be_at_least_ten_seconds() {
+        let mut config = Config::default();
+        config.sync.interval_secs = MIN_SYNC_INTERVAL_SECS;
+        assert!(config.validate().is_ok());
+        config.sync.interval_secs = MIN_SYNC_INTERVAL_SECS - 1;
+        let error = config.validate().unwrap_err().to_string();
+        assert!(error.contains("interval_secs"), "{error}");
     }
 
     #[test]

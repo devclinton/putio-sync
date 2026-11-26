@@ -18,12 +18,21 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   time is now marked as checked (only fixed column lists, `?` placeholders and quoted paths go
   into the text; values are bound). Password hashes saved by earlier versions still verify.
 - Dependencies: wasmi 2.0.3, since 2.0.2 was yanked.
+- Hot reload (part 1): hand edits of the config file and saves through the API now reach the
+  running services without a restart, through one shared path. `watch.refresh_cycle` sets the
+  daemon's watch interval live. `--watch-interval` and `--download-interval` no longer have
+  defaults; when given, the flag pins that interval for the run. An invalid hand edit is
+  refused: the running settings stay, and the error is logged once per distinct file content.
+  A settings import now also applies logging, Tailscale, organiser, updates, DLNA and
+  arr settings at once. The daemon warns, for one release, when the config fails validation.
 - Usage stats receiver Worker: the 4 KB limit now counts bytes and stops reading early (411 without
   `Content-Length`), each field keeps at most 200 distinct values a day, `/summary` is off unless
   `PUBLIC_SUMMARY=1`, and the README covers limits and rate limiting.
 
 ### Added
 
+- `sync.interval_secs` (default 300, at least 10) sets how often Put.io is synced, and is
+  followed live. `--download-interval` pins it.
 - Anonymous usage stats (058, part 2), off by default. With `[usage_stats] enabled = true` and
   an `endpoint`, putio-sync posts one small JSON document a day (random install id, version,
   install kind, OS, enabled feature names, bucketed files per day and library size, crash
@@ -69,6 +78,8 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   its first word, and a small count such as `tokens: 5` is left readable.
 - Storage cleanup checks every folder above a file against the unfinished transfers again just
   before deleting, as the plan did, not only its parent folder.
+- The torrent watcher is now always built, so watch folders added while the daemon runs are
+  picked up without a restart.
 - The free-space hold no longer blocks smaller files behind one that doesn't fit, or flips the
   big file's status on every poll: rows that don't fit stay pending and the next one that fits
   runs. Running downloads' unwritten bytes now count against the floor, so several workers can't

@@ -32,6 +32,7 @@ pub mod changelog;
 pub mod error;
 pub mod handlers;
 pub mod listen;
+pub mod live;
 pub mod middleware;
 pub mod models;
 pub mod routes;
@@ -149,6 +150,10 @@ pub struct AppState {
     /// The Put.io organiser (feature 023); `None` unless the daemon's is attached with
     /// [`AppState::with_organiser`]
     pub organiser: Option<Arc<putio_sync_download::Organiser>>,
+    /// The running config, published to by every writer and followed by the services
+    /// (feature: hot reload). Built from the initial config; share one with the config
+    /// file watcher using [`AppState::with_hub`].
+    pub hub: Arc<putio_sync_core::config_hub::ConfigHub>,
 }
 
 /// The engine behind the API (FR-018: a save says what applies now)
@@ -204,6 +209,7 @@ impl AppState {
         );
         let arr = build_arr(&config, &client, database.as_ref(), &download_manager);
         AppState {
+            hub: Arc::new(putio_sync_core::config_hub::ConfigHub::new(config.clone())),
             arr,
             tailscale,
             hooks,
@@ -244,6 +250,12 @@ impl AppState {
                 middleware::ratelimit::AUTH_FAILURE_WINDOW,
             )),
         }
+    }
+
+    /// Use `hub`, the one the config file watcher publishes to, instead of the state's own
+    pub fn with_hub(mut self, hub: Arc<putio_sync_core::config_hub::ConfigHub>) -> AppState {
+        self.hub = hub;
+        self
     }
 
     /// Read stall verdicts from `tracker`, the one the daemon's stall check task feeds

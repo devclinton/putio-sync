@@ -62,6 +62,12 @@ remote_parent_id = 0
 # Default: false
 delete_after_download = false
 
+# Seconds between Put.io syncs by the daemon. At least 10. Followed live: edit the file
+# or save settings and the next wait uses the new value. `daemon --download-interval`,
+# when given, overrides this and pins it.
+# Default: 300
+interval_secs = 300
+
 # ============================================================================
 # State Database
 # ============================================================================
@@ -294,8 +300,8 @@ min_free_space_mb = 5120
 # Watch Configuration (for torrent file monitoring)
 # ============================================================================
 [watch]
-# Seconds between scans. The daemon does not read this: it scans every
-# --watch-interval seconds (default 60). Only `server --watch` uses it.
+# Seconds between scans. The daemon follows this live; `daemon --watch-interval`, when
+# given, overrides it and pins it. `server --watch` reads it at startup.
 # Default: 60
 refresh_cycle = 60
 

@@ -36,5 +36,5 @@ pub mod error;
 pub mod schedule;
 
 // Re-export commonly used types
-pub use daemon::{DaemonConfig, PutioDaemon};
+pub use daemon::{DaemonConfig, DaemonHandle, Pins, PutioDaemon};
 pub use error::{DaemonError, DaemonResult};
