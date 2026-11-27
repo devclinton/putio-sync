@@ -6,6 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::{AuthMethod, Config, ExistingFile};
+use putio_sync_core::events::{self, Payload};
 use putio_sync_daemon::{DaemonConfig, Pins, PutioDaemon};
 use putio_sync_doctor::Doctor;
 use putio_sync_download::DownloadConfig;
@@ -342,6 +343,10 @@ pub async fn execute_daemon(
         Some(config_file_path.as_path()),
     ));
     plugins.start();
+    // A stage may name a plugin as a step (feature 057)
+    if let Some(pipeline) = &pipeline {
+        pipeline.set_step_plugins(plugins.clone());
+    }
     // Their filters, rename rules and folder rules join the sync (feature 028)
     if let Some(manager) = daemon.get_download_manager() {
         manager.set_sync_hooks(plugins.clone());
@@ -457,10 +462,18 @@ pub async fn execute_daemon(
     // published it
     let handle = daemon.handle().with_pins(pins);
     let putio = daemon.get_client();
+    // Outages and a refused token become events, once each (feature 057)
+    if let Some(client) = &putio {
+        putio_sync_core::health::PutioWatch::default().attach(client);
+    }
     let mut published = hub.subscribe();
+    let mut applied = Arc::new(config.clone());
     tokio::spawn(async move {
         while published.changed().await.is_ok() {
             let snapshot = published.borrow_and_update().clone();
+            // Names only, so no value can leak through the event (feature 057)
+            let sections = putio_sync_core::restart::changed_sections(&applied, &snapshot.config);
+            applied = snapshot.config.clone();
             if let Some(client) = &putio {
                 apply_token(client, &snapshot.config);
             }
@@ -469,6 +482,9 @@ pub async fn execute_daemon(
                 api.apply(&snapshot.config);
             }
             metrics.apply(&snapshot.config).await;
+            if !sections.is_empty() {
+                events::emit(Payload::ConfigChanged(events::ConfigChanged { sections }));
+            }
         }
     });
 
@@ -479,7 +495,15 @@ pub async fn execute_daemon(
     info!("🔄 Starting daemon loop...");
     info!("Press Ctrl+C to stop");
 
-    daemon.start().await.context("Daemon execution failed")?;
+    // Hooks and plugins are loaded and subscribed: say so (feature 057)
+    let started = std::time::Instant::now();
+    events::emit(Payload::DaemonStarted(events::DaemonStarted {
+        pid: std::process::id(),
+    }));
+    let ran = daemon.start().await;
+    events::emit(Payload::DaemonStopping(events::DaemonStopping {
+        uptime_seconds: started.elapsed().as_secs_f64(),
+    }));
     // Let hooks and plugins finish the events already on the bus; the daemon's own
     // shutdown used most of Docker's 10 s grace, so this gets 2 s
     let drain = std::time::Duration::from_secs(2);
@@ -487,6 +511,12 @@ pub async fn execute_daemon(
     if !hooks_done || !plugins_done {
         warn!("Stopped with hook or plugin events still running");
     }
+    // Each working plugin gets `on_unload`, under its own time limit; the wait here is
+    // short so the stop stays inside the grace period
+    if !plugins.shutdown(drain).await {
+        warn!("Stopped with a plugin still unloading");
+    }
+    ran.context("Daemon execution failed")?;
 
     if updates.restart_requested() {
         // The exec below skips destructors: this stop is clean

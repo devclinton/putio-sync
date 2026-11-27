@@ -1936,3 +1936,80 @@ async fn the_category_folder_is_listed_once_across_adds() {
     list.assert_async().await;
     add.assert_async().await;
 }
+
+/// Feature 057: an application that stops answering and answers again sends one
+/// `arr.unreachable` and one `arr.recovered`; a refused key is not an outage
+#[tokio::test]
+async fn an_unreachable_app_is_announced_once_and_its_recovery_once() {
+    use putio_sync_core::events::{self, EventType, Payload};
+
+    let h = Harness::new().await;
+    // A port nothing listens on yet
+    let port = {
+        let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        socket.local_addr().unwrap().port()
+    };
+    let url = format!("http://127.0.0.1:{port}");
+    let server = ArrServer {
+        kind: ArrKind::Sonarr,
+        url: format!("{url}/sonarr?apikey=in-the-url"),
+        api_key: Some("secret-key".to_string()),
+        name: None,
+        category: None,
+    };
+    let service = h
+        .service(vec![server.clone()])
+        .with_outage_threshold(Duration::ZERO);
+    let hosts = vec!["putio-sync".to_string()];
+    let mut rx = events::subscribe();
+    let mut mine = move || {
+        let mut out = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            let ours = match &event.payload {
+                Payload::ArrUnreachable(d) => d.url == url,
+                Payload::ArrRecovered(d) => d.url == url,
+                _ => false,
+            };
+            if ours {
+                out.push(event);
+            }
+        }
+        out
+    };
+
+    service.refresh_all_client_info(15432, &hosts).await;
+    service.refresh_all_client_info(15432, &hosts).await;
+    let events = mine();
+    assert_eq!(events.len(), 1, "{events:?}");
+    let Payload::ArrUnreachable(d) = &events[0].payload else {
+        panic!("expected arr.unreachable, got {:?}", events[0].payload);
+    };
+    assert_eq!(
+        (d.kind.as_str(), d.error.as_str()),
+        ("sonarr", "unreachable")
+    );
+    let since = d.since;
+    let text = serde_json::to_string(&*events[0]).unwrap();
+    assert!(!text.contains("secret-key") && !text.contains("in-the-url"));
+
+    // It is back, but refuses the key: reachable all the same
+    let mut arr = mockito::Server::new_with_opts_async(mockito::ServerOpts {
+        port,
+        ..Default::default()
+    })
+    .await;
+    let _refused = arr
+        .mock("GET", Matcher::Any)
+        .with_status(401)
+        .create_async()
+        .await;
+    service.refresh_all_client_info(15432, &hosts).await;
+    service.refresh_all_client_info(15432, &hosts).await;
+    let events = mine();
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].payload.event_type(), EventType::ArrRecovered);
+    let Payload::ArrRecovered(d) = &events[0].payload else {
+        unreachable!()
+    };
+    assert_eq!(d.since, since);
+}

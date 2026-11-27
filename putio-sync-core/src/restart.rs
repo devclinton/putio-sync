@@ -71,8 +71,36 @@ pub fn pending(started: &Config, running: &Config) -> Vec<String> {
     out
 }
 
+/// The top-level config sections that differ between `old` and `new`, sorted. Names
+/// only, never values: this is what `config.changed` carries (feature 057).
+pub fn changed_sections(old: &Config, new: &Config) -> Vec<String> {
+    let (Ok(old), Ok(new)) = (toml::Table::try_from(old), toml::Table::try_from(new)) else {
+        return Vec::new();
+    };
+    let mut names: Vec<&String> = old.keys().chain(new.keys()).collect();
+    names.sort();
+    names.dedup();
+    names
+        .into_iter()
+        .filter(|name| old.get(*name) != new.get(*name))
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn changed_sections_are_named_without_values() {
+        let old = Config::default();
+        let mut new = Config::default();
+        assert!(changed_sections(&old, &new).is_empty());
+        new.auth = Some(toml::from_str("token = \"s3cret-token\"").unwrap());
+        new.api.enabled = !old.api.enabled;
+        let changed = changed_sections(&old, &new);
+        assert_eq!(changed, vec!["api", "auth"]);
+        assert!(!changed.join(" ").contains("s3cret"));
+    }
+
     use super::*;
 
     #[test]

@@ -254,3 +254,55 @@ async fn a_withdrawn_or_delisted_registry_plugin_is_a_warning() {
         ]
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pipeline_step_that_names_a_plugin_which_cannot_run_is_a_problem() {
+    use putio_sync_core::hooks::{HookConfig, HookStage};
+    let mut env = Env::new().await;
+    env.healthy().await;
+    let plugins_dir = env.dir.path().join("plugins");
+    write(
+        &plugins_dir,
+        "sorter",
+        "version = \"1\"\nstep = true\n",
+        "return {on_item = function() end}",
+    );
+    let step = |name: &str, plugin: &str| HookConfig {
+        name: name.to_string(),
+        stage: Some(HookStage::PostProcessing),
+        plugin: Some(plugin.to_string()),
+        ..Default::default()
+    };
+    let mut config = putio_sync_core::config::Config::default();
+    config.download.target_directory = env.downloads();
+    config.plugins_dir = Some(plugins_dir.clone());
+    config.hooks = vec![step("sort", "sorter"), step("gone", "not-here")];
+
+    // One plugin is off, the other is not installed
+    env.doctor.configure(&config);
+    let found = check(&env).await;
+    assert_eq!(found.status, Status::Problem, "{found:?}");
+    assert_eq!(
+        found.summary,
+        "2 pipeline steps cannot run: the plugin is missing, off or broken."
+    );
+    let details: Vec<_> = found
+        .items
+        .iter()
+        .map(|i| (i.key.as_str(), i.detail.as_deref().unwrap_or_default()))
+        .collect();
+    assert_eq!(
+        details,
+        [
+            ("sort", "the plugin \"sorter\" is off"),
+            ("gone", "the plugin \"not-here\" is not installed"),
+        ]
+    );
+
+    // On and installed: fine. A step that is off is not looked at.
+    config.plugins = vec![enabled("sorter")];
+    config.hooks[1].enabled = false;
+    env.doctor.configure(&config);
+    let found = check(&env).await;
+    assert_eq!(found.status, Status::Ok, "{found:?}");
+}

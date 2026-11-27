@@ -101,3 +101,15 @@ test("only a new or changed command needs confirming", () => {
   assert.deepEqual(changedCommands(saved, [{ name: "a", command: ["/bin/a", "-x"] }]), ["a"]);
   assert.deepEqual(changedCommands(undefined, [{ name: "a", command: ["/bin/a"] }]), ["a"]);
 });
+
+test("a plugin step round-trips and is offered only for a pipeline step", async () => {
+  const { blankHook, fromSettings, kindChoices, targetLabel, toSettings } = await import("../../ui/hooks.js");
+  const saved = { name: "sort", enabled: true, events: [], timeout_secs: 60, stage: "post_processing", required: false, categories: ["sonarr"], plugin: "tv-folders" };
+  const row = fromSettings(saved);
+  assert.equal(row.kind, "plugin");
+  assert.equal(row.plugin, "tv-folders");
+  assert.equal(targetLabel(row), "plugin tv-folders");
+  assert.deepEqual(toSettings(row), saved);
+  assert.deepEqual(kindChoices(row).map(([v]) => v), ["command", "url", "plugin"]);
+  assert.deepEqual(kindChoices(blankHook()).map(([v]) => v), ["command", "url"]);
+});

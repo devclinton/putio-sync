@@ -47,6 +47,8 @@ pub struct Doctor {
     /// Finished runs, so a waiter can tell a run finished while it waited
     runs: AtomicU64,
     metrics: bool,
+    /// `local_disk.low` was sent and `local_disk.recovered` has not been (feature 057)
+    disk_low: putio_sync_core::health::Once,
     /// Tailscale (feature 036); built from the config per run when not shared
     #[cfg(feature = "tailscale")]
     tailscale: Option<Arc<putio_sync_tailscale::TailscaleService>>,
@@ -76,6 +78,7 @@ impl Doctor {
             running: tokio::sync::Mutex::new(()),
             runs: AtomicU64::new(0),
             metrics: false,
+            disk_low: Default::default(),
             #[cfg(feature = "tailscale")]
             tailscale: None,
             #[cfg(feature = "hooks")]
@@ -224,8 +227,48 @@ impl Doctor {
                 item_count: check.item_count,
             }));
         }
+        self.local_disk_events(&ctx, &report);
         self.runs.fetch_add(1, Ordering::SeqCst);
         report
+    }
+
+    /// `local_disk.low` when the Disk space check first is a warning or a problem, and
+    /// `local_disk.recovered` when it is fine again; a skipped check changes nothing
+    fn local_disk_events(&self, ctx: &Ctx, report: &Report) {
+        let Some(check) = report.check(CheckId::DiskSpace) else {
+            return;
+        };
+        let low = match check.status {
+            Status::Warning | Status::Problem => true,
+            Status::Ok => false,
+            _ => return,
+        };
+        let changed = if low {
+            self.disk_low.raise()
+        } else {
+            self.disk_low.reset()
+        };
+        if !changed {
+            return;
+        }
+        let dir = &ctx.config.download.target_directory;
+        let (free, total) = putio_sync_telemetry::gauges::disk_usage(dir).unwrap_or((0, 0));
+        let disk = events::LocalDisk {
+            path: dir.display().to_string(),
+            total_bytes: total,
+            free_bytes: free,
+            free_percent: if total == 0 {
+                0.0
+            } else {
+                (free as f64 * 1000.0 / total as f64).round() / 10.0
+            },
+            summary: check.summary.clone(),
+        };
+        events::emit(if low {
+            Payload::LocalDiskLow(disk)
+        } else {
+            Payload::LocalDiskRecovered(disk)
+        });
     }
 
     /// Detect again and list what `fix` would act on. Changes nothing.

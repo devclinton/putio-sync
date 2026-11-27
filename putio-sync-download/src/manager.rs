@@ -719,6 +719,8 @@ pub struct DownloadManager {
     pub(crate) config: Arc<RwLock<DownloadConfig>>,
     /// Progress trackers for active downloads
     progress_trackers: Arc<RwLock<HashMap<i64, ProgressTracker>>>,
+    /// Milliseconds between two `download.progress` events of one file (feature 057)
+    progress_event_ms: Arc<std::sync::atomic::AtomicU64>,
     /// Overall progress
     overall_progress: Arc<RwLock<OverallProgress>>,
     /// Active worker pool (for dynamic scaling)
@@ -852,6 +854,9 @@ pub struct TransfersSnapshot {
     pub stale: bool,
 }
 
+/// The default gap between two `download.progress` events of one file
+const PROGRESS_EVENT_MS: u64 = 10_000;
+
 impl DownloadManager {
     /// Create a new download manager
     ///
@@ -873,6 +878,7 @@ impl DownloadManager {
             bandwidth: RateLimiter::from_policy(config.bandwidth_policy()),
             config: Arc::new(RwLock::new(config)),
             progress_trackers: Arc::new(RwLock::new(HashMap::new())),
+            progress_event_ms: Arc::new(std::sync::atomic::AtomicU64::new(PROGRESS_EVENT_MS)),
             overall_progress,
             workers: Arc::new(RwLock::new(HashMap::new())),
             next_worker_id: Arc::new(RwLock::new(0)),
@@ -919,6 +925,7 @@ impl DownloadManager {
             bandwidth: RateLimiter::from_policy(config.bandwidth_policy()),
             config: Arc::new(RwLock::new(config)),
             progress_trackers: Arc::new(RwLock::new(HashMap::new())),
+            progress_event_ms: Arc::new(std::sync::atomic::AtomicU64::new(PROGRESS_EVENT_MS)),
             overall_progress,
             workers: Arc::new(RwLock::new(HashMap::new())),
             next_worker_id: Arc::new(RwLock::new(0)),
@@ -1411,6 +1418,7 @@ impl DownloadManager {
         match self.client.delete_files(ok.clone()).await {
             Ok(_) => {
                 info!(count = ok.len(), "Deleted held-back files from Put.io");
+                cleanup_deleted(&ok);
                 result.deleted = ok;
             }
             Err(e) => {
@@ -1418,6 +1426,14 @@ impl DownloadManager {
             }
         }
         result
+    }
+
+    /// How often one file's `download.progress` is sent; 10 seconds unless set
+    pub fn set_progress_event_period(&self, period: Duration) {
+        self.progress_event_ms.store(
+            period.as_millis() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     /// Download a single file
@@ -1663,6 +1679,19 @@ impl DownloadManager {
         };
         let hash = remote.is_some() && (verify || resumed_from.is_some());
         let mut redownloads = 0u32;
+        // Every download has a start, sent before its finished or failed event (057)
+        let starting_as = target_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| name.clone());
+        events::emit(Payload::DownloadStarted(events::DownloadStarted {
+            file_id,
+            relative_path: event_path(&file.relative_path, &starting_as),
+            name: starting_as,
+            size_bytes: file.file_size,
+            resumed: resumed_from.is_some_and(|from| from > 0),
+            resumed_from_bytes: resumed_from.unwrap_or(0),
+        }));
         let mut result = self
             .transfer(&file, &filename, &target_path, &config, resumed_from, hash)
             .await;
@@ -1987,7 +2016,8 @@ impl DownloadManager {
         let client = &self.client;
         let resume_enabled = config.resume_enabled;
         let stop = self.stop_signal(file.file_id);
-        let result = retry_with_stall_detection(
+        let label = format!("Download {}", filename);
+        let download = retry_with_stall_detection(
             || async {
                 let from = if resume_enabled {
                     check_resume(&temp_path, file.file_size).await?
@@ -2023,10 +2053,46 @@ impl DownloadManager {
             },
             config.max_retries,
             config.retry_initial_delay_secs,
-            &format!("Download {}", filename),
+            &label,
             stop.as_deref(),
-        )
-        .await;
+        );
+        // `download.progress` while it runs: at most one per file per period, and only
+        // subscribers that name the type get it (feature 057)
+        let period = Duration::from_millis(
+            self.progress_event_ms
+                .load(std::sync::atomic::Ordering::Relaxed)
+                .max(1),
+        );
+        let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        tokio::pin!(download);
+        let result = loop {
+            tokio::select! {
+                done = &mut download => break done,
+                _ = ticker.tick() => {
+                    let Ok(meta) = tokio::fs::metadata(&temp_path).await else {
+                        continue;
+                    };
+                    let downloaded = meta.len().min(file.file_size);
+                    let name = target_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| filename.to_string());
+                    events::emit(Payload::DownloadProgress(events::DownloadProgress {
+                        file_id: file.file_id,
+                        relative_path: event_path(&file.relative_path, &name),
+                        name,
+                        size_bytes: file.file_size,
+                        downloaded_bytes: downloaded,
+                        percent: if file.file_size == 0 {
+                            0.0
+                        } else {
+                            (downloaded as f64 * 1000.0 / file.file_size as f64).round() / 10.0
+                        },
+                    }));
+                }
+            }
+        };
         result.map(|r| Transferred {
             attempts: r.attempts,
             crc32: r.value.crc32,
@@ -2179,6 +2245,11 @@ impl DownloadManager {
             .swap(false, std::sync::atomic::Ordering::SeqCst);
         self.sync_status.write().await.begin();
         telemetry::sync::started();
+        // Paired with the `sync.completed` below by `started_at` (feature 057)
+        events::emit(Payload::SyncStarted(events::SyncStarted {
+            trigger: if manual { "manual" } else { "schedule" }.to_string(),
+            started_at,
+        }));
         let result = self.sync_downloads_inner().await;
         self.sync_status.write().await.finish(match &result {
             Ok(stats) => SyncOutcome::from(stats),
@@ -3179,6 +3250,7 @@ impl DownloadManager {
                                             name = %file_info.name,
                                             "Deleted from Put.io"
                                         );
+                                        cleanup_deleted(&[file_id]);
                                     }
                                     Err(e) => {
                                         warn!(
@@ -4434,6 +4506,15 @@ async fn download_source(
 }
 
 /// A file's path under the download folder for events, `/`-separated
+/// `cleanup.deleted`: delete-after-download removed these from Put.io (feature 057)
+fn cleanup_deleted(file_ids: &[i64]) {
+    events::emit(Payload::CleanupDeleted(events::CleanupDeleted {
+        file_ids: file_ids.to_vec(),
+        count: file_ids.len() as u64,
+        reason: "downloaded".to_string(),
+    }));
+}
+
 fn event_path(relative_dir: &str, name: &str) -> String {
     let dir = relative_dir.replace('\\', "/");
     let dir = dir.trim_matches('/');

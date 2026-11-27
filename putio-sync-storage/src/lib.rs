@@ -195,7 +195,7 @@ impl StorageService {
 
     /// Account numbers only, setting the gauges; `(size, used)`. Sends `storage.low`
     /// when free space first drops below `warn_free_percent`, and again only after a
-    /// reading above it.
+    /// reading above it, which sends `storage.recovered`.
     pub async fn refresh(&self) -> Result<(i64, i64), StorageError> {
         let disk = self.client.get_account_info().await?.disk;
         metrics::set_storage(disk.size, disk.used);
@@ -203,14 +203,20 @@ impl StorageService {
         let free = free_of(disk.size, disk.used);
         let low = is_low(disk.size, free, warn);
         let was_low = self.low.swap(low, std::sync::atomic::Ordering::SeqCst);
-        if low && !was_low {
-            events::emit(Payload::StorageLow(events::StorageLow {
+        if low != was_low {
+            let reading = events::StorageLow {
                 total_bytes: disk.size,
                 used_bytes: disk.used,
                 free_bytes: free,
                 free_percent: (free as f64 * 1000.0 / disk.size as f64).round() / 10.0,
                 warn_free_percent: warn,
-            }));
+            };
+            events::emit(if low {
+                Payload::StorageLow(reading)
+            } else {
+                // Back above the warning level (feature 057)
+                Payload::StorageRecovered(reading)
+            });
         }
         Ok((disk.size, disk.used))
     }

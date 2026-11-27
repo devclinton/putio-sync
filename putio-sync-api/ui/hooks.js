@@ -18,7 +18,34 @@ export const EVENTS = [
   ["verify.redownload", "Re-downloading after a mismatch"],
   ["pipeline.step_failed", "Pipeline step failed"],
   ["pipeline.completed", "Pipeline finished with warnings"],
+  ["pipeline.finished", "Item ready (pipeline finished)"],
+  ["putio.unreachable", "Put.io unreachable"],
+  ["putio.recovered", "Put.io reachable again"],
+  ["auth.expired", "Put.io token refused"],
+  ["storage.recovered", "Put.io storage recovered"],
+  ["local_disk.low", "Download disk low"],
+  ["local_disk.recovered", "Download disk recovered"],
+  ["arr.unreachable", "Radarr / Sonarr unreachable"],
+  ["arr.recovered", "Radarr / Sonarr reachable again"],
+  ["sync.started", "Sync run started"],
+  ["download.started", "Download started"],
+  ["download.progress", "Download progress (every 10 s)"],
+  ["subtitles.found", "Subtitles found"],
+  ["subtitles.missing", "Subtitles missing"],
+  ["translation.finished", "Translation finished"],
+  ["translation.failed", "Translation failed"],
+  ["cleanup.deleted", "Deleted from Put.io after download"],
+  ["daemon.started", "Daemon started"],
+  ["daemon.stopping", "Daemon stopping"],
+  ["config.changed", "Configuration changed"],
 ];
+
+/** What a hook runs: a plugin only as a pipeline step (feature 057) */
+export function kindChoices(row) {
+  const kinds = [["command", "Command"], ["url", "Webhook URL"]];
+  if (row.stage || row.kind === "plugin") kinds.push(["plugin", "Plugin"]);
+  return kinds;
+}
 
 /** What a hook runs as: an event hook, or a step of a pipeline stage (feature 038) */
 export const RUNS_AS = [
@@ -30,11 +57,12 @@ export const RUNS_AS = [
 
 /** An editor row for a new hook */
 export function blankHook(n = 1) {
-  return { name: `hook-${n}`, enabled: true, kind: "command", program: "", args: "", url: "", pairs: [], all: false, events: ["download.finished"], timeout_secs: 30, stage: "", required: true, categories: "" };
+  return { name: `hook-${n}`, enabled: true, kind: "command", program: "", args: "", url: "", plugin: "", pairs: [], all: false, events: ["download.finished"], timeout_secs: 30, stage: "", required: true, categories: "" };
 }
 
 /** What a hook runs, as `GET /hooks` would show it (the program, or the URL cut down) */
 export function targetLabel(row) {
+  if (row.kind === "plugin") return (row.plugin || "").trim() ? `plugin ${row.plugin.trim()}` : "";
   if (row.kind === "url") {
     const text = row.url.trim();
     if (!text) return "";
@@ -80,7 +108,8 @@ export function fromSettings(hook) {
   return {
     name: hook.name,
     enabled: hook.enabled !== false,
-    kind: url ? "url" : "command",
+    kind: hook.plugin != null ? "plugin" : url ? "url" : "command",
+    plugin: hook.plugin || "",
     program: command[0] || "",
     args: command.slice(1).join("\n"),
     url: hook.url || "",
@@ -106,7 +135,10 @@ export function toSettings(row) {
   }
   const pairs = {};
   for (const p of row.pairs) if (p.key.trim()) pairs[p.key.trim()] = p.value;
-  if (row.kind === "url") {
+  if (row.kind === "plugin") {
+    // A plugin's on_item is the step (feature 057); it takes no headers or environment
+    out.plugin = (row.plugin || "").trim();
+  } else if (row.kind === "url") {
     out.url = row.url.trim();
     out.headers = pairs;
   } else {

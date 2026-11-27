@@ -4,10 +4,12 @@
 //! token accepted, folders mapped); a failed item is a problem, a warning a warning.
 //! Feature 059: a plugin from the registry that was withdrawn or is no longer listed is a
 //! warning, from the list last fetched (the check fetches nothing).
+//! Feature 057: a pipeline step that names a plugin which cannot run is a problem.
 
 use super::{count, Ctx};
 use crate::report::{Finding, Item, Status};
 use chrono::{DateTime, Duration, Utc};
+use putio_sync_core::step_plugins::StepPlugins;
 use putio_sync_plugins::action::{HealthItem, HealthStatus};
 use putio_sync_plugins::{CallError, PluginState, PluginStatus, PluginsService, RunResult};
 use std::sync::Arc;
@@ -107,6 +109,29 @@ pub(crate) async fn plugins(ctx: &Ctx) -> Finding {
         .filter(|p| p.state == PluginState::Broken && enabled(&p.name))
         .map(item)
         .collect();
+    // Feature 057: a pipeline step that names a plugin which is not installed, off,
+    // broken or has no on_item fails every item that reaches it
+    let steps: Vec<Item> = ctx
+        .config
+        .hooks
+        .iter()
+        .filter(|h| h.enabled && h.stage.is_some())
+        .filter_map(|h| {
+            let why = service.problem(h.plugin.as_deref()?)?;
+            Some(Item::new(&h.name, h.name.clone()).detail(why))
+        })
+        .collect();
+    if broken.is_empty() && !steps.is_empty() {
+        return Finding::new(
+            Status::Problem,
+            format!(
+                "{} cannot run: the plugin is missing, off or broken.",
+                count(steps.len(), "pipeline step")
+            ),
+        )
+        .suggest("Install or turn on the plugin in Settings › Plugins, or change the step under Settings › Integrations.")
+        .items(steps);
+    }
     let (unhealthy, unsure) = health(&service, &plugins).await;
     if broken.is_empty() && !unhealthy.is_empty() {
         return Finding::new(

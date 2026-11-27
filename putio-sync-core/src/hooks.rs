@@ -56,6 +56,9 @@ pub struct HookConfig {
     /// http or https URL to POST the event to
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// A plugin whose `on_item` runs as the step; pipeline hooks only (feature 057)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
     /// Extra request headers, URL hooks only
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
@@ -107,6 +110,7 @@ impl Default for HookConfig {
             events: Vec::new(),
             command: None,
             url: None,
+            plugin: None,
             headers: BTreeMap::new(),
             env: BTreeMap::new(),
             timeout_secs: default_timeout(),
@@ -125,12 +129,17 @@ pub enum HookKind {
     Command,
     /// POSTs the event to a URL
     Url,
+    /// Calls a plugin's `on_item`; pipeline steps only (feature 057)
+    Plugin,
 }
 
 impl HookConfig {
-    /// Command or URL; a hook with neither counts as a command (validation refuses it)
+    /// Command, URL or plugin; a hook with none counts as a command (validation refuses
+    /// it)
     pub fn kind(&self) -> HookKind {
-        if self.url.is_some() {
+        if self.plugin.is_some() {
+            HookKind::Plugin
+        } else if self.url.is_some() {
             HookKind::Url
         } else {
             HookKind::Command
@@ -142,6 +151,7 @@ impl HookConfig {
     pub fn target_label(&self) -> String {
         match self.kind() {
             HookKind::Url => crate::redact::url(self.url.as_deref().unwrap_or_default()),
+            HookKind::Plugin => format!("plugin {}", self.plugin.as_deref().unwrap_or_default()),
             HookKind::Command => self
                 .command
                 .as_ref()
@@ -152,14 +162,13 @@ impl HookConfig {
     }
 
     /// Whether the hook runs for `event_type`. `*` matches all but `hook.test` and
-    /// `plugin.test`, which only the test buttons send.
+    /// `plugin.test`, which only the test buttons send, and `download.progress`, which a
+    /// hook must list by name (feature 057).
     pub fn matches(&self, event_type: EventType) -> bool {
         if event_type.is_test() || self.stage.is_some() {
             return false;
         }
-        self.events
-            .iter()
-            .any(|e| e == ALL_EVENTS || e == event_type.as_str())
+        self.events.iter().any(|e| event_type.matched_by(e))
     }
 
     /// The run timeout
@@ -185,11 +194,33 @@ impl HookConfig {
             ));
         }
         let hook = format!("hooks \"{}\"", self.name);
+        if let Some(plugin) = &self.plugin {
+            if self.command.is_some() || self.url.is_some() {
+                return bad(format!(
+                    "{}: set one of command, url or plugin, not more",
+                    hook
+                ));
+            }
+            if self.stage.is_none() {
+                return bad(format!(
+                    "{}.plugin: only for pipeline hooks (set stage); a plugin gets events through its own manifest",
+                    hook
+                ));
+            }
+            let valid = crate::plugins::valid_name(plugin);
+            if !valid {
+                return bad(format!(
+                    "{}.plugin: \"{}\" is not a plugin name (letters, digits, - and _)",
+                    hook, plugin
+                ));
+            }
+        }
         match (&self.command, &self.url) {
+            _ if self.plugin.is_some() => {}
             (Some(_), Some(_)) => {
                 return bad(format!("{}: set either command or url, not both", hook))
             }
-            (None, None) => return bad(format!("{}: set command or url", hook)),
+            (None, None) => return bad(format!("{}: set command, url or plugin", hook)),
             (Some(command), None) => match command.first() {
                 None => return bad(format!("{}.command: must name a program", hook)),
                 Some(program) if !Path::new(program).is_absolute() => {
@@ -544,7 +575,33 @@ mod tests {
         assert!(err(h.clone()).contains("either command or url"));
         h.command = None;
         h.url = None;
-        assert!(err(h).contains("set command or url"));
+        assert!(err(h).contains("set command, url or plugin"));
+    }
+
+    #[test]
+    fn a_plugin_is_a_step_target() {
+        let mut h = command_hook();
+        h.command = None;
+        h.env.clear();
+        h.events.clear();
+        h.stage = Some(HookStage::PostProcessing);
+        h.plugin = Some("tv-folders".to_string());
+        h.validate(0).unwrap();
+        assert_eq!(h.kind(), HookKind::Plugin);
+        assert_eq!(h.target_label(), "plugin tv-folders");
+
+        let mut both = h.clone();
+        both.url = Some("https://x".to_string());
+        assert!(err(both).contains("one of command, url or plugin"));
+
+        let mut event = h.clone();
+        event.stage = None;
+        event.events = vec!["download.finished".to_string()];
+        assert!(err(event).contains("only for pipeline hooks"));
+
+        let mut bad = h.clone();
+        bad.plugin = Some("no spaces".to_string());
+        assert!(err(bad).contains("not a plugin name"));
     }
 
     #[test]

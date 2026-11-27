@@ -109,11 +109,16 @@ async fn downloaded(env: &Env, id: i64, path: &Path) {
 
 /// A movie on disk with an English subtitle, registered as item `file:5`
 async fn movie_with_en(env: &Env) -> PathBuf {
+    movie_named(env, "name-of-file:5").await
+}
+
+/// Like [`movie_with_en`], with the item's name
+async fn movie_named(env: &Env, name: &str) -> PathBuf {
     let video = env.dir.path().join("Movie.2020.mkv");
     big_file(&video, BIG);
     std::fs::write(env.dir.path().join("Movie.2020.en.srt"), SRT).unwrap();
     downloaded(env, 5, &video).await;
-    downloaded_item(env, "file:5", &video).await;
+    downloaded_item_named(env, "file:5", name, &video).await;
     video
 }
 
@@ -312,6 +317,37 @@ async fn one_language_failing_does_not_stop_the_other_and_the_item_finishes_with
     assert_eq!(fr.state, StepState::Failed);
     let attempts = env.store.attempts(fr.id).await.unwrap();
     assert_eq!(attempts.len(), 3, "optional_retries is [0, 0]");
+}
+
+/// Feature 057: `translation.finished` per saved language, `translation.failed` per failed
+/// attempt
+#[tokio::test]
+async fn a_translation_and_a_failed_one_are_announced() {
+    use putio_sync_core::events::{self, Payload};
+    let s = chat_server(&["fr"]).await;
+    let env = env_for(&["en", "es", "fr"], chat(&s.url())).await;
+    movie_named(&env, "ev-translate").await;
+    let mut rx = events::subscribe();
+    for _ in 0..4 {
+        env.pipeline.run_due().await;
+    }
+    let (mut done, mut failed) = (Vec::new(), Vec::new());
+    while let Ok(event) = rx.try_recv() {
+        match &event.payload {
+            Payload::TranslationFinished(p) if p.name == "ev-translate" => done.push(p.clone()),
+            Payload::TranslationFailed(p) if p.name == "ev-translate" => failed.push(p.clone()),
+            _ => {}
+        }
+    }
+    assert_eq!(done.len(), 1, "{done:?}");
+    assert_eq!(done[0].key, "file:5");
+    assert_eq!(done[0].language, "es");
+    assert_eq!(done[0].video, "Movie.2020.mkv");
+    assert!(!done[0].detail.is_empty());
+    assert_eq!(failed.len(), 3, "one per attempt: {failed:?}");
+    assert!(failed
+        .iter()
+        .all(|f| f.language == "fr" && !f.error.is_empty()));
 }
 
 #[tokio::test]

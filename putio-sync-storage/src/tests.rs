@@ -503,8 +503,26 @@ async fn storage_low_is_sent_on_the_way_down_only() {
     assert!(lows(&mut rx).is_empty(), "still low sends nothing");
     m.remove_async().await;
 
+    // Back above the line: `storage.recovered` once (feature 057)
+    let mut recovered_rx = events::subscribe();
+    let recovered = |rx: &mut tokio::sync::broadcast::Receiver<Arc<events::Event>>| {
+        let mut n = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let Payload::StorageRecovered(l) = &event.payload {
+                if l.total_bytes == SIZE {
+                    n.push(l.clone());
+                }
+            }
+        }
+        n
+    };
     let m = w.account(SIZE, SIZE / 2).await;
     w.svc.refresh().await.unwrap();
+    w.svc.refresh().await.unwrap();
+    let sent = recovered(&mut recovered_rx);
+    assert_eq!(sent.len(), 1, "recovered is sent once");
+    assert_eq!(sent[0].free_bytes, SIZE - SIZE / 2);
+    assert_eq!(sent[0].free_percent, 50.0);
     m.remove_async().await;
     w.account(SIZE, low_used).await;
     w.svc.refresh().await.unwrap();

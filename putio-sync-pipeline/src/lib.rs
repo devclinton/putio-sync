@@ -22,6 +22,7 @@ use putio_sync_core::config::{Config, PipelineConfig};
 use putio_sync_core::hooks::HookConfig;
 use putio_sync_core::media::MediaLookup;
 use putio_sync_core::pipeline_gate::PipelineGate;
+use putio_sync_core::step_plugins::StepPlugins;
 use putio_sync_core::subtitles::SubtitlesConfig;
 use putio_sync_core::translation::TranslationConfig;
 use putio_sync_db::pipeline::{FinishedOutcome, FinishedRow};
@@ -120,6 +121,9 @@ pub(crate) struct Inner {
     pub search_fixed: std::sync::atomic::AtomicBool,
     /// The ids the *arr history holds; none until the daemon sets it
     pub media: RwLock<Option<Arc<dyn MediaLookup>>>,
+    /// What runs a hook step that names a plugin (feature 057); none until the daemon
+    /// sets it
+    pub step_plugins: RwLock<Option<Arc<dyn StepPlugins>>>,
     /// Live translation settings and the in-flight limit
     pub translator: Arc<putio_sync_translation::Translator>,
     /// Transcriptions run one at a time, whatever the item
@@ -167,6 +171,7 @@ impl Pipeline {
                 ),
                 search_fixed: std::sync::atomic::AtomicBool::new(false),
                 media: RwLock::new(None),
+                step_plugins: RwLock::new(None),
                 translator: Arc::new(putio_sync_translation::Translator::new(&config.translation)),
                 transcribing: Semaphore::new(1),
                 manual: tokio::sync::Mutex::new(()),
@@ -253,6 +258,15 @@ impl Pipeline {
     /// Where the IDs of an *arr download come from (the daemon gives the history reader)
     pub fn set_media_lookup(&self, media: Arc<dyn MediaLookup>) {
         *self.inner.media.write().unwrap_or_else(|e| e.into_inner()) = Some(media);
+    }
+
+    /// What runs the hook steps that name a plugin (the daemon gives the plugins service)
+    pub fn set_step_plugins(&self, plugins: Arc<dyn StepPlugins>) {
+        *self
+            .inner
+            .step_plugins
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(plugins);
     }
 
     /// The gate for Radarr and Sonarr

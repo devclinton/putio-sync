@@ -57,6 +57,46 @@ pub enum EventType {
     PipelineCompleted,
     /// A doctor check became a problem (feature 030)
     DoctorProblem,
+    /// An item left its processing pipeline (feature 057)
+    PipelineFinished,
+    /// Put.io calls have failed for the outage threshold (feature 057)
+    PutioUnreachable,
+    /// Put.io answers again after `putio.unreachable` (feature 057)
+    PutioRecovered,
+    /// Put.io refused the token (feature 057)
+    AuthExpired,
+    /// Put.io storage is back above the warning level (feature 057)
+    StorageRecovered,
+    /// The download folder's disk fell below the doctor's line (feature 057)
+    LocalDiskLow,
+    /// The download folder's disk is back above the doctor's line (feature 057)
+    LocalDiskRecovered,
+    /// A Radarr or Sonarr server stopped answering (feature 057)
+    ArrUnreachable,
+    /// A Radarr or Sonarr server answers again (feature 057)
+    ArrRecovered,
+    /// A sync run began (feature 057)
+    SyncStarted,
+    /// A file download attempt began (feature 057)
+    DownloadStarted,
+    /// How far a running download is; opt-in (feature 057)
+    DownloadProgress,
+    /// The subtitles step saved subtitles for a video (feature 057)
+    SubtitlesFound,
+    /// The subtitles step left wanted languages without a subtitle (feature 057)
+    SubtitlesMissing,
+    /// A subtitle translation was saved (feature 057)
+    TranslationFinished,
+    /// A subtitle translation failed (feature 057)
+    TranslationFailed,
+    /// Downloaded files were deleted from Put.io (feature 057)
+    CleanupDeleted,
+    /// The daemon is up (feature 057)
+    DaemonStarted,
+    /// The daemon is shutting down (feature 057)
+    DaemonStopping,
+    /// A new configuration was applied (feature 057)
+    ConfigChanged,
     /// Sent by the "send test event" button only
     HookTest,
     /// Sent by a plugin's "send test event" button only
@@ -65,7 +105,7 @@ pub enum EventType {
 
 impl EventType {
     /// Every type, in documentation order.
-    pub const ALL: [EventType; 16] = [
+    pub const ALL: [EventType; 36] = [
         EventType::DownloadFinished,
         EventType::DownloadFailed,
         EventType::TransferAdded,
@@ -80,6 +120,26 @@ impl EventType {
         EventType::PipelineStepFailed,
         EventType::PipelineCompleted,
         EventType::DoctorProblem,
+        EventType::PipelineFinished,
+        EventType::PutioUnreachable,
+        EventType::PutioRecovered,
+        EventType::AuthExpired,
+        EventType::StorageRecovered,
+        EventType::LocalDiskLow,
+        EventType::LocalDiskRecovered,
+        EventType::ArrUnreachable,
+        EventType::ArrRecovered,
+        EventType::SyncStarted,
+        EventType::DownloadStarted,
+        EventType::DownloadProgress,
+        EventType::SubtitlesFound,
+        EventType::SubtitlesMissing,
+        EventType::TranslationFinished,
+        EventType::TranslationFailed,
+        EventType::CleanupDeleted,
+        EventType::DaemonStarted,
+        EventType::DaemonStopping,
+        EventType::ConfigChanged,
         EventType::HookTest,
         EventType::PluginTest,
     ];
@@ -101,6 +161,26 @@ impl EventType {
             EventType::PipelineStepFailed => "pipeline.step_failed",
             EventType::PipelineCompleted => "pipeline.completed",
             EventType::DoctorProblem => "doctor.problem",
+            EventType::PipelineFinished => "pipeline.finished",
+            EventType::PutioUnreachable => "putio.unreachable",
+            EventType::PutioRecovered => "putio.recovered",
+            EventType::AuthExpired => "auth.expired",
+            EventType::StorageRecovered => "storage.recovered",
+            EventType::LocalDiskLow => "local_disk.low",
+            EventType::LocalDiskRecovered => "local_disk.recovered",
+            EventType::ArrUnreachable => "arr.unreachable",
+            EventType::ArrRecovered => "arr.recovered",
+            EventType::SyncStarted => "sync.started",
+            EventType::DownloadStarted => "download.started",
+            EventType::DownloadProgress => "download.progress",
+            EventType::SubtitlesFound => "subtitles.found",
+            EventType::SubtitlesMissing => "subtitles.missing",
+            EventType::TranslationFinished => "translation.finished",
+            EventType::TranslationFailed => "translation.failed",
+            EventType::CleanupDeleted => "cleanup.deleted",
+            EventType::DaemonStarted => "daemon.started",
+            EventType::DaemonStopping => "daemon.stopping",
+            EventType::ConfigChanged => "config.changed",
             EventType::HookTest => "hook.test",
             EventType::PluginTest => "plugin.test",
         }
@@ -109,6 +189,18 @@ impl EventType {
     /// Whether only a test button sends it, so `*` leaves it out.
     pub fn is_test(&self) -> bool {
         matches!(self, EventType::HookTest | EventType::PluginTest)
+    }
+
+    /// Whether a hook or plugin must ask for it by name: `*` leaves it out, because it
+    /// is sent every 10 seconds per running download (feature 057).
+    pub fn is_opt_in(&self) -> bool {
+        matches!(self, EventType::DownloadProgress)
+    }
+
+    /// Whether a subscriber that lists `wanted` gets this type: a listed name always
+    /// matches, `*` matches all but the test and opt-in types.
+    pub fn matched_by(&self, wanted: &str) -> bool {
+        wanted == self.as_str() || (wanted == "*" && !self.is_test() && !self.is_opt_in())
     }
 }
 
@@ -261,6 +353,66 @@ pub enum Payload {
     /// `doctor.problem`
     #[serde(rename = "doctor.problem")]
     DoctorProblem(DoctorProblem),
+    /// `pipeline.finished`
+    #[serde(rename = "pipeline.finished")]
+    PipelineFinished(PipelineFinished),
+    /// `putio.unreachable`
+    #[serde(rename = "putio.unreachable")]
+    PutioUnreachable(PutioUnreachable),
+    /// `putio.recovered`
+    #[serde(rename = "putio.recovered")]
+    PutioRecovered(PutioRecovered),
+    /// `auth.expired`
+    #[serde(rename = "auth.expired")]
+    AuthExpired(AuthExpired),
+    /// `storage.recovered`
+    #[serde(rename = "storage.recovered")]
+    StorageRecovered(StorageLow),
+    /// `local_disk.low`
+    #[serde(rename = "local_disk.low")]
+    LocalDiskLow(LocalDisk),
+    /// `local_disk.recovered`
+    #[serde(rename = "local_disk.recovered")]
+    LocalDiskRecovered(LocalDisk),
+    /// `arr.unreachable`
+    #[serde(rename = "arr.unreachable")]
+    ArrUnreachable(ArrUnreachable),
+    /// `arr.recovered`
+    #[serde(rename = "arr.recovered")]
+    ArrRecovered(ArrRecovered),
+    /// `sync.started`
+    #[serde(rename = "sync.started")]
+    SyncStarted(SyncStarted),
+    /// `download.started`
+    #[serde(rename = "download.started")]
+    DownloadStarted(DownloadStarted),
+    /// `download.progress`
+    #[serde(rename = "download.progress")]
+    DownloadProgress(DownloadProgress),
+    /// `subtitles.found`
+    #[serde(rename = "subtitles.found")]
+    SubtitlesFound(SubtitlesFound),
+    /// `subtitles.missing`
+    #[serde(rename = "subtitles.missing")]
+    SubtitlesMissing(SubtitlesMissing),
+    /// `translation.finished`
+    #[serde(rename = "translation.finished")]
+    TranslationFinished(TranslationFinished),
+    /// `translation.failed`
+    #[serde(rename = "translation.failed")]
+    TranslationFailed(TranslationFailed),
+    /// `cleanup.deleted`
+    #[serde(rename = "cleanup.deleted")]
+    CleanupDeleted(CleanupDeleted),
+    /// `daemon.started`
+    #[serde(rename = "daemon.started")]
+    DaemonStarted(DaemonStarted),
+    /// `daemon.stopping`
+    #[serde(rename = "daemon.stopping")]
+    DaemonStopping(DaemonStopping),
+    /// `config.changed`
+    #[serde(rename = "config.changed")]
+    ConfigChanged(ConfigChanged),
     /// `hook.test`
     #[serde(rename = "hook.test")]
     HookTest(HookTest),
@@ -287,6 +439,26 @@ impl Payload {
             Payload::PipelineStepFailed(_) => EventType::PipelineStepFailed,
             Payload::PipelineCompleted(_) => EventType::PipelineCompleted,
             Payload::DoctorProblem(_) => EventType::DoctorProblem,
+            Payload::PipelineFinished(_) => EventType::PipelineFinished,
+            Payload::PutioUnreachable(_) => EventType::PutioUnreachable,
+            Payload::PutioRecovered(_) => EventType::PutioRecovered,
+            Payload::AuthExpired(_) => EventType::AuthExpired,
+            Payload::StorageRecovered(_) => EventType::StorageRecovered,
+            Payload::LocalDiskLow(_) => EventType::LocalDiskLow,
+            Payload::LocalDiskRecovered(_) => EventType::LocalDiskRecovered,
+            Payload::ArrUnreachable(_) => EventType::ArrUnreachable,
+            Payload::ArrRecovered(_) => EventType::ArrRecovered,
+            Payload::SyncStarted(_) => EventType::SyncStarted,
+            Payload::DownloadStarted(_) => EventType::DownloadStarted,
+            Payload::DownloadProgress(_) => EventType::DownloadProgress,
+            Payload::SubtitlesFound(_) => EventType::SubtitlesFound,
+            Payload::SubtitlesMissing(_) => EventType::SubtitlesMissing,
+            Payload::TranslationFinished(_) => EventType::TranslationFinished,
+            Payload::TranslationFailed(_) => EventType::TranslationFailed,
+            Payload::CleanupDeleted(_) => EventType::CleanupDeleted,
+            Payload::DaemonStarted(_) => EventType::DaemonStarted,
+            Payload::DaemonStopping(_) => EventType::DaemonStopping,
+            Payload::ConfigChanged(_) => EventType::ConfigChanged,
             Payload::HookTest(_) => EventType::HookTest,
             Payload::PluginTest(_) => EventType::PluginTest,
         }
@@ -308,6 +480,8 @@ impl Payload {
                 }
             }
             Payload::PipelineStepFailed(p) => cut(&mut p.error),
+            Payload::ArrUnreachable(a) => cut(&mut a.error),
+            Payload::TranslationFailed(t) => cut(&mut t.error),
             _ => {}
         }
     }
@@ -541,6 +715,233 @@ pub struct PipelineCompleted {
     pub warnings: Vec<String>,
 }
 
+/// `pipeline.finished` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineFinished {
+    /// The item key
+    pub key: String,
+    /// The item name
+    pub name: String,
+    /// The item's category, such as sonarr; null when it has none
+    pub category: Option<String>,
+    /// Where the item came from, as a step hook's source
+    pub source: String,
+    /// The item's folder on the daemon's disk; empty when nothing was downloaded
+    pub folder: String,
+    /// The item's files, as a step hook's files; empty for skipped
+    pub files: Vec<String>,
+    /// Success, warnings (optional steps were given up) or skipped (a pre_download step skipped the item)
+    pub result: String,
+    /// The optional steps that were given up; empty unless result is warnings
+    pub warnings: Vec<String>,
+    /// From the item entering the pipeline to this event
+    pub duration_seconds: f64,
+}
+
+/// `putio.unreachable` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PutioUnreachable {
+    /// When the first failed call of the outage was made
+    #[serde(serialize_with = "millis")]
+    pub since: DateTime<Utc>,
+    /// What the last failed call ran into: network_error or server_error
+    pub error: String,
+}
+
+/// `putio.recovered` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PutioRecovered {
+    /// When the outage began
+    #[serde(serialize_with = "millis")]
+    pub since: DateTime<Utc>,
+    /// How long the outage lasted
+    pub outage_seconds: f64,
+}
+
+/// `auth.expired` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthExpired {
+    /// What to do about it
+    pub message: String,
+}
+
+/// `local_disk.low` and `local_disk.recovered` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LocalDisk {
+    /// The download folder
+    pub path: String,
+    /// The disk's size
+    pub total_bytes: u64,
+    /// Free bytes
+    pub free_bytes: u64,
+    /// Free space as a percentage of the size, one decimal
+    pub free_percent: f64,
+    /// The doctor check's summary
+    pub summary: String,
+}
+
+/// `arr.unreachable` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArrUnreachable {
+    /// Radarr or sonarr
+    pub kind: String,
+    /// The server's address: scheme, host and port only
+    pub url: String,
+    /// When the first failed call of the outage was made
+    #[serde(serialize_with = "millis")]
+    pub since: DateTime<Utc>,
+    /// What the last failed call ran into, secret-free
+    pub error: String,
+}
+
+/// `arr.recovered` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArrRecovered {
+    /// Radarr or sonarr
+    pub kind: String,
+    /// The server's address: scheme, host and port only
+    pub url: String,
+    /// When the outage began
+    #[serde(serialize_with = "millis")]
+    pub since: DateTime<Utc>,
+    /// How long the outage lasted
+    pub outage_seconds: f64,
+}
+
+/// `sync.started` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncStarted {
+    /// Schedule or manual
+    pub trigger: String,
+    /// When the run started; the same value as in its sync.completed
+    #[serde(serialize_with = "millis")]
+    pub started_at: DateTime<Utc>,
+}
+
+/// `download.started` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DownloadStarted {
+    /// The Put.io file id
+    pub file_id: i64,
+    /// The file name
+    pub name: String,
+    /// The path under the download folder, /-separated
+    pub relative_path: String,
+    /// Size bytes
+    pub size_bytes: u64,
+    /// True when it carries on from a partial file
+    pub resumed: bool,
+    /// Bytes already on disk; 0 for a fresh download
+    pub resumed_from_bytes: u64,
+}
+
+/// `download.progress` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DownloadProgress {
+    /// The Put.io file id
+    pub file_id: i64,
+    /// The file name
+    pub name: String,
+    /// The path under the download folder, /-separated
+    pub relative_path: String,
+    /// The file's full size
+    pub size_bytes: u64,
+    /// Bytes on disk so far
+    pub downloaded_bytes: u64,
+    /// Downloaded_bytes of size_bytes, one decimal
+    pub percent: f64,
+}
+
+/// `subtitles.found` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubtitlesFound {
+    /// The item key
+    pub key: String,
+    /// The item name
+    pub name: String,
+    /// The video, as the step names it (its path under the item's folder)
+    pub video: String,
+    /// The languages saved
+    pub languages: Vec<String>,
+    /// The subtitle files written, absolute paths
+    pub files: Vec<String>,
+}
+
+/// `subtitles.missing` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubtitlesMissing {
+    /// The item key
+    pub key: String,
+    /// The item name
+    pub name: String,
+    /// The video, as the step names it
+    pub video: String,
+    /// The wanted languages with no subtitle
+    pub languages: Vec<String>,
+}
+
+/// `translation.finished` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TranslationFinished {
+    /// The item key
+    pub key: String,
+    /// The item name
+    pub name: String,
+    /// The video, as the step names it
+    pub video: String,
+    /// The language translated to
+    pub language: String,
+    /// The step's result line
+    pub detail: String,
+}
+
+/// `translation.failed` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TranslationFailed {
+    /// The item key
+    pub key: String,
+    /// The item name
+    pub name: String,
+    /// The video, as the step names it
+    pub video: String,
+    /// The language asked for
+    pub language: String,
+    /// What went wrong, secret-free; cut at 4 096 bytes
+    pub error: String,
+}
+
+/// `cleanup.deleted` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CleanupDeleted {
+    /// The Put.io ids deleted
+    pub file_ids: Vec<i64>,
+    /// How many ids
+    pub count: u64,
+    /// Always downloaded for now
+    pub reason: String,
+}
+
+/// `daemon.started` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DaemonStarted {
+    /// The daemon's process id
+    pub pid: u32,
+}
+
+/// `daemon.stopping` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DaemonStopping {
+    /// How long the daemon ran
+    pub uptime_seconds: f64,
+}
+
+/// `config.changed` (feature 057)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigChanged {
+    /// The changed top-level sections, sorted
+    pub sections: Vec<String>,
+}
+
 /// `hook.test`
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HookTest {
@@ -601,6 +1002,13 @@ pub struct DoctorProblem {
     pub area: String,
     /// How many items it found; 0 for checks that do not count
     pub item_count: u64,
+}
+
+/// The time in the samples
+fn sample_time() -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339("2026-11-27T19:04:11.250Z")
+        .expect("a valid time")
+        .with_timezone(&Utc)
 }
 
 /// One sample payload of every type, for tests and the docs check.
@@ -725,6 +1133,121 @@ pub fn samples() -> Vec<Payload> {
             summary: "2.1 GB free on /data, below the 5 GB minimum".to_string(),
             area: "Local".to_string(),
             item_count: 0,
+        }),
+        Payload::PipelineFinished(PipelineFinished {
+            key: "transfer:991".to_string(),
+            name: "Some.Show.S01E01.1080p".to_string(),
+            category: Some("sonarr".to_string()),
+            source: "putio".to_string(),
+            folder: "/data/Some.Show.S01E01.1080p".to_string(),
+            files: vec!["episode.mkv".to_string(), "episode.en.srt".to_string()],
+            result: "success".to_string(),
+            warnings: Vec::new(),
+            duration_seconds: 412.6,
+        }),
+        Payload::PutioUnreachable(PutioUnreachable {
+            since: sample_time(),
+            error: "network_error".to_string(),
+        }),
+        Payload::PutioRecovered(PutioRecovered {
+            since: sample_time(),
+            outage_seconds: 184.2,
+        }),
+        Payload::AuthExpired(AuthExpired {
+            message: "Put.io refused the token; sign in again".to_string(),
+        }),
+        Payload::StorageRecovered(StorageLow {
+            total_bytes: 1099511627776,
+            used_bytes: 769658139443,
+            free_bytes: 329853488333,
+            free_percent: 30.0,
+            warn_free_percent: 10,
+        }),
+        Payload::LocalDiskLow(LocalDisk {
+            path: "/data".to_string(),
+            total_bytes: 4000787030016,
+            free_bytes: 215842357248,
+            free_percent: 5.4,
+            summary: "201 GB free of 3.6 TB (5%).".to_string(),
+        }),
+        Payload::LocalDiskRecovered(LocalDisk {
+            path: "/data".to_string(),
+            total_bytes: 4000787030016,
+            free_bytes: 1280251849605,
+            free_percent: 32.0,
+            summary: "1.2 TB free of 3.6 TB (32%).".to_string(),
+        }),
+        Payload::ArrUnreachable(ArrUnreachable {
+            kind: "sonarr".to_string(),
+            url: "http://nas01:8989".to_string(),
+            since: sample_time(),
+            error: "unreachable".to_string(),
+        }),
+        Payload::ArrRecovered(ArrRecovered {
+            kind: "sonarr".to_string(),
+            url: "http://nas01:8989".to_string(),
+            since: sample_time(),
+            outage_seconds: 312.0,
+        }),
+        Payload::SyncStarted(SyncStarted {
+            trigger: "schedule".to_string(),
+            started_at: sample_time(),
+        }),
+        Payload::DownloadStarted(DownloadStarted {
+            file_id: 123456789,
+            name: "episode.mkv".to_string(),
+            relative_path: "Shows/episode.mkv".to_string(),
+            size_bytes: 1400000000,
+            resumed: true,
+            resumed_from_bytes: 350000000,
+        }),
+        Payload::DownloadProgress(DownloadProgress {
+            file_id: 123456789,
+            name: "episode.mkv".to_string(),
+            relative_path: "Shows/episode.mkv".to_string(),
+            size_bytes: 1400000000,
+            downloaded_bytes: 700000000,
+            percent: 50.0,
+        }),
+        Payload::SubtitlesFound(SubtitlesFound {
+            key: "transfer:991".to_string(),
+            name: "Some.Show.S01E01.1080p".to_string(),
+            video: "episode.mkv".to_string(),
+            languages: vec!["en".to_string()],
+            files: vec!["/data/Some.Show.S01E01.1080p/episode.en.srt".to_string()],
+        }),
+        Payload::SubtitlesMissing(SubtitlesMissing {
+            key: "transfer:991".to_string(),
+            name: "Some.Show.S01E01.1080p".to_string(),
+            video: "episode.mkv".to_string(),
+            languages: vec!["es".to_string()],
+        }),
+        Payload::TranslationFinished(TranslationFinished {
+            key: "transfer:991".to_string(),
+            name: "Some.Show.S01E01.1080p".to_string(),
+            video: "episode.mkv".to_string(),
+            language: "es".to_string(),
+            detail: "es: saved episode.es.srt from en (412 cues, 6 chunks, 0 retries, 0 splits)"
+                .to_string(),
+        }),
+        Payload::TranslationFailed(TranslationFailed {
+            key: "transfer:991".to_string(),
+            name: "Some.Show.S01E01.1080p".to_string(),
+            video: "episode.mkv".to_string(),
+            language: "es".to_string(),
+            error: "the translator answered 503".to_string(),
+        }),
+        Payload::CleanupDeleted(CleanupDeleted {
+            file_ids: vec![123456789],
+            count: 1,
+            reason: "downloaded".to_string(),
+        }),
+        Payload::DaemonStarted(DaemonStarted { pid: 4242 }),
+        Payload::DaemonStopping(DaemonStopping {
+            uptime_seconds: 86400.5,
+        }),
+        Payload::ConfigChanged(ConfigChanged {
+            sections: vec!["download".to_string(), "hooks".to_string()],
         }),
         Payload::HookTest(HookTest {
             hook: "home-assistant".to_string(),
@@ -872,6 +1395,19 @@ mod tests {
             assert_eq!(t.as_str().parse::<EventType>().unwrap(), t);
         }
         assert!("download.done".parse::<EventType>().is_err());
+    }
+
+    /// `*` leaves out the test events and `download.progress`; a listed name matches
+    #[test]
+    fn star_leaves_out_test_and_opt_in_types() {
+        for t in EventType::ALL {
+            assert!(t.matched_by(t.as_str()));
+            assert_eq!(t.matched_by("*"), !t.is_test() && !t.is_opt_in(), "{t}");
+            assert!(!t.matched_by("nothing"));
+        }
+        assert!(EventType::DownloadProgress.is_opt_in());
+        assert!(!EventType::DownloadProgress.matched_by("*"));
+        assert!(EventType::DownloadStarted.matched_by("*"));
     }
 
     #[test]

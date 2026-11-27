@@ -453,6 +453,7 @@ impl Pipeline {
                     message.push_str(&format!(" ({} passed over)", outcome.warnings.len()));
                 }
                 self.record_provenance(&outcome.saved).await;
+                subtitle_events(item, &step.name, &outcome);
                 info!(key = %item.key, video = %step.name, result = %message, "Subtitles step done");
                 (AttemptResult::Done, log_redact::redact(&message), None)
             }
@@ -477,6 +478,39 @@ impl Pipeline {
             },
         )
         .await
+    }
+}
+
+/// `subtitles.found` for what was saved now and `subtitles.missing` for the wanted
+/// languages still without a subtitle (feature 057); a video can send both
+fn subtitle_events(item: &ItemRow, video: &str, outcome: &engine::Outcome) {
+    use putio_sync_core::events::{self, Payload};
+    if !outcome.saved.is_empty() {
+        let mut languages: Vec<String> = Vec::new();
+        for saved in &outcome.saved {
+            if !languages.contains(&saved.language) {
+                languages.push(saved.language.clone());
+            }
+        }
+        events::emit(Payload::SubtitlesFound(events::SubtitlesFound {
+            key: item.key.clone(),
+            name: item.name.clone(),
+            video: video.to_string(),
+            languages,
+            files: outcome
+                .saved
+                .iter()
+                .map(|s| s.path.display().to_string())
+                .collect(),
+        }));
+    }
+    if !outcome.missing.is_empty() {
+        events::emit(Payload::SubtitlesMissing(events::SubtitlesMissing {
+            key: item.key.clone(),
+            name: item.name.clone(),
+            video: video.to_string(),
+            languages: outcome.missing.clone(),
+        }));
     }
 }
 

@@ -14,6 +14,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Changed
 
+- The Plex, Jellyfin and Emby plugins refresh an item once, when its `pipeline.finished`
+  arrives, when they run under the daemon (057). So the server scans after subtitles and
+  translations are saved, not after each file. `wait_for_pipeline = false` in the plugin's
+  settings keeps the per-folder grouping; a one-off `putio-sync sync` is unchanged.
 - Dependencies: sqlx 0.9, argon2 0.6 and sysinfo 0.40. Every query that builds its SQL at run
   time is now marked as checked (only fixed column lists, `?` placeholders and quoted paths go
   into the text; values are bound). Password hashes saved by earlier versions still verify.
@@ -52,6 +56,25 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   the folder mapping check and the Completed Download Handling and Import Extra Files
   settings. Each has its own button to fix or turn on; nothing changes in the app until you
   press it.
+- More events and plugin callbacks (057). `pipeline.finished` is sent once for every item
+  that leaves the pipeline, with `result` (`success`, `warnings`, `skipped`), its folder and
+  files, so a hook or plugin can act when an item is fully ready. New health events:
+  `putio.unreachable` / `putio.recovered` (once per outage), `auth.expired`,
+  `storage.recovered`, `local_disk.low` / `local_disk.recovered` and `arr.unreachable` /
+  `arr.recovered`. New activity events: `sync.started`, `download.started`,
+  `download.progress` (at most one per file per 10 seconds, only for hooks and plugins that
+  list it by name; `"*"` leaves it out), `subtitles.found` / `subtitles.missing`,
+  `translation.finished` / `translation.failed` and `cleanup.deleted`. New lifecycle
+  events: `daemon.started`, `daemon.stopping` and `config.changed` (section names only).
+  All are schema version 1, in EVENTS.md, `GET /events/schema` and the hook editor.
+- A plugin can be a pipeline step (057): `step = true` in `plugin.toml`, an
+  `on_item(item, stage)` that returns done, `"skip"` or `{ fail = "why" }`, and a `[[hooks]]`
+  entry with `stage` and `plugin = "name"` (Settings › Integrations: **Runs**: Plugin). The
+  step keeps the required/optional rules, retries and Retry/Skip, and runs on the plugin's
+  own queue with its limits. The doctor reports a step whose plugin cannot run.
+- Plugins may define `on_config_changed(config)`, called when their own settings are saved,
+  and `on_unload()`, called before a reload, a turn-off or a shutdown drops their state, both
+  with a short time limit. New examples: `small-item-step` and `batch-digest`.
 - Quick setup: the daemon prints a setup link with the code in it. The wizard asks the
   language, links Put.io and asks what you download and how it reaches Put.io (Radarr, Sonarr,
   by hand, a watch folder), then shows the folder rules, release check, Put.io cleanup and

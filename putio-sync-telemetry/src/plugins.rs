@@ -10,8 +10,17 @@ use std::time::Duration;
 use crate::{global, Telemetry};
 
 /// What a plugin run was for, besides the event types: the tick, the script's `init`,
-/// and (031) a settings action or a health check.
-pub const RUN_KINDS: [&str; 4] = ["tick", "init", "action", "health"];
+/// (031) a settings action or a health check, and (057) a pipeline step (`on_item`),
+/// `on_config_changed` and `on_unload`.
+pub const RUN_KINDS: [&str; 7] = [
+    "tick",
+    "init",
+    "action",
+    "health",
+    "item",
+    "config_changed",
+    "unload",
+];
 
 impl Telemetry {
     /// Create a loaded plugin's series at zero, so they show before its first run.

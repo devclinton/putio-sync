@@ -21,6 +21,13 @@ same files, and a test checks they match and pass a dry run:
 | [`store-counter`](store-counter/) | `download.finished` | Counts downloads per day in the store; reports it from `health` |
 | [`tick-poller`](tick-poller/) | `on_tick`, `sync.completed` | Checks a URL and logs when its status changes |
 
+Two show the callbacks of feature 057:
+
+| Folder | Callback | What it does |
+|---|---|---|
+| [`small-item-step`](small-item-step/) | `on_item` | A pipeline step that skips or fails items under a size |
+| [`batch-digest`](batch-digest/) | `on_unload`, `on_config_changed` | Groups downloads per sync run and loses none on a reload |
+
 The WebAssembly ones (feature 029) have their build steps in their own README; see
 [PLUGINS.md](../../PLUGINS.md#webassembly-plugins). A test loads each of them
 (`putio-sync-plugins/tests/examples.rs`), so they keep working.

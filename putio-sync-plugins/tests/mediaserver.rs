@@ -690,3 +690,142 @@ async fn emby_sends_due_folders_in_one_request() {
     )
     .await;
 }
+
+fn pipeline_finished(folder: &str, files: &[&str], result: &str) -> Payload {
+    let mut p = events::samples()
+        .into_iter()
+        .find(|p| p.event_type() == EventType::PipelineFinished)
+        .unwrap();
+    if let Payload::PipelineFinished(d) = &mut p {
+        d.folder = folder.to_string();
+        d.files = files.iter().map(|f| f.to_string()).collect();
+        d.result = result.to_string();
+    }
+    p
+}
+
+fn daemon_started() -> Payload {
+    events::samples()
+        .into_iter()
+        .find(|p| p.event_type() == EventType::DaemonStarted)
+        .unwrap()
+}
+
+/// Feature 057: under the daemon an item's folder is refreshed once, when the item leaves
+/// the pipeline, and not when its folder goes quiet or the sync run ends
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plex_refreshes_an_item_once_when_its_pipeline_finishes() {
+    let _turn = SERIAL.lock().await;
+    let mut server = mockito::Server::new_async().await;
+    let _sections = sections(&mut server).await;
+    let item = server
+        .mock("GET", "/library/sections/1/refresh")
+        .match_query(Matcher::UrlEncoded("path".into(), "/data/tv/Show".into()))
+        .with_status(200)
+        .expect(1)
+        .create_async()
+        .await;
+    let season = server
+        .mock("GET", "/library/sections/1/refresh")
+        .match_query(Matcher::UrlEncoded(
+            "path".into(),
+            "/data/tv/Show/Season 01".into(),
+        ))
+        .with_status(200)
+        .expect(0)
+        .create_async()
+        .await;
+    let movie = server
+        .mock("GET", "/library/sections/2/refresh")
+        .match_query(Matcher::UrlEncoded("path".into(), "/data/movies".into()))
+        .with_status(200)
+        .expect(1)
+        .create_async()
+        .await;
+    let clock = Clock::new(1_793_784_600.0);
+    let plugins = service(vec![plex(&server, json!({}))], &clock);
+    plugins.start();
+
+    events::emit(daemon_started());
+    events::emit(finished("/downloads/tv/Show/Season 01/e01.mkv"));
+    events::emit(finished("/downloads/tv/Show/Season 01/e02.mkv"));
+    settle(&plugins, "plex").await;
+    // The folder is quiet and the sync run ends, but the item's steps still run
+    clock.advance(60.0);
+    plugins.tick();
+    events::emit(sync_completed());
+    settle(&plugins, "plex").await;
+    assert!(!item.matched_async().await);
+
+    // A skipped item refreshes nothing; a finished one refreshes its folder at once
+    events::emit(pipeline_finished("/downloads/tv/Other", &[], "skipped"));
+    events::emit(pipeline_finished(
+        "/downloads/tv/Show",
+        &[
+            "Season 01/e01.mkv",
+            "Season 01/e02.mkv",
+            "Season 01/e01.en.srt",
+        ],
+        "success",
+    ));
+    wait_matched("the item's refresh", &item).await;
+    // A single-file item names the file: its folder is refreshed
+    events::emit(pipeline_finished(
+        "/downloads/movies/film.mkv",
+        &["film.mkv"],
+        "warnings",
+    ));
+    wait_matched("the movie's refresh", &movie).await;
+    settle(&plugins, "plex").await;
+    clock.advance(600.0);
+    plugins.tick();
+    settle(&plugins, "plex").await;
+    item.assert_async().await;
+    movie.assert_async().await;
+    season.assert_async().await;
+}
+
+/// With the setting off, or with no pipeline (a one-off sync), nothing changes
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plex_keeps_grouping_per_folder_when_it_does_not_wait_for_the_pipeline() {
+    let _turn = SERIAL.lock().await;
+    let mut server = mockito::Server::new_async().await;
+    let _sections = sections(&mut server).await;
+    let season = server
+        .mock("GET", "/library/sections/1/refresh")
+        .match_query(Matcher::UrlEncoded(
+            "path".into(),
+            "/data/tv/Show/Season 01".into(),
+        ))
+        .with_status(200)
+        .expect(1)
+        .create_async()
+        .await;
+    let item = server
+        .mock("GET", "/library/sections/1/refresh")
+        .match_query(Matcher::UrlEncoded("path".into(), "/data/tv/Show".into()))
+        .with_status(200)
+        .expect(0)
+        .create_async()
+        .await;
+    let clock = Clock::new(1_793_784_600.0);
+    let plugins = service(
+        vec![plex(&server, json!({"wait_for_pipeline": false}))],
+        &clock,
+    );
+    plugins.start();
+    events::emit(daemon_started());
+    events::emit(finished("/downloads/tv/Show/Season 01/e01.mkv"));
+    settle(&plugins, "plex").await;
+    clock.advance(21.0);
+    plugins.tick();
+    wait_matched("the folder refresh", &season).await;
+    events::emit(pipeline_finished(
+        "/downloads/tv/Show",
+        &["Season 01/e01.mkv"],
+        "success",
+    ));
+    settle(&plugins, "plex").await;
+    season.assert_async().await;
+    item.assert_async().await;
+}

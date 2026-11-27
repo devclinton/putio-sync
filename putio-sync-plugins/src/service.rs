@@ -92,6 +92,9 @@ pub struct PluginStatus {
     pub approved_paths: Vec<String>,
     /// Whether it has `on_tick` (known once running)
     pub has_tick: bool,
+    /// Whether it has `on_item`, so it can be a pipeline step (057; known once running)
+    #[serde(default)]
+    pub has_item: bool,
     /// Jobs waiting
     pub queued: usize,
     /// The last runs, oldest first
@@ -573,11 +576,113 @@ impl PluginsService {
             .unwrap_or_else(|e| e.into_inner()) = dir;
     }
 
-    /// Use new settings now; running plugins rebuild their state
+    /// Use new settings now; running plugins rebuild their state. A plugin whose own
+    /// settings changed, and that still runs, then gets `on_config_changed(config)` once
+    /// (057), with the values `putio.config` holds.
     pub fn configure(&self, settings: Vec<PluginSettings>) {
         let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        let changed: Vec<String> = settings
+            .iter()
+            .filter(|new| {
+                state
+                    .settings
+                    .iter()
+                    .find(|old| old.name == new.name)
+                    .is_some_and(|old| old != *new)
+            })
+            .map(|s| s.name.clone())
+            .collect();
+        // Running before the change: a plugin that is only now turned on gets `init`
+        let ran: HashSet<String> = state.slots.keys().cloned().collect();
         state.settings = settings;
         apply(&mut state, Changed::All);
+        for name in changed.iter().filter(|n| ran.contains(*n)) {
+            let Some(slot) = state.slots.get(name) else {
+                continue;
+            };
+            let spec = slot.spec();
+            let config = Value::Object(spec.manifest.config_values(&spec.settings));
+            // Nobody waits for the answer; the run is counted and a failure is kept
+            let (reply, _) = oneshot::channel();
+            slot.push(Job::Call {
+                function: "on_config_changed".to_string(),
+                kind: "config_changed".to_string(),
+                args: vec![config],
+                limit: None,
+                reply,
+            });
+        }
+    }
+
+    /// Stop every plugin for good: what is queued is dropped, each working plugin gets
+    /// `on_unload` (057), and this waits for the workers to end, at most `timeout`. False
+    /// when a worker was still running then. Use [`PluginsService::drain`] first to let
+    /// queued events run.
+    pub async fn shutdown(&self, timeout: Duration) -> bool {
+        let slots: Vec<Arc<Slot>> = {
+            let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut slots: Vec<Arc<Slot>> = state.slots.drain().map(|(_, s)| s).collect();
+            slots.extend(state.hook_slots.drain().map(|(_, h)| h.slot.clone()));
+            slots
+        };
+        for slot in &slots {
+            slot.stop();
+        }
+        let deadline = Instant::now() + timeout;
+        loop {
+            if slots.iter().all(|s| s.exited()) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Why a pipeline step that names `name` cannot run now (057), or `None`
+    pub(crate) fn step_problem(&self, name: &str) -> Option<String> {
+        let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(found) = state.found.iter().find(|f| f.name == name) else {
+            return Some(format!("the plugin \"{name}\" is not installed"));
+        };
+        let settings = state.settings.iter().find(|s| s.name == name);
+        let (plugin_state, error) = state_of(found, settings);
+        let why = |what: &str| match &error {
+            Some(e) => Some(format!("the plugin \"{name}\" {what}: {e}")),
+            None => Some(format!("the plugin \"{name}\" {what}")),
+        };
+        match plugin_state {
+            PluginState::Enabled => {}
+            PluginState::Disabled => return why("is off"),
+            PluginState::Broken => return why("is broken"),
+            PluginState::NeedsApproval => return why("needs an approval"),
+            PluginState::MissingConfig => return why("misses a setting"),
+        }
+        // Not started (the service is not running): nothing to say yet
+        let slot = state.slots.get(name)?;
+        if let Some(e) = slot.load_error() {
+            return Some(format!("the plugin \"{name}\" is broken: {e}"));
+        }
+        if !slot.loaded() {
+            // Build the state so the next look knows whether it has on_item
+            if slot.idle() {
+                slot.push(Job::Load);
+            }
+            return None;
+        }
+        (!slot.has_item()).then(|| format!("the plugin \"{name}\" has no on_item"))
+    }
+
+    /// The running worker of `name`, for a step call
+    pub(crate) fn step_slot(&self, name: &str) -> Option<Arc<Slot>> {
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .slots
+            .get(name)
+            .cloned()
     }
 
     /// Find the plugins again; returns how many were found and how many are broken
@@ -861,6 +966,8 @@ impl PluginsService {
                         .map(|s| s.approved_paths.clone())
                         .unwrap_or_default(),
                     has_tick: slot.is_some_and(|s| s.has_tick()),
+                    has_item: manifest.is_some_and(|m| m.step)
+                        || slot.is_some_and(|s| s.has_item()),
                     queued: slot.map(|s| s.queued()).unwrap_or(0),
                     runs: history
                         .get(&found.name)
@@ -1372,7 +1479,7 @@ fn apply(state: &mut State, changed: Changed) {
                 }
             }
             None => {
-                let slot = Slot::new(spec);
+                let slot = Slot::new(spec).with_lifecycle();
                 match slot.spawn(env.clone()) {
                     Ok(()) => {
                         tracing::info!(plugin = %found.name, "Plugin started");

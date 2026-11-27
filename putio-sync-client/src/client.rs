@@ -197,7 +197,12 @@ pub struct PutioApiClient {
     username: Option<String>,
     password: Option<String>,
     retry_policy: RetryPolicy,
+    /// Told the outcome of every attempt; see [`Self::observe_attempts`]
+    observer: std::sync::OnceLock<AttemptObserver>,
 }
+
+/// Called with each attempt's outcome and, when Put.io answered, the HTTP status
+pub type AttemptObserver = Box<dyn Fn(ApiOutcome, Option<u16>) + Send + Sync>;
 
 impl PutioApiClient {
     /// Create a new API client from an AuthConfig
@@ -250,6 +255,7 @@ impl PutioApiClient {
             username: auth_config.username,
             password: auth_config.password,
             retry_policy: RetryPolicy::default(),
+            observer: std::sync::OnceLock::new(),
         }
     }
 
@@ -301,6 +307,7 @@ impl PutioApiClient {
             username: None,
             password: None,
             retry_policy: RetryPolicy::default(),
+            observer: std::sync::OnceLock::new(),
         }
     }
 
@@ -362,6 +369,7 @@ impl PutioApiClient {
             username: Some(username),
             password: Some(password),
             retry_policy: RetryPolicy::default(),
+            observer: std::sync::OnceLock::new(),
         }
     }
 
@@ -479,6 +487,13 @@ impl PutioApiClient {
         }
         *current = Some(token);
         true
+    }
+
+    /// Tell `observer` the outcome of every API attempt from now on (retries included).
+    /// The daemon uses it for the `putio.unreachable`, `putio.recovered` and
+    /// `auth.expired` events. Only the first observer is kept; false when one was set.
+    pub fn observe_attempts(&self, observer: AttemptObserver) -> bool {
+        self.observer.set(observer).is_ok()
     }
 
     /// Generate the appropriate Authorization header based on auth method
@@ -641,7 +656,11 @@ impl PutioApiClient {
 
             let started = Instant::now();
             let result = self.client.execute(req).await;
-            api::record_attempt(op, attempt_outcome(&result), started.elapsed());
+            let outcome = attempt_outcome(&result);
+            api::record_attempt(op, outcome, started.elapsed());
+            if let Some(observer) = self.observer.get() {
+                observer(outcome, result.as_ref().ok().map(|r| r.status().as_u16()));
+            }
             if let Ok(response) = &result {
                 record_rate_limit(response.headers());
             }

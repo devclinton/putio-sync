@@ -54,12 +54,16 @@ pub struct Manifest {
     /// `plugin.wasm` when not set
     #[serde(default)]
     pub entry: String,
-    /// Event types, or `*` for all; may be empty when `hooks` is not
+    /// Event types, or `*` for all; may be empty when `hooks` is not or `step` is set
     #[serde(default)]
     pub events: Vec<String>,
     /// Sync extension points it answers: `filter`, `rename`, `folder` (028)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<String>,
+    /// Whether it is a pipeline step: it has `on_item` and a `[[hooks]]` entry can name
+    /// it (057). Such a plugin needs no `events`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub step: bool,
     /// What the plugin may do
     #[serde(default)]
     pub permissions: Permissions,
@@ -371,7 +375,7 @@ impl Manifest {
                 return Err(format!("hooks: \"{}\" listed twice", hook));
             }
         }
-        if self.events.is_empty() && self.hooks.is_empty() {
+        if self.events.is_empty() && self.hooks.is_empty() && !self.step {
             return Err("events: list at least one event, or \"*\" for all".to_string());
         }
         for event in &self.events {
@@ -512,13 +516,10 @@ impl Manifest {
         self.actions.iter().any(|a| a.id == id)
     }
 
-    /// Whether the plugin wants `event_type`. `*` leaves out the test events.
+    /// Whether the plugin wants `event_type`. `*` leaves out the test events and
+    /// `download.progress`, which must be listed by name (057).
     pub fn wants(&self, event_type: EventType) -> bool {
-        !event_type.is_test()
-            && self
-                .events
-                .iter()
-                .any(|e| e == ALL_EVENTS || e == event_type.as_str())
+        !event_type.is_test() && self.events.iter().any(|e| event_type.matched_by(e))
     }
 
     fn field(&self, key: &str) -> Option<&ConfigField> {
@@ -999,6 +1000,16 @@ default = 5
         assert!(err(&with("hooks = [\"filter\", \"filter\"]"))
             .contains("hooks: \"filter\" listed twice"));
         assert!(err(&with("hooks = []")).contains("events: list at least one event"));
+    }
+
+    #[test]
+    fn a_step_plugin_needs_no_events() {
+        let m = parse(&with("step = true")).unwrap();
+        assert!(m.step && m.events.is_empty());
+        assert!(!m.wants(EventType::PipelineFinished));
+        assert!(err(&with("step = false")).contains("events: list at least one event"));
+        let m = parse(&with("events = [\"pipeline.finished\"]")).unwrap();
+        assert!(!m.step && m.wants(EventType::PipelineFinished));
     }
 
     #[test]

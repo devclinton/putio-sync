@@ -520,6 +520,552 @@ fixed and comes back sends it again. Warnings send nothing.
 }
 ```
 
+### `pipeline.finished`
+
+An item left the processing pipeline: every step passed, or a `pre_download` step skipped it. Sent once per item, after the last step, so it is the event that says the item's files are ready (downloaded, subtitled, translated). `pipeline.completed` is still sent as well when optional steps were given up. An item that waits for the operator sends nothing until it goes on and finishes.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `key` | string | the item key |
+| `name` | string | the item name |
+| `category` | string or null | the item's category, such as `sonarr`; `null` when it has none |
+| `source` | string | where the item came from, as a step hook's `source` |
+| `folder` | string | the item's folder on the daemon's disk; empty when nothing was downloaded |
+| `files` | array of string | the item's files as paths under `folder`, `/`-separated; empty for `skipped` |
+| `result` | string | `success`, `warnings` (optional steps were given up) or `skipped` (a `pre_download` step skipped the item) |
+| `warnings` | array of string | the optional steps that were given up; empty unless `result` is `warnings` |
+| `duration_seconds` | number | from the item entering the pipeline to this event |
+
+```json
+{
+  "schema_version": 1,
+  "id": "7d3f2ece-d9f1-4849-ac2a-813b270e534c",
+  "type": "pipeline.finished",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "key": "transfer:991",
+    "name": "Some.Show.S01E01.1080p",
+    "category": "sonarr",
+    "source": "putio",
+    "folder": "/data/Some.Show.S01E01.1080p",
+    "files": [
+      "episode.mkv",
+      "episode.en.srt"
+    ],
+    "result": "success",
+    "warnings": [],
+    "duration_seconds": 412.6
+  }
+}
+```
+
+### `putio.unreachable`
+
+The daemon's Put.io calls have all failed for 60 seconds (connection errors, timeouts or 5xx answers). Sent once per outage; `putio.recovered` follows when a call gets an answer again. A refused token is not an outage: see `auth.expired`.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `since` | string | when the first failed call of the outage was made |
+| `error` | string | what the last failed call ran into: `network_error` or `server_error` |
+
+```json
+{
+  "schema_version": 1,
+  "id": "09ba243b-cb4f-4275-adc3-f8e7e3db9cff",
+  "type": "putio.unreachable",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "since": "2026-11-27T19:04:11.250Z",
+    "error": "network_error"
+  }
+}
+```
+
+### `putio.recovered`
+
+Put.io answered again after a `putio.unreachable`. Sent once per outage, and only when the unreachable event was sent.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `since` | string | when the outage began |
+| `outage_seconds` | number | how long the outage lasted |
+
+```json
+{
+  "schema_version": 1,
+  "id": "8a7c7d9a-abaf-42a8-a77f-554da042e4b5",
+  "type": "putio.recovered",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "since": "2026-11-27T19:04:11.250Z",
+    "outage_seconds": 184.2
+  }
+}
+```
+
+### `auth.expired`
+
+Put.io refused the daemon's token (a 401 or 403 answer to listing files or transfers, or reading the account). Sent once; not again until a call with a working token has succeeded.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `message` | string | what to do about it |
+
+```json
+{
+  "schema_version": 1,
+  "id": "5a3f10cb-3871-4de8-a9e8-f171844f2aa1",
+  "type": "auth.expired",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "message": "Put.io refused the token; sign in again"
+  }
+}
+```
+
+### `storage.recovered`
+
+Put.io free space is back above `storage.warn_free_percent` after a `storage.low`. Sent once per recovery. The fields are those of `storage.low`.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `total_bytes` | integer | account size |
+| `used_bytes` | integer |  |
+| `free_bytes` | integer |  |
+| `free_percent` | number | free space as a percentage of the size, one decimal |
+| `warn_free_percent` | integer | the configured `storage.warn_free_percent` |
+
+```json
+{
+  "schema_version": 1,
+  "id": "5ba30239-1aee-40ef-ad4a-2cbe0e3a74af",
+  "type": "storage.recovered",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "total_bytes": 1099511627776,
+    "used_bytes": 769658139443,
+    "free_bytes": 329853488333,
+    "free_percent": 30.0,
+    "warn_free_percent": 10
+  }
+}
+```
+
+### `local_disk.low`
+
+The disk that holds the download folder went below the doctor's free-space line: its **Disk space** check is a warning or a problem (under 10% free, less room than the queue needs, or under `download.min_free_space_mb`). Checked on each doctor run; sent once per crossing. `storage.low` is about Put.io's storage, not this disk.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `path` | string | the download folder |
+| `total_bytes` | integer | the disk's size |
+| `free_bytes` | integer |  |
+| `free_percent` | number | free space as a percentage of the size, one decimal |
+| `summary` | string | the doctor check's summary |
+
+```json
+{
+  "schema_version": 1,
+  "id": "1dccb6d6-48cb-4d01-af49-5d6af213a41e",
+  "type": "local_disk.low",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "path": "/data",
+    "total_bytes": 4000787030016,
+    "free_bytes": 215842357248,
+    "free_percent": 5.4,
+    "summary": "201 GB free of 3.6 TB (5%)."
+  }
+}
+```
+
+### `local_disk.recovered`
+
+The download folder's disk is back above the doctor's free-space line after a `local_disk.low`. Sent once per crossing, with the same fields.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `path` | string | the download folder |
+| `total_bytes` | integer | the disk's size |
+| `free_bytes` | integer |  |
+| `free_percent` | number | free space as a percentage of the size, one decimal |
+| `summary` | string | the doctor check's summary |
+
+```json
+{
+  "schema_version": 1,
+  "id": "8683fcb2-3808-4fb8-acde-564cb0ffb9ae",
+  "type": "local_disk.recovered",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "path": "/data",
+    "total_bytes": 4000787030016,
+    "free_bytes": 1280251849605,
+    "free_percent": 32.0,
+    "summary": "1.2 TB free of 3.6 TB (32%)."
+  }
+}
+```
+
+### `arr.unreachable`
+
+Calls to a configured Radarr or Sonarr server have all failed for 60 seconds (it could not be reached, or timed out). Sent once per outage and per server. putio-sync checks each server every 15 minutes, so an outage is announced at the second failed check. An answer of any kind, a refused API key included, is not an outage.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `kind` | string | `radarr` or `sonarr` |
+| `url` | string | the server's address: scheme, host and port only |
+| `since` | string | when the first failed call of the outage was made |
+| `error` | string | what the last failed call ran into: `unreachable` or `timed_out` |
+
+```json
+{
+  "schema_version": 1,
+  "id": "c893e1ef-5660-4c56-abac-5ce3e0280e73",
+  "type": "arr.unreachable",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "kind": "sonarr",
+    "url": "http://nas01:8989",
+    "since": "2026-11-27T19:04:11.250Z",
+    "error": "unreachable"
+  }
+}
+```
+
+### `arr.recovered`
+
+A Radarr or Sonarr server answered again after an `arr.unreachable`. Sent once per outage, and only when the unreachable event was sent.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `kind` | string | `radarr` or `sonarr` |
+| `url` | string | the server's address: scheme, host and port only |
+| `since` | string | when the outage began |
+| `outage_seconds` | number | how long the outage lasted |
+
+```json
+{
+  "schema_version": 1,
+  "id": "7c8c5e39-cfd3-4dc2-a1d1-a072989fdf8b",
+  "type": "arr.recovered",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "kind": "sonarr",
+    "url": "http://nas01:8989",
+    "since": "2026-11-27T19:04:11.250Z",
+    "outage_seconds": 312.0
+  }
+}
+```
+
+### `sync.started`
+
+A sync run began. Every `sync.started` is followed by one `sync.completed` with the same `trigger` and `started_at`.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `trigger` | string | `schedule` or `manual` |
+| `started_at` | string | when the run started; the same value as in its `sync.completed` |
+
+```json
+{
+  "schema_version": 1,
+  "id": "f768b24d-494a-48b0-a5d3-8d6bb88ca0fc",
+  "type": "sync.started",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "trigger": "schedule",
+    "started_at": "2026-11-27T19:04:11.250Z"
+  }
+}
+```
+
+### `download.started`
+
+A download of one file began. Sent once per attempt, before that attempt's `download.finished` or `download.failed`. Files that are skipped (already on disk) send nothing.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `file_id` | integer | the Put.io file id |
+| `name` | string | the file name |
+| `relative_path` | string | the path under the download folder, `/`-separated |
+| `size_bytes` | integer |  |
+| `resumed` | boolean | `true` when it carries on from a partial file |
+| `resumed_from_bytes` | integer | bytes already on disk; 0 for a fresh download |
+
+```json
+{
+  "schema_version": 1,
+  "id": "3027e70d-78be-4ed1-a9ad-f24f34cade74",
+  "type": "download.started",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "file_id": 123456789,
+    "name": "episode.mkv",
+    "relative_path": "Shows/episode.mkv",
+    "size_bytes": 1400000000,
+    "resumed": true,
+    "resumed_from_bytes": 350000000
+  }
+}
+```
+
+### `download.progress`
+
+How far a running download is. Sent at most once per file every 10 seconds while the file downloads, and only when a hook or plugin subscribes to it: **`"*"` does not include it**, a hook or plugin must list `download.progress` by name. A download that ends within 10 seconds sends none.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `file_id` | integer | the Put.io file id |
+| `name` | string | the file name |
+| `relative_path` | string | the path under the download folder, `/`-separated |
+| `size_bytes` | integer | the file's full size |
+| `downloaded_bytes` | integer | bytes on disk so far |
+| `percent` | number | `downloaded_bytes` of `size_bytes`, one decimal |
+
+```json
+{
+  "schema_version": 1,
+  "id": "639af8f1-cef1-470c-ac1f-f5197fd222c2",
+  "type": "download.progress",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "file_id": 123456789,
+    "name": "episode.mkv",
+    "relative_path": "Shows/episode.mkv",
+    "size_bytes": 1400000000,
+    "downloaded_bytes": 700000000,
+    "percent": 50.0
+  }
+}
+```
+
+### `subtitles.found`
+
+The pipeline's subtitles step saved at least one subtitle file for a video. Sent once per video and attempt that saved something.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `key` | string | the item key |
+| `name` | string | the item name |
+| `video` | string | the video, as the step names it (its path under the item's folder) |
+| `languages` | array of string | the languages saved |
+| `files` | array of string | the subtitle files written, absolute paths |
+
+```json
+{
+  "schema_version": 1,
+  "id": "54b6cdb2-3195-489a-ab06-d6560e088b6c",
+  "type": "subtitles.found",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "key": "transfer:991",
+    "name": "Some.Show.S01E01.1080p",
+    "video": "episode.mkv",
+    "languages": [
+      "en"
+    ],
+    "files": [
+      "/data/Some.Show.S01E01.1080p/episode.en.srt"
+    ]
+  }
+}
+```
+
+### `subtitles.missing`
+
+The pipeline's subtitles step ended for a video with wanted languages that still have no subtitle. A video can send both this and `subtitles.found`, when some languages were found and others were not.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `key` | string | the item key |
+| `name` | string | the item name |
+| `video` | string | the video, as the step names it |
+| `languages` | array of string | the wanted languages with no subtitle |
+
+```json
+{
+  "schema_version": 1,
+  "id": "270e8b00-0da8-48b0-a319-579e834bcca4",
+  "type": "subtitles.missing",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "key": "transfer:991",
+    "name": "Some.Show.S01E01.1080p",
+    "video": "episode.mkv",
+    "languages": [
+      "es"
+    ]
+  }
+}
+```
+
+### `translation.finished`
+
+The pipeline translated a subtitle and saved it. A language that already had a subtitle sends nothing.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `key` | string | the item key |
+| `name` | string | the item name |
+| `video` | string | the video, as the step names it |
+| `language` | string | the language translated to |
+| `detail` | string | the step's result line |
+
+```json
+{
+  "schema_version": 1,
+  "id": "d2a418ff-a9a0-4e76-a981-ca57153b57f1",
+  "type": "translation.finished",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "key": "transfer:991",
+    "name": "Some.Show.S01E01.1080p",
+    "video": "episode.mkv",
+    "language": "es",
+    "detail": "es: saved episode.es.srt from en (412 cues, 6 chunks, 0 retries, 0 splits)"
+  }
+}
+```
+
+### `translation.failed`
+
+A translation attempt failed or got no answer in time; an optional step that is retried sends one per failed attempt. `pipeline.step_failed` is sent as well, as for any step.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `key` | string | the item key |
+| `name` | string | the item name |
+| `video` | string | the video, as the step names it |
+| `language` | string | the language asked for |
+| `error` | string | what went wrong, secret-free; cut at 4 096 bytes |
+
+```json
+{
+  "schema_version": 1,
+  "id": "1e1e1e68-f446-406a-a545-53bb92fbefd8",
+  "type": "translation.failed",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "key": "transfer:991",
+    "name": "Some.Show.S01E01.1080p",
+    "video": "episode.mkv",
+    "language": "es",
+    "error": "the translator answered 503"
+  }
+}
+```
+
+### `cleanup.deleted`
+
+putio-sync deleted files from Put.io after downloading them (`download.delete_after_download`). Sent once per delete call that Put.io accepted.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `file_ids` | array of integer | the Put.io ids deleted |
+| `count` | integer | how many ids |
+| `reason` | string | always `downloaded` for now |
+
+```json
+{
+  "schema_version": 1,
+  "id": "6e3a4550-f0c0-4250-adf6-8b7e36377a8e",
+  "type": "cleanup.deleted",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "file_ids": [
+      123456789
+    ],
+    "count": 1,
+    "reason": "downloaded"
+  }
+}
+```
+
+### `daemon.started`
+
+The daemon finished starting: its hooks and plugins are loaded and its loops are about to run. The version is in the envelope's `source`.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `pid` | integer | the daemon's process id |
+
+```json
+{
+  "schema_version": 1,
+  "id": "30a7b413-8a54-4498-adc5-0d8042a0e99f",
+  "type": "daemon.started",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "pid": 4242
+  }
+}
+```
+
+### `daemon.stopping`
+
+The daemon is stopping (a signal, or a restart into an update). Hooks and plugins get about 2 seconds to handle the events still queued, this one included; plugins then get `on_unload`.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `uptime_seconds` | number | how long the daemon ran |
+
+```json
+{
+  "schema_version": 1,
+  "id": "918d819b-f6c9-4e4f-a874-4563865ad477",
+  "type": "daemon.stopping",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "uptime_seconds": 86400.5
+  }
+}
+```
+
+### `config.changed`
+
+The daemon applied a changed configuration, from a save in Settings or the API, or an edit of `config.toml`. Only the names of the top-level sections that differ are sent, never a value.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `sections` | array of string | the changed top-level sections, sorted |
+
+```json
+{
+  "schema_version": 1,
+  "id": "81fdeb6d-42db-4204-a56c-8f731d4e0a38",
+  "type": "config.changed",
+  "occurred_at": "2026-11-27T19:04:11.250Z",
+  "source": { "app": "putio-sync", "version": "0.4.0", "host": "nas01" },
+  "data": {
+    "sections": [
+      "download",
+      "hooks"
+    ]
+  }
+}
+```
+
 ### `hook.test`
 
 Sent only to one hook, by the **Send test event** button in Settings › Integrations › Event hooks or
@@ -580,6 +1126,13 @@ that stage (feature 038). It gets no event; it gets the item.
   `PUTIO_SYNC_ITEM_DIR` and `PUTIO_SYNC_ITEM_STAGE`, and `PUTIO_SYNC_ITEM_JSON`, the path of a
   temp file with the item as JSON, removed after the run. Standard input is empty.
 - **Webhook.** A POST with the same JSON as the body.
+- **Plugin** (feature 057). `plugin = "name"` in place of `command` or `url` calls that
+  plugin's `on_item(item, stage)` with the item JSON as a table. Nothing, `true` or `"done"`
+  is done, `"skip"` is the skip result, and `{ fail = "why" }`, an error, a timeout or a
+  memory stop is a failure. It runs on the plugin's own queue with the plugin's limits, not
+  `timeout_secs`. A plugin that is missing, off, broken or has no `on_item` fails the step
+  with a message that names it, and the doctor says so. See
+  [PLUGINS.md](PLUGINS.md#pipeline-steps).
 - **The item JSON** has `key`, `name`, `category`, `source`, `dir`, `stage`, `transfer_id`
   and `files`, a list of `{relative_path, size, putio_id}` with the paths relative to `dir`.
 - **Result.** Exit 0 or a 2xx answer is done. Anything else is a failure, and a command

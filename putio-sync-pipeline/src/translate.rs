@@ -31,6 +31,39 @@ fn readable(path: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("srt") || e.eq_ignore_ascii_case("vtt"))
 }
 
+/// `translation.finished` or `translation.failed` for one video and language
+/// (feature 057); `outcome` is the result line or the error
+pub(crate) fn translation_event(
+    item: &ItemRow,
+    video: &str,
+    language: &str,
+    outcome: Result<&str, &str>,
+) {
+    use putio_sync_core::events::{self, Payload};
+    let (key, name, video, language) = (
+        item.key.clone(),
+        item.name.clone(),
+        video.to_string(),
+        language.to_string(),
+    );
+    events::emit(match outcome {
+        Ok(detail) => Payload::TranslationFinished(events::TranslationFinished {
+            key,
+            name,
+            video,
+            language,
+            detail: detail.to_string(),
+        }),
+        Err(error) => Payload::TranslationFailed(events::TranslationFailed {
+            key,
+            name,
+            video,
+            language,
+            error: error.to_string(),
+        }),
+    });
+}
+
 /// The label for a language in metrics: a wanted language, else `other`
 pub(crate) fn language_label(language: &str, wanted: &[String]) -> String {
     if wanted.iter().any(|w| w == language) {
@@ -388,6 +421,7 @@ impl Pipeline {
                     key = %item.key, video = %step.name, language = %target, kind = label,
                     duration_ms = took.as_millis() as u64, "translation done"
                 );
+                translation_event(item, &step.name, &target, Ok(&message));
                 (AttemptResult::Done, message, None)
             }
             Err(Early::Parked) => unreachable!("handled above"),
@@ -398,6 +432,7 @@ impl Pipeline {
                     key = %item.key, video = %step.name, language = %target, kind = label,
                     error = %why, "translation failed"
                 );
+                translation_event(item, &step.name, &target, Err(&why));
                 (AttemptResult::Failed, why.clone(), Some(why))
             }
         };

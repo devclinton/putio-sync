@@ -1,0 +1,11 @@
+name = "small-item-step"
+version = "0.1.0"
+description = "A pipeline step that skips or fails items too small to be the real thing"
+step = true
+
+[[config]]
+key = "min_mb"
+type = "integer"
+label = "Smallest item (MB)"
+help = "Items whose files add up to less than this are stopped"
+default = 50

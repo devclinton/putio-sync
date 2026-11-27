@@ -8,6 +8,14 @@
 -- server; a failed refresh is tried once more after another delay, then dropped. The
 -- waiting folders are kept in the store, so a restart does not lose them.
 --
+-- Under the daemon every download is an item of the pipeline (subtitles, translation,
+-- the person's own steps), and `pipeline.finished` says when the item is ready. With
+-- `wait_for_pipeline` on (the default), the plugin then refreshes the item's folder once,
+-- at once, and the files that landed in it wait for that event and not for a quiet
+-- folder. A file whose item never finishes is still sent after `max_wait_seconds`. A
+-- one-off `putio-sync sync` has no pipeline and sends no such event, so there the folders
+-- are grouped as before.
+--
 -- A server adapter has:
 --   adapter.libraries()          -> { {key, title, locations = {...}}, ... } or raises
 --   adapter.refresh(groups)      -> raises; groups = { {library, folders = {...}}, ... }
@@ -73,6 +81,9 @@ function media.new(adapter, actions)
   local delay = clamp(cfg.delay_seconds, 0, 600, 20)
   local max_wait = clamp(cfg.max_wait_seconds, 10, 3600, 300)
   local rules = cfg.path_map or {}
+  local wait_for_pipeline = cfg.wait_for_pipeline ~= false
+  -- Whether a pipeline is running: the daemon said it started, or an item finished
+  local piped = false
   local chosen = {}
   local any_chosen = false
   for _, key in ipairs(cfg.libraries or {}) do
@@ -113,6 +124,9 @@ function media.new(adapter, actions)
   end
 
   local function due(p, now, all)
+    if p.ready then return true end
+    -- Held for its item's pipeline.finished; the longest wait is the way out
+    if p.held then return now - p.first >= max_wait end
     return all or now - p.last >= delay or now - p.first >= max_wait
   end
 
@@ -166,7 +180,7 @@ function media.new(adapter, actions)
             count("refresh_failures")
             putio.log.warn("Refresh failed twice; dropped", { folder = folder, error = err })
           else
-            p.first, p.last = now, now
+            p.first, p.last, p.ready = now, now, nil
           end
         end
       end
@@ -197,6 +211,7 @@ function media.new(adapter, actions)
     local folder = putio.path.map(putio.path.parent(d.local_path), rules)
     local now = putio.time.now()
     local p = pending[folder]
+    local held = (wait_for_pipeline and piped) or nil
     if p then
       p.last = now
       p.count = p.count + 1
@@ -209,8 +224,28 @@ function media.new(adapter, actions)
         putio.log.warn("Too many folders waiting; this one is not refreshed", { folder = folder })
         return
       end
-      pending[folder] = { first = now, last = now, count = 1, tries = 0 }
+      pending[folder] = { first = now, last = now, count = 1, tries = 0, held = held }
     end
+    save()
+  end
+
+  -- An item left the pipeline: its folder is ready now, and the folders of its files
+  -- that were waiting are covered by it
+  local function add_item(event)
+    local d = event.data or {}
+    if d.result == "skipped" or type(d.folder) ~= "string" or d.folder == "" then return end
+    local folder = d.folder
+    -- A single-file item's "folder" is the file itself
+    local files = d.files or {}
+    if #files == 1 and folder:sub(-#files[1] - 1) == "/" .. files[1] then
+      folder = putio.path.parent(folder)
+    end
+    folder = putio.path.map(folder, rules)
+    for waiting in pairs(pending) do
+      if putio.path.within(waiting, folder) then pending[waiting] = nil end
+    end
+    local now = putio.time.now()
+    pending[folder] = { first = now, last = now, count = 1, tries = 0, ready = true }
     save()
   end
 
@@ -285,6 +320,14 @@ function media.new(adapter, actions)
     local t = event.type
     if t == "download.finished" then
       add(event)
+    elseif t == "daemon.started" then
+      piped = true
+    elseif t == "pipeline.finished" then
+      piped = true
+      if wait_for_pipeline then
+        add_item(event)
+        flush(false)
+      end
     elseif t == "sync.completed" then
       flush(true)
     elseif t == "plugin.test" then

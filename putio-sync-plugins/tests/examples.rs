@@ -265,3 +265,61 @@ async fn wasm_examples_load_and_answer() {
         );
     }
 }
+
+/// Feature 057: the step example answers per stage, and the batching example writes what
+/// it holds when it is unloaded
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_step_and_batching_examples_work() {
+    use putio_sync_core::events::{self, EventType};
+    use putio_sync_core::step_plugins::{StepAnswer, StepPlugins};
+    use serde_json::json;
+
+    let data = tempfile::tempdir().unwrap();
+    let on = |name: &str| PluginSettings {
+        name: name.to_string(),
+        enabled: true,
+        ..PluginSettings::default()
+    };
+    let plugins = PluginsService::new(PluginsOptions {
+        dir: Some(examples()),
+        data_dir: Some(data.path().to_path_buf()),
+        settings: vec![on("small-item-step"), on("batch-digest")],
+        ..PluginsOptions::default()
+    });
+    plugins.start();
+
+    let item = |mb: u64| {
+        json!({
+            "key": "transfer:57", "name": "Show", "dir": "/data/Show",
+            "files": [{"relative_path": "a.mkv", "size": mb * 1024 * 1024}],
+        })
+    };
+    let ask = |mb: u64, stage: &'static str| {
+        let plugins = &plugins;
+        async move { plugins.run_item("small-item-step", &item(mb), stage).await }
+    };
+    assert_eq!(ask(900, "pre_download").await, StepAnswer::Done);
+    assert_eq!(ask(3, "pre_download").await, StepAnswer::Skip);
+    assert!(matches!(
+        ask(3, "post_processing").await,
+        StepAnswer::Failed(m) if m.contains("3 MB, under 50 MB")
+    ));
+
+    events::emit(
+        events::samples()
+            .into_iter()
+            .find(|p| p.event_type() == EventType::DownloadFinished)
+            .unwrap(),
+    );
+    assert!(plugins.drain(Duration::from_secs(10)).await);
+    assert!(plugins.shutdown(Duration::from_secs(10)).await);
+    let stored: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(data.path().join("batch-digest.json")).unwrap(),
+    )
+    .unwrap();
+    let digests = stored["digests"].as_array().unwrap();
+    assert!(!digests.is_empty());
+    let last = digests.last().unwrap();
+    assert_eq!(last["why"], "unload");
+    assert!(!last["names"].as_array().unwrap().is_empty());
+}

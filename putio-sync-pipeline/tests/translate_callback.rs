@@ -79,6 +79,11 @@ fn big_file(path: &Path) {
 }
 
 async fn movie(env: &Env) -> PathBuf {
+    movie_named(env, "name-of-file:5").await
+}
+
+/// Like [`movie`], with the item's name
+async fn movie_named(env: &Env, name: &str) -> PathBuf {
     let video = env.dir.path().join("Movie.2020.mkv");
     big_file(&video);
     std::fs::write(env.dir.path().join("Movie.2020.en.srt"), SRT).unwrap();
@@ -93,7 +98,7 @@ async fn movie(env: &Env) -> PathBuf {
         )
         .await
         .unwrap();
-    downloaded_item(env, "file:5", &video).await;
+    downloaded_item_named(env, "file:5", name, &video).await;
     video
 }
 
@@ -256,6 +261,61 @@ async fn a_callback_that_never_comes_times_the_step_out_without_retrying() {
         env.pipeline.accept_callback(&token, None, ES).await,
         Err(AcceptError::NotFound)
     );
+}
+
+/// Feature 057: the translation events of one item, as (finished languages, failed errors)
+fn translation_events(
+    rx: &mut tokio::sync::broadcast::Receiver<Arc<putio_sync_core::events::Event>>,
+    name: &str,
+) -> (Vec<String>, Vec<String>) {
+    use putio_sync_core::events::Payload;
+    let (mut done, mut failed) = (Vec::new(), Vec::new());
+    while let Ok(event) = rx.try_recv() {
+        match &event.payload {
+            Payload::TranslationFinished(p) if p.name == name => done.push(p.language.clone()),
+            Payload::TranslationFailed(p) if p.name == name => failed.push(p.error.clone()),
+            _ => {}
+        }
+    }
+    (done, failed)
+}
+
+#[tokio::test]
+async fn a_translation_from_the_callback_is_announced_once() {
+    let (s, seen) = service(202, "").await;
+    let env = env_for(&s.url(), 600).await;
+    movie_named(&env, "ev-callback-done").await;
+    let mut rx = putio_sync_core::events::subscribe();
+    env.pipeline.run_due().await;
+    assert_eq!(
+        translation_events(&mut rx, "ev-callback-done"),
+        (vec![], vec![]),
+        "a parked step says nothing yet"
+    );
+    let token = token_of(&seen, 0);
+    env.pipeline
+        .accept_callback(&token, Some("text/plain"), ES)
+        .await
+        .unwrap();
+    env.pipeline.run_due().await;
+    let (done, failed) = translation_events(&mut rx, "ev-callback-done");
+    assert_eq!(done, vec!["es"]);
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
+#[tokio::test]
+async fn a_callback_that_never_comes_is_announced_as_failed() {
+    let (s, _seen) = service(202, "").await;
+    let env = env_for(&s.url(), 1).await;
+    movie_named(&env, "ev-callback-late").await;
+    let mut rx = putio_sync_core::events::subscribe();
+    env.pipeline.run_due().await;
+    tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+    env.pipeline.expire_callbacks().await;
+    let (done, failed) = translation_events(&mut rx, "ev-callback-late");
+    assert!(done.is_empty());
+    assert_eq!(failed.len(), 1);
+    assert!(failed[0].starts_with("no callback within"), "{}", failed[0]);
 }
 
 #[tokio::test]
