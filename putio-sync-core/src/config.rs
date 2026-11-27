@@ -644,7 +644,7 @@ impl ArrConfig {
 /// `[arr]` after env overrides and validation
 #[derive(Clone, PartialEq, Eq)]
 pub struct ArrSettings {
-    /// Answer the Transmission RPC
+    /// Answer the Transmission RPC and the qBittorrent API (067)
     pub enabled: bool,
     /// Username the *arr apps send
     pub username: String,

@@ -93,7 +93,7 @@ each build is in [CHANGELOG.md](CHANGELOG.md), and planned work is in [ROADMAP.m
 - **Executable Guard**: Executables and installers on Put.io (`.exe`, `.msi`, `.bat`, ...) are never downloaded; configurable with `blocked_extensions`
 - **Folder Rules**: Per-folder type presets (video, audio, ebooks, no binaries, or your own), skip a folder, or delete blocked files from Put.io; child folders inherit
 - **Transfer Management**: Add torrents from files or magnet links
-- **Radarr / Sonarr**: acts as their Transmission download client: Put.io transfer, local download, progress, completion and blocklisting of failed releases ([details](#radarr-and-sonarr))
+- **Radarr / Sonarr**: acts as their Transmission download client: Put.io transfer, local download, progress, completion and blocklisting of failed releases. Also answers the qBittorrent Web API for autobrr, cross-seed and phone apps ([details](#radarr-and-sonarr))
 - **Release check**: fake releases (an `.exe` posing as a movie, a locked `.7z`) are rejected before they reach Put.io or the NAS ([details](#release-check))
 - **Watch Mode**: Automatically upload .torrent and .magnet files from watched directories with smart deduplication
 - **Post-Processing**: Archive or delete processed torrent files after upload
@@ -900,7 +900,7 @@ H = histogram.
 | `putio_sync_doctor_check_items` | gauge | `check` | Items the check found at its last run |
 | `putio_sync_doctor_last_run_timestamp_seconds` | gauge | — | Unix time the last doctor run finished; absent until the first |
 | `putio_sync_doctor_last_run_duration_seconds` | gauge | — | Duration of the last doctor run |
-| `putio_sync_arr_rpc_requests_total` | counter | `method`, `outcome` | Transmission RPC requests from Radarr/Sonarr; `outcome` is `ok`, `error` or `auth_failed` |
+| `putio_sync_arr_rpc_requests_total` | counter | `method`, `outcome` | Transmission RPC and qBittorrent API requests from Radarr/Sonarr and other tools; `outcome` is `ok`, `error` or `auth_failed` |
 | `putio_sync_arr_items` | gauge | `state` | Radarr/Sonarr items by state: `putio`, `local`, `done`, `failed` |
 | `putio_sync_arr_blocklist_total` | counter | `outcome` | Calls asking Radarr/Sonarr to blocklist a failed release: `ok`, `not_found`, `error` |
 | `putio_sync_arr_path_mapping_total` | counter | `result` | Remote Path Mappings changed by setup: `created`, `updated`, `removed`, `failed` |
@@ -1825,6 +1825,73 @@ stale page or a second click changes nothing, then shows the check's new result.
 Two settings are shown as recommendations, each with **Turn on**, never changed on their
 own: **Completed Download Handling** (older versions only; newer ones always have it on)
 and **Import Extra Files** with `srt`, so subtitles are imported with the video.
+
+### The qBittorrent API
+
+putio-sync also answers qBittorrent's Web API v2 at `/api/v2/` on the same port, with the
+same user name and password. Use it for tools that only speak qBittorrent: autobrr,
+cross-seed and phone apps such as nzb360. Radarr and Sonarr can use it too (client type
+**qBittorrent**), but the Transmission client above is the one **Set up automatically**
+adds. In a tool, enter the host and port (`http://<host>:15432`), leave any URL base empty,
+and give the user name `putio-sync` and the `[arr]` password. It is off unless `[arr]` is
+enabled.
+
+A torrent is the same thing as in the Transmission API: a Put.io transfer plus its local
+download. Both APIs show the same items.
+
+| Path under `/api/v2/` | What it does |
+|---|---|
+| `auth/login`, `auth/logout` | Sign in (`Ok.` and a `SID` cookie, or `Fails.`), sign out |
+| `app/version`, `app/webapiVersion` | `v4.6.7` and `2.9.3` |
+| `app/preferences`, `app/buildInfo`, `app/defaultSavePath` | Fixed answers; `save_path` is the download folder |
+| `torrents/add` | Magnets or links in `urls`, or .torrent files as `multipart/form-data`; `category` and `savepath` |
+| `torrents/info` | The list; `filter`, `category`, `hashes`, `sort`, `reverse`, `limit`, `offset` |
+| `torrents/properties`, `torrents/files`, `torrents/trackers` | One torrent, by `hash` |
+| `torrents/categories`, `createCategory`, `removeCategories` | Categories and their folders |
+| `torrents/setCategory` | Accepted for the category the torrent has; another one is refused (409) |
+| `torrents/pause`, `stop`, `resume`, `start` | Pause or resume the local download |
+| `torrents/delete` | Remove; `deleteFiles=true` also deletes the local files |
+| `sync/maindata`, `transfer/info` | The list and speeds for apps that poll |
+
+Answers that differ from a real qBittorrent:
+
+- **States.** `queuedDL` while Put.io queues the transfer, `downloading` while Put.io or
+  putio-sync downloads, `pausedDL` when paused, `error` when it failed, and `pausedUP` once
+  every file is on disk and the processing steps are done. Nothing is ever `uploading`:
+  putio-sync doesn't seed.
+- **Fixed values.** Ratio `0` with ratio limit `0`, seeding time `0`, peers and seeds `0`,
+  uploaded `0`, availability `-1`, no tags, and one tracker, `https://put.io/`, shown as
+  working. With the ratio limit reached and the state `pausedUP`, Radarr and Sonarr may
+  remove an item after import, as with Transmission.
+- **Hash.** The real v1 infohash, from the magnet or the .torrent. An add without one (a
+  v2-only magnet) is refused; there is no made-up hash.
+- **Files.** `torrents/files` lists the files on disk once the download has started (up to
+  5,000). Before that it is one entry with the item's name and size. Priorities are not
+  changed through this API.
+- **Folders.** The category is the folder, as above. `savepath` is used when given and must
+  be inside the download folder; anything else is refused with 409. A category's
+  `savePath` is always `<download folder>/<category>`.
+- **Pause** stops the local download. The Put.io transfer goes on.
+- **Accepted and ignored** (200, nothing changes): share limits, queue priority, force
+  start, reannounce, recheck, automatic management, speed limits, sequential download, tags.
+  Options on an add other than `urls`, the files, `category` and `savepath` are ignored
+  too, so a torrent added as paused starts.
+- **Refused.** `torrents/delete` with `hashes=all` (400), because the items are shared with
+  Radarr and Sonarr. Every other path answers 404, such as `app/setPreferences`,
+  `torrents/rename` and the RSS and search APIs.
+- `sync/maindata` always sends the full list (`full_update` is true).
+
+Sign-in works like qBittorrent's, with these limits. The password is compared in constant
+time, and wrong ones count against the Transmission API's failure counter: after 5 the
+address gets 403 for a minute. The `SID` cookie is random (244 bits), `HttpOnly` and
+`SameSite=Strict`, limited to `/api/v2`, and `Secure` behind an HTTPS proxy. A session ends
+after an hour unused, after a day, on sign-out, on a restart, and when the password or user
+name changes. At most 64 are kept. Changes need a POST, and a request from a browser page
+on another site is refused. The password and the cookie are never logged.
+
+Setup guides: [autobrr](https://devclinton.github.io/putio-sync/docs/guides/autobrr.html),
+[cross-seed](https://devclinton.github.io/putio-sync/docs/guides/cross-seed.html) and
+[phone apps](https://devclinton.github.io/putio-sync/docs/guides/qbittorrent-apps.html).
 
 ### The blackhole
 

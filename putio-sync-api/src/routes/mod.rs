@@ -7,6 +7,7 @@ pub mod active;
 pub mod arr;
 pub mod local;
 pub mod putio;
+pub mod qbit;
 pub mod releases;
 pub mod setup;
 pub mod system;

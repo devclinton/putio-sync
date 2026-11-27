@@ -93,6 +93,51 @@ pub enum ItemId {
     Id(i64),
 }
 
+/// An item with what a client view needs (011 and 067)
+#[derive(Debug, Clone)]
+pub struct Snapshot {
+    /// The item
+    pub item: ArrItem,
+    /// Its local download
+    pub local: LocalProgress,
+    /// Whether the processing pipeline (038) still has a step to run on it
+    pub gated: bool,
+    /// When it was added, Unix seconds
+    pub added_on: i64,
+    /// When its row last changed, Unix seconds
+    pub changed_on: i64,
+}
+
+/// Most files [`ArrService::files_on_disk`] lists for one item
+pub const MAX_LISTED_FILES: usize = 5000;
+
+/// Deepest folder level [`ArrService::files_on_disk`] reads
+const MAX_LISTED_DEPTH: usize = 16;
+
+/// Collect the regular files under `path` into `out` as `<prefix>/<...>` with their sizes
+fn list_files(path: &Path, prefix: &str, depth: usize, out: &mut Vec<(String, u64)>) {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return;
+    };
+    if meta.is_file() {
+        out.push((prefix.to_string(), meta.len()));
+        return;
+    }
+    if !meta.is_dir() || depth >= MAX_LISTED_DEPTH {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if out.len() >= MAX_LISTED_FILES {
+            return;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        list_files(&entry.path(), &format!("{prefix}/{name}"), depth + 1, out);
+    }
+}
+
 /// Errors whose text goes back to the *arr as the RPC `result`
 #[derive(Debug, Error)]
 pub enum ArrError {
@@ -1672,6 +1717,17 @@ impl ArrService {
 
     /// Items as Transmission torrents, all of them or those `ids` name
     pub async fn torrents(&self, ids: Option<&[ItemId]>) -> Result<Vec<Value>, ArrError> {
+        Ok(self
+            .snapshots(ids)
+            .await?
+            .iter()
+            .map(|s| view::torrent(&s.item, &s.local, &self.target, s.gated))
+            .collect())
+    }
+
+    /// Each item with its local progress, all of them or those `ids` name: what the
+    /// Transmission and qBittorrent (067) views are built from
+    pub async fn snapshots(&self, ids: Option<&[ItemId]>) -> Result<Vec<Snapshot>, ArrError> {
         let repo = self.db.arr();
         let items = repo.list().await?;
         let speeds: HashMap<i64, f64> = self
@@ -1681,6 +1737,7 @@ impl ArrService {
             .map(|list| list.into_iter().map(|d| (d.file_id, d.speed_bps)).collect())
             .unwrap_or_default();
 
+        let times = repo.times().await?;
         let nas_paused = self.db.flags().get_bool(NAS_DOWNLOADS_PAUSED).await?;
 
         let mut out = Vec::new();
@@ -1715,14 +1772,71 @@ impl ArrService {
                 speed_bps: speed.max(0.0) as u64,
                 paused,
             };
-            out.push(view::torrent(
-                item,
-                &local,
-                &self.target,
-                self.gated(item).is_some(),
-            ));
+            let (added_on, changed_on) = times.get(&item.hash).copied().unwrap_or((0, 0));
+            out.push(Snapshot {
+                gated: self.gated(item).is_some(),
+                item: item.clone(),
+                local,
+                added_on,
+                changed_on,
+            });
         }
         Ok(out)
+    }
+
+    /// Add a release the qBittorrent way (067): `save_path`, when given, names the folder
+    /// and must be inside the download folder; otherwise `category` does, as in 011
+    pub async fn add_in(
+        &self,
+        source: AddSource,
+        category: &str,
+        save_path: Option<&str>,
+    ) -> Result<AddOutcome, ArrError> {
+        match save_path.map(str::trim).filter(|p| !p.is_empty()) {
+            Some(path) => self.add(source, Some(path)).await,
+            None => {
+                let category = normalize_arr_category(category)
+                    .ok_or_else(|| ArrError::OutsideTarget(self.download_dir()))?;
+                let dir = view::download_dir(&self.target, &category);
+                self.add(source, Some(&dir)).await
+            }
+        }
+    }
+
+    /// Every category in use: those of the items and those read from the saved
+    /// applications' putio-sync clients, sorted, without the empty one
+    pub async fn categories(&self) -> Result<Vec<String>, ArrError> {
+        let mut all: std::collections::BTreeSet<String> =
+            self.db.arr().categories().await?.into_iter().collect();
+        for info in self
+            .clients
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+        {
+            all.extend(info.categories.iter().cloned());
+        }
+        all.remove("");
+        Ok(all.into_iter().collect())
+    }
+
+    /// The files of an item on disk, as paths below its category folder with their sizes;
+    /// empty before anything is on disk. At most [`MAX_LISTED_FILES`], symlinks not followed.
+    pub async fn files_on_disk(&self, item: &ArrItem) -> Vec<(String, u64)> {
+        let Some(name) = item.output_name.clone() else {
+            return Vec::new();
+        };
+        let Some(root) = output_path(&self.target, &item.category, &name) else {
+            return Vec::new();
+        };
+        tokio::task::spawn_blocking(move || {
+            let mut out = Vec::new();
+            list_files(&root, &name, 0, &mut out);
+            out.sort();
+            out
+        })
+        .await
+        .unwrap_or_default()
     }
 
     /// Hashes of the items `ids` name

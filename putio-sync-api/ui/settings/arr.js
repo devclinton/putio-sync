@@ -86,6 +86,15 @@ function arrBody(data, reload, ctx) {
     h("h3", { class: "sub", text: "Connection" }),
     h("p", { class: "muted", text: "Set up automatically below, or add a Transmission download client in Radarr or Sonarr with these details. Use the first host that works." }),
     connection,
+    c.qbittorrent
+      ? h("p", { class: "muted", text: "Tools that only speak qBittorrent, such as autobrr, cross-seed and phone apps, use the same host, port, user name and password. Choose the type qBittorrent and leave the URL base empty." })
+      : null,
+    c.qbittorrent
+      ? kv([
+          ["Type", "qBittorrent"],
+          ["URL", h("span", { class: "name", text: `${c.connection.ssl ? "https" : "http"}://${c.connection.hosts[0]}:${c.connection.port}` })],
+        ])
+      : null,
     h(
       "p",
       { class: "muted" },

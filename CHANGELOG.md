@@ -62,6 +62,16 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 - Forecast (064): the Stats page says when the download disk and the Put.io account fill
   at the rate of the last week, or that it can't tell yet (`GET /stats/forecast`).
 - All four are in Settings and apply without a restart.
+- qBittorrent API (067): putio-sync now also answers qBittorrent's Web API v2 at `/api/v2/`,
+  on the same port and with the `[arr]` user name and password, so tools that only speak
+  qBittorrent can use it: autobrr, cross-seed and phone apps such as nzb360. Radarr and
+  Sonarr can add it as a qBittorrent client too. Sign-in, add (magnets, links and .torrent
+  files), list, properties, files, trackers, categories, pause, resume, delete,
+  `sync/maindata` and `transfer/info` are answered; values Put.io has none for (ratio,
+  peers, tags) get fixed answers, listed in the README. It is off unless `[arr]` is enabled,
+  shares the Transmission API's limit on wrong passwords, and its session cookie is random,
+  `HttpOnly` and expires. Settings shows the address, and the docs have a guide for each
+  tool.
 - Pick files inside a transfer (070): **Choose files** on a transfer, an Active item or a
   queue row shows the transfer's files as a tree with sizes and tick boxes, with **Only this**
   and **All but this** on each file. The choice is for that transfer only, wins over its folder

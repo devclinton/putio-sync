@@ -54,6 +54,7 @@ async fn disabled_shows_defaults() {
     assert_eq!(client["env"], json!({"password": false}));
     assert_eq!(client["connection"]["implementation"], "Transmission");
     assert_eq!(client["connection"]["url_base"], "/transmission/");
+    assert_eq!(client["qbittorrent"]["api"], "/api/v2/");
     assert_eq!(client["connection"]["port"], 15432);
     assert_eq!(client["connection"]["hosts"][0], "putio-sync");
     assert_eq!(body["applications"], json!([]));
