@@ -1,7 +1,7 @@
 // Feature 056: the usage profile's words and the setup link's code
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { answersFrom, codeFromHash, keyLabel, languagesFrom, note, reason, startAnswers, startKinds, title, valueText } from "../../ui/profile.js";
+import { afterStartApps, answersFrom, codeFromHash, keyLabel, languagesFrom, note, reason, startAnswers, startKinds, title, valueText } from "../../ui/profile.js";
 
 test("the setup code comes from the link's fragment", () => {
   assert.equal(codeFromHash("#code=AB12-CD34"), "AB12-CD34");
@@ -65,4 +65,24 @@ test("answers keep only known choices and an empty watch folder is off", () => {
   assert.equal(answersFrom({ kinds: ["tv"], arr: [], byHand: true, watchOn: true, watch: " /w ", language: "" }).watch, "/w");
   assert.equal(answersFrom({ kinds: ["tv"], arr: [], byHand: true, watchOn: false, watch: "/w", language: "" }).watch, null);
   assert.deepEqual(languagesFrom("de, en  fr"), ["de", "en", "fr"]);
+});
+
+test("after start, only the apps the wizard set up are checked, matched on their saved address", () => {
+  const apps = [
+    { index: 0, kind: "radarr", name: "Radarr", url: "http://radarr:7878", api_key_set: true },
+    { index: 1, kind: "sonarr", name: null, url: "http://sonarr:8989", api_key_set: true },
+    { index: 2, kind: "radarr", name: "Old", url: "http://old:7878", api_key_set: true },
+    { index: 3, kind: "sonarr", name: "No key", url: "http://nokey:8989", api_key_set: false },
+  ];
+  const setUp = [
+    { url: "HTTP://Radarr:7878/", host: "nas.lan" },
+    { url: "http://sonarr:8989", host: null },
+    { url: "http://nokey:8989", host: "x" },
+  ];
+  assert.deepEqual(afterStartApps(apps, setUp), [
+    { index: 0, kind: "radarr", name: "Radarr", host: "nas.lan" },
+    { index: 1, kind: "sonarr", name: "Sonarr", host: null },
+  ]);
+  assert.deepEqual(afterStartApps(apps, []), []);
+  assert.deepEqual(afterStartApps(null, setUp), []);
 });

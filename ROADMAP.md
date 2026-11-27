@@ -83,8 +83,7 @@ preview the differences as 015 does, without overwriting changes the user
 made by hand.
 
 Done in `specs/056-usage-profile-wizard/`, with Radarr and Sonarr only (no
-Lidarr). Not built: the after-start Radarr/Sonarr check on the wizard (the
-Radarr / Sonarr settings card already runs it).
+Lidarr). The after-start Radarr/Sonarr check (T019) followed in its own change.
 
 ## Queued: features
 

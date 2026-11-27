@@ -44,6 +44,10 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- After the setup wizard starts the daemon, it shows each Radarr or Sonarr it set up, with
+  the folder mapping check and the Completed Download Handling and Import Extra Files
+  settings. Each has its own button to fix or turn on; nothing changes in the app until you
+  press it.
 - Quick setup: the daemon prints a setup link with the code in it. The wizard asks the
   language, links Put.io and asks what you download and how it reaches Put.io (Radarr, Sonarr,
   by hand, a watch folder), then shows the folder rules, release check, Put.io cleanup and
