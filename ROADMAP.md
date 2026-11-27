@@ -446,7 +446,7 @@ its environment variable, and whether it applies live or needs a restart
 (`putio_sync_core::restart::RESTART_ONLY`). CI fails when the generated page
 is out of date.
 
-### 066 Say why something is waiting
+### 066 Say why something is waiting (done)
 
 Behaviour that is correct but silent gets one plain line where the user is
 looking. Each row on the Active and queue pages says why it is not
