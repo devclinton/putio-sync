@@ -452,6 +452,49 @@ schedule, a setting that needs a restart) and links to the setting that
 caused it. Error messages say what happened and what to do, and link to the
 matching 016 guide. 064 adds its own reasons to the same line.
 
+### 067 qBittorrent API emulation
+
+putio-sync already answers as Transmission for Radarr and Sonarr (011). Answer
+as qBittorrent too (its Web API v2: sign-in, add, list, properties, files,
+categories, pause, resume, delete), on the same listener and `[arr]`
+password. This opens it to tools that only speak qBittorrent: autobrr,
+cross-seed, and phone apps such as LunaSea and nzb360. A torrent is a Put.io
+transfer plus its download, as in 011; fields Put.io has no value for
+(peers, ratio limits) get fixed, documented answers. Each supported tool gets
+a setup guide and a contract test from its real requests.
+
+### 068 Release search through Prowlarr or Jackett
+
+A search box that finds releases through the user's own Prowlarr or Jackett
+(the Torznab API) and adds a result to Put.io in one click. putio-sync holds
+no indexers and no indexer credentials beyond that server's URL and key.
+Results show size, seeders, age and the 042 release pre-check verdict before
+anything is added, and can be sent to a chosen Put.io folder. Off until a
+server is set. This is the release search 062 needs before Trakt,
+Letterboxd or IMDb watchlists can work.
+
+### 069 Other cloud providers
+
+Work with Real-Debrid, AllDebrid, Premiumize and TorBox as well as Put.io.
+The Put.io client is used directly across the workspace, so the first step
+is a provider interface (add a transfer, list transfers and files, get a
+download link, delete, account and space) with Put.io as its first
+implementation and no change in behaviour. Then one provider at a time,
+each behind its own sign-in. Features a provider cannot do (Put.io's
+subtitle lookup, folders on providers without them) are turned off for it
+and said so. To settle in the spec: one provider per install or several at
+once, and what the project is called when it is not only Put.io.
+
+### 070 Pick files inside a transfer
+
+Choose which files of one transfer to download, without writing a folder
+rule: a file tree with sizes and tick boxes on the transfer and queue rows,
+"only this file" and "all but this", and the same choice when adding a
+magnet or .torrent from the UI once its file list is known. A choice applies
+to that transfer only and wins over folder rules and glob filters for it;
+unticked files are left on Put.io and shown as skipped by choice (066).
+Queue order and priority already exist and are not part of this.
+
 ### Magnet file lists from peers (deferred from 043)
 
 When the .torrent caches never have a magnet's file list, fetch it from
