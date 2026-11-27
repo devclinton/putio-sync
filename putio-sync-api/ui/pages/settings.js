@@ -2,7 +2,8 @@
 // `#/settings/<section>?field=<address>` opens a section and jumps to a field. All sections
 // load at once, so the section list marks unsaved changes and problems anywhere; search uses
 // the settings catalog (061), which the command palette shares. Notifications (030) loads
-// when opened. Advanced fields are hidden per section until Show advanced is on.
+// when opened. Advanced fields are hidden per section until Show advanced is on. Each card
+// heading has a ? that opens its help (014).
 
 import { h, navigate, toastError } from "../app.js";
 import { rank } from "../fuzzy.js";
@@ -10,6 +11,7 @@ import { entryText } from "../settings/catalog.js";
 import { settingsCatalog } from "../settings/groups.js";
 import { SECTIONS, fieldId, sectionOf, sectionOfKey, settingsHref } from "../settings/sections.js";
 import { assistant, riskList } from "../settings/form.js";
+import { attachHelp } from "../settings/help.js";
 import { POLL_MS, noticeParts } from "../settings/reload.js";
 import { settingsStatus } from "../api.js";
 import * as general from "../settings/general.js";
@@ -254,6 +256,8 @@ export function mount(el, params) {
     riskBox,
     h("div", { class: "settings-layout" }, h("nav", { class: "settings-nav", "aria-label": "Settings sections" }, nav), h("div", {}, SECTIONS.map((s) => panels[s.id].node))),
   );
+  // A ? beside each card heading opens its help (014)
+  ctx.cleanup.push(attachHelp(el));
   page = { params, ctx, show };
   show(params);
   showRisks();

@@ -1,11 +1,12 @@
 // General section (feature 046): appearance in this browser (feature 012), which credentials
-// are set, and the update check (feature 055).
+// are set, the update check (feature 055), and showing the page tours again (feature 014).
 
 import { get } from "../api.js";
 import { h, toast } from "../app.js";
 import { LANGUAGES, choice, nativeName, setLanguage } from "../i18n.js";
 import { groupCard } from "./form.js";
 import { profileCard } from "./profile.js";
+import { resetSeen, store } from "../tour.js";
 
 const UPDATES = { id: "updates", key: "updates", title: "Updates" };
 const CHECK = ["check", "Check for updates", "Asks GitHub once a day for a newer release; nothing about this install is sent", "b"];
@@ -15,7 +16,7 @@ const MODE_NAMES = { system: "System", light: "Light", dark: "Dark" };
 
 /** The groups whose fields the settings catalog lists (061); both update fields, as either may show */
 export const groups = [{ ...UPDATES, fields: [CHECK, AUTO_INSTALL] }];
-export const cards = (ctx) => [appearance(ctx), language(), profileCard(ctx), credentials(ctx), updates(ctx)];
+export const cards = (ctx) => [appearance(ctx), language(), profileCard(ctx), credentials(ctx), updates(ctx), tours()];
 
 /** The update settings. Only an install that replaces itself can update automatically
  * (US4); elsewhere a save keeps auto_install as it is. */
@@ -90,5 +91,23 @@ function credentials(ctx) {
     h("h2", { text: "Credentials" }),
     list,
     h("p", { class: "muted spaced", text: "Tokens and passwords are never shown here. Change them in the config file or environment." }),
+  );
+}
+
+/** Page tours (feature 014): forget which were seen, and show this page's at once */
+function tours() {
+  const again = async () => {
+    resetSeen(store());
+    toast("Tours will show again", "ok", "Each page shows its tour the next time you open it.");
+    const ui = await import("../tour_ui.js");
+    ui.start("settings", { force: true });
+  };
+  return h(
+    "section",
+    { class: "card", id: "card-tours" },
+    h("h2", { text: "Tours and help" }),
+    h("p", { class: "muted", text: "Each page shows a short tour the first time you open it. The ? next to a heading explains that group of settings." }),
+    h("button", { type: "button", class: "btn spaced", onclick: again }, "Show the tours again"),
+    h("p", { class: "muted spaced", text: "Saved in this browser only." }),
   );
 }

@@ -7,11 +7,11 @@ what is queued, in the order planned. Each entry is the starting brief for
 
 ## Queued: onboarding and setup
 
-### 014 Guided tour and in-app help
+### 014 Guided tour and in-app help (done)
 
 A short, skippable tour of each page on first visit, re-runnable from
-Settings. Help panels and tooltips explain each setting in plain words, with
-links to the guides from 016.
+Settings. A ? on each settings card opens a plain-words help panel with a
+link to the guide from 016. Spec: `specs/014-guided-tour/`.
 
 ### 016 Onboarding guides (done)
 

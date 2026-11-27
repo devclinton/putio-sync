@@ -1054,6 +1054,21 @@ on), a **Guide** link on the Radarr / Sonarr, Folder rules, Torrent watcher and 
 cards, a **Metrics guide** link on the Network card, and a **Troubleshooting guide** link on
 the Doctor and Logs pages.
 
+### Tours and help
+
+The first time you open a page in a browser, a small card says what the page is for in two to
+four steps, and outlines the part of the page each step is about. **Next** and **Back** move
+through it; **Skip** or Esc closes it; **Don't show tours** turns every tour off. The card has
+no backdrop and never blocks the page: you can ignore it and carry on. At phone width it sits
+along the bottom, and it does not animate when your system asks for reduced motion. The setup
+wizard and the sign-in page have no tour.
+
+Which tours you have seen is saved in the browser only. **Settings › General › Tours and help**
+has **Show the tours again**, which brings every tour back and starts the Settings tour.
+
+In Settings, the **?** next to each card heading opens a short explanation of that group of
+settings in plain words, with a link to the guide that covers it.
+
 ### Command palette
 
 **Cmd+K** (macOS) or **Ctrl+K** opens one search box from any page; on a phone, tap the
