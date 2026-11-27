@@ -402,6 +402,8 @@ main { max-width: 1160px; margin: 0 auto; padding: 40px 40px 80px; outline: none
 .link:hover, .name-cell a:hover { text-decoration: underline; }
 .name-cell a { text-decoration: none; }
 .block { display: block; font-weight: 400; }
+/* 066: a row's reason line; its links stay underlined inside a name cell */
+.reason-line a, .name-cell .reason-line a { text-decoration: underline; }
 
 /* Forms */
 

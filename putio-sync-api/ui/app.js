@@ -93,6 +93,22 @@ export function h(tag, attrs = {}, ...children) {
 /** A link to the docs book's `page`, at heading `id` (055) */
 export const docs = (page, id, text = "Docs") => h("a", { href: `https://devclinton.github.io/putio-sync/docs/${page}.html${id ? "#" + id : ""}`, target: "_blank", rel: "noopener" }, text);
 
+/**
+ * A row's reason line (066) from ui/waiting.js: the words, a link to the setting or page
+ * behind them, and the guide for an error. Null for no line.
+ */
+export function reasonLine(line) {
+  if (!line) return null;
+  const tone = { warn: "warn-text", error: "error-text" }[line.tone] || "muted";
+  return h(
+    "small",
+    { class: `${tone} block reason-line` },
+    h("span", { text: line.text }),
+    line.link ? [" ", h("a", { href: line.link.href }, line.link.label)] : null,
+    line.guide ? [" ", docs(line.guide.slug, "", `Guide: ${line.guide.title}`)] : null,
+  );
+}
+
 // Replace an element's children like `h` adds them: null and false are skipped and
 // arrays are flattened. The DOM's own `replaceChildren` shows null as the text "null".
 export function fill(el, ...children) {

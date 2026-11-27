@@ -45,6 +45,10 @@ pub struct QueueItemResponse {
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
+    /// Why the row is not downloading, when something known holds it back (feature
+    /// 066); read-only
+    #[serde(default, skip_deserializing)]
+    pub waiting: Option<putio_sync_download::Waiting>,
 }
 
 /// Queue response
@@ -142,9 +146,12 @@ async fn get_queue(
     }
     .map_err(|e| ApiError::InternalError(format!("Failed to get queue: {}", e)))?;
 
+    // One snapshot of what the workers check, so every row's reason agrees
+    let queue_state = state.download_manager.queue_state().await;
     let response_items: Vec<QueueItemResponse> = items
         .into_iter()
         .map(|item| QueueItemResponse {
+            waiting: queue_state.for_row(&item.status, item.file_id, item.file_size),
             id: item.id,
             file_id: item.file_id,
             filename: item.filename,
@@ -157,7 +164,7 @@ async fn get_queue(
         })
         .collect();
 
-    let nas_paused = state.download_manager.nas_paused().await;
+    let nas_paused = queue_state.nas_paused;
 
     Ok(Json(QueueResponse {
         total: response_items.len(),

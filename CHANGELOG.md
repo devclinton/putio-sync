@@ -48,6 +48,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Why a row is waiting (066): each row on the Active and Queue pages that is not downloading
+  says why in one line, and links to the setting behind it: a paused bandwidth schedule or
+  limit, a timed pause, the Pause local downloads switch, the free space floor, a file too
+  big for the space left, or every worker busy. A failed row says what failed and what to do,
+  with a link to the troubleshooting guide. `GET /local/queue` rows and `GET /active` items
+  carry the reason as `waiting`: a stable `code` plus its fields.
 - Tours and help (014): each page shows a short tour the first time you open it in a browser,
   with Next, Back, Skip and "Don't show tours"; it never blocks the page. In Settings, the **?**
   next to each card heading explains that group in plain words and links to its guide.

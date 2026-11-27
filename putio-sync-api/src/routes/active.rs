@@ -190,6 +190,7 @@ async fn with_processing(state: &AppState, view: Pipeline) -> serde_json::Value 
                 "next_sync_at": null,
                 "note": null,
                 "phase": null,
+                "waiting": null,
                 "links": {},
                 "step": step(&row.key),
             }));

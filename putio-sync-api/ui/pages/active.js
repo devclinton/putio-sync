@@ -8,11 +8,12 @@
 // opens a timeline of its stages and steps, with Retry and Skip on a failed step.
 
 import { get, post } from "../api.js";
-import { confirm, empty, fill, h, nasBanner, poll, refill, setNasPaused, toast } from "../app.js";
+import { confirm, empty, fill, h, nasBanner, poll, reasonLine, refill, setNasPaused, toast } from "../app.js";
 import { bytes, dateTime, duration, percent, relative, speed, utc } from "../format.js";
 import { selection } from "../select.js";
 import { stepLine } from "../timeline.js";
 import { timelineView } from "../timeline_view.js";
+import { putioErrorLine, skippedLine, waitingLine } from "../waiting.js";
 
 const REFRESH_MS = 5000;
 
@@ -373,11 +374,14 @@ function row(i) {
   const notes = [
     from ? h("small", { class: "muted block", text: from }) : null,
     i.stall ? h("small", { class: "warn-text block", text: `No progress for ${duration(i.stall.seconds)}: ${i.stall.reason}` }) : null,
-    i.state === "waiting_for_sync" ? h("small", { class: "muted block", text: i.next_sync_at ? `Done on Put.io; the next sync ${relative(i.next_sync_at)} picks it up` : "Done on Put.io; the next sync picks it up" }) : null,
     i.seeding ? h("small", { class: "muted block", text: "Still seeding on Put.io" }) : null,
     i.reason ? h("small", { class: "error-text block", text: i.reason }) : null,
+    reasonLine(putioErrorLine(i)),
     i.note ? h("small", { class: "muted block", text: i.note }) : null,
-    i.held ? h("small", { class: "muted block", text: "Put.io keeps downloading; local download held" }) : null,
+    // 066: why it is not downloading here, with the setting behind it
+    reasonLine(waitingLine(i.waiting)),
+    i.held && !i.waiting ? h("small", { class: "muted block", text: "Put.io keeps downloading; local download held" }) : null,
+    reasonLine(skippedLine(i.files)),
     i.step ? h("small", { class: i.state === "waiting_for_operator" || i.step.state === "failed" ? "error-text block" : "muted block", text: stepLine(i.step, i.state) }) : null,
   ];
   return h(

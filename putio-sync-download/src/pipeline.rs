@@ -4,6 +4,7 @@
 //! [`build`] is pure, so every state rule is tested without Put.io (R4, R5, R6).
 //! `DownloadManager::pipeline` gathers its input.
 
+use crate::waiting::{code, QueueState, Waiting};
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use putio_sync_client::models::Transfer;
 use putio_sync_core::stall::Stall;
@@ -143,6 +144,9 @@ pub struct PipelineItem {
     /// NAS: `checking` or `verifying` while every running file reads back from disk
     /// (features 040, 034); none otherwise
     pub phase: Option<&'static str>,
+    /// Why it is not downloading to the NAS, when something known holds it back
+    /// (feature 066)
+    pub waiting: Option<Waiting>,
     pub links: Links,
 }
 
@@ -212,6 +216,9 @@ pub struct BuildInput {
     pub transfer_origins: HashMap<i64, Origin>,
     /// In-memory notes, by file id
     pub notes: HashMap<i64, String>,
+    /// What the workers check before they claim a row; `None` gives pending items no
+    /// reason
+    pub queue: Option<QueueState>,
     /// When the last completed sync run started; `None` before the first
     pub last_sync_start: Option<SystemTime>,
     /// When the sync runs next
@@ -231,6 +238,7 @@ impl Default for BuildInput {
             stalls: HashMap::new(),
             transfer_origins: HashMap::new(),
             notes: HashMap::new(),
+            queue: None,
             last_sync_start: None,
             next_sync_at: None,
             now: UNIX_EPOCH,
@@ -473,6 +481,11 @@ fn transfer_item(
         next_sync_at: None,
         note: None,
         phase: None,
+        waiting: if held {
+            Some(Waiting::new(code::HELD))
+        } else {
+            (state == State::Queued).then(|| Waiting::new(code::PUTIO_QUEUE))
+        },
         links: links(&key, Some(transfer.id)),
         key,
     })
@@ -513,6 +526,14 @@ fn waiting_item(input: &BuildInput, transfer: &Transfer, key: String) -> Option<
         next_sync_at: input.next_sync_at,
         note: None,
         phase: None,
+        waiting: Some(if held {
+            Waiting::new(code::HELD)
+        } else {
+            Waiting {
+                until: input.next_sync_at.map(rfc3339),
+                ..Waiting::new(code::WAITING_FOR_SYNC)
+            }
+        }),
         links: links(&key, Some(transfer.id)),
         key,
     })
@@ -621,9 +642,41 @@ fn nas_item(
             .first()
             .copied()
             .filter(|p| *p != "downloading" && phases.iter().all(|q| q == p)),
+        waiting: nas_waiting(input, state, held, files),
         links: links(&key, transfer_id),
         key,
     })
+}
+
+/// Why a NAS item is not downloading: a failure, its pause, or what holds its pending
+/// files back. `None` while a file runs.
+fn nas_waiting(
+    input: &BuildInput,
+    state: State,
+    held: bool,
+    files: &[&PipelineFile],
+) -> Option<Waiting> {
+    let with_status = |wanted: &'static str| {
+        files
+            .iter()
+            .filter(move |f| matches!(&f.state, FileState::Queued(status) if status == wanted))
+    };
+    match state {
+        State::Failed => {
+            let ids: Vec<i64> = with_status("failed").map(|f| f.file_id).collect();
+            Some(match &input.queue {
+                Some(queue) => queue.failed(&ids),
+                None => Waiting::new(code::FAILED),
+            })
+        }
+        State::Paused if held => Some(Waiting::new(code::HELD)),
+        State::Paused => Some(Waiting::new(code::PAUSED)),
+        State::Queued => input
+            .queue
+            .as_ref()?
+            .for_pending_files(with_status("pending").map(|f| f.size)),
+        _ => None,
+    }
 }
 
 /// The name of an item with no transfer in the list: the folder for a folder row; for a
@@ -747,6 +800,10 @@ fn rfc3339_opt<S: Serializer>(time: &Option<SystemTime>, serializer: S) -> Resul
     }
 }
 
+fn rfc3339(time: SystemTime) -> String {
+    DateTime::<Utc>::from(time).to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -820,6 +877,109 @@ mod tests {
     fn only(pipeline: &Pipeline) -> &PipelineItem {
         assert_eq!(pipeline.items.len(), 1, "{:#?}", pipeline.items);
         &pipeline.items[0]
+    }
+
+    /// The reason of the one item `build` makes, with `queue` as the workers' state
+    fn waiting_of(
+        transfers: Vec<Transfer>,
+        files: Vec<PipelineFile>,
+        queue: Option<QueueState>,
+    ) -> Option<Waiting> {
+        let mut input = input(transfers, files);
+        input.queue = queue;
+        only(&build(&input)).waiting.clone()
+    }
+
+    /// One worker, busy
+    fn busy() -> QueueState {
+        QueueState {
+            workers: 1,
+            running: 1,
+            ..QueueState::default()
+        }
+    }
+
+    #[test]
+    fn a_putio_item_waits_in_putios_queue_or_is_held() {
+        let code_of = |status: &str, held: bool| {
+            let mut input = input(vec![transfer(1, status, None)], vec![]);
+            if held {
+                input.holds.insert(1);
+            }
+            only(&build(&input)).waiting.as_ref().map(|w| w.code)
+        };
+        assert_eq!(code_of("IN_QUEUE", false), Some(code::PUTIO_QUEUE));
+        assert_eq!(code_of("DOWNLOADING", false), None);
+        assert_eq!(code_of("ERROR", false), None);
+        assert_eq!(code_of("DOWNLOADING", true), Some(code::HELD));
+    }
+
+    #[test]
+    fn waiting_for_sync_says_when_the_next_sync_runs() {
+        let mut input = input(vec![transfer(1, "COMPLETED", Some(150))], vec![]);
+        input.next_sync_at = Some(at(260));
+        let waiting = only(&build(&input)).waiting.clone().unwrap();
+        assert_eq!(waiting.code, code::WAITING_FOR_SYNC);
+        assert_eq!(waiting.until.as_deref(), Some("2026-01-01T00:04:20Z"));
+        input.holds.insert(1);
+        assert_eq!(
+            only(&build(&input)).waiting.as_ref().map(|w| w.code),
+            Some(code::HELD)
+        );
+    }
+
+    #[test]
+    fn a_queued_nas_item_takes_the_workers_reason() {
+        let done = || transfer(1, "COMPLETED", Some(50));
+        let files = || vec![queued(10, Some(1), "pending")];
+        // Nothing known about the workers: no reason is made up
+        assert_eq!(waiting_of(vec![done()], files(), None), None);
+        let turn = waiting_of(vec![done()], files(), Some(busy())).unwrap();
+        assert_eq!(turn.code, code::WAITING_TURN);
+        assert_eq!(turn.workers, Some(1));
+        let paused = QueueState {
+            nas_paused: true,
+            ..busy()
+        };
+        assert_eq!(
+            waiting_of(vec![done()], files(), Some(paused))
+                .unwrap()
+                .code,
+            code::DOWNLOADS_PAUSED
+        );
+        // A free worker is about to take it
+        let free = QueueState {
+            workers: 2,
+            ..busy()
+        };
+        assert_eq!(waiting_of(vec![done()], files(), Some(free)), None);
+    }
+
+    #[test]
+    fn a_running_nas_item_has_no_reason() {
+        let files = vec![
+            queued(10, Some(1), "downloading"),
+            queued(11, Some(1), "pending"),
+        ];
+        let done = transfer(1, "COMPLETED", Some(50));
+        assert_eq!(waiting_of(vec![done], files, Some(busy())), None);
+    }
+
+    #[test]
+    fn paused_and_failed_nas_items_say_so() {
+        let done = || transfer(1, "COMPLETED", Some(50));
+        let paused = waiting_of(vec![done()], vec![queued(10, Some(1), "paused")], None);
+        assert_eq!(paused.unwrap().code, code::PAUSED);
+
+        let mut queue = busy();
+        queue.failures.insert(11, "integrity");
+        let files = vec![queued(10, Some(1), "failed"), queued(11, Some(1), "failed")];
+        let failed = waiting_of(vec![done()], files.clone(), Some(queue)).unwrap();
+        assert_eq!(failed.code, code::FAILED);
+        assert_eq!(failed.kind, Some("integrity"));
+        // After a restart the kind is gone; the item still says it failed
+        let failed = waiting_of(vec![done()], files, None).unwrap();
+        assert_eq!((failed.code, failed.kind), (code::FAILED, None));
     }
 
     fn stage_state(transfer: Transfer, files: Vec<PipelineFile>) -> (Stage, State) {
