@@ -49,6 +49,13 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("usage_stats.js", JS, include_bytes!("../ui/usage_stats.js")),
     ("guides.js", JS, include_bytes!("../ui/guides.js")),
     ("palette.js", JS, include_bytes!("../ui/palette.js")),
+    ("tour.js", JS, include_bytes!("../ui/tour.js")),
+    ("tour_ui.js", JS, include_bytes!("../ui/tour_ui.js")),
+    (
+        "tour_content.js",
+        JS,
+        include_bytes!("../ui/tour_content.js"),
+    ),
     ("theme.js", JS, include_bytes!("../ui/theme.js")),
     ("i18n.js", JS, include_bytes!("../ui/i18n.js")),
     ("translate.js", JS, include_bytes!("../ui/translate.js")),
@@ -188,6 +195,11 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
         "settings/form.js",
         JS,
         include_bytes!("../ui/settings/form.js"),
+    ),
+    (
+        "settings/help.js",
+        JS,
+        include_bytes!("../ui/settings/help.js"),
     ),
     (
         "settings/general.js",

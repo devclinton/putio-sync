@@ -5,6 +5,7 @@
 import { authStatus, getIdentity, getToken, logout, onAuthExpired, post } from "./api.js";
 import { choice, setLanguage, tr } from "./i18n.js";
 import { who } from "./signin.js";
+import { due, readSeen, store } from "./tour.js";
 import * as status from "./pages/status.js";
 import * as active from "./pages/active.js";
 import * as queue from "./pages/queue.js";
@@ -264,6 +265,7 @@ function show(name, mod, params) {
   // Keyboard and screen-reader users land on the new page, not on the link they used
   if (focusNext) view.focus({ preventScroll: true });
   focusNext = false;
+  startTour(name);
 }
 
 // Phones: the bar shows four pages and a More button that opens the rest
@@ -287,6 +289,16 @@ nav.addEventListener("keydown", (ev) => {
 document.addEventListener("click", (ev) => {
   if (nav.classList.contains("more-open") && !nav.contains(ev.target)) closeMore();
 });
+
+// Page tours (feature 014): a page's short tour, the first time it opens in this browser.
+// Never on the sign-in or setup pages; the card and its words load only when one is due.
+let tourUi = null;
+function startTour(name) {
+  if (tourUi) tourUi.then((m) => m.stop(), () => {});
+  if (!due(name, readSeen(store()), { setup: setupMode })) return;
+  tourUi ||= import("./tour_ui.js");
+  tourUi.then((m) => currentName === name && m.start(name), () => (tourUi = null));
+}
 
 function showTitle() {
   document.title = `${tr(TITLES[currentName])} · putio-sync`;
