@@ -23,7 +23,7 @@ clients. They are a Guides part of the docs site and are linked from the UI
 (setup wizard, settings, Doctor, Logs, command palette). Spec:
 `specs/016-onboarding-guides/`.
 
-### 056 Usage profile in the setup wizard
+### 056 Usage profile in the setup wizard (done)
 
 Goal: a new user is set up and syncing in under 60 seconds. The wizard asks
 four things and detects or recommends the rest:
@@ -81,6 +81,10 @@ What the answers set:
 The answers are saved, so Settings can run the profile again later and
 preview the differences as 015 does, without overwriting changes the user
 made by hand.
+
+Done in `specs/056-usage-profile-wizard/`, with Radarr and Sonarr only (no
+Lidarr). Not built: the after-start Radarr/Sonarr check on the wizard (the
+Radarr / Sonarr settings card already runs it).
 
 ## Queued: features
 

@@ -1079,6 +1079,24 @@ caches = ["https://itorrents.net/torrent/{HASH}.torrent"]
 # Checks and reports older than 400 days are deleted at startup and daily.
 
 # ============================================================================
+# Usage profile (written by the setup wizard)
+# ============================================================================
+# The answers to the setup wizard's "How will you use putio-sync?" screen, and the
+# values they set. Settings › General › Usage profile asks again; a setting you
+# changed by hand since (it differs from `applied`) is kept. Leave this section to
+# the wizard; without it everything works as configured below.
+# [profile]
+# kinds = ["movies", "tv"]       # movies, tv, music, books, software, other
+# arr = ["radarr", "sonarr"]     # the *arr apps that send downloads
+# by_hand = true                 # files are also added on Put.io by hand
+# watch = "/watch"               # the folder .torrent and .magnet files are dropped in
+# language = "de"                # the page's language, for subtitles
+# [profile.folders]              # the Put.io folders each kind was found in
+# movies = ["Movies"]
+# [profile.applied]              # the values the profile last set, by setting
+# "download.rules[Movies].preset" = "movies"
+
+# ============================================================================
 # Database Configuration (Advanced)
 # ============================================================================
 # Database location (SQLite): see [database] near the top. Default: .putiosync.db

@@ -44,6 +44,12 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Quick setup: the daemon prints a setup link with the code in it. The wizard asks the
+  language, links Put.io and asks what you download and how it reaches Put.io (Radarr, Sonarr,
+  by hand, a watch folder), then shows the folder rules, release check, Put.io cleanup and
+  subtitles that sets up, each with a switch, and starts syncing. "I'll set it up myself" keeps
+  the step-by-step wizard. Settings › General › Usage profile asks again and keeps settings you
+  changed by hand.
 - `sync.interval_secs` (default 300, at least 10) sets how often Put.io is synced, and is
   followed live. `--download-interval` pins it.
 - Anonymous usage stats (058, part 2), off by default. With `[usage_stats] enabled = true` and

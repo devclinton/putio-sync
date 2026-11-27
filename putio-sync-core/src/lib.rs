@@ -37,6 +37,9 @@ pub mod database;
 /// Settings risks, diffs, export and import (feature 015)
 pub mod assistant;
 
+/// The setup wizard's usage profile: answers to recommended settings (feature 056)
+pub mod profile;
+
 /// Config file warnings for the doctor
 pub mod config_lint;
 

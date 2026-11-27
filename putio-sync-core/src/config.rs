@@ -284,6 +284,9 @@ pub struct Config {
         skip_serializing_if = "crate::usage_stats::UsageStatsConfig::is_default"
     )]
     pub usage_stats: crate::usage_stats::UsageStatsConfig,
+    /// The setup wizard's usage profile: the answers and what it set (feature 056)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<crate::profile::ProfileConfig>,
 }
 
 /// `[doctor]`: how often the daemon runs the doctor's checks (feature 010). The CLI and
@@ -2056,6 +2059,7 @@ impl ConfigBuilder {
             plugin_editor: false,
             plugin_registry: Default::default(),
             usage_stats: Default::default(),
+            profile: None,
         }
     }
 }
@@ -3413,6 +3417,7 @@ mod tests {
             plugin_editor: false,
             plugin_registry: Default::default(),
             usage_stats: Default::default(),
+            profile: None,
         }
     }
 

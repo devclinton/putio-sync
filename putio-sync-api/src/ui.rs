@@ -127,6 +127,17 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
         include_bytes!("../ui/settings/signin.js"),
     ),
     ("pages/setup.js", JS, include_bytes!("../ui/pages/setup.js")),
+    ("profile.js", JS, include_bytes!("../ui/profile.js")),
+    (
+        "profile_view.js",
+        JS,
+        include_bytes!("../ui/profile_view.js"),
+    ),
+    (
+        "settings/profile.js",
+        JS,
+        include_bytes!("../ui/settings/profile.js"),
+    ),
     ("pages/news.js", JS, include_bytes!("../ui/pages/news.js")),
     (
         "pages/update.js",

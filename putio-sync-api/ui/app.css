@@ -951,6 +951,16 @@ button.brow:hover { background: var(--surface-2); }
 .setup-review { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 16px; }
 .setup-review dt { color: var(--muted); }
 .setup-review dd { margin: 0; overflow-wrap: anywhere; }
+.setup-language { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+.setup-language select { width: auto; max-width: 14em; }
+.setup-manual { margin-top: 12px; text-align: center; }
+.profile-questions fieldset { margin: 0 0 12px; }
+.profile-recs { list-style: none; padding: 0; margin: 0 0 12px; display: grid; gap: 10px; }
+.profile-rec { display: grid; gap: 4px; }
+.profile-rec.off strong { color: var(--muted); text-decoration: line-through; }
+.profile-rec .inline { display: flex; align-items: center; gap: 8px; }
+.input-short { max-width: 8em; }
+.profile-diff ul { margin: 0 0 12px; padding-left: 1.2em; overflow-wrap: anywhere; }
 .setup-samples { margin: 0 0 12px; padding-left: 18px; font-size: var(--fs-sm); }
 .setup-samples small { margin-left: 8px; color: var(--muted); }
 

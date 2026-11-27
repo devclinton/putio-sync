@@ -101,7 +101,17 @@ pub(crate) struct Session {
     pub(crate) link: Option<LinkState>,
     /// The `[arr]` draft for Radarr/Sonarr auto-setup, saved at finish
     pub(crate) arr: Option<ArrConfig>,
+    /// The usage profile, applied at finish (feature 056); None on the manual path
+    pub(crate) profile: Option<ProfileDraft>,
     pub(crate) finished: bool,
+}
+
+/// The usage screen's answers, the review screen's changes and the folders found
+#[derive(Debug, Clone)]
+pub(crate) struct ProfileDraft {
+    pub(crate) answers: putio_sync_core::profile::Answers,
+    pub(crate) overrides: std::collections::BTreeMap<String, putio_sync_core::profile::Override>,
+    pub(crate) found: putio_sync_core::profile::Found,
 }
 
 pub(crate) struct Inner {
@@ -110,6 +120,8 @@ pub(crate) struct Inner {
     /// How long a code lasts, in milliseconds (atomic so tests can shorten it on a shared state)
     code_lifetime_ms: std::sync::atomic::AtomicU64,
     hosts: HostPolicy,
+    /// `http://host:port` the console printed, for the setup link (feature 056)
+    link_base: StdMutex<Option<String>>,
     api_token: Option<String>,
     pub(crate) config_path: PathBuf,
     pub(crate) putio_base_url: String,
@@ -149,6 +161,7 @@ impl SetupState {
                     CODE_LIFETIME.as_millis() as u64
                 ),
                 hosts,
+                link_base: StdMutex::new(None),
                 api_token,
                 config_path,
                 putio_base_url: DEFAULT_BASE_URL.to_string(),
@@ -159,6 +172,7 @@ impl SetupState {
                     account: None,
                     link: None,
                     arr: None,
+                    profile: None,
                     finished: false,
                 }),
                 limiter: AuthLimiter::new(AUTH_FAILURE_LIMIT, AUTH_FAILURE_WINDOW),
@@ -195,6 +209,31 @@ impl SetupState {
         self.current_code().0
     }
 
+    /// Remember `http://host:port`, so [`Self::setup_link`] and a replaced code's message
+    /// can print the setup link
+    pub fn set_link_base(&self, base: &str) {
+        *self
+            .inner
+            .link_base
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(base.trim_end_matches('/').to_string());
+    }
+
+    /// `http://host:port/setup#code=…`: the code is in the fragment, which browsers never
+    /// send to the server, so it stays out of access logs and proxies (feature 056)
+    pub fn setup_link(&self) -> Option<String> {
+        self.link_for(&self.code())
+    }
+
+    fn link_for(&self, code: &str) -> Option<String> {
+        self.inner
+            .link_base
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|base| format!("{base}/setup#code={code}"))
+    }
+
     /// The current code and whether it was just replaced
     fn current_code(&self) -> (String, bool) {
         let mut code = self.inner.code.lock().unwrap_or_else(|e| e.into_inner());
@@ -214,6 +253,10 @@ impl SetupState {
         eprintln!();
         eprintln!("      {}", code.0);
         eprintln!();
+        if let Some(link) = self.link_for(&code.0) {
+            eprintln!("  New setup link: {link}");
+            eprintln!();
+        }
         (code.0.clone(), true)
     }
 
@@ -271,6 +314,8 @@ pub fn setup_router(state: SetupState) -> Router {
         .route("/setup/arr/discover", post(handlers::arr_discover))
         .route("/setup/arr/preview", post(handlers::arr_preview))
         .route("/setup/arr/run", post(handlers::arr_run))
+        .route("/setup/profile/detect", get(handlers::profile_detect))
+        .route("/setup/profile", post(handlers::profile_set))
         .route("/setup/dry-run", post(handlers::dry_run))
         .route("/setup/finish", post(handlers::finish))
         .route_layer(axum::middleware::from_fn_with_state(
@@ -284,6 +329,11 @@ pub fn setup_router(state: SetupState) -> Router {
         .route("/setup/status", get(handlers::status))
         .route(
             "/",
+            get(ui::index).layer(CompressionLayer::new().gzip(true)),
+        )
+        // The setup link's page (feature 056); the code is in the fragment
+        .route(
+            "/setup",
             get(ui::index).layer(CompressionLayer::new().gzip(true)),
         )
         .route(

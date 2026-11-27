@@ -1,14 +1,28 @@
 // First-run setup wizard (feature 013). The shell mounts it instead of the dashboard
 // while /auth/status says setup_required. Every /setup/* call carries the setup code
 // (kept in sessionStorage) or an API token; the Put.io token never comes back.
+//
+// Feature 056: the setup link carries the code in its fragment (`/setup#code=…`), so it is
+// never sent to the server in a URL. The quick path asks the language, links Put.io, asks
+// how putio-sync is used and shows what that sets up; "I'll set it up myself" keeps the
+// step-by-step wizard.
 
 import { docs, fill, h, toast } from "../app.js";
 import { guideFor } from "../guides.js";
 import { bytes } from "../format.js";
+import { LANGUAGES, choice, nativeName, setLanguage } from "../i18n.js";
+import { codeFromHash, startAnswers } from "../profile.js";
+import { reviewList, usageForm } from "../profile_view.js";
 
 const CODE_KEY = "putio-sync.setup-code";
 const TOKEN_KEY = "putio-sync.token";
-const STEPS = ["Put.io", "Download folder", "What to download", "Extras", "Review"];
+
+// The steps of each path: [name, screen]
+const FLOWS = {
+  quick: () => [["Language", languageStep], ["Put.io", putioStep], ["How you use it", usageStep], ...(state.needFolder ? [["Download folder", folderStep]] : []), ["Review", profileReviewStep]],
+  manual: () => [["Language", languageStep], ["Put.io", putioStep], ["Download folder", folderStep], ["What to download", downloadStep], ["Extras", extrasStep], ["Review", reviewStep]],
+};
+const flow = () => FLOWS[state.path]();
 
 let root = null;
 let state = null;
@@ -54,7 +68,18 @@ async function call(method, path, body) {
 
 export function mount(el) {
   root = el;
-  state = { step: -1, code: stored("sessionStorage", CODE_KEY), session: null, busy: false };
+  state = { step: -1, code: stored("sessionStorage", CODE_KEY), session: null, busy: false, path: "quick", needFolder: false, detect: null, profile: null, overrides: {}, review: null, arr: {}, linked: false };
+  // The code from the setup link; the fragment is dropped so it isn't kept in history
+  const linked = codeFromHash(window.location.hash);
+  if (linked) {
+    state.code = linked;
+    state.linked = true;
+    try {
+      window.history.replaceState(null, "", "/");
+    } catch {
+      // the code stays in the address bar until the next page
+    }
+  }
   document.title = "Set up · putio-sync";
   start();
 }
@@ -68,6 +93,7 @@ async function start() {
   if (state.code) {
     try {
       await call("POST", "/setup/unlock");
+      stored("sessionStorage", CODE_KEY, state.code);
       await refresh();
       return show(0);
     } catch {
@@ -75,16 +101,31 @@ async function start() {
       state.code = null;
     }
   }
-  render(unlockStep());
+  render(unlockStep(state.linked));
 }
 
 async function refresh() {
   state.session = await call("GET", "/setup/session");
 }
 
+/** The language switcher at the top of every screen */
+function languagePicker(id = "setup-language") {
+  const select = h(
+    "select",
+    { id, class: "input", "aria-label": "Language", onchange: async () => (await setLanguage(select.value)) || toast("Couldn't load that language", "error", "The page stays in English.") },
+    h("option", { value: "", text: "Browser default" }),
+    ["en", ...LANGUAGES].map((code) => h("option", { value: code, translate: "no", lang: code, text: nativeName(code) })),
+  );
+  select.value = choice();
+  return select;
+}
+
 function render(...children) {
   if (!root) return;
-  root.replaceChildren(h("section", { class: "card setup" }, ...children));
+  const top = h("div", { class: "setup-language" }, languagePicker());
+  root.replaceChildren(h("section", { class: "card setup" }, top, ...children));
+  // The language screen has its own picker
+  if (root.querySelector("#setup-language-main")) top.remove();
   const first = root.querySelector("input, select, button.btn-primary");
   if (first) first.focus();
 }
@@ -93,7 +134,7 @@ function progress() {
   return h(
     "ol",
     { class: "setup-steps" },
-    STEPS.map((name, i) =>
+    flow().map(([name], i) =>
       h("li", { class: i === state.step ? "now" : i < state.step ? "done" : null, text: name }),
     ),
   );
@@ -152,17 +193,26 @@ function field(label, input, hint = null) {
 function show(step) {
   clearTimeout(linkTimer);
   state.step = step;
-  const steps = [putioStep, folderStep, downloadStep, extrasStep, reviewStep];
-  render(progress(), steps[step]());
+  render(progress(), flow()[step][1]());
 }
 
 // ---- Unlock -----------------------------------------------------------------
 
-function unlockStep() {
+/** The first screen: the language, before anything else */
+function languageStep() {
+  return [
+    h("h1", { text: "Set up putio-sync" }),
+    h("p", { class: "muted", text: "Choose the language for this page. Subtitles in it are suggested too." }),
+    form([field("Language", languagePicker("setup-language-main")), nav({})], async () => show(state.step + 1)),
+  ];
+}
+
+function unlockStep(linkFailed = false) {
   const input = h("input", { class: "input", type: "password", autocomplete: "one-time-code", autocapitalize: "characters", spellcheck: "false" });
   return [
     h("h1", { text: "Set up putio-sync" }),
     h("p", { class: "muted small" }, docs("guides/index", "", "Setup guide")),
+    linkFailed ? h("p", { class: "error-text", role: "alert", text: "The code in that link didn't work. The daemon makes a new one each time it starts: use the newest link in its log." }) : null,
     h("p", { class: "muted" }, "Enter the setup code printed in the daemon's log or console. An existing API token works too."),
     form([field("Setup code", input), h("button", { type: "submit", class: "btn btn-primary", text: "Continue" })], async (err) => {
       const code = input.value.trim();
@@ -199,7 +249,7 @@ function putioStep() {
     const res = await call("POST", "/setup/putio/token", { token: token.value.trim() });
     token.value = "";
     s.account = res.account;
-    show(0);
+    show(state.step);
   });
   const link = h("button", {
     type: "button",
@@ -235,7 +285,7 @@ function putioStep() {
         e.textContent = "Connect Put.io first.";
         return;
       }
-      show(1);
+      show(state.step + 1);
     }),
   ];
 }
@@ -254,7 +304,7 @@ function appIdForm(s) {
       }
       await call("PUT", "/setup/putio/app-id", { app_id: id });
       s.app_id_available = true;
-      show(0);
+      show(state.step);
     }),
     h("h3", { class: "sub", text: "Or paste a token" }),
   ];
@@ -262,23 +312,206 @@ function appIdForm(s) {
 
 function waitForLink(box, err) {
   linkTimer = setTimeout(async () => {
-    if (!root || state.step !== 0) return;
+    if (!root || flow()[state.step][1] !== putioStep) return;
     try {
       const res = await call("GET", "/setup/putio/link");
       if (res.state === "linked") {
         state.session.account = res.account;
         toast("Put.io linked");
-        return show(0);
+        return show(state.step);
       }
       if (res.state === "expired") {
         box.replaceChildren(h("p", { class: "error-text", text: "The code expired. Link again." }));
-        return show(0);
+        return show(state.step);
       }
     } catch (e) {
       fail(err, e);
     }
     waitForLink(box, err);
   }, 3000);
+}
+
+// ---- How you use it (056) ------------------------------------------------------
+
+/** The suggested download folder, unless one is chosen; the folder screen only if it fails */
+async function ensureFolder() {
+  const s = state.session;
+  if (s.download_dir) return;
+  const path = s.suggestions.download_dir;
+  if (!path) {
+    state.needFolder = true;
+    return;
+  }
+  try {
+    const c = await call("PUT", "/setup/folder", { path, create: true });
+    s.download_dir = c.path;
+    state.needFolder = false;
+  } catch {
+    state.needFolder = true;
+  }
+}
+
+const ARR_NAME = { radarr: "Radarr", sonarr: "Sonarr" };
+
+/** Address and API key for each ticked *arr; they are set up when syncing starts */
+function arrFields(box, kinds) {
+  if (!kinds.length) return box.replaceChildren();
+  const rows = kinds.map((kind) => {
+    const saved = (state.arr[kind] ||= { url: "", key: "", done: false });
+    const url = h("input", { class: "input", type: "text", value: saved.url, placeholder: kind === "radarr" ? "http://radarr:7878" : "http://sonarr:8989", spellcheck: "false", oninput: () => ((saved.url = url.value.trim()), (saved.done = false)) });
+    const key = h("input", { class: "input", type: "password", value: saved.key, autocomplete: "off", spellcheck: "false", oninput: () => ((saved.key = key.value.trim()), (saved.done = false)) });
+    return h("fieldset", { class: "fields" }, h("legend", { text: ARR_NAME[kind] }), field("Address", url), field("API key", key, "Radarr/Sonarr → Settings → General."));
+  });
+  const look = h("button", {
+    type: "button",
+    class: "btn btn-small",
+    text: "Look for them",
+    onclick: async () => {
+      look.disabled = true;
+      try {
+        const found = await call("POST", "/setup/arr/discover");
+        for (const i of found.instances || []) {
+          const a = state.arr[i.kind];
+          if (a && !a.url) a.url = i.url;
+        }
+        if (!(found.instances || []).length) toast("None found; enter the address.");
+        return arrFields(box, kinds);
+      } catch (e) {
+        toast(e.error, "error");
+      }
+      look.disabled = false;
+    },
+  });
+  fill(
+    box,
+    h("h3", { class: "sub", text: "Connect Radarr and Sonarr" }),
+    h("p", { class: "muted", text: "Optional. With an API key, putio-sync becomes their download client when you start; or do it later in Settings › Integrations." }),
+    rows,
+    look,
+  );
+}
+
+function usageStep() {
+  const s = state.session;
+  const box = h("div", {}, h("p", { class: "muted", text: "Looking at your Put.io folders…" }));
+  const arrBox = h("div", {});
+  let questions = null;
+  const ask = (d, warning) => {
+    questions = usageForm({ start: state.profile || startAnswers(null, d.found, d.watch_dir || s.suggestions.watch_dir), found: d.found || {}, onArr: (kinds) => arrFields(arrBox, kinds) });
+    fill(box, warning ? h("p", { class: "warn-text", text: warning }) : null, questions.node);
+  };
+  (state.detect ? Promise.resolve(state.detect) : call("GET", "/setup/profile/detect").then((d) => (state.detect = d))).then(
+    (d) => root && ask(d),
+    (e) => root && ask({ found: {} }, e.error),
+  );
+  return [
+    h("h2", { text: "How will you use putio-sync?" }),
+    h("p", { class: "muted", text: "Your answers pick the settings. The next screen shows each one; change any of them there or later in Settings." }),
+    form([box, arrBox, nav({})], async (err) => {
+      if (!questions) return;
+      const answers = questions.read();
+      if (!answers.kinds.length) {
+        err.textContent = "Pick at least one kind of download.";
+        return;
+      }
+      state.profile = answers;
+      state.overrides = {};
+      await ensureFolder();
+      state.review = await call("POST", "/setup/profile", { answers, overrides: {} });
+      show(state.step + 1);
+    }),
+    h(
+      "p",
+      { class: "setup-manual" },
+      h("button", {
+        type: "button",
+        class: "btn btn-quiet",
+        text: "I'll set it up myself",
+        onclick: async () => {
+          try {
+            await call("POST", "/setup/profile", { answers: null });
+          } catch (e) {
+            return toast(e.error, "error");
+          }
+          state.path = "manual";
+          state.review = null;
+          show(2);
+        },
+      }),
+    ),
+  ];
+}
+
+function profileReviewStep() {
+  const s = state.session;
+  const list = h("div", { role: "status" });
+  let timer = 0;
+  const onChange = (id, override) => {
+    state.overrides[id] = override;
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      try {
+        state.review = await call("POST", "/setup/profile", { answers: state.profile, overrides: state.overrides });
+        if (root) draw();
+      } catch (e) {
+        toast(e.error, "error");
+      }
+    }, 250);
+  };
+  const draw = () => fill(list, reviewList(state.review, { presets: s.presets, onChange }));
+  draw();
+  const ready = (state.profile.arr || []).filter((k) => state.arr[k] && state.arr[k].url && state.arr[k].key);
+  const arr = ready.map((k) => ARR_NAME[k]);
+  // Each app with a key is checked now, so a wrong key shows before Start syncing
+  const arrCheck = h("div", { role: "status" });
+  for (const kind of ready) {
+    const a = state.arr[kind];
+    const line = h("p", { class: "muted", text: `Checking ${ARR_NAME[kind]}…` });
+    arrCheck.append(line);
+    call("POST", "/setup/arr/preview", { target: { url: a.url }, api_key: a.key, remember: true }).then(
+      (p) => ((line.className = p.ok ? "notice" : "error-text"), (line.textContent = p.ok ? `Ready: ${p.name} ${p.version} will get the download client.` : `${ARR_NAME[kind]}: ${p.detail || p.reason}`)),
+      (e) => ((line.className = "error-text"), (line.textContent = `${ARR_NAME[kind]}: ${e.error}`)),
+    );
+  }
+  return [
+    h("h2", { text: "Review" }),
+    h(
+      "dl",
+      { class: "setup-review" },
+      h("dt", { text: "Put.io" }),
+      h("dd", { text: s.account ? s.account.username : "Not connected" }),
+      h("dt", { text: "Download folder" }),
+      h("dd", { translate: "no", text: s.download_dir || "Not chosen" }),
+      (state.profile.arr || []).length ? [h("dt", { text: "Radarr and Sonarr" }), h("dd", { text: arr.join(", ") || "Set up later in Settings" })] : null,
+    ),
+    arrCheck,
+    h("h3", { class: "sub", text: "What your answers set up" }),
+    list,
+    h("p", { class: "muted", text: "Nothing is downloaded until you start. A dry run shows what the first sync would fetch." }),
+    dryRunBox(),
+    form(nav({ next: "Start syncing" }), startSyncing),
+  ];
+}
+
+/** Sets up the *arr apps that have a key, then saves and starts */
+async function startSyncing(err) {
+  for (const kind of state.profile.arr || []) {
+    const a = state.arr[kind];
+    if (!a || !a.url || !a.key || a.done) continue;
+    let r;
+    try {
+      r = await call("POST", "/setup/arr/run", { target: { url: a.url }, api_key: a.key, remember: true });
+    } catch (e) {
+      r = { outcome: "failed", detail: e.error };
+    }
+    if (r.outcome === "failed") {
+      err.textContent = `${ARR_NAME[kind]}: ${r.detail || r.reason}`;
+      return;
+    }
+    a.done = true;
+    state.session.arr_enabled = true;
+  }
+  await finish(err);
 }
 
 // ---- Download folder --------------------------------------------------------
@@ -333,9 +566,11 @@ function folderStep() {
           }
           throw e;
         }
-        show(2);
+        if (state.path === "quick") state.review = await call("POST", "/setup/profile", { answers: state.profile, overrides: state.overrides });
+        show(state.step + 1);
       },
     ),
+    state.path === "manual" ? h("p", { class: "setup-manual" }, h("button", { type: "button", class: "btn btn-quiet", text: "Use the quick setup instead", onclick: () => ((state.path = "quick"), show(2)) })) : null,
   ];
 }
 
@@ -382,7 +617,7 @@ function downloadStep() {
         await call("PUT", "/setup/download", { preset: preset.value || null, folder_rules });
         s.preset = preset.value || null;
         s.folder_rules = folder_rules;
-        show(3);
+        show(state.step + 1);
       },
     ),
   ];
@@ -413,7 +648,7 @@ function extrasStep() {
         await call("PUT", "/setup/extras", { watch_dir: watchOn.checked ? watch.value.trim() : null, metrics: metrics.checked });
         s.watch_dir = watchOn.checked ? watch.value.trim() : null;
         s.metrics = metrics.checked;
-        show(4);
+        show(state.step + 1);
       },
     ),
   ];
@@ -471,9 +706,8 @@ function arrSection(box) {
 
 // ---- Review and finish -------------------------------------------------------
 
-function reviewStep() {
-  const s = state.session;
-  const presetName = (name) => (s.presets.find((p) => p.name === name) || {}).label || name;
+/** The dry run button and its report */
+function dryRunBox() {
   const report = h("div", { role: "status" });
   const dryRun = h("button", {
     type: "button",
@@ -496,6 +730,12 @@ function reviewStep() {
       dryRun.disabled = false;
     },
   });
+  return [dryRun, report];
+}
+
+function reviewStep() {
+  const s = state.session;
+  const presetName = (name) => (s.presets.find((p) => p.name === name) || {}).label || name;
   return [
     h("h2", { text: "Review" }),
     h(
@@ -515,8 +755,7 @@ function reviewStep() {
       h("dd", { text: s.metrics ? "On" : "Off" }),
     ),
     h("p", { class: "muted", text: "Nothing is downloaded until you start. A dry run shows what the first sync would fetch." }),
-    dryRun,
-    report,
+    dryRunBox(),
     form(nav({ next: "Save and start syncing" }), finish),
   ];
 }

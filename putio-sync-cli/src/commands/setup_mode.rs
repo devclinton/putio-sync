@@ -200,16 +200,20 @@ async fn stop_signal() {
 fn banner(path: &Path, reasons: &[String], addr: SocketAddr, state: &SetupState) {
     let host = if addr.ip().is_unspecified() {
         "localhost".to_string()
+    } else if addr.is_ipv6() {
+        format!("[{}]", addr.ip())
     } else {
         addr.ip().to_string()
     };
     eprintln!();
     eprintln!("  putio-sync needs setting up: {}", reasons.join("; "));
-    eprintln!(
-        "  Open http://{}:{}/ and enter the setup code:",
-        host,
-        addr.port()
-    );
+    let base = format!("http://{}:{}", host, addr.port());
+    state.set_link_base(&base);
+    eprintln!("  Open this link to set up:");
+    eprintln!();
+    eprintln!("      {}", state.setup_link().unwrap_or_default());
+    eprintln!();
+    eprintln!("  Or open {base}/ and enter the setup code:");
     eprintln!();
     eprintln!("      {}", state.code());
     eprintln!();
