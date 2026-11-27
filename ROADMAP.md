@@ -384,6 +384,74 @@ SHA-256 and manifest (it starts off), shows what an update changes before making
 the old version back when the new one does not load, and removes registry plugins. The
 doctor warns about withdrawn or delisted ones. See `specs/059-plugin-registry/`.
 
+### 062 Watchlist sources
+
+Add transfers to Put.io from lists the user already keeps, for people who run
+no Radarr or Sonarr. A source is an RSS or Atom feed the user supplies (a
+tracker's feed, a show's feed); each new item's magnet or .torrent link is
+added to Put.io once. Per source: a poll interval, a Put.io folder, include
+and exclude patterns, and the 042 release pre-check before anything is added.
+Seen items are remembered so nothing is added twice, and a dry run lists what
+a source would add. Trakt, Letterboxd and IMDb watchlists are a later step:
+they name titles, not releases, so they need a release search that putio-sync
+does not have. To settle in the spec: whether that step is in scope at all.
+
+### 063 Library reconciliation
+
+One page, and a doctor check, that compare what is on Put.io, what is on
+disk and what Radarr/Sonarr hold, and list what disagrees:
+
+- on Put.io but never downloaded (and not excluded by a rule);
+- downloaded, but the Put.io copy is gone (expected with delete after
+  download, so only shown when it is off);
+- on disk and incomplete, or failing its 034 check;
+- waiting in an *arr queue for an import that never came.
+
+Each row has one fix: download, queue again, delete from Put.io, or open in
+the *arr app. Fixes that delete ask first, and bulk actions follow 008. The
+data is in the history database, Local files (044) and the *arr integration
+already; nothing joins it yet. Read-only until a fix is chosen.
+
+### 064 Download windows and a storage budget
+
+Bandwidth schedules (032) limit speed, not whether to download. This adds
+rules for when downloads may run and how full things may get:
+
+- **Windows**: download only inside set hours, per day of the week; outside
+  them the queue waits and says why.
+- **Local disk**: pause when the download disk is under a set free space,
+  resume above it (on top of the disk hold, which skips single files).
+- **Put.io budget**: keep the account under a set share of its space by
+  removing the oldest finished, already-downloaded files first (033's
+  free-up, with a budget in place of a button). It deletes, so it is off by
+  default and shows what it would remove before it is turned on.
+- **Forecast**: the Stats page shows when the local disk and the Put.io
+  account fill at the current rate.
+
+Every rule applies live (hot reload) and shows on the Active page as the
+reason a download is waiting.
+
+### 065 Short README and a generated config reference
+
+The README is over 2,600 lines and mixes install steps, every config key,
+the metrics and API tables and internals. Cut it to about a page: what
+putio-sync is, a 60-second install, and links. Move the reference material
+to the docs site (054, 016), one page per topic, with redirects or anchors
+kept for links that already point into the README. Add a config reference
+generated from the code, so it cannot drift: every setting with its default,
+its environment variable, and whether it applies live or needs a restart
+(`putio_sync_core::restart::RESTART_ONLY`). CI fails when the generated page
+is out of date.
+
+### 066 Say why something is waiting
+
+Behaviour that is correct but silent gets one plain line where the user is
+looking. Each row on the Active and queue pages says why it is not
+downloading (a folder rule, the release pre-check, disk space, a bandwidth
+schedule, a setting that needs a restart) and links to the setting that
+caused it. Error messages say what happened and what to do, and link to the
+matching 016 guide. 064 adds its own reasons to the same line.
+
 ### Magnet file lists from peers (deferred from 043)
 
 When the .torrent caches never have a magnet's file list, fetch it from
