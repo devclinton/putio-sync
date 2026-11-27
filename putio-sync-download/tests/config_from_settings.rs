@@ -33,6 +33,13 @@ fn non_default_settings() -> DownloadSettings {
         max_retries: 9,
         retry_initial_delay_secs: 11,
         min_free_space_mb: 7,
+        windows: vec![putio_sync_core::download_window::WindowEntry {
+            days: "daily".to_string(),
+            start: "01:00".to_string(),
+            end: "07:00".to_string(),
+        }],
+        pause_free_space_mb: 3,
+        resume_free_space_mb: 5,
         blocked_extensions: vec!["exe".to_string(), "iso".to_string()],
         rules: vec![FolderRule {
             path: "Movies".to_string(),
@@ -60,6 +67,9 @@ fn every_manager_field_comes_from_settings() {
             max_retries: 9,
             retry_initial_delay_secs: 11,
             min_free_space_bytes: 7 * 1024 * 1024,
+            windows: settings.windows.clone(),
+            pause_free_space_bytes: 3 * 1024 * 1024,
+            resume_free_space_bytes: 5 * 1024 * 1024,
             workers: 7,
             delete_after_download: true,
             stream_mp4: false,

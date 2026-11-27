@@ -571,6 +571,8 @@ buffer_size_mb = 16        # Stream buffer size for downloads
 resume_enabled = true      # Enable automatic resume
 on_existing = "resume"     # A file already on disk: resume, overwrite or keep_both
 min_free_space_mb = 5120   # Hold new downloads under this much free space; 0 = off
+pause_free_space_mb = 0    # Pause every download under this much free space; 0 = off
+resume_free_space_mb = 0   # A pause ends at this much free; 0 = 1024 MB above the pause level
 ```
 
 **Low disk space.** While the download folder has less than `min_free_space_mb` free
@@ -579,6 +581,37 @@ does a file that would take the free space under the minimum. Downloads that are
 running continue. The daemon logs a warning once, the Status page shows a "Low disk
 space" notice (`low_disk` in `GET /status`), and downloads start again by themselves when
 space is back. Doctor's disk check reports the same floor. Set it to `0` to turn this off.
+
+**Disk pause.** `pause_free_space_mb` is the harder stop: while the download folder has
+less free space than this, nothing new starts and running downloads pause where they are.
+They go on by themselves once `resume_free_space_mb` is free (0 means 1024 MB above the
+pause level; it must be above the pause level), so a disk that hovers at the limit does not
+flap. Free space that can't be read does not start a pause. Waiting rows say `Paused for
+disk space` with both levels.
+
+**Download hours.** Downloads run only inside the `[[download.windows]]` entries; with
+none they run at any time. Outside them the queue waits, running downloads pause, and
+each waiting row says when the hours reopen. Entries are written like the bandwidth
+schedule's (`days`, `start`, `end`, in the daemon's local time; an end before the start
+runs past midnight), there may be up to 50, and overlapping ones simply add up. On the
+night clocks change, a window follows the wall clock.
+
+```toml
+[[download.windows]]       # weeknights
+days = "mon-fri"
+start = "23:00"
+end = "07:00"
+
+[[download.windows]]       # all weekend
+days = "sat,sun"
+start = "00:00"
+end = "24:00"
+```
+
+Both rules are in Settings › Downloads › Download hours and disk pause, apply without a
+restart, hold the one-off `download` command too, and pause verify runs that follow
+bandwidth pauses. Mistakes are refused with the entry and field named, such as
+`download.windows entry 1: start '25:00': expected HH:MM between 00:00 and 23:59`.
 
 ### When a file already exists
 
@@ -1250,7 +1283,7 @@ daemon's download manager and watcher:
 | Group | Applies live | Needs a restart |
 |---|---|---|
 | Logging | `level`, `module_filters`, `buffer_lines`, at once (level and filters are ignored while `RUST_LOG` is set) | `console_format`, `console_enabled`, `file_*` |
-| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`, `slow_limit_bytes_per_sec` (running downloads too), `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `min_free_space_mb`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, `verify`, `verify_max_redownloads`, `verify_read_limit_mb_per_sec`, `verify_follow_bandwidth_pause`, for the next download or verify run | `target_directory` (new downloads go there at once, but the disk figures stay on the startup folder), and the rest of the group |
+| Download | `workers` (the pool scales), `bandwidth_limit_bytes_per_sec`, `bandwidth_schedule`, `slow_limit_bytes_per_sec`, `windows`, `pause_free_space_mb`, `resume_free_space_mb` (running downloads too), `buffer_size_mb`, `max_retries`, `retry_initial_delay_secs`, `min_free_space_mb`, `on_existing`, `resume_enabled`, `delete_after_download`, `blocked_extensions`, `verify`, `verify_max_redownloads`, `verify_read_limit_mb_per_sec`, `verify_follow_bandwidth_pause`, for the next download or verify run | `target_directory` (new downloads go there at once, but the disk figures stay on the startup folder), and the rest of the group |
 | Watcher | everything, at the next scan (also the watcher Start/Stop endpoints); `refresh_cycle` unless `--watch-interval` pins it | — |
 | Cleanup | `enabled`, `run_at`, `min_age_hours`, `nested`, from the next run or schedule check | — |
 | Release check | — | everything |
@@ -1407,6 +1440,7 @@ addresses, for a plugin server or an indexer on the same machine.
 | `GET /settings/assistant` | Per group: what each field affects, the fields that apply live, the defaults; and the risks of the running config |
 | `GET /settings/export` | The settings as a TOML file, without `[auth]`, `api.auth_token` and `[arr]` |
 | `POST /settings/import` | `{"toml": "...", "apply": false, "confirm_exec"?}` → a preview with `changes` (dotted keys), `risks`, `unknown` and `ignored`; with `true`, saves it and adds `message`. A file that adds or changes a hook command, `subtitles.transcription.ffmpeg_path` or `plugins_dir` shows a danger risk and `needs_confirm_exec`, and applying it needs `"confirm_exec": true`. 400 for invalid TOML (line number only), a refused config, a file over 1 MB or a missing `confirm_exec` |
+| `GET /stats/forecast` | When the download disk (`local`) and the Put.io account (`putio`) fill at the rate of the last week: `state` (`filling`, `not_enough_data`, `not_growing`, `full`), `days_left`, `full_at`, `rate_bytes_per_day`, `total_bytes`, `used_bytes` |
 | `GET /stats/releases?range=` | Rejected releases and bytes kept off the NAS, by stage and reason; magnet lookups by cache; fallbacks to Put.io; report counts with the top file types and trackers |
 | `GET /releases/reports?range=&format=json\|csv` | The rejection and flag reports as a download: file types, sizes and tracker hosts, never a link, magnet or passkey |
 | `GET /releases/flags?file_id=&history_id=&arr_hash=&report_id=` | The flags on up to 200 releases, and which of the `file_id`s a Radarr/Sonarr item holds |
@@ -2217,12 +2251,37 @@ warn_free_percent = 10     # warn below this percent free (1-89)
 target_free_percent = 20   # free up until this percent is free (above warn, up to 90)
 auto_free = false          # daemon: free up once a day when below the warning level
 run_at = "02:30"           # time of day for the automatic run, 24-hour local time
+budget_enabled = false     # daemon: delete old downloaded files to stay under the budget
+budget_used_percent = 90   # the budget: the share of the account that may be used (10-99)
 ```
+
+**Storage budget.** With `budget_enabled = true` the daemon keeps the account under
+`budget_used_percent`: about every 15 minutes it reads the account, and when more than
+the budget is used it deletes the oldest files until it is back under. It deletes, so it
+is off by default, and it only ever deletes a file that passes every rule above: a
+finished download is recorded for it and the local file is there with the same size.
+Each file is checked again right before its delete, each deletion is logged (`Deleted
+Put.io file to free space`, `trigger=budget`), shows in History, and is listed under
+**Recent runs** as a `storage budget` run; hooks get `cleanup.deleted` with
+`reason: "storage_budget"`. When it is over budget and nothing may be deleted it says so
+in the log and looks again in an hour. Settings › Put.io › Put.io storage has **Preview
+what it would delete**, which lists the files for the budget you entered and deletes
+nothing; the switch there can be turned on only after that preview. (The config file and
+the API can turn it on without one.) `POST /putio/storage/budget/preview`
+(`{"used_percent": 80}`, or no body for the saved budget) is the same dry run.
 
 The same settings are in the web UI under Settings › Put.io › Put.io storage, and the CLI has
 [`files free-space`](#files-free-space). The API is `GET /putio/storage`,
 `POST /putio/storage/plan`, `POST /putio/storage/free` (`{plan_id, file_ids}`) and
 `GET /putio/storage/runs`.
+
+**Forecast.** The Stats page says when the download disk and the Put.io account fill.
+The daemon stores one reading an hour of each (30 days are kept) and fits a line through
+the last week. It gives a date only with at least a day of readings; otherwise it says
+that there is not enough data, or that the disk is not filling up (level or falling use,
+or more than ten years away). `GET /stats/forecast` returns `local` and `putio`, each
+with `state` (`filling`, `not_enough_data`, `not_growing`, `full`), `total_bytes`,
+`used_bytes`, `rate_bytes_per_day`, `days_left` and `full_at`.
 
 ### Put.io Empty-Folder Cleanup
 

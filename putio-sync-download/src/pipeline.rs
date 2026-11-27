@@ -667,7 +667,7 @@ fn nas_item(
 }
 
 /// Why a NAS item is not downloading: a failure, its pause, or what holds its pending
-/// files back. `None` while a file runs.
+/// files back. `None` while a file runs, unless a rule stops every download (064).
 fn nas_waiting(
     input: &BuildInput,
     state: State,
@@ -693,6 +693,8 @@ fn nas_waiting(
             .queue
             .as_ref()?
             .for_pending_files(with_status("pending").map(|f| f.size)),
+        // A closed download window or the free-space pause stops running files in place
+        State::Downloading => input.queue.as_ref()?.stopped(),
         _ => None,
     }
 }

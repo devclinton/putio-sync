@@ -105,6 +105,14 @@ pub async fn run_storage(storage: Arc<StorageService>) {
             if let Err(e) = storage.refresh().await {
                 debug!("Could not read Put.io storage: {}", e);
             }
+            // The storage budget (feature 064): does nothing unless it is turned on
+            match storage.budget_run().await {
+                Ok(_) => {}
+                Err(StorageError::AlreadyRunning) => {
+                    info!("Storage budget check skipped: a free-up is in progress")
+                }
+                Err(e) => warn!("Storage budget check failed: {}", e),
+            }
         }
         let config = storage.config();
         let run_at = if config.auto_free {

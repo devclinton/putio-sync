@@ -25,7 +25,7 @@ export const SECTIONS = [
     id: "downloads",
     title: "Downloads",
     help: "Where files go and how they are downloaded: how many at once, how fast and when, and how each file is checked once it arrives, and which subtitles are saved next to videos.",
-    cards: [["download", "Downloads"], ["bandwidth", "Bandwidth"], ["verify", "Verification"], ["subtitles", "Subtitles"], ["translation", "Translation"]],
+    cards: [["download", "Downloads"], ["bandwidth", "Bandwidth"], ["hours", "Download hours and disk pause"], ["verify", "Verification"], ["subtitles", "Subtitles"], ["translation", "Translation"]],
   },
   {
     id: "rules",

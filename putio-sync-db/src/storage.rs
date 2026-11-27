@@ -42,7 +42,19 @@ pub struct StorageRun {
     pub deleted: Vec<StorageRunFile>,
 }
 
-/// Repository for `storage_runs` and `storage_run_files`
+/// How full a disk was at a time (feature 064)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromRow)]
+pub struct UsageSample {
+    /// Unix seconds
+    pub taken_at: i64,
+    pub used: i64,
+    pub total: i64,
+}
+
+/// Samples older than this are deleted when a new one is added
+const SAMPLE_KEEP_SECS: i64 = 30 * 86_400;
+
+/// Repository for `storage_runs`, `storage_run_files` and `usage_samples`
 pub struct StorageRepository<'a> {
     pool: &'a SqlitePool,
 }
@@ -125,6 +137,56 @@ impl<'a> StorageRepository<'a> {
         Ok(files.rows_affected() + runs.rows_affected())
     }
 
+    /// Record that `kind` (`local` or `putio`) had `used` of `total` bytes in use at
+    /// `at` (Unix seconds), unless it has a sample less than `min_gap_secs` old. Samples
+    /// older than 30 days go when one is added. True when it was recorded.
+    pub async fn add_sample(
+        &self,
+        kind: &str,
+        at: i64,
+        used: i64,
+        total: i64,
+        min_gap_secs: i64,
+    ) -> DbResult<bool> {
+        const CONTEXT: &str = "Failed to record a usage sample";
+        let added = sqlx::query(
+            "INSERT INTO usage_samples (kind, taken_at, used, total) SELECT ?, ?, ?, ? \
+             WHERE NOT EXISTS (SELECT 1 FROM usage_samples WHERE kind = ? AND taken_at > ?)",
+        )
+        .bind(kind)
+        .bind(at)
+        .bind(used)
+        .bind(total)
+        .bind(kind)
+        .bind(at - min_gap_secs)
+        .execute(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, CONTEXT))?
+        .rows_affected()
+            > 0;
+        if added {
+            sqlx::query("DELETE FROM usage_samples WHERE taken_at < ?")
+                .bind(at - SAMPLE_KEEP_SECS)
+                .execute(self.pool)
+                .await
+                .map_err(tracked(DbOp::Other, CONTEXT))?;
+        }
+        Ok(added)
+    }
+
+    /// The samples of `kind` taken at or after `since` (Unix seconds), oldest first
+    pub async fn samples(&self, kind: &str, since: i64) -> DbResult<Vec<UsageSample>> {
+        sqlx::query_as::<_, UsageSample>(
+            "SELECT taken_at, used, total FROM usage_samples WHERE kind = ? AND taken_at >= ? \
+             ORDER BY taken_at",
+        )
+        .bind(kind)
+        .bind(since)
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to read usage samples"))
+    }
+
     /// The latest `limit` runs, newest first, each with its files in deletion order
     pub async fn recent_runs(&self, limit: i64) -> DbResult<Vec<StorageRun>> {
         const CONTEXT: &str = "Failed to read storage runs";
@@ -198,5 +260,45 @@ mod tests {
         assert!(!runs[1].finished_at.is_empty());
 
         assert_eq!(repo.recent_runs(1).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn samples_are_spaced_listed_oldest_first_and_pruned() {
+        let dir = TempDir::new().unwrap();
+        let db = Database::new(dir.path().join("test.db")).await.unwrap();
+        let repo = db.storage();
+        const HOUR: i64 = 3600;
+        let t0 = 1_800_000_000;
+        assert!(repo.add_sample("putio", t0, 10, 100, HOUR).await.unwrap());
+        // Too soon for the same kind, fine for another
+        assert!(!repo
+            .add_sample("putio", t0 + HOUR - 1, 11, 100, HOUR)
+            .await
+            .unwrap());
+        assert!(repo
+            .add_sample("local", t0 + 60, 5, 50, HOUR)
+            .await
+            .unwrap());
+        assert!(repo
+            .add_sample("putio", t0 + HOUR, 12, 100, HOUR)
+            .await
+            .unwrap());
+
+        let putio = repo.samples("putio", 0).await.unwrap();
+        assert_eq!(
+            putio
+                .iter()
+                .map(|s| (s.taken_at, s.used, s.total))
+                .collect::<Vec<_>>(),
+            vec![(t0, 10, 100), (t0 + HOUR, 12, 100)]
+        );
+        assert_eq!(repo.samples("putio", t0 + 1).await.unwrap().len(), 1);
+        assert_eq!(repo.samples("local", 0).await.unwrap().len(), 1);
+
+        // 31 days on, a new sample removes every older one
+        let later = t0 + 31 * 86_400;
+        assert!(repo.add_sample("local", later, 6, 50, HOUR).await.unwrap());
+        assert!(repo.samples("putio", 0).await.unwrap().is_empty());
+        assert_eq!(repo.samples("local", 0).await.unwrap().len(), 1);
     }
 }

@@ -14,6 +14,8 @@ const SETTINGS = {
   "download.bandwidth_schedule": ["Bandwidth schedule", "card-bandwidth"],
   "download.bandwidth_limit_bytes_per_sec": ["Bandwidth limit (bytes/s)"],
   "download.min_free_space_mb": ["Minimum free space (MB)"],
+  "download.windows": ["Download hours", "card-hours"],
+  "download.pause_free_space_mb": ["Pause below free space (MB)"],
   "download.target_directory": ["Download folder"],
   "download.workers": ["Workers"],
 };
@@ -66,6 +68,12 @@ export function waitingLine(w) {
     case "disk_space": {
       const [free, min] = space(w);
       return line(`Waiting for disk space: ${free} free, ${min} must stay free.`, "warn");
+    }
+    case "download_window":
+      return line(w.until_local ? `Outside the download hours; downloads start again at ${clock(w.until_local)} (the daemon's clock).` : "Outside the download hours.", "warn");
+    case "disk_pause": {
+      const [free, min] = space(w);
+      return line(`Paused for disk space: ${free} free, under the ${min} pause level. Downloads resume at ${bytes(w.resume_bytes)} free.`, "warn");
     }
     case "disk_unreadable":
       return line("Waiting: the free space of the download folder can't be read, so nothing starts.", "warn", settingLink(w.setting), guide("troubleshooting"));

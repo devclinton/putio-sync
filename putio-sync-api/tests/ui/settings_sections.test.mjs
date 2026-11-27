@@ -28,7 +28,7 @@ test("field addresses map to input ids", () => {
 });
 
 test("the subtitles card is in Downloads", () => {
-  assert.deepEqual(sectionOf("downloads").cards.map(([id]) => id), ["download", "bandwidth", "verify", "subtitles", "translation"]);
+  assert.deepEqual(sectionOf("downloads").cards.map(([id]) => id), ["download", "bandwidth", "hours", "verify", "subtitles", "translation"]);
   assert.deepEqual(linkParts("Turn them on in Settings › Downloads › Subtitles."), ["Turn them on in ", { text: "Settings › Downloads › Subtitles", href: "#/settings/downloads?field=card-subtitles" }, "."]);
 });
 

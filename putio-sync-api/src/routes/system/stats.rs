@@ -56,6 +56,7 @@ pub fn router() -> Router<AppState> {
         .route("/disk", get(disk_stats))
         .route("/summary", get(summary))
         .route("/releases", get(releases))
+        .route("/forecast", get(forecast))
 }
 
 /// Pre-aggregated download statistics for one range and filter set
@@ -250,6 +251,20 @@ async fn disk_stats(State(state): State<AppState>) -> Result<Json<DiskStats>, Ap
             )))
         }
     }
+}
+
+/// GET /stats/forecast: when the download disk and the Put.io account fill at the rate
+/// of the last week (feature 064). Each has `state`: `filling` (with `days_left` and
+/// `full_at`), `not_enough_data`, `not_growing` or `full`. Reads stored samples only.
+async fn forecast(
+    State(state): State<AppState>,
+) -> Result<Json<putio_sync_storage::Forecasts>, ApiError> {
+    state
+        .storage
+        .forecast()
+        .await
+        .map(Json)
+        .map_err(|e| ApiError::Internal(e.to_string()))
 }
 
 #[cfg(test)]

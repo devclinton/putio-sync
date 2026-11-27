@@ -72,6 +72,7 @@ export const HELP = {
   watcher: { text: "Watches folders on this machine for .torrent files and sends each one to Put.io. Other programs can drop files there to start a download.", guide: "guides/watch-folders" },
   download: { text: "Where downloaded files are saved, how many download at once, and what happens when a file already exists. Start with the defaults and change one thing at a time.", guide: "guides/first-sync" },
   stream: { text: "Choose between saving files on this machine and leaving them on Put.io to play through your media server. Stream mode needs the media server turned on.", guide: "guides/media-server" },
+  hours: { text: "Sets the hours downloads may run in, and pauses them all when the download disk is nearly full. Outside the hours the queue waits and says why.", guide: "guides/first-sync" },
   bandwidth: { text: "Limits how fast putio-sync downloads, all the time or at set hours, so it does not slow down everyone else on your network.", guide: "guides/first-sync" },
   verify: { text: "Checks each file after it arrives by comparing it with what Put.io says it should be. A file that does not match is downloaded again.", guide: "guides/troubleshooting" },
   subtitles: { text: "Saves subtitles next to each video, in the languages you choose, so your player or media server finds them without extra steps.", guide: "guides/media-server" },

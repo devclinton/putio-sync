@@ -415,7 +415,7 @@ the *arr app. Fixes that delete ask first, and bulk actions follow 008. The
 data is in the history database, Local files (044) and the *arr integration
 already; nothing joins it yet. Read-only until a fix is chosen.
 
-### 064 Download windows and a storage budget
+### 064 Download windows and a storage budget (done)
 
 Bandwidth schedules (032) limit speed, not whether to download. This adds
 rules for when downloads may run and how full things may get:

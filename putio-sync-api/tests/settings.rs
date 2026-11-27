@@ -119,6 +119,9 @@ async fn download_settings_round_trip() {
             "retry_initial_delay_secs",
             "delete_empty_folders",
             "min_free_space_mb",
+            "windows",
+            "pause_free_space_mb",
+            "resume_free_space_mb",
             "bandwidth_schedule",
             "slow_limit_bytes_per_sec",
             "verify",
@@ -291,7 +294,8 @@ async fn storage_settings_round_trip() {
     let body = get_ok(&app, path).await;
     assert_eq!(
         body,
-        json!({"warn_free_percent": 10, "target_free_percent": 20, "auto_free": false, "run_at": "02:30"})
+        json!({"warn_free_percent": 10, "target_free_percent": 20, "auto_free": false, "run_at": "02:30",
+               "budget_enabled": false, "budget_used_percent": 90})
     );
 
     put_changed(&app, path, body.clone(), "target_free_percent", json!(30)).await;
@@ -307,6 +311,71 @@ async fn storage_settings_round_trip() {
 
     let message = message(&app, path, "auto_free", json!(true)).await;
     assert!(message.contains("only under `daemon`"), "{message}");
+
+    // Feature 064: the budget is off until asked for, checked, and kept by an old body
+    let body = get_ok(&app, path).await;
+    put_invalid(&app, path, body.clone(), "budget_used_percent", json!(5)).await;
+    put_invalid(&app, path, body.clone(), "budget_used_percent", json!(100)).await;
+    put_changed(&app, path, body.clone(), "budget_used_percent", json!(80)).await;
+    put_changed(
+        &app,
+        path,
+        get_ok(&app, path).await,
+        "budget_enabled",
+        json!(true),
+    )
+    .await;
+    assert!(app.state.storage.config().budget_enabled);
+    let mut old = get_ok(&app, path).await;
+    old.as_object_mut().unwrap().remove("budget_enabled");
+    old.as_object_mut().unwrap().remove("budget_used_percent");
+    let (status, response) = put(&app, path, old).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let kept = saved(&app).storage;
+    assert!(kept.budget_enabled);
+    assert_eq!(kept.budget_used_percent, 80);
+}
+
+#[tokio::test]
+async fn download_windows_and_the_space_pause_are_checked_saved_and_live() {
+    let app = test_app().await;
+    let path = "/settings/download";
+    let body = get_ok(&app, path).await;
+    assert_eq!(body["windows"], json!([]));
+    assert_eq!(body["pause_free_space_mb"], json!(0));
+    assert_eq!(body["resume_free_space_mb"], json!(0));
+
+    put_invalid(
+        &app,
+        path,
+        body.clone(),
+        "windows",
+        json!([{"days": "mon", "start": "25:00", "end": "06:00"}]),
+    )
+    .await;
+    let mut bad = body.clone();
+    bad["pause_free_space_mb"] = json!(2000);
+    bad["resume_free_space_mb"] = json!(1000);
+    let (status, error) = put(&app, path, bad).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{error}");
+    assert!(
+        error.to_string().contains("resume_free_space_mb"),
+        "{error}"
+    );
+
+    let nights = json!([{"days": "mon-fri", "start": "23:00", "end": "07:00"}]);
+    put_changed(&app, path, body, "windows", nights).await;
+    assert_eq!(saved(&app).download.windows.len(), 1);
+    let body = get_ok(&app, path).await;
+    put_changed(&app, path, body, "pause_free_space_mb", json!(5000)).await;
+    assert_eq!(saved(&app).download.pause_free_space_bytes(), 5000 << 20);
+    assert_eq!(saved(&app).download.resume_free_space_bytes(), 6024 << 20);
+
+    // Neither needs a restart
+    assert!(!putio_sync_core::restart::RESTART_ONLY
+        .iter()
+        .flat_map(|(_, keys)| keys.iter())
+        .any(|k| k.contains("windows") || k.contains("free_space")));
 }
 
 #[tokio::test]

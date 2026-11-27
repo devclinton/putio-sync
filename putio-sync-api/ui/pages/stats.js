@@ -5,6 +5,7 @@
 
 import { downloadReports, get, releaseStats } from "../api.js";
 import { empty as emptyState, h, toastError } from "../app.js";
+import { forecastLine } from "../download_limits.js";
 import { bytes, duration, speed } from "../format.js";
 
 const RANGES = { "24h": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "90d": "Last 90 days", "1y": "Last year", all: "All time" };
@@ -26,6 +27,7 @@ let f = {};
 let els = null;
 let data = null;
 let releases = null;
+let forecast = null;
 let seq = 0;
 let sel = { bar: null, cell: null, heat: "bytes" };
 let resize = null;
@@ -144,6 +146,8 @@ async function load() {
   els.body.classList.add("loading");
   // The release tiles are optional: a failure there leaves the rest of the page
   const rel = releaseStats(f.range, tz).catch(() => null);
+  // So is the forecast (feature 064), which no filter changes
+  const fore = get("/stats/forecast").catch(() => null);
   let res;
   try {
     res = await get(`/stats/summary?${q}`);
@@ -162,10 +166,11 @@ async function load() {
     );
     throw e;
   }
-  const relRes = await rel;
+  const [relRes, foreRes] = [await rel, await fore];
   if (mine !== seq || !els) return;
   data = res;
   releases = relRes;
+  forecast = foreRes;
   els.body.classList.remove("loading");
   renderFilters();
   render();
@@ -185,7 +190,7 @@ function render() {
   els.plot = null;
   els.body.replaceChildren(
     h("div", { class: "tiles" }, tile("Files", count(t.files)), tile("Downloaded", bytes(t.bytes)), tile("Time downloading", t.seconds ? duration(t.seconds) : "—"), tile("Average speed", t.avg_bps ? speed(t.avg_bps) : "—")),
-    h("div", { class: "stats-grid" }, card("Bandwidth", empty ? null : bandwidth()), card("When", empty ? null : heatmap()), card("File types", empty ? null : types()), card("Origin", empty ? null : origin()), card("Sources", empty ? null : sources()), rejectedCard(), magnetsCard(), heldCard(), reportsCard()),
+    h("div", { class: "stats-grid" }, card("Bandwidth", empty ? null : bandwidth()), card("When", empty ? null : heatmap()), card("File types", empty ? null : types()), card("Origin", empty ? null : origin()), card("Sources", empty ? null : sources()), rejectedCard(), magnetsCard(), heldCard(), reportsCard(), forecastCard()),
   );
   if (els.plot) drawBars();
 }
@@ -546,6 +551,25 @@ function heldCard() {
   ];
   const median = held.median_found_secs == null ? "" : ` Found ones took ${duration(held.median_found_secs)} (median).`;
   return h("section", { class: "card" }, h("h2", { text: title }), countList(null, rows, ended), h("p", { text: `${count(held.now)} waiting now.${median}` }));
+}
+
+/** When the download disk and the Put.io account fill (feature 064) */
+function forecastCard() {
+  const title = "Forecast";
+  if (!forecast) return h("section", { class: "card" }, h("h2", { text: title }), emptyState("Can't load the forecast"));
+  const row = (label, disk) => {
+    const line = forecastLine(disk);
+    if (!line) return null;
+    return h("div", { class: "spaced" }, h("h3", { class: "sub", text: label }), line.use ? h("p", { class: "muted", text: line.use }) : null, h("p", { class: line.tone === "warn" ? "warn-text" : null, text: line.text }));
+  };
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: title }),
+    row("Download disk", forecast.local),
+    row("Put.io account", forecast.putio),
+    h("p", { class: "muted small", text: "From one reading an hour over the last week; a rate that changes moves the date." }),
+  );
 }
 
 function reportsCard() {

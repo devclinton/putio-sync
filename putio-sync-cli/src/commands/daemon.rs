@@ -784,6 +784,9 @@ mod tests {
                 rules: putio_sync_core::rules::RuleSet::from_config(&config.download),
                 verify: putio_sync_download::manager::VerifySettings::default(),
                 min_free_space_bytes: config.download.min_free_space_bytes(),
+                windows: config.download.windows.clone(),
+                pause_free_space_bytes: config.download.pause_free_space_bytes(),
+                resume_free_space_bytes: config.download.resume_free_space_bytes(),
             }
         );
         assert_eq!(

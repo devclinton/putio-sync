@@ -64,6 +64,12 @@ pub struct DownloadConfig {
     pub retry_initial_delay_secs: u64,
     /// New downloads wait while free space (less the file) is under this; 0 = off
     pub min_free_space_bytes: u64,
+    /// Hours downloads may run in; none means always (feature 064)
+    pub windows: Vec<putio_sync_core::download_window::WindowEntry>,
+    /// Every download pauses while free space is under this; 0 = off (feature 064)
+    pub pause_free_space_bytes: u64,
+    /// A `pause_free_space_bytes` pause ends once this much is free
+    pub resume_free_space_bytes: u64,
     /// Number of concurrent download workers
     pub workers: usize,
     /// Delete files from Put.io after successful download
@@ -109,6 +115,16 @@ impl From<&putio_sync_core::config::DownloadConfig> for VerifySettings {
 }
 
 impl DownloadConfig {
+    /// The download windows and the free-space pause (feature 064)
+    pub fn gate_rules(&self) -> crate::gates::Rules {
+        crate::gates::Rules {
+            windows: putio_sync_core::download_window::Windows::from_entries(&self.windows),
+            pause_bytes: self.pause_free_space_bytes,
+            resume_bytes: self.resume_free_space_bytes,
+            dir: self.target_directory.clone(),
+        }
+    }
+
     /// The default limit, the schedule and the slow limit
     pub fn bandwidth_policy(&self) -> Policy {
         Policy::new(
@@ -146,6 +162,9 @@ impl Default for DownloadConfig {
             retry_initial_delay_secs: 2,
             min_free_space_bytes: putio_sync_core::config::DownloadConfig::DEFAULT_MIN_FREE_SPACE_MB
                 * 1024 * 1024,
+            windows: Vec::new(),
+            pause_free_space_bytes: 0,
+            resume_free_space_bytes: 0,
             workers: 1,
             delete_after_download: false,
             stream_mp4: true,
@@ -173,6 +192,9 @@ impl From<&putio_sync_core::config::DownloadConfig> for DownloadConfig {
             max_retries: settings.max_retries,
             retry_initial_delay_secs: settings.retry_initial_delay_secs,
             min_free_space_bytes: settings.min_free_space_bytes(),
+            windows: settings.windows.clone(),
+            pause_free_space_bytes: settings.pause_free_space_bytes(),
+            resume_free_space_bytes: settings.resume_free_space_bytes(),
             workers: settings.workers,
             delete_after_download: settings.delete_after_download,
             stream_mp4: settings.stream_mp4,
@@ -298,6 +320,20 @@ impl Drop for SpaceGuard {
 /// Free bytes on the volume that holds (or will hold) `dir`. A directory that doesn't
 /// exist yet is measured through its nearest existing parent, since the download creates
 /// it. `None` when it can't be read; that is logged at most every [`SPACE_WARN_EVERY`].
+/// A limiter following `config`'s bandwidth settings, held by its download windows and
+/// free-space pause (feature 064)
+fn gated_limiter(config: &DownloadConfig) -> (RateLimiter, Arc<crate::gates::Gates>) {
+    let warned = Mutex::new(None);
+    let gates = Arc::new(crate::gates::Gates::new(
+        config.gate_rules(),
+        Arc::new(move |dir: &Path| free_bytes_of(dir, &warned)),
+    ));
+    let limiter = RateLimiter::from_policy(config.bandwidth_policy());
+    let gate = gates.clone();
+    limiter.set_gate(Arc::new(move |now| gate.check(now.naive_local()).is_some()));
+    (limiter, gates)
+}
+
 fn free_bytes_of(dir: &Path, warned: &Mutex<Option<Instant>>) -> Option<u64> {
     let mut probe = dir;
     loop {
@@ -801,6 +837,8 @@ pub struct DownloadManager {
     pub(crate) finish_seen: Arc<tokio::sync::Mutex<Option<crate::finished::SeenItems>>>,
     /// The one bandwidth limiter every download shares (feature 032)
     pub(crate) bandwidth: RateLimiter,
+    /// The download windows and the free-space pause, asked by `bandwidth` (feature 064)
+    gates: Arc<crate::gates::Gates>,
     /// The "verify everything" run (feature 034)
     pub(crate) verifier: crate::verify::VerifyRunner,
     /// Moves a file's folder while the processing pipeline stages it (feature 038)
@@ -899,11 +937,13 @@ impl DownloadManager {
         config: DownloadConfig,
     ) -> Self {
         let overall_progress = Arc::new(RwLock::new(OverallProgress::new(0, 0)));
+        let (bandwidth, gates) = gated_limiter(&config);
 
         Self {
             client,
             database: Some(database),
-            bandwidth: RateLimiter::from_policy(config.bandwidth_policy()),
+            bandwidth,
+            gates,
             config: Arc::new(RwLock::new(config)),
             progress_trackers: Arc::new(RwLock::new(HashMap::new())),
             progress_event_ms: Arc::new(std::sync::atomic::AtomicU64::new(PROGRESS_EVENT_MS)),
@@ -948,11 +988,13 @@ impl DownloadManager {
         let overall_progress = Arc::new(RwLock::new(OverallProgress::new(0, 0)));
 
         warn!("Download manager initialized without database - download tracking disabled");
+        let (bandwidth, gates) = gated_limiter(&config);
 
         Self {
             client,
             database: None,
-            bandwidth: RateLimiter::from_policy(config.bandwidth_policy()),
+            bandwidth,
+            gates,
             config: Arc::new(RwLock::new(config)),
             progress_trackers: Arc::new(RwLock::new(HashMap::new())),
             progress_event_ms: Arc::new(std::sync::atomic::AtomicU64::new(PROGRESS_EVENT_MS)),
@@ -1020,6 +1062,7 @@ impl DownloadManager {
         let new_worker_count = new_config.workers;
 
         self.bandwidth.set_policy(new_config.bandwidth_policy());
+        self.gates.set_rules(new_config.gate_rules());
 
         // Update configuration
         {
@@ -1033,6 +1076,11 @@ impl DownloadManager {
                 config.bandwidth_schedule.len()
             );
             info!("  Buffer size: {} MB", config.buffer_size_mb);
+            info!(
+                "  Download windows: {}, pause below {} bytes free",
+                config.windows.len(),
+                config.pause_free_space_bytes
+            );
         }
 
         // Handle worker scaling if count changed
@@ -3275,7 +3323,8 @@ impl DownloadManager {
     ///
     /// true if an item was processed, false if queue is empty
     pub async fn process_queue(&self) -> DownloadResult<bool> {
-        // Paused by the schedule or a pause: claim nothing (running files wait in place)
+        // Paused by the schedule, a pause, a closed download window or the free-space
+        // pause: claim nothing (running files wait in place)
         if self.bandwidth.is_paused() {
             return Ok(false);
         }
@@ -3523,8 +3572,11 @@ impl DownloadManager {
                 .unwrap_or(0),
             None => 0,
         };
+        // Reading the limit asks the gates, so their answer below is of now
+        self.bandwidth.is_paused();
         crate::waiting::QueueState {
             bandwidth: crate::waiting::bandwidth_hold(&self.bandwidth.status()),
+            rule: self.gates.hold().map(crate::waiting::rule_hold),
             nas_paused: self.nas_paused().await,
             min_free_bytes,
             free_bytes: (min_free_bytes > 0)
