@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthMethod, Config};
+use putio_sync_core::t;
 use putio_sync_file_manager::TorrentWatcher;
 use std::path::PathBuf;
 use tracing::{debug, info};
@@ -133,11 +134,21 @@ async fn add_magnet_link(
         .await
         .context("Failed to add magnet link")?;
 
-    println!("✓ Transfer added: {} (ID: {})", transfer.name, transfer.id);
-    println!("  Status: {}", transfer.status);
-    println!("  Size: {}", format_bytes(transfer.size.unwrap_or(0)));
+    println!(
+        "{}",
+        t!(
+            "✓ Transfer added: {0} (ID: {1})",
+            transfer.name,
+            transfer.id
+        )
+    );
+    println!("  {}", t!("Status: {0}", transfer.status));
+    println!(
+        "  {}",
+        t!("Size: {0}", format_bytes(transfer.size.unwrap_or(0)))
+    );
     if let Some(parent) = parent_id {
-        println!("  Parent folder: {}", parent);
+        println!("  {}", t!("Parent folder: {0}", parent));
     }
 
     Ok(())
@@ -167,11 +178,21 @@ async fn add_torrent_file(
         .await
         .context("Failed to upload .torrent file")?;
 
-    println!("✓ Transfer added: {} (ID: {})", transfer.name, transfer.id);
-    println!("  Status: {}", transfer.status);
-    println!("  Size: {}", format_bytes(transfer.size.unwrap_or(0)));
+    println!(
+        "{}",
+        t!(
+            "✓ Transfer added: {0} (ID: {1})",
+            transfer.name,
+            transfer.id
+        )
+    );
+    println!("  {}", t!("Status: {0}", transfer.status));
+    println!(
+        "  {}",
+        t!("Size: {0}", format_bytes(transfer.size.unwrap_or(0)))
+    );
     if let Some(parent) = parent_id {
-        println!("  Parent folder: {}", parent);
+        println!("  {}", t!("Parent folder: {0}", parent));
     }
 
     Ok(())
@@ -187,12 +208,18 @@ async fn process_watch_directories(
 
     for dir in watch_dirs {
         if !dir.exists() {
-            eprintln!("Warning: Watch directory does not exist: {}", dir.display());
+            eprintln!(
+                "{}",
+                t!(
+                    "Warning: Watch directory does not exist: {0}",
+                    dir.display()
+                )
+            );
             continue;
         }
 
         if !dir.is_dir() {
-            eprintln!("Warning: Not a directory: {}", dir.display());
+            eprintln!("{}", t!("Warning: Not a directory: {0}", dir.display()));
             continue;
         }
 
@@ -202,12 +229,15 @@ async fn process_watch_directories(
         let torrent_files = find_torrent_files(dir)?;
 
         if torrent_files.is_empty() {
-            println!("No .torrent files found in {}", dir.display());
+            println!("{}", t!("No .torrent files found in {0}", dir.display()));
         } else {
             println!(
-                "Found {} .torrent file(s) in {}",
-                torrent_files.len(),
-                dir.display()
+                "{}",
+                t!(
+                    "Found {0} .torrent file(s) in {1}",
+                    torrent_files.len(),
+                    dir.display()
+                )
             );
 
             for file in torrent_files {

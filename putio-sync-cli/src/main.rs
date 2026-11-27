@@ -2,10 +2,10 @@
 //!
 //! Command-line interface for putio-sync
 
-mod cli;
 mod logging;
 
 // Import from library
+use putio_sync_cli::cli;
 use putio_sync_cli::commands;
 
 #[cfg(feature = "server")]
@@ -53,6 +53,8 @@ fn get_version_with_commit() -> String {
 const MAIN_STACK_SIZE: usize = 8 * 1024 * 1024;
 
 fn main() {
+    // The language first: help and argument errors are already translated (060)
+    putio_sync_cli::i18n::init();
     let cli = std::thread::Builder::new()
         .name("main".to_string())
         .stack_size(MAIN_STACK_SIZE)
@@ -86,6 +88,13 @@ async fn run() {
             "putio-sync",
             &mut std::io::stdout(),
         );
+        let _ = std::io::stdout().flush();
+        return;
+    }
+
+    // The language list needs no config, token or logging (feature 060)
+    if let Commands::Languages { json } = &args.command {
+        let _ = commands::languages::execute(*json, &mut std::io::stdout().lock());
         let _ = std::io::stdout().flush();
         return;
     }
@@ -199,7 +208,7 @@ async fn run() {
     // Handle commands
     let result = match args.command {
         // Handled above, before config and logging
-        Commands::Completions { .. } => Ok(()),
+        Commands::Completions { .. } | Commands::Languages { .. } => Ok(()),
         Commands::Login {
             no_save,
             no_browser,
@@ -561,7 +570,8 @@ async fn run() {
     // Handle command execution errors
     if let Err(e) = result {
         // `{:#}` prints the whole cause chain, not just the outermost context
-        eprintln!("Error: {:#}", e);
+        // Only the prefix is translated; the chain is the same text the log has
+        eprintln!("{}", putio_sync_core::t!("Error: {0}", format!("{e:#}")));
         error!("Error: {:#}", e);
         std::process::exit(1);
     }

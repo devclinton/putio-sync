@@ -125,6 +125,21 @@ The `i18n` feature is on in `default` and added to both lite builds in the relea
 `INSTALLATION.md`'s build commands. Without it, `i18n::select` still runs (so `--lang` is accepted
 and warns) but only English exists: under 20 KiB.
 
+**Measured (2026-11-27, macOS arm64, release, lite build of `putio-sync-cli`)**: packing each
+catalog whole came to 434 KiB for 27 languages, over SC-004. The build script now stores the
+English keys once (a deflated JSON array) and each language as a deflated array of values in the
+same order (`null` where a string is not translated): 243 KiB packed (248,805 bytes).
+
+| Build | Size |
+|---|---|
+| lite, English only (`--no-default-features`) | 17,375,456 bytes |
+| lite with `i18n` | 17,660,448 bytes (+278 KiB) |
+
+The full build embeds the same payload; it was not built in release here (disk space).
+Start-up, median of 60 runs of `languages --json`: English-only build 29.3 ms; `i18n` build
+25.4 ms in English, 28.2 ms in German, 25.9 ms in Japanese. The gap is inside the run-to-run
+noise (under 3 ms), within SC-005's 10 ms.
+
 **Alternatives**: One compressed bundle of all languages: smaller by ~10% but inflates 1 MB at every
 start. `zstd`: better ratio, new C dependency. `lzma-rs` (in the tree via `putio-sync-update`): its
 encoder doesn't compress meaningfully.

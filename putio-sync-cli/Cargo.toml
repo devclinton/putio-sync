@@ -21,7 +21,9 @@ path = "src/main.rs"
 # transfer and queue commands. `hooks` and `plugins` add event hooks and Lua/WebAssembly
 # plugins to it; the lite releases are `--features hooks` and `--features hooks,plugins`.
 [features]
-default = ["server"]
+default = ["server", "i18n"]
+# The translation catalogs (feature 060). Leave it out for an English-only build.
+i18n = []
 hooks = ["dep:putio-sync-hooks", "putio-sync-doctor/hooks"]
 plugins = ["dep:putio-sync-plugins", "putio-sync-doctor/plugins"]
 server = [
@@ -106,6 +108,12 @@ urlencoding = "2.1"
 # Progress bars
 indicatif = "0.18"
 
+# Column widths for wide (CJK) and combining characters (feature 060)
+unicode-width = "0.2"
+
+# The embedded translation catalogs are deflated (feature 060)
+flate2 = "1"
+
 # Signal handling
 ctrlc = "3.4"
 
@@ -120,6 +128,10 @@ sysinfo = { workspace = true }
 # Reading the Put.io token without echo
 rpassword = "7.5"
 
+[build-dependencies]
+flate2 = "1"
+serde_json = { workspace = true }
+
 [dev-dependencies]
 tempfile = "3.8"
 tokio = { workspace = true, features = ["test-util"] }
@@ -127,7 +139,6 @@ assert_cmd = "2.0"
 predicates = "3.0"
 assert_fs = "1.1"
 mockito = "1.2"
-flate2 = "1"
 
 [[test]]
 name = "archive"

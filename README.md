@@ -374,6 +374,14 @@ It prints each file (size, id, date added, Put.io path and local copy) and the t
 then asks before deleting unless `--yes`. It needs the download database (see
 [Database Location](#database-location)). The exit code is non-zero when any delete fails.
 
+### `languages`
+
+List the languages the CLI can show, and the one in use. See [Language](#language).
+
+```bash
+putio-sync languages [--json]
+```
+
 ### `doctor`
 
 Run the health checks and print a report. See [Doctor](#doctor) for what is checked.
@@ -528,6 +536,34 @@ putio-sync history --output csv > history.csv
 
 <!-- ANCHOR_END: commands -->
 <!-- ANCHOR: configuration -->
+## Language
+
+The CLI's help, command output, prompts, table headers and doctor report come in the web
+UI's 26 languages as well as English. The language is the first of these that names one
+putio-sync has:
+
+1. `--lang <code>`, anywhere on the command line: `putio-sync --lang de status`
+2. the `PUTIO_SYNC_LANG` environment variable
+3. `language` under `[ui]` in the config file (the web UI's "Automatic" uses it too)
+4. the system locale: `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`
+5. English
+
+`putio-sync languages` lists the codes and says which one is in use and why. A code
+putio-sync does not have prints one line on standard error and the next choice is used;
+`-q` hides the line, and the exit code does not change. `C` and `POSIX` mean English.
+
+```toml
+[ui]
+language = "de"
+```
+
+Some things are the same in every language, so scripts keep working: `--json` and `--csv`
+output, exit codes, log lines, command, flag and value names, and the text of an error after
+the translated `Error:`. A yes/no question takes `y` or `yes` as well as the language's own
+word. The translations are machine-made; a string with no translation shows in English.
+The catalogs are `putio-sync-cli/i18n/<code>.json`, and a correction is an edit to one
+line. A build without the `i18n` feature has English only.
+
 ## Configuration
 
 Configuration is stored at `~/.putiosync/config.toml`. See `config.example.toml` for a complete example with all options documented.
@@ -1123,7 +1159,8 @@ Matching is loose, so "subt" finds Subtitles. Arrow keys move, Enter opens, Esc 
 
 ### Languages
 
-The UI follows the browser's language when it has a translation, and English otherwise.
+With **Automatic**, the UI uses `[ui] language` from the config file when it is set, then
+the browser's language when it has a translation, and English otherwise.
 **Settings › General › Language** picks another one for this browser and switches at once.
 Translations are machine-made for Arabic, Chinese (simplified and traditional), Danish, Dutch,
 Finnish, French, German, Hebrew, Hindi, Indonesian, Italian, Japanese, Korean, Malay,

@@ -254,6 +254,9 @@ pub struct Config {
     /// Update checks against GitHub Releases (feature 055)
     #[serde(default, skip_serializing_if = "UpdatesConfig::is_default")]
     pub updates: UpdatesConfig,
+    /// Language for the CLI and the web UI's "Automatic" choice (feature 060)
+    #[serde(default, skip_serializing_if = "UiConfig::is_default")]
+    pub ui: UiConfig,
     /// Organising files stream mode keeps on Put.io (feature 023)
     #[serde(
         default,
@@ -313,6 +316,29 @@ impl DoctorConfig {
     /// Time between scheduled runs
     pub fn interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_minutes.max(5) * 60)
+    }
+}
+
+/// `[ui]`: the language for the CLI and for the web UI's "Automatic" choice (feature 060).
+/// Left out of a saved config while unset, so older files round-trip unchanged.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct UiConfig {
+    /// A code from `putio-sync languages`, such as "de" or "pt-PT". Stored as written; an
+    /// unknown value counts as unset (the CLI warns once, and the doctor reports it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+}
+
+impl UiConfig {
+    /// Nothing set
+    pub fn is_default(&self) -> bool {
+        self.language.is_none()
+    }
+
+    /// The language, when one is set and we have it
+    pub fn lang(&self) -> Option<crate::i18n::Lang> {
+        crate::i18n::Lang::get(self.language.as_deref()?)
     }
 }
 
@@ -2087,6 +2113,7 @@ impl ConfigBuilder {
             sign_in: crate::sign_in::SignInConfig::default(),
             dlna: DlnaConfig::default(),
             updates: UpdatesConfig::default(),
+            ui: UiConfig::default(),
             organise: Default::default(),
             hooks: Vec::new(),
             plugins_dir: None,
@@ -3466,6 +3493,7 @@ mod tests {
             sign_in: crate::sign_in::SignInConfig::default(),
             dlna: DlnaConfig::default(),
             updates: UpdatesConfig::default(),
+            ui: UiConfig::default(),
             organise: Default::default(),
             hooks: Vec::new(),
             plugins_dir: None,
@@ -3476,6 +3504,22 @@ mod tests {
             usage_stats: Default::default(),
             profile: None,
         }
+    }
+
+    #[test]
+    fn ui_language_round_trips_and_unknown_is_unset() {
+        let config: Config = toml::from_str("[ui]\nlanguage = \"pt_PT\"\n").unwrap();
+        assert_eq!(config.ui.language.as_deref(), Some("pt_PT"));
+        assert_eq!(config.ui.lang().map(|l| l.code), Some("pt-PT"));
+        let saved = toml::to_string(&config).unwrap();
+        assert!(saved.contains("[ui]\nlanguage = \"pt_PT\""), "{saved}");
+
+        let unknown: Config = toml::from_str("[ui]\nlanguage = \"xx\"\n").unwrap();
+        assert_eq!(unknown.ui.lang(), None);
+        // Unset leaves no [ui] table in a saved config
+        assert!(!toml::to_string(&Config::default())
+            .unwrap()
+            .contains("[ui]"));
     }
 
     #[test]

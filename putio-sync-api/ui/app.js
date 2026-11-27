@@ -2,8 +2,8 @@
 // Pages export { mount(el, params), unmount() } and import helpers from here,
 // api.js and format.js; they never import each other.
 
-import { authStatus, getIdentity, getToken, logout, onAuthExpired, post } from "./api.js";
-import { choice, setLanguage, tr } from "./i18n.js";
+import { authStatus, get, getIdentity, getToken, logout, onAuthExpired, post } from "./api.js";
+import { choice, setConfigured, setLanguage, tr } from "./i18n.js";
 import { who } from "./signin.js";
 import { due, readSeen, store } from "./tour.js";
 import * as status from "./pages/status.js";
@@ -595,7 +595,15 @@ find.addEventListener("click", openPalette);
 find.setAttribute("aria-keyshortcuts", MAC ? "Meta+K" : "Control+K");
 find.querySelector("kbd").textContent = MAC ? "⌘K" : "Ctrl+K";
 
-// The saved or browser language (feature 051), before the first page shows
+// The saved language (feature 051), else the config's (060), else the browser's, before the
+// first page shows. The sign-in page can't read settings and skips the call.
+if (!choice() && getToken()) {
+  try {
+    setConfigured((await get("/settings/ui")).language);
+  } catch {
+    // the browser's languages decide
+  }
+}
 await setLanguage(choice(), false);
 
 // A daemon without a usable config serves the setup wizard instead

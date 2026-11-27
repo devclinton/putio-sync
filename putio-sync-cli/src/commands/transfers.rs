@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthMethod, Config};
+use putio_sync_core::t;
 use serde::Serialize;
 use std::path::PathBuf;
 use tracing::info;
@@ -74,19 +75,15 @@ pub async fn execute_cancel(
 
     // Confirm deletion unless --yes flag is provided
     if !yes {
-        println!("This will cancel {} transfer(s):", transfer_ids.len());
+        println!(
+            "{}",
+            t!("This will cancel {0} transfer(s):", transfer_ids.len())
+        );
         for id in &transfer_ids {
-            println!("  - Transfer {}", id);
+            println!("  {}", t!("- Transfer {0}", id));
         }
-        print!("Continue? [y/N] ");
-        use std::io::{self, Write};
-        io::stdout().flush()?;
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-
-        if !input.trim().eq_ignore_ascii_case("y") {
-            println!("Cancelled");
+        if !crate::ui::confirm(&t!("Continue?"))? {
+            println!("{}", t!("Cancelled"));
             return Ok(());
         }
     }
@@ -97,7 +94,10 @@ pub async fn execute_cancel(
         .await
         .context("Failed to cancel transfers")?;
 
-    println!("Successfully cancelled {} transfer(s)", transfer_ids.len());
+    println!(
+        "{}",
+        t!("Successfully cancelled {0} transfer(s)", transfer_ids.len())
+    );
 
     Ok(())
 }
@@ -115,7 +115,7 @@ pub async fn execute_retry(transfer_id: i64, config_path: Option<PathBuf>) -> Re
         .await
         .context("Failed to retry transfer")?;
 
-    println!("Successfully retried transfer {}", transfer_id);
+    println!("{}", t!("Successfully retried transfer {0}", transfer_id));
 
     Ok(())
 }
@@ -161,11 +161,11 @@ fn create_api_client(config: &Config) -> Result<PutioApiClient> {
 /// Display transfers in table format
 fn display_table(transfers: &[TransferDisplay]) -> Result<()> {
     if transfers.is_empty() {
-        println!("No active transfers");
+        println!("{}", t!("No active transfers"));
         return Ok(());
     }
 
-    println!("\nActive Transfers");
+    println!("\n{}", t!("Active Transfers"));
     println!("{}", "═".repeat(120));
     println!(
         "{:<8} {:<10} {:<50} {:>12} {:>8} {:>12} {:>8}",
@@ -210,7 +210,7 @@ fn display_table(transfers: &[TransferDisplay]) -> Result<()> {
     }
 
     println!("{}", "═".repeat(120));
-    println!("Total: {} transfer(s)\n", transfers.len());
+    println!("{}\n", t!("Total: {0} transfer(s)", transfers.len()));
 
     Ok(())
 }

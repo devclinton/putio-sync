@@ -230,13 +230,18 @@ Radarr and Sonarr must not import an item before its pipeline is done:
   import back forever: after a set number of retries the item completes
   without it, and the failure shows on the item and in notifications.
 
-### 060 Multi-language CLI
+### 060 Multi-language CLI (done)
 
-The CLI's help, command output, prompts, table headers and error messages in the 051
-languages, from built-in catalogs keyed by English text and filled by the same translation
-service. Picked by `--lang`, then `PUTIO_SYNC_LANG`, then the config's UI language (shared with
-056), then the OS locale, then English. `--json`, `--csv`, exit codes and log lines stay
-English. A build can leave the catalogs out. See `specs/060-cli-i18n/`.
+The CLI's help, command output, prompts, table headers, doctor report and common argument
+errors in the 051 languages, from catalogs built into the binary (`putio-sync-cli/i18n/`,
+keyed by English text, filled by the same translation service and compressed). Picked by
+`--lang`, then `PUTIO_SYNC_LANG`, then `[ui] language` in the config (also the web UI's
+"Automatic", through `GET`/`PUT /settings/ui`), then the OS locale, then English;
+`putio-sync languages` shows the choice. `--json`, `--csv`, exit codes and log lines stay
+English, and a build without the `i18n` feature has English only. Tables now measure names by
+display width. Left for later: review by native speakers, plural forms (messages use
+"file(s)"), the progress bars, status words that come from data, the support bundle, and
+daemon messages shown in the web UI. See `specs/060-cli-i18n/`.
 
 ### 061 Command palette (done)
 

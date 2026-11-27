@@ -4,8 +4,10 @@
 
 #[cfg(feature = "server")]
 pub mod api_listener;
+pub mod cli;
 pub mod commands;
 pub mod diagnostics;
+pub mod i18n;
 pub mod output;
 pub mod services;
 #[cfg(feature = "server")]

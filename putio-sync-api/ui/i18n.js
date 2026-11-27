@@ -9,6 +9,13 @@ const RTL = new Set(["ar", "he"]);
 
 let lang = "en";
 let translator = null;
+// `[ui] language` from the config (feature 060): what "Automatic" uses before the browser's
+let configured = null;
+
+/** Tell the UI the config's language, or null. Takes effect at the next setLanguage. */
+export function setConfigured(code) {
+  configured = match(String(code || "").replace(/_/g, "-").split(".")[0]);
+}
 
 /** The catalog language for a browser tag such as "pt-BR" or "zh-Hant-TW", or null */
 export function match(tag) {
@@ -20,7 +27,7 @@ export function match(tag) {
   return base === "en" || LANGUAGES.includes(base) ? base : null;
 }
 
-/** The saved choice: a language code, or "" for the browser's */
+/** The saved choice: a language code, or "" for Automatic */
 export function choice() {
   try {
     const saved = window.localStorage.getItem(KEY) || "";
@@ -46,7 +53,7 @@ export function nativeName(code) {
   }
 }
 
-/** Show the UI in `code` ("" follows the browser) and save it. Resolves false when the catalog can't load. */
+/** Show the UI in `code` ("" is Automatic: the config's language, then the browser's) and save it. Resolves false when the catalog can't load. */
 export async function setLanguage(code, save = true) {
   if (save) {
     try {
@@ -56,7 +63,7 @@ export async function setLanguage(code, save = true) {
       // not remembered, still applied
     }
   }
-  const want = code || (navigator.languages || [navigator.language]).map(match).find(Boolean) || "en";
+  const want = code || configured || (navigator.languages || [navigator.language]).map(match).find(Boolean) || "en";
   let catalog = {};
   let ok = true;
   if (want !== "en") {

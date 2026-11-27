@@ -18,6 +18,7 @@ use futures_util::FutureExt;
 use putio_sync_client::{AccountProbe, FileWalk, PutioApiClient, Transfer};
 use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::Config;
+use putio_sync_core::msg;
 use putio_sync_core::stall::StallTracker;
 use putio_sync_db::Database;
 use std::panic::AssertUnwindSafe;
@@ -127,7 +128,9 @@ impl Ctx {
     async fn putio_unusable(&self) -> Option<Finding> {
         let (probe, _) = self.probe().await;
         probe.result.as_ref().err().map(|_| {
-            Finding::skipped("Skipped because Put.io could not be used; see the sign-in check.")
+            Finding::skipped(msg!(
+                "Skipped because Put.io could not be used; see the sign-in check."
+            ))
         })
     }
 }
@@ -173,11 +176,11 @@ async fn detect(ctx: &Ctx, id: CheckId) -> Finding {
         #[cfg(feature = "plugins")]
         Plugins => plugins::plugins(ctx).await,
         #[cfg(not(feature = "tailscale"))]
-        Tailscale => Finding::skipped("Skipped: this putio-sync build has no web UI."),
+        Tailscale => Finding::skipped(msg!("Skipped: this putio-sync build has no web UI.")),
         #[cfg(not(feature = "hooks"))]
-        Hooks => Finding::skipped("Skipped: this putio-sync build has no event hooks."),
+        Hooks => Finding::skipped(msg!("Skipped: this putio-sync build has no event hooks.")),
         #[cfg(not(feature = "plugins"))]
-        Plugins => Finding::skipped("Skipped: this putio-sync build has no plugins."),
+        Plugins => Finding::skipped(msg!("Skipped: this putio-sync build has no plugins.")),
         SignIn => sign_in::sign_in(ctx).await,
         Crashes => crashes::crashes(ctx).await,
     }
@@ -191,14 +194,19 @@ pub(crate) async fn finding(ctx: &Ctx, id: CheckId) -> Finding {
         Ok(Ok(finding)) => finding,
         Ok(Err(_)) => {
             warn!(check = id.as_str(), "Doctor check panicked");
-            Finding::new(Status::Problem, "The check could not complete: it crashed.")
-                .suggest("See the putio-sync logs for details.")
+            Finding::new(
+                Status::Problem,
+                msg!("The check could not complete: it crashed."),
+            )
+            .suggest(msg!("See the putio-sync logs for details."))
         }
         Err(_) => Finding::new(
             Status::Problem,
-            "The check could not complete: the doctor ran out of time.",
+            msg!("The check could not complete: the doctor ran out of time."),
         )
-        .suggest("Run the doctor again; if it keeps happening, Put.io may be slow."),
+        .suggest(msg!(
+            "Run the doctor again; if it keeps happening, Put.io may be slow."
+        )),
     }
 }
 

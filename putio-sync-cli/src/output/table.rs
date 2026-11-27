@@ -1,21 +1,25 @@
 //! Table output formatter
 
-use super::{format_bytes, format_timestamp};
+use super::{format_bytes, format_timestamp, pad, truncate};
 use putio_sync_client::FileEntry;
+use putio_sync_core::t;
 
 /// Format files as a table
 pub fn format_table(files: &[FileEntry]) -> String {
     if files.is_empty() {
-        return "No files found.\n".to_string();
+        return format!("{}\n", t!("No files found."));
     }
 
     let mut output = String::new();
 
     // Header
-    output.push_str(&format!(
-        "{:<12} {:<40} {:<12} {:<20} {:<10}\n",
-        "ID", "Name", "Size", "Modified", "Type"
-    ));
+    output.push_str(&row(&[
+        &t!("ID"),
+        &t!("Name"),
+        &t!("Size"),
+        &t!("Modified"),
+        &t!("Type"),
+    ]));
     output.push_str(&"─".repeat(100));
     output.push('\n');
 
@@ -35,25 +39,29 @@ pub fn format_table(files: &[FileEntry]) -> String {
 
         let file_type = file.file_type.to_lowercase();
 
-        output.push_str(&format!(
-            "{:<12} {:<40} {:<12} {:<20} {:<10}\n",
-            file.id,
-            truncate(&name, 40),
-            size_str,
-            format_timestamp(&file.created_at),
-            file_type
-        ));
+        output.push_str(&row(&[
+            &file.id.to_string(),
+            &truncate(&name, 40),
+            &size_str,
+            &format_timestamp(&file.created_at),
+            &file_type,
+        ]));
     }
 
     output
 }
 
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() > max_len {
-        format!("{}...", &s[..max_len - 3])
-    } else {
-        s.to_string()
-    }
+/// Column widths, in terminal columns
+const COLUMNS: [usize; 5] = [12, 40, 12, 20, 10];
+
+/// One line of the table, each cell padded to its column by display width
+fn row(cells: &[&str; 5]) -> String {
+    let padded: Vec<String> = cells
+        .iter()
+        .zip(COLUMNS)
+        .map(|(cell, columns)| pad(cell, columns))
+        .collect();
+    format!("{}\n", padded.join(" ").trim_end())
 }
 
 #[cfg(test)]
@@ -100,5 +108,26 @@ mod tests {
         let files = vec![];
         let output = format_table(&files);
         assert!(output.contains("No files found"));
+    }
+
+    #[test]
+    fn wide_and_multi_byte_names_do_not_panic_and_line_up() {
+        use crate::output::width;
+        // 45 CJK characters: a multi-byte character sits across byte 37, where the old
+        // byte slice panicked
+        let cjk = "映".repeat(45);
+        let files = vec![
+            create_test_file(1, &cjk, 10, "VIDEO"),
+            create_test_file(2, &format!("{}é.mkv", "a".repeat(36)), 10, "VIDEO"),
+            create_test_file(3, "short.mkv", 10, "VIDEO"),
+        ];
+        let output = format_table(&files);
+        let size_column: Vec<usize> = output
+            .lines()
+            .skip(2)
+            .map(|line| width(&line[..line.find("10 B").unwrap()]))
+            .collect();
+        assert_eq!(size_column, [54, 54, 54], "{output}");
+        assert!(output.contains("..."));
     }
 }

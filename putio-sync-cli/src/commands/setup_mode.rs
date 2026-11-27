@@ -9,6 +9,7 @@ use putio_sync_client::{PutioApiClient, DEFAULT_BASE_URL};
 use putio_sync_core::config::Config;
 use putio_sync_core::listen::ListenAddr;
 use putio_sync_core::setup::{check_local, SetupReason};
+use putio_sync_core::t;
 use putio_sync_tailscale::{Cli, TailscaleService};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -117,11 +118,20 @@ async fn serve(
                     said = true;
                     warn!(bind = %shown.join(", "), "Setup mode is not listening yet; edit the config file or run `putio-sync setup`");
                     eprintln!();
-                    eprintln!("  putio-sync needs setting up: {}", reasons.join("; "));
-                    eprintln!("  It is waiting to listen on {}.", shown.join(", "));
                     eprintln!(
-                        "  Or run `putio-sync setup --config {}` in a terminal.",
-                        shown_path(&path)
+                        "  {}",
+                        t!("putio-sync needs setting up: {0}", reasons.join("; "))
+                    );
+                    eprintln!(
+                        "  {}",
+                        t!("It is waiting to listen on {0}.", shown.join(", "))
+                    );
+                    eprintln!(
+                        "  {}",
+                        t!(
+                            "Or run `putio-sync setup --config {0}` in a terminal.",
+                            shown_path(&path)
+                        )
                     );
                     eprintln!();
                 }
@@ -206,35 +216,50 @@ fn banner(path: &Path, reasons: &[String], addr: SocketAddr, state: &SetupState)
         addr.ip().to_string()
     };
     eprintln!();
-    eprintln!("  putio-sync needs setting up: {}", reasons.join("; "));
+    eprintln!(
+        "  {}",
+        t!("putio-sync needs setting up: {0}", reasons.join("; "))
+    );
     let base = format!("http://{}:{}", host, addr.port());
     state.set_link_base(&base);
-    eprintln!("  Open this link to set up:");
+    eprintln!("  {}", t!("Open this link to set up:"));
     eprintln!();
     eprintln!("      {}", state.setup_link().unwrap_or_default());
     eprintln!();
-    eprintln!("  Or open {base}/ and enter the setup code:");
+    eprintln!("  {}", t!("Or open {0}/ and enter the setup code:", base));
     eprintln!();
     eprintln!("      {}", state.code());
     eprintln!();
     if state.api_token_configured() {
-        eprintln!("  Your API token also unlocks the setup.");
+        eprintln!("  {}", t!("Your API token also unlocks the setup."));
     }
     eprintln!(
-        "  Or run `putio-sync setup --config {}` in a terminal.",
-        shown_path(path)
+        "  {}",
+        t!(
+            "Or run `putio-sync setup --config {0}` in a terminal.",
+            shown_path(path)
+        )
     );
     eprintln!();
 }
 
 fn banner_without_listener(path: &Path, reasons: &[String]) {
     eprintln!();
-    eprintln!("  putio-sync needs setting up: {}", reasons.join("; "));
     eprintln!(
-        "  The web UI is off, so run `putio-sync setup --config {}`",
-        shown_path(path)
+        "  {}",
+        t!("putio-sync needs setting up: {0}", reasons.join("; "))
     );
-    eprintln!("  or edit the config file. Waiting for it to change...");
+    eprintln!(
+        "  {}",
+        t!(
+            "The web UI is off, so run `putio-sync setup --config {0}`",
+            shown_path(path)
+        )
+    );
+    eprintln!(
+        "  {}",
+        t!("or edit the config file. Waiting for it to change...")
+    );
     eprintln!();
 }
 

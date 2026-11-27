@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use putio_sync_core::config::Config;
+use putio_sync_core::t;
 use putio_sync_db::models::HistoryAction;
 use putio_sync_db::{Database, HistoryRepository};
 use serde::Serialize;
@@ -183,12 +184,12 @@ fn display_table(
     since: Option<&str>,
     until: Option<&str>,
 ) -> Result<()> {
-    println!("\nDownload & Delete History");
+    println!("\n{}", t!("Download & Delete History"));
     println!("{}", "═".repeat(95));
 
     // Show filters if applied
     if action_filter.is_some() || since.is_some() || until.is_some() {
-        print!("Filters:              ");
+        print!("{}              ", t!("Filters:"));
         let mut filters = Vec::new();
         if let Some(a) = action_filter {
             filters.push(format!("Action: {}", a));
@@ -204,15 +205,19 @@ fn display_table(
     }
 
     if entries.is_empty() {
-        println!("\nNo history entries found.");
+        println!("\n{}", t!("No history entries found."));
         if action_filter.is_none() && since.is_none() && until.is_none() {
-            println!("Try downloading some files first!");
+            println!("{}", t!("Try downloading some files first!"));
         }
     } else {
         println!();
         println!(
-            "{:<20} {:<12} {:<40} {:<12} Speed",
-            "Timestamp", "Action", "Filename", "Size"
+            "{} {} {} {} {}",
+            crate::output::pad(&t!("Timestamp"), 20),
+            crate::output::pad(&t!("Action"), 12),
+            crate::output::pad(&t!("Filename"), 40),
+            crate::output::pad(&t!("Size"), 12),
+            t!("Speed")
         );
         println!("{}", "─".repeat(95));
 
@@ -235,15 +240,18 @@ fn display_table(
     let showing_from = if entries.is_empty() { 0 } else { offset + 1 };
     let showing_to = offset + entries.len();
     println!(
-        "\nShowing {} - {} of {} entries{}",
-        showing_from,
-        showing_to,
-        format_count(total_count),
-        if showing_to < total_count as usize {
-            ". Use --offset to see more."
-        } else {
-            ""
-        }
+        "\n{}",
+        t!(
+            "Showing {0} - {1} of {2} entries{3}",
+            showing_from,
+            showing_to,
+            format_count(total_count),
+            if showing_to < total_count as usize {
+                ". Use --offset to see more."
+            } else {
+                ""
+            }
+        )
     );
 
     println!("{}", "═".repeat(95));

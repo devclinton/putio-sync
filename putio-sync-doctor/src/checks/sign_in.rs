@@ -3,6 +3,7 @@
 
 use super::{count, Ctx};
 use crate::report::{Finding, Item, Status};
+use putio_sync_core::msg;
 use putio_sync_core::sign_in::SignInConfig;
 
 /// A provider that's on but can't sign anyone in, with what it lacks
@@ -51,28 +52,24 @@ pub(crate) fn check(config: &SignInConfig) -> Finding {
     if !broken.is_empty() {
         return Finding::new(
             Status::Problem,
-            format!("{} can't sign anyone in.", count(broken.len(), "provider")),
+            msg!("{0} can't sign anyone in.", count(broken.len(), "provider")),
         )
-        .suggest("Fill in the missing fields in Settings › Sign-in, or turn the provider off.")
+        .suggest(msg!(
+            "Fill in the missing fields in Settings › Sign-in, or turn the provider off."
+        ))
         .items(broken);
     }
     match config.base_url() {
         None => Finding::new(
             Status::Warning,
-            "No public URL is set, so each redirect URL follows the address the browser used.",
-        )
+            msg!("No public URL is set, so each redirect URL follows the address the browser used."))
         .suggest(
-            "Set the public URL in Settings › Sign-in to the address you registered with the provider.",
-        ),
+            msg!("Set the public URL in Settings › Sign-in to the address you registered with the provider.")),
         Some(url) if plain_http_elsewhere(url) => Finding::new(
             Status::Warning,
-            format!("The public URL {url} uses http://; Google and Discord only accept https:// redirect URLs off this machine."),
-        )
-        .suggest("Serve putio-sync over HTTPS (a reverse proxy or tailscale serve) and use that address."),
-        Some(_) => Finding::ok(format!(
-            "{} on.",
-            count(providers.len(), "provider")
-        )),
+            msg!("The public URL {0} uses http://; Google and Discord only accept https:// redirect URLs off this machine.", url))
+        .suggest(msg!("Serve putio-sync over HTTPS (a reverse proxy or tailscale serve) and use that address.")),
+        Some(_) => Finding::ok(msg!("{0} on.", count(providers.len(), "provider"))),
     }
 }
 

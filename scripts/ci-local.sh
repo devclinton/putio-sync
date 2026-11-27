@@ -117,8 +117,9 @@ fi
 echo ""
 
 # The CLI-only build (putio-sync-lite) must still build without the daemon and API
-# The bare CLI from source, and the lite and lite-plugins release editions
-for features in "" hooks hooks,plugins; do
+# The bare CLI from source, an English-only build, and the lite and lite-plugins release
+# editions (which carry the translations, feature 060)
+for features in "" hooks hooks,i18n hooks,plugins,i18n; do
     print_step "Checking the lite CLI build (features: ${features:-none})..."
     if cargo clippy -p putio-sync-cli -p putio-sync-doctor --no-default-features --features "$features" --all-targets -- -D warnings \
         && cargo test -p putio-sync-cli -p putio-sync-doctor --no-default-features --features "$features"; then

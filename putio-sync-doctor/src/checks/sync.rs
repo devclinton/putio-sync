@@ -3,6 +3,7 @@
 use super::{age, bytes, count, verb, Ctx, STALE_AGE};
 use crate::report::{Finding, FixId, Item, Status};
 use putio_sync_client::PutioApiClient;
+use putio_sync_core::msg;
 use putio_sync_db::models::QueueItem;
 use putio_sync_db::Database;
 use putio_sync_download::files::{create_temp_path, is_partial_download};
@@ -61,20 +62,20 @@ async fn open_rows(db: &Database) -> Result<Vec<QueueItem>, String> {
 
 pub(crate) async fn dead_queue_rows(ctx: &Ctx) -> Finding {
     let Some(db) = &ctx.db else {
-        return Finding::skipped("Needs the database.");
+        return Finding::skipped(msg!("Needs the database."));
     };
     let rows = match open_rows(db).await {
         Ok(rows) => rows,
-        Err(e) => return Finding::skipped(format!("Could not read the queue: {e}")),
+        Err(e) => return Finding::skipped(msg!("Could not read the queue: {0}", e)),
     };
     if rows.is_empty() {
-        return Finding::ok("The queue is empty.");
+        return Finding::ok(msg!("The queue is empty."));
     }
     let walk = ctx.walk().await;
     if !walk.complete {
-        return Finding::skipped(
-            "The account listing did not finish, so missing files can't be told apart.",
-        );
+        return Finding::skipped(msg!(
+            "The account listing did not finish, so missing files can't be told apart."
+        ));
     }
     let seen: HashSet<i64> = walk.files.iter().map(|f| f.id).collect();
     let mut items = Vec::new();
@@ -112,26 +113,26 @@ pub(crate) async fn dead_queue_rows(ctx: &Ctx) -> Finding {
         Status::Warning
     };
     Finding::new(status, summary)
-        .suggest("Remove them from the queue.")
+        .suggest(msg!("Remove them from the queue."))
         .items(items)
 }
 
 pub(crate) async fn failing_downloads(ctx: &Ctx) -> Finding {
     let Some(db) = &ctx.db else {
-        return Finding::skipped("Needs the database.");
+        return Finding::skipped(msg!("Needs the database."));
     };
     let failed = match db.queue().failed().await {
         Ok(rows) => rows,
-        Err(e) => return Finding::skipped(format!("Could not read the queue: {e}")),
+        Err(e) => return Finding::skipped(msg!("Could not read the queue: {0}", e)),
     };
     let failing = match db.downloads().failing(FAILING_RETRIES).await {
         Ok(rows) => rows,
-        Err(e) => return Finding::skipped(format!("Could not read the downloads: {e}")),
+        Err(e) => return Finding::skipped(msg!("Could not read the downloads: {0}", e)),
     };
     // A file queued again is being retried right now
     let mut seen: HashSet<i64> = match db.queue().claimed().await {
         Ok(rows) => rows.iter().map(|r| r.file_id).collect(),
-        Err(e) => return Finding::skipped(format!("Could not read the queue: {e}")),
+        Err(e) => return Finding::skipped(msg!("Could not read the queue: {0}", e)),
     };
     let mut items = Vec::new();
     for row in &failed {
@@ -171,7 +172,9 @@ pub(crate) async fn failing_downloads(ctx: &Ctx) -> Finding {
         Status::Warning
     };
     Finding::new(status, summary)
-        .suggest("Requeue them for another try. If they fail again, check the logs for the cause.")
+        .suggest(msg!(
+            "Requeue them for another try. If they fail again, check the logs for the cause."
+        ))
         .items(items)
 }
 
@@ -265,17 +268,19 @@ pub(crate) async fn orphans(db: &Database, target_dir: &Path) -> Result<Vec<Part
 
 pub(crate) async fn orphan_partials(ctx: &Ctx) -> Finding {
     let Some(db) = &ctx.db else {
-        return Finding::skipped("Needs the database to know which downloads are running.");
+        return Finding::skipped(msg!(
+            "Needs the database to know which downloads are running."
+        ));
     };
     let target = &ctx.config.download.target_directory;
     if !target.is_dir() {
-        return Finding::skipped(
-            "The download folder does not exist; see the download folder check.",
-        );
+        return Finding::skipped(msg!(
+            "The download folder does not exist; see the download folder check."
+        ));
     }
     let orphans = match orphans(db, target).await {
         Ok(o) => o,
-        Err(e) => return Finding::skipped(format!("Could not read the queue: {e}")),
+        Err(e) => return Finding::skipped(msg!("Could not read the queue: {0}", e)),
     };
     let total: u64 = orphans.iter().map(|p| p.size).sum();
     let items: Vec<Item> = orphans
@@ -302,7 +307,9 @@ pub(crate) async fn orphan_partials(ctx: &Ctx) -> Finding {
         Status::Warning
     };
     Finding::new(status, summary)
-        .suggest("Delete them to free the space; a later sync downloads anything still needed.")
+        .suggest(msg!(
+            "Delete them to free the space; a later sync downloads anything still needed."
+        ))
         .items(items)
 }
 
@@ -355,8 +362,9 @@ pub(crate) async fn bandwidth(ctx: &Ctx) -> Finding {
     let summary = format!("Downloads are {state} by {cause}.{next} {clock}");
     match status.override_ {
         Some(o) if o.mode == OverrideMode::Pause && status.source == Source::Pause => {
-            Finding::new(Status::Warning, summary)
-                .suggest("Choose Resume schedule on the Status page to download again now.")
+            Finding::new(Status::Warning, summary).suggest(msg!(
+                "Choose Resume schedule on the Status page to download again now."
+            ))
         }
         _ => Finding::ok(summary),
     }

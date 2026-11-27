@@ -8,6 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use putio_sync_client::{FileEntry, PutioApiClient};
 use putio_sync_core::config::{AuthMethod, Config, ExistingFile, ProgressStyle, SortOrder};
 use putio_sync_core::filter::{parse_size, sort_files, FileFilter, SortField};
+use putio_sync_core::t;
 use putio_sync_db::Database;
 use putio_sync_download::{DownloadConfig, DownloadFile, DownloadManager};
 use std::path::PathBuf;
@@ -387,24 +388,33 @@ async fn run_single_download(
     let duration_secs = duration.as_secs_f64();
 
     // Display summary
-    println!("\n📊 Download Summary");
+    println!("\n{}", t!("📊 Download Summary"));
     println!("═══════════════════════════════════════════════");
-    println!("Files downloaded:  {}", files_downloaded);
+    println!("{}", t!("Files downloaded:  {0}", files_downloaded));
     if files_failed > 0 {
-        println!("Files failed:      {}", files_failed);
+        println!("{}", t!("Files failed:      {0}", files_failed));
     }
     println!(
-        "Total size:        {} ({} bytes)",
-        format_size(total_bytes),
-        total_bytes
+        "{}",
+        t!(
+            "Total size:        {0} ({1} bytes)",
+            format_size(total_bytes),
+            total_bytes
+        )
     );
-    println!("Time elapsed:      {:.2}s", duration_secs);
+    println!(
+        "{}",
+        t!("Time elapsed:      {0}s", format!("{:.2}", duration_secs))
+    );
     let avg_speed = if duration_secs > 0.0 {
         total_bytes as f64 / duration_secs
     } else {
         0.0
     };
-    println!("Average speed:     {}/s", format_size(avg_speed as u64));
+    println!(
+        "{}",
+        t!("Average speed:     {0}/s", format_size(avg_speed as u64))
+    );
     println!("═══════════════════════════════════════════════");
 
     if files_failed > 0 {

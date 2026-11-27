@@ -13,6 +13,8 @@
 //! - PUT  /settings/precheck - Update the release check settings
 //! - GET  /settings/tailscale - Get the Tailscale settings (feature 036)
 //! - PUT  /settings/tailscale - Update the Tailscale settings
+//! - GET  /settings/ui - Get the language setting (feature 060)
+//! - PUT  /settings/ui - Set or clear it; the CLI reads it at each run
 //! - GET  /settings/updates - Get the update check settings (feature 055)
 //! - PUT  /settings/updates - Update them; they apply at the next check
 //! - GET  /settings/hooks - Get the event hooks, header and env values masked (feature 027)
@@ -753,6 +755,8 @@ pub fn router() -> Router<AppState> {
         .route("/precheck", put(update_precheck_settings))
         .route("/tailscale", get(get_tailscale_settings))
         .route("/tailscale", put(update_tailscale_settings))
+        .route("/ui", get(get_ui_settings))
+        .route("/ui", put(update_ui_settings))
         .route("/updates", get(get_updates_settings))
         .route("/updates", put(update_updates_settings))
         .route("/hooks", get(get_hooks_settings))
@@ -1936,6 +1940,62 @@ async fn update_tailscale_settings(
 
     Ok(Json(SuccessResponse {
         message: saved_message("Tailscale", &changed, live, when, &notes),
+    }))
+}
+
+/// The `[ui]` settings (feature 060): the language of the CLI, and of the web UI where
+/// the browser has no saved choice
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiSettings {
+    /// A language code such as `de`; `null` when unset
+    pub language: Option<String>,
+}
+
+fn ui_view(config: &Config) -> UiSettings {
+    UiSettings {
+        language: config.ui.language.clone().filter(|l| !l.is_empty()),
+    }
+}
+
+/// Get the language setting
+///
+/// GET /settings/ui
+async fn get_ui_settings(State(state): State<AppState>) -> Result<Json<UiSettings>, ApiError> {
+    Ok(Json(ui_view(&*state.config.read().await)))
+}
+
+/// Set or clear the language setting. `null` or `""` clears it; a code there is no
+/// catalog for is refused.
+///
+/// PUT /settings/ui
+async fn update_ui_settings(
+    State(state): State<AppState>,
+    settings: Result<Json<UiSettings>, JsonRejection>,
+) -> Result<Json<SuccessResponse>, ApiError> {
+    let settings = body(settings)?;
+    let language = match settings.language.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(code) => Some(
+            putio_sync_core::i18n::Lang::get(code)
+                .ok_or_else(|| ApiError::BadRequest(format!("unknown language {code:?}")))?
+                .code
+                .to_string(),
+        ),
+    };
+    let changed = update(&state, ui_view, |config| {
+        config.ui.language = language;
+        Ok(())
+    })
+    .await?;
+    Ok(Json(SuccessResponse {
+        message: saved_message(
+            "Language",
+            &changed,
+            &["language"],
+            "Applies at the next command and page load",
+            &[],
+        ),
     }))
 }
 

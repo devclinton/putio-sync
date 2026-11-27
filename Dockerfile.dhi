@@ -41,8 +41,8 @@ ARG TARGETARCH
 RUN --mount=type=cache,id=putio-sync-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=putio-sync-target-${TARGETARCH}-${PUTIO_SYNC_EDITION},target=/build/target \
     case "$PUTIO_SYNC_EDITION" in \
-        lite) cargo build --release --locked -p putio-sync-cli --no-default-features --features hooks ;; \
-        lite-plugins) cargo build --release --locked -p putio-sync-cli --no-default-features --features hooks,plugins ;; \
+        lite) cargo build --release --locked -p putio-sync-cli --no-default-features --features hooks,i18n ;; \
+        lite-plugins) cargo build --release --locked -p putio-sync-cli --no-default-features --features hooks,plugins,i18n ;; \
         full) cargo build --release --locked --bin putio-sync ;; \
         *) echo "Unknown PUTIO_SYNC_EDITION: $PUTIO_SYNC_EDITION"; exit 1 ;; \
     esac && \

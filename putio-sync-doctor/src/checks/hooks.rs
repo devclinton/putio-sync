@@ -4,6 +4,7 @@
 use super::{count, Ctx};
 use crate::report::{Finding, Item, Status};
 use chrono::{Duration, Utc};
+use putio_sync_core::msg;
 use putio_sync_hooks::RunResult;
 use std::path::Path;
 
@@ -32,7 +33,7 @@ fn not_runnable(program: &Path) -> Option<&'static str> {
 pub(crate) async fn hooks(ctx: &Ctx) -> Finding {
     let hooks = &ctx.config.hooks;
     if hooks.is_empty() {
-        return Finding::ok("No hooks are set up.");
+        return Finding::ok(msg!("No hooks are set up."));
     }
     let broken: Vec<Item> = hooks
         .iter()
@@ -46,9 +47,11 @@ pub(crate) async fn hooks(ctx: &Ctx) -> Finding {
     if !broken.is_empty() {
         return Finding::new(
             Status::Problem,
-            format!("{} cannot run its program.", count(broken.len(), "hook")),
+            msg!("{0} cannot run its program.", count(broken.len(), "hook")),
         )
-        .suggest("Fix the program path, make it executable (chmod +x), or turn the hook off.")
+        .suggest(msg!(
+            "Fix the program path, make it executable (chmod +x), or turn the hook off."
+        ))
         .items(broken);
     }
 
@@ -80,19 +83,15 @@ pub(crate) async fn hooks(ctx: &Ctx) -> Finding {
     if !failed.is_empty() {
         return Finding::new(
             Status::Warning,
-            format!(
-                "The last run of {} failed in the last 24 hours.",
-                count(failed.len(), "hook")
-            ),
-        )
+            msg!("The last run of {0} failed in the last 24 hours.", count(failed.len(), "hook")))
         .suggest(
-            "See the hook's output in the log, then use Send test event in Settings › Integrations › Event hooks.",
-        )
+            msg!("See the hook's output in the log, then use Send test event in Settings › Integrations › Event hooks."))
         .items(failed);
     }
-    Finding::ok(format!(
-        "{} set up, {enabled} on; none failed in the last 24 hours.",
-        count(hooks.len(), "hook")
+    Finding::ok(msg!(
+        "{0} set up, {1} on; none failed in the last 24 hours.",
+        count(hooks.len(), "hook"),
+        enabled
     ))
 }
 

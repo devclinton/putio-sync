@@ -1,5 +1,7 @@
 //! Command implementations for putio-sync CLI
 
+use putio_sync_core::t;
+
 #[cfg(feature = "server")]
 pub mod archive;
 pub mod clean_empty;
@@ -12,6 +14,7 @@ pub mod doctor;
 pub mod download;
 pub mod free_space;
 pub mod history;
+pub mod languages;
 pub mod list;
 pub mod login;
 #[cfg(feature = "plugins")]
@@ -114,7 +117,10 @@ pub(crate) fn check_filter(text: &str) -> anyhow::Result<()> {
     let warnings = putio_sync_core::pattern::check(text)
         .map_err(|e| anyhow::anyhow!("invalid --filter {text:?}: {e}"))?;
     for warning in warnings {
-        eprintln!("Warning: --filter {text:?}: {warning}");
+        eprintln!(
+            "{}",
+            t!("Warning: --filter {0}: {1}", format!("{:?}", text), warning)
+        );
     }
     Ok(())
 }

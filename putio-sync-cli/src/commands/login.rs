@@ -6,6 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use axum::{extract::Query, response::Html, routing::get, Router};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthConfig, Config};
+use putio_sync_core::t;
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -58,8 +59,11 @@ pub async fn execute_login(
     no_browser: bool,
     config_path: Option<PathBuf>,
 ) -> Result<()> {
-    println!("\n=== Put.io OAuth Token Helper ===\n");
-    println!("This command will help you obtain an OAuth token from Put.io using OAuth 2.0.");
+    println!("\n{}\n", t!("=== Put.io OAuth Token Helper ==="));
+    println!(
+        "{}",
+        t!("This command will help you obtain an OAuth token from Put.io using OAuth 2.0.")
+    );
     println!();
 
     // Load OAuth configuration from .env file
@@ -68,9 +72,12 @@ pub async fn execute_login(
     // Generate authorization URL
     let (auth_url, csrf_token) = build_authorize_url(&oauth_config)?;
 
-    println!("Step 1: Starting local callback server");
+    println!("{}", t!("Step 1: Starting local callback server"));
     println!("-------------------------------");
-    println!("Starting server on {}...", oauth_config.redirect_uri);
+    println!(
+        "{}",
+        t!("Starting server on {0}...", oauth_config.redirect_uri)
+    );
 
     // Parse redirect URI to get port
     let port = extract_port(&oauth_config.redirect_uri)?;
@@ -93,26 +100,29 @@ pub async fn execute_login(
             .context("Failed to start callback server")
     });
 
-    println!("✓ Server started successfully!\n");
+    println!("{}\n", t!("✓ Server started successfully!"));
 
     // Open browser to authorization URL
-    println!("Step 2: Authorize putio-sync");
+    println!("{}", t!("Step 2: Authorize putio-sync"));
     println!("-------------------------------");
     if !no_browser {
-        println!("Opening browser to Put.io authorization page...");
+        println!("{}", t!("Opening browser to Put.io authorization page..."));
         if let Err(e) = open::that(auth_url.as_str()) {
-            eprintln!("Warning: Could not open browser automatically: {}", e);
-            println!("Please manually visit this URL:");
+            eprintln!(
+                "{}",
+                t!("Warning: Could not open browser automatically: {0}", e)
+            );
+            println!("{}", t!("Please manually visit this URL:"));
             println!("{}", auth_url);
         } else {
-            println!("✓ Browser opened successfully!");
+            println!("{}", t!("✓ Browser opened successfully!"));
         }
     } else {
-        println!("Please visit this URL to authorize putio-sync:");
+        println!("{}", t!("Please visit this URL to authorize putio-sync:"));
         println!("{}", auth_url);
     }
     println!();
-    println!("Waiting for authorization...");
+    println!("{}", t!("Waiting for authorization..."));
 
     // Wait for authorization code
     let auth_code = rx
@@ -120,10 +130,10 @@ pub async fn execute_login(
         .context("Failed to receive authorization code")?
         .context("Authorization failed")?;
 
-    println!("✓ Authorization received!\n");
+    println!("{}\n", t!("✓ Authorization received!"));
 
     // Exchange authorization code for access token
-    println!("Step 3: Exchanging code for access token");
+    println!("{}", t!("Step 3: Exchanging code for access token"));
     println!("-------------------------------");
 
     // Put.io uses a non-standard OAuth implementation with GET instead of POST
@@ -176,10 +186,10 @@ pub async fn execute_login(
 
     let access_token = token_response.access_token;
 
-    println!("✓ Access token received!\n");
+    println!("{}\n", t!("✓ Access token received!"));
 
     // Verify token works
-    println!("Step 4: Verifying token");
+    println!("{}", t!("Step 4: Verifying token"));
     println!("-------------------------------");
 
     let api_client = PutioApiClient::new(access_token.clone());
@@ -187,10 +197,10 @@ pub async fn execute_login(
     // Try to get account info to verify token and display info
     match api_client.get_account_info().await {
         Ok(info) => {
-            println!("✓ Token verified successfully!");
-            println!("\nAccount Information:");
-            println!("  Username: {}", info.username);
-            println!("  Email: {}", info.mail);
+            println!("{}", t!("✓ Token verified successfully!"));
+            println!("\n{}", t!("Account Information:"));
+            println!("  {}", t!("Username: {0}", info.username));
+            println!("  {}", t!("Email: {0}", info.mail));
         }
         Err(e) => {
             tracing::error!("Token verification failed: {:?}", e);
@@ -202,7 +212,7 @@ pub async fn execute_login(
 
     // Save token by default (unless --no-save is specified)
     if !no_save {
-        println!("Step 5: Saving token");
+        println!("{}", t!("Step 5: Saving token"));
         println!("-------------------------------");
 
         let config_file_path = determine_config_path(config_path)?;
@@ -220,15 +230,21 @@ pub async fn execute_login(
             .save(&config_file_path)
             .context("Failed to save configuration")?;
 
-        println!("✓ Token saved to: {}", config_file_path.display());
+        println!(
+            "{}",
+            t!("✓ Token saved to: {0}", config_file_path.display())
+        );
         println!();
-        println!("✓ All done! You can now use putio-sync commands.");
+        println!("{}", t!("✓ All done! You can now use putio-sync commands."));
     } else {
-        println!("Token verified but not saved.");
-        println!("Your access token is:");
+        println!("{}", t!("Token verified but not saved."));
+        println!("{}", t!("Your access token is:"));
         println!("{}", access_token);
         println!();
-        println!("To save it, run `putio-sync login` without --no-save.");
+        println!(
+            "{}",
+            t!("To save it, run `putio-sync login` without --no-save.")
+        );
     }
 
     // Shutdown server

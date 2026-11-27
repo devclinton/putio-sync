@@ -457,6 +457,33 @@ async fn updates_settings_round_trip() {
     put_invalid(&app, path, body, "check", json!("sometimes")).await;
 }
 
+#[tokio::test]
+async fn ui_language_round_trip() {
+    let app = test_app().await;
+    let path = "/settings/ui";
+    assert_eq!(get_ok(&app, path).await, json!({"language": null}));
+
+    put_changed(&app, path, json!({}), "language", json!("de")).await;
+    assert_eq!(saved(&app).ui.language.as_deref(), Some("de"));
+    // A locale name is stored as its catalog code
+    let (status, _) = put(&app, path, json!({"language": "pt_BR"})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(get_ok(&app, path).await, json!({"language": "pt"}));
+
+    let (status, response) = put(&app, path, json!({"language": "xx"})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(response["error"], "unknown language \"xx\"");
+    assert_eq!(saved(&app).ui.language.as_deref(), Some("pt"));
+
+    for clear in [json!(""), json!(null)] {
+        put_changed(&app, path, json!({}), "language", json!("fr")).await;
+        let (status, _) = put(&app, path, json!({"language": clear})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(saved(&app).ui.language, None);
+        assert_eq!(get_ok(&app, path).await, json!({"language": null}));
+    }
+}
+
 // ---- Tokens are never written from the environment -----------------------------------
 
 #[tokio::test]

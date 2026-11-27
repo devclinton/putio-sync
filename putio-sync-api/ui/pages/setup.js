@@ -115,7 +115,7 @@ function languagePicker(id = "setup-language") {
   const select = h(
     "select",
     { id, class: "input", "aria-label": "Language", onchange: async () => (await setLanguage(select.value)) || toast("Couldn't load that language", "error", "The page stays in English.") },
-    h("option", { value: "", text: "Browser default" }),
+    h("option", { value: "", text: "Automatic" }),
     ["en", ...LANGUAGES].map((code) => h("option", { value: code, translate: "no", lang: code, text: nativeName(code) })),
   );
   select.value = choice();

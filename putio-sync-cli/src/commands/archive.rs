@@ -11,6 +11,7 @@ use putio_sync_archive::summary::SummaryOptions;
 use putio_sync_archive::{ArchiveError, ArchiveResult};
 use putio_sync_core::config::Config;
 use putio_sync_core::log_redact;
+use putio_sync_core::t;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -64,7 +65,10 @@ pub async fn execute_archive(job: ArchiveJob, config_path: Option<PathBuf>) -> i
         Ok(()) => 0,
         Err(e) => {
             // Known secrets are masked and URLs shortened, whatever the cause says
-            eprintln!("archive {name}: {}", log_redact::redact(&e.to_string()));
+            eprintln!(
+                "{}",
+                t!("archive {0}: {1}", name, log_redact::redact(&e.to_string()))
+            );
             e.exit_code()
         }
     }

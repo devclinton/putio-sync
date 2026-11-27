@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::cleanup::EmptyFolderCleanup;
 use putio_sync_core::config::{AuthMethod, Config};
+use putio_sync_core::{i18n, t};
 use putio_sync_db::Database;
 use putio_sync_doctor::report::FixInfo;
 use putio_sync_doctor::{
@@ -32,7 +33,10 @@ pub async fn execute_doctor(
     let doctor = match build(config_path).await {
         Ok(doctor) => doctor,
         Err(e) => {
-            eprintln!("The doctor could not run: {e:#}");
+            eprintln!(
+                "{}",
+                t!("The doctor could not run: {0}", format!("{:#}", e))
+            );
             return EXIT_FAILED;
         }
     };
@@ -45,7 +49,7 @@ pub async fn execute_doctor(
         }
     };
     result.unwrap_or_else(|e| {
-        eprintln!("The doctor could not write its output: {e}");
+        eprintln!("{}", t!("The doctor could not write its output: {0}", e));
         EXIT_FAILED
     })
 }
@@ -141,12 +145,12 @@ fn print_check(check: &CheckResult, width: usize, out: &mut impl Write) -> io::R
     let pad = " ".repeat(width + 5);
     writeln!(
         out,
-        "  {} {:<width$} {}",
+        "  {} {} {}",
         mark(check.status),
-        check.title,
-        check.summary
+        crate::output::pad(i18n::tr(&check.title), width),
+        check.summary_localized()
     )?;
-    if let Some(suggestion) = &check.suggestion {
+    if let Some(suggestion) = &check.suggestion_localized() {
         writeln!(out, "{pad}→ {suggestion}")?;
     }
     for item in check.items.iter().take(SHOWN_ITEMS) {
@@ -154,7 +158,11 @@ fn print_check(check: &CheckResult, width: usize, out: &mut impl Write) -> io::R
     }
     let shown = check.items.len().min(SHOWN_ITEMS) as u64;
     if check.item_count > shown {
-        writeln!(out, "{pad}… and {} more", check.item_count - shown)?;
+        writeln!(
+            out,
+            "{}",
+            t!("{0}… and {1} more", pad, check.item_count - shown)
+        )?;
     }
     Ok(())
 }
@@ -163,7 +171,7 @@ fn print_report(report: &Report, out: &mut impl Write) -> io::Result<()> {
     let width = report
         .checks
         .iter()
-        .map(|c| c.title.chars().count())
+        .map(|c| crate::output::width(i18n::tr(&c.title)))
         .max()
         .unwrap_or(0);
     for area in Area::ALL {
@@ -171,7 +179,7 @@ fn print_report(report: &Report, out: &mut impl Write) -> io::Result<()> {
         if checks.is_empty() {
             continue;
         }
-        writeln!(out, "{}", area.title())?;
+        writeln!(out, "{}", i18n::tr(area.title()))?;
         for check in checks {
             print_check(check, width, out)?;
         }
@@ -179,22 +187,28 @@ fn print_report(report: &Report, out: &mut impl Write) -> io::Result<()> {
     let c = report.counts;
     writeln!(
         out,
-        "\nSummary: {} problem{}, {} warning{}, {} ok, {} skipped (took {:.1}s)",
-        c.problem,
-        if c.problem == 1 { "" } else { "s" },
-        c.warning,
-        if c.warning == 1 { "" } else { "s" },
-        c.ok,
-        c.skipped,
-        report.duration_ms as f64 / 1000.0
+        "\n{}",
+        t!(
+            "Summary: {0} problem{1}, {2} warning{3}, {4} ok, {5} skipped (took {6}s)",
+            c.problem,
+            if c.problem == 1 { "" } else { "s" },
+            c.warning,
+            if c.warning == 1 { "" } else { "s" },
+            c.ok,
+            c.skipped,
+            format!("{:.1}", report.duration_ms as f64 / 1000.0)
+        )
     )?;
     let fixes: Vec<&FixInfo> = report.checks.iter().flat_map(|c| &c.fixes).collect();
     if !fixes.is_empty() {
         let ids: Vec<&str> = fixes.iter().map(|f| f.id.as_str()).collect();
         writeln!(
             out,
-            "Fixes available: {} — run `putio-sync doctor --fix <id>`",
-            ids.join(", ")
+            "{}",
+            t!(
+                "Fixes available: {0} — run `putio-sync doctor --fix <id>`",
+                ids.join(", ")
+            )
         )?;
     }
     Ok(())
@@ -203,11 +217,14 @@ fn print_report(report: &Report, out: &mut impl Write) -> io::Result<()> {
 fn print_preview(preview: &FixPreview, out: &mut impl Write) -> io::Result<()> {
     writeln!(
         out,
-        "{} ({}) would act on {} item{}:",
-        preview.fix.label(),
-        preview.fix,
-        preview.item_count,
-        if preview.item_count == 1 { "" } else { "s" }
+        "{}",
+        t!(
+            "{0} ({1}) would act on {2} item{3}:",
+            preview.fix.label(),
+            preview.fix,
+            preview.item_count,
+            if preview.item_count == 1 { "" } else { "s" }
+        )
     )?;
     // Every item, so a confirmation covers exactly what was shown
     for item in &preview.items {
@@ -219,19 +236,26 @@ fn print_preview(preview: &FixPreview, out: &mut impl Write) -> io::Result<()> {
 fn print_outcome(outcome: &FixOutcome, out: &mut impl Write) -> io::Result<()> {
     writeln!(
         out,
-        "\nDone: {}, skipped: {}, failed: {}",
-        outcome.done.len(),
-        outcome.skipped.len(),
-        outcome.failed.len()
+        "\n{}",
+        t!(
+            "Done: {0}, skipped: {1}, failed: {2}",
+            outcome.done.len(),
+            outcome.skipped.len(),
+            outcome.failed.len()
+        )
     )?;
     for s in &outcome.skipped {
-        writeln!(out, "  skipped {}: {}", s.item, s.reason)?;
+        writeln!(out, "  {}", t!("skipped {0}: {1}", s.item, s.reason))?;
     }
     for f in &outcome.failed {
-        writeln!(out, "  failed {}: {}", f.item, f.error)?;
+        writeln!(out, "  {}", t!("failed {0}: {1}", f.item, f.error))?;
     }
-    writeln!(out, "\nChecked again:")?;
-    print_check(&outcome.check, outcome.check.title.chars().count(), out)
+    writeln!(out, "\n{}", t!("Checked again:"))?;
+    print_check(
+        &outcome.check,
+        crate::output::width(i18n::tr(&outcome.check.title)),
+        out,
+    )
 }
 
 fn confirm(
@@ -239,17 +263,16 @@ fn confirm(
     input: &mut impl BufRead,
     out: &mut impl Write,
 ) -> io::Result<bool> {
-    write!(
+    writeln!(out)?;
+    crate::ui::confirm::confirm_with(
+        &t!(
+            "Apply {0} to {1} item(s)?",
+            i18n::tr(preview.fix.label()),
+            preview.item_count
+        ),
+        input,
         out,
-        "\nApply {} to {} item(s)? [y/N] ",
-        preview.fix.label(),
-        preview.item_count
-    )?;
-    out.flush()?;
-    let mut answer = String::new();
-    input.read_line(&mut answer)?;
-    let answer = answer.trim().to_lowercase();
-    Ok(answer == "y" || answer == "yes")
+    )
 }
 
 /// Preview fix `id`, ask if it deletes, apply it and print what happened
@@ -264,11 +287,24 @@ pub async fn apply_fix(
 ) -> io::Result<i32> {
     let Ok(fix) = id.parse::<FixId>() else {
         let ids: Vec<&str> = FixId::ALL.iter().map(|f| f.as_str()).collect();
-        eprintln!("Unknown fix {id:?}. Valid fixes: {}", ids.join(", "));
+        eprintln!(
+            "{}",
+            t!(
+                "Unknown fix {0}. Valid fixes: {1}",
+                format!("{:?}", id),
+                ids.join(", ")
+            )
+        );
         return Ok(EXIT_FAILED);
     };
     if json && fix.destructive() && !dry_run && !yes {
-        eprintln!("{fix} deletes data and --json can't ask first; add --yes or --dry-run.");
+        eprintln!(
+            "{}",
+            t!(
+                "{0} deletes data and --json can't ask first; add --yes or --dry-run.",
+                fix
+            )
+        );
         return Ok(EXIT_FAILED);
     }
     let preview = doctor.preview(fix).await;
@@ -277,10 +313,10 @@ pub async fn apply_fix(
             serde_json::to_writer_pretty(&mut *out, &preview)?;
             writeln!(out)?;
         } else if preview.items.is_empty() {
-            writeln!(out, "Nothing to fix.")?;
+            writeln!(out, "{}", t!("Nothing to fix."))?;
         } else {
             print_preview(&preview, out)?;
-            writeln!(out, "\nDry run: nothing was changed.")?;
+            writeln!(out, "\n{}", t!("Dry run: nothing was changed."))?;
         }
         return Ok(0);
     }
@@ -288,7 +324,7 @@ pub async fn apply_fix(
         print_preview(&preview, out)?;
     }
     if fix.destructive() && !yes && !confirm(&preview, input, out)? {
-        writeln!(out, "Cancelled; nothing was changed.")?;
+        writeln!(out, "{}", t!("Cancelled; nothing was changed."))?;
         return Ok(0);
     }
     let request = FixRequest {
@@ -298,7 +334,7 @@ pub async fn apply_fix(
     let outcome = match doctor.apply(fix, &request).await {
         Ok(outcome) => outcome,
         Err(e) => {
-            eprintln!("The fix was refused: {e}");
+            eprintln!("{}", t!("The fix was refused: {0}", e));
             return Ok(EXIT_FAILED);
         }
     };

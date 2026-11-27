@@ -4,6 +4,7 @@
 use super::{bytes, count, Ctx};
 use crate::report::{Finding, Item, Status};
 use putio_sync_core::logging::{self, LevelStatus};
+use putio_sync_core::msg;
 use putio_sync_core::{assistant, config_lint};
 use putio_sync_telemetry::gauges::disk_usage;
 
@@ -20,31 +21,34 @@ pub(crate) async fn download_dir(ctx: &Ctx) -> Finding {
     let dir = &ctx.config.download.target_directory;
     let shown = dir.display().to_string();
     if !dir.is_dir() {
-        return Finding::new(Status::Problem, format!("{shown} does not exist."))
-            .suggest("Create the folder or fix `download.target_directory` in the config.");
+        return Finding::new(Status::Problem, msg!("{0} does not exist.", shown)).suggest(msg!(
+            "Create the folder or fix `download.target_directory` in the config."
+        ));
     }
     let probe = dir.join(format!(".putio-sync-doctor-{}", std::process::id()));
     match std::fs::write(&probe, b"doctor") {
         Ok(()) => {
             let _ = std::fs::remove_file(&probe);
-            Finding::ok(format!("{shown} exists and is writable."))
+            Finding::ok(msg!("{0} exists and is writable.", shown))
         }
-        Err(e) => Finding::new(Status::Problem, format!("Can't write to {shown}: {e}."))
-            .suggest("Check the folder's permissions and that the disk is mounted read-write."),
+        Err(e) => Finding::new(Status::Problem, msg!("Can't write to {0}: {1}.", shown, e))
+            .suggest(msg!(
+                "Check the folder's permissions and that the disk is mounted read-write."
+            )),
     }
 }
 
 pub(crate) async fn disk_space(ctx: &Ctx) -> Finding {
     let dir = &ctx.config.download.target_directory;
     if !dir.is_dir() {
-        return Finding::skipped("The download folder does not exist.");
+        return Finding::skipped(msg!("The download folder does not exist."));
     }
     let (free, total) = match disk_usage(dir) {
         Ok(usage) => usage,
-        Err(e) => return Finding::skipped(format!("Could not read the disk usage: {e}")),
+        Err(e) => return Finding::skipped(msg!("Could not read the disk usage: {0}", e)),
     };
     if total == 0 {
-        return Finding::skipped("The disk reported no size.");
+        return Finding::skipped(msg!("The disk reported no size."));
     }
     // Everything the queue still owns (pending, downloading and paused rows)
     let pending: u64 = match &ctx.db {
@@ -143,41 +147,29 @@ pub(crate) async fn database(ctx: &Ctx) -> Finding {
         if leftover {
             return Finding::new(
                 Status::Warning,
-                format!(
-                    "The database is still in the download folder at {}.",
+                msg!(
+                    "The database is still in the download folder at {0}.",
                     legacy.display()
                 ),
             )
-            .suggest(format!(
-                "Restart the putio-sync daemon; it moves the database to {}.",
+            .suggest(msg!(
+                "Restart the putio-sync daemon; it moves the database to {0}.",
                 path.display()
             ));
         }
-        return Finding::skipped(format!("No database at {} yet.", path.display()));
+        return Finding::skipped(msg!("No database at {0} yet.", path.display()));
     };
     match db.quick_check().await {
         Ok(lines) if lines == ["ok"] && leftover => Finding::new(
             Status::Warning,
-            format!(
-                "Using {}, but an older database is still at {}.",
-                path.display(),
-                legacy.display()
-            ),
-        )
-        .suggest("Delete the older database once you no longer need it."),
+            msg!("Using {0}, but an older database is still at {1}.", path.display(), legacy.display()))
+        .suggest(msg!("Delete the older database once you no longer need it.")),
         Ok(lines) if lines == ["ok"] => match db.write_probe().await {
-            Ok(()) => Finding::ok(format!(
-                "The integrity check of {} passed and it can be written.",
-                path.display()
-            )),
+            Ok(()) => Finding::ok(msg!("The integrity check of {0} passed and it can be written.", path.display())),
             Err(e) => Finding::new(
                 Status::Problem,
-                format!("The database at {} can't be written: {e}", path.display()),
-            )
-            .suggest(format!(
-                "Check that the volume holding {} is mounted read-write and has free space; putio-sync can't save progress until it is.",
-                path.display()
-            )),
+                msg!("The database at {0} can't be written: {1}", path.display(), e))
+            .suggest(msg!("Check that the volume holding {0} is mounted read-write and has free space; putio-sync can't save progress until it is.", path.display())),
         },
         Ok(lines) => {
             let items = lines
@@ -188,13 +180,12 @@ pub(crate) async fn database(ctx: &Ctx) -> Finding {
                 .collect();
             Finding::new(
                 Status::Problem,
-                format!("The integrity check found {}.", count(lines.len(), "problem")),
-            )
-            .suggest("Stop putio-sync, back up the database file, and restore it or let putio-sync create a new one.")
+                msg!("The integrity check found {0}.", count(lines.len(), "problem")))
+            .suggest(msg!("Stop putio-sync, back up the database file, and restore it or let putio-sync create a new one."))
             .items(items)
         }
-        Err(e) => Finding::new(Status::Problem, format!("The integrity check failed: {e}"))
-            .suggest("Check that the database file is readable and the disk is healthy."),
+        Err(e) => Finding::new(Status::Problem, msg!("The integrity check failed: {0}", e))
+            .suggest(msg!("Check that the database file is readable and the disk is healthy.")),
     }
 }
 
@@ -219,19 +210,28 @@ pub(crate) async fn config(ctx: &Ctx) -> Finding {
         Some(path) => match std::fs::read_to_string(path) {
             Ok(text) => Some(lint_items(&text)),
             Err(e) if risks.is_empty() => {
-                return Finding::skipped(format!("Could not read {}: {e}", path.display()));
+                return Finding::skipped(msg!("Could not read {0}: {1}", path.display(), e));
             }
             Err(_) => None,
         },
     };
-    let warnings = match lint {
-        Some(Err(problem)) => return problem,
+    let mut warnings = match lint {
+        Some(Err(problem)) => return *problem,
         Some(Ok(items)) => items,
-        None if risks.is_empty() => return Finding::skipped("No config file is in use."),
+        None if risks.is_empty() => return Finding::skipped(msg!("No config file is in use.")),
         None => Vec::new(),
     };
+    // `[ui] language` naming a language there is no catalog for (feature 060)
+    if let Some(value) = ctx.config.ui.language.as_deref().filter(|v| !v.is_empty()) {
+        if ctx.config.ui.lang().is_none() {
+            warnings.push(Item::new("ui.language", "ui.language").detail(format!(
+                "\"{value}\" is not a language putio-sync has, so the next choice is used. \
+                 `putio-sync languages` lists them."
+            )));
+        }
+    }
     if warnings.is_empty() && risks.is_empty() {
-        return Finding::ok("No unknown or risky settings.");
+        return Finding::ok(msg!("No unknown or risky settings."));
     }
 
     let mut parts = Vec::new();
@@ -263,7 +263,7 @@ pub(crate) async fn config(ctx: &Ctx) -> Finding {
 
 /// The lint warnings of the config file `text` as items, or a Problem when it is not
 /// valid TOML
-fn lint_items(text: &str) -> Result<Vec<Item>, Finding> {
+fn lint_items(text: &str) -> Result<Vec<Item>, Box<Finding>> {
     match config_lint::lint(text) {
         Ok(warnings) => Ok(warnings
             .into_iter()
@@ -274,11 +274,15 @@ fn lint_items(text: &str) -> Result<Vec<Item>, Finding> {
         Err(e) => {
             let line = e.span().map(|s| line_of(text, s.start));
             let at = line.map(|l| format!(" (line {l})")).unwrap_or_default();
-            Err(Finding::new(
-                Status::Problem,
-                format!("The config file can't be read{at}: {}", e.message()),
-            )
-            .suggest("Fix the file; putio-sync will not start with it as it is."))
+            Err(Box::new(
+                Finding::new(
+                    Status::Problem,
+                    msg!("The config file can't be read{0}: {1}", at, e.message()),
+                )
+                .suggest(msg!(
+                    "Fix the file; putio-sync will not start with it as it is."
+                )),
+            ))
         }
     }
 }
@@ -306,7 +310,7 @@ pub(crate) async fn log_level(ctx: &Ctx) -> Finding {
 
 fn level_finding(s: &LevelStatus) -> Finding {
     if !s.verbose {
-        return Finding::ok(format!("Logging at {}.", s.effective));
+        return Finding::ok(msg!("Logging at {0}.", s.effective));
     }
     let loud: Vec<&str> = s
         .effective
@@ -347,8 +351,7 @@ fn level_finding(s: &LevelStatus) -> Finding {
         summary.push_str(&format!(" Set on the Logs page: {}.", page.join(", ")));
     }
     Finding::new(Status::Warning, summary).suggest(
-        "Debug and trace slow the daemon and fill the log file. Revert on the Logs page, or lower the level in Settings › Advanced › Logging.",
-    )
+        msg!("Debug and trace slow the daemon and fill the log file. Revert on the Logs page, or lower the level in Settings › Advanced › Logging."))
 }
 
 #[cfg(test)]
@@ -478,6 +481,14 @@ mod tests {
 
         let good = toml::to_string(&putio_sync_core::config::Config::default()).unwrap();
         std::fs::write(&path, &good).unwrap();
+        assert_eq!(config(&c).await.status, Status::Ok);
+
+        // A language there is no catalog for is named; a known one is fine (060)
+        c.config.ui.language = Some("xx".to_string());
+        let f = config(&c).await;
+        assert_eq!(f.status, Status::Warning);
+        assert_eq!(f.items[0].key, "ui.language");
+        c.config.ui.language = Some("de".to_string());
         assert_eq!(config(&c).await.status, Status::Ok);
 
         std::fs::write(&path, format!("typo_section = 1\n{good}")).unwrap();

@@ -4,6 +4,7 @@
 //! change `[usage_stats] enabled` in the config file. Nothing is sent from here.
 
 use putio_sync_core::config::Config;
+use putio_sync_core::t;
 use putio_sync_core::usage_stats::{self as stats, Inputs};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -63,14 +64,14 @@ pub async fn execute(
     out: &mut impl Write,
 ) -> i32 {
     let Some(path) = config_file(config_arg) else {
-        eprintln!("Could not find the config file");
+        eprintln!("{}", t!("Could not find the config file"));
         return 1;
     };
     let mut config = if path.exists() {
         match Config::load(&path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Could not read {}: {e}", path.display());
+                eprintln!("{}", t!("Could not read {0}: {1}", path.display(), e));
                 return 1;
             }
         }
@@ -81,7 +82,7 @@ pub async fn execute(
         UsageStatsCommands::Show => {
             let inputs = inputs(&config, &path).await;
             let Some(file) = stats::state_path(Some(&path)) else {
-                eprintln!("Could not find the config folder");
+                eprintln!("{}", t!("Could not find the config folder"));
                 return 1;
             };
             let id = stats::load(&file).install_id;
@@ -96,7 +97,8 @@ pub async fn execute(
             };
             let _ = writeln!(
                 out,
-                "Usage stats are {status}. This is what would be sent:\n"
+                "{}\n",
+                t!("Usage stats are {0}. This is what would be sent:", status)
             );
             let _ = writeln!(out, "{json}");
             0
@@ -104,7 +106,7 @@ pub async fn execute(
         UsageStatsCommands::Enable | UsageStatsCommands::Disable => {
             let on = command == UsageStatsCommands::Enable;
             if !path.exists() {
-                eprintln!("No config file at {}", path.display());
+                eprintln!("{}", t!("No config file at {0}", path.display()));
                 return 1;
             }
             config.usage_stats.enabled = on;
@@ -112,17 +114,9 @@ pub async fn execute(
                 eprintln!("{e}");
                 return 1;
             }
-            let _ = writeln!(
-                out,
-                "Usage stats are now {}. A running putio-sync picks this up after a restart, or turn it {} in Settings.",
-                if on { "on" } else { "off" },
-                if on { "off" } else { "on" },
-            );
+            let _ = writeln!(out, "{}", t!("Usage stats are now {0}. A running putio-sync picks this up after a restart, or turn it {1} in Settings.", if on { "on" } else { "off" }, if on { "off" } else { "on" }));
             if on && config.usage_stats.endpoint.trim().is_empty() {
-                let _ = writeln!(
-                    out,
-                    "No receiver is set up yet ([usage_stats] endpoint is empty), so nothing is sent."
-                );
+                let _ = writeln!(out, "{}", t!("No receiver is set up yet ([usage_stats] endpoint is empty), so nothing is sent."));
             }
             0
         }

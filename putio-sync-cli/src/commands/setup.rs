@@ -12,6 +12,7 @@ use putio_sync_core::setup::{
     check_folder, check_local, check_preset, preset_choices, putio_token, resolve_app_id,
     suggest_download_dir, FolderWarning, SetupChoices, APP_ID_HELP,
 };
+use putio_sync_core::t;
 use putio_sync_download::{dry_run, DRY_RUN_LIMIT};
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -144,7 +145,10 @@ pub async fn execute_setup(args: SetupArgs, config_path: Option<PathBuf>) -> i32
     let path = match config_path.or_else(|| Config::default_path().ok()) {
         Some(path) => path,
         None => {
-            eprintln!("Error: could not determine the config file path; pass --config");
+            eprintln!(
+                "{}",
+                t!("Error: could not determine the config file path; pass --config")
+            );
             return 1;
         }
     };
@@ -161,11 +165,11 @@ pub async fn execute_setup(args: SetupArgs, config_path: Option<PathBuf>) -> i32
     {
         Ok(Finished::Written) => 0,
         Ok(Finished::Cancelled) => {
-            eprintln!("Cancelled; nothing was written.");
+            eprintln!("{}", t!("Cancelled; nothing was written."));
             2
         }
         Err(e) => {
-            eprintln!("Error: {e:#}");
+            eprintln!("{}", t!("Error: {0}", format!("{:#}", e)));
             1
         }
     }

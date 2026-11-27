@@ -3,6 +3,7 @@
 use anyhow::Result;
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthMethod, Config};
+use putio_sync_core::t;
 use std::path::PathBuf;
 use tracing::{debug, info};
 
@@ -27,7 +28,10 @@ pub async fn execute_status(
     let config = match load_existing_config(config_file_path.as_deref()) {
         Ok(config) => config,
         Err(e) => {
-            eprintln!("Warning: {e}. Showing status with default settings.");
+            eprintln!(
+                "{}",
+                t!("Warning: {0}. Showing status with default settings.", e)
+            );
             None
         }
     };
@@ -71,11 +75,11 @@ pub async fn execute_status(
             });
             println!("{}", serde_json::to_string_pretty(&quick_status)?);
         } else {
-            println!("🔍 putio-sync Status");
+            println!("{}", t!("🔍 putio-sync Status"));
             println!("{}", summary);
 
             // Quick health checks
-            println!("\n📊 Quick Health Checks");
+            println!("\n{}", t!("📊 Quick Health Checks"));
             let health_checks =
                 generate_quick_health_checks(&config, &download_status, &watch_status).await;
             for check in health_checks {
@@ -134,11 +138,12 @@ pub async fn execute_health(config_path: Option<PathBuf>) -> Result<()> {
     }
 
     if overall_healthy {
-        println!("\n✅ System is healthy");
+        println!("\n{}", t!("✅ System is healthy"));
         Ok(())
     } else {
         println!(
-            "\n⚠️  System has issues - run 'putio-sync status --detailed' for more information"
+            "\n{}",
+            t!("⚠️  System has issues - run 'putio-sync status --detailed' for more information")
         );
         std::process::exit(1);
     }
@@ -294,94 +299,112 @@ async fn generate_quick_health_checks(
 
 /// Execute the debug command - comprehensive debug information dump
 pub async fn execute_debug(config_path: Option<PathBuf>) -> Result<()> {
-    println!("🔧 putio-sync Debug Information\n");
+    println!("{}\n", t!("🔧 putio-sync Debug Information"));
 
     // Configuration debugging
-    println!("📋 Configuration Analysis");
+    println!("{}", t!("📋 Configuration Analysis"));
     let config_file_path = config_path.or_else(|| Config::default_path().ok());
 
     if let Some(ref path) = config_file_path {
-        println!("  Config file: {}", path.display());
-        println!("  Exists: {}", path.exists());
+        println!("  {}", t!("Config file: {0}", path.display()));
+        println!("  {}", t!("Exists: {0}", path.exists()));
 
         if path.exists() {
             match std::fs::metadata(path) {
                 Ok(metadata) => {
-                    println!("  Size: {} bytes", metadata.len());
-                    println!("  Readable: {}", !metadata.permissions().readonly());
+                    println!("  {}", t!("Size: {0} bytes", metadata.len()));
+                    println!(
+                        "  {}",
+                        t!("Readable: {0}", !metadata.permissions().readonly())
+                    );
                 }
-                Err(e) => println!("  Metadata error: {}", e),
+                Err(e) => println!("  {}", t!("Metadata error: {0}", e)),
             }
 
             match Config::load(path) {
                 Ok(config) => {
-                    println!("  ✅ Config loads successfully");
-                    println!("  Auth configured: {}", config.auth.is_some());
+                    println!("  {}", t!("✅ Config loads successfully"));
+                    println!("  {}", t!("Auth configured: {0}", config.auth.is_some()));
                     if let Some(auth) = &config.auth {
-                        println!("  Auth method: {:?}", auth.auth_method);
+                        println!(
+                            "  {}",
+                            t!("Auth method: {0}", format!("{:?}", auth.auth_method))
+                        );
                     }
-                    println!("  Download workers: {}", config.download.workers);
+                    println!("  {}", t!("Download workers: {0}", config.download.workers));
                     println!(
-                        "  Download target: {}",
-                        config.download.target_directory.display()
+                        "  {}",
+                        t!(
+                            "Download target: {0}",
+                            config.download.target_directory.display()
+                        )
                     );
                     println!(
-                        "  Target exists: {}",
-                        config.download.target_directory.exists()
+                        "  {}",
+                        t!(
+                            "Target exists: {0}",
+                            config.download.target_directory.exists()
+                        )
                     );
-                    println!("  Watch directories: {}", config.watch.paths.len());
+                    println!(
+                        "  {}",
+                        t!("Watch directories: {0}", config.watch.paths.len())
+                    );
                     for (i, path) in config.watch.paths.iter().enumerate() {
                         println!(
-                            "    {}: {} (exists: {})",
-                            i + 1,
-                            path.display(),
-                            path.exists()
+                            "    {}",
+                            t!(
+                                "{0}: {1} (exists: {2})",
+                                i + 1,
+                                path.display(),
+                                path.exists()
+                            )
                         );
                     }
                 }
                 Err(e) => {
-                    println!("  ❌ Config load error: {}", e);
+                    println!("  {}", t!("❌ Config load error: {0}", e));
                 }
             }
         } else {
-            println!("  ❌ Config file does not exist");
+            println!("  {}", t!("❌ Config file does not exist"));
         }
     } else {
-        println!("  ❌ No config file path found");
+        println!("  {}", t!("❌ No config file path found"));
     }
 
     // Environment debugging
-    println!("\n🌍 Environment Information");
-    println!("  OS: {}", std::env::consts::OS);
-    println!("  Architecture: {}", std::env::consts::ARCH);
+    println!("\n{}", t!("🌍 Environment Information"));
+    println!("  {}", t!("OS: {0}", std::env::consts::OS));
+    println!("  {}", t!("Architecture: {0}", std::env::consts::ARCH));
     println!(
-        "  Working directory: {}",
-        std::env::current_dir()?.display()
+        "  {}",
+        t!("Working directory: {0}", std::env::current_dir()?.display())
     );
 
     if let Ok(home) = std::env::var("HOME") {
-        println!("  Home directory: {}", home);
+        println!("  {}", t!("Home directory: {0}", home));
     }
 
     // Check for common environment variables
     let env_vars = ["RUST_LOG", "PUTIO_SYNC_CONFIG", "PUTIO_TOKEN"];
-    println!("  Environment variables:");
+    println!("  {}", t!("Environment variables:"));
     for var in &env_vars {
         match std::env::var(var) {
             Ok(value) => {
                 if var.contains("TOKEN") || var.contains("PASS") {
-                    println!("    {}: [REDACTED]", var);
+                    println!("    {}", t!("{0}: [REDACTED]", var));
                 } else {
                     println!("    {}: {}", var, value);
                 }
             }
-            Err(_) => println!("    {}: (not set)", var),
+            Err(_) => println!("    {}", t!("{0}: (not set)", var)),
         }
     }
 
     // Network connectivity test
-    println!("\n🌐 Network Connectivity");
-    println!("  Testing Put.io API connectivity...");
+    println!("\n{}", t!("🌐 Network Connectivity"));
+    println!("  {}", t!("Testing Put.io API connectivity..."));
 
     if let Some(ref path) = config_file_path {
         if let Ok(config) = Config::load(path) {
@@ -390,7 +413,7 @@ pub async fn execute_debug(config_path: Option<PathBuf>) -> Result<()> {
                     AuthMethod::Token => match auth.token {
                         Some(token) => PutioApiClient::new(token),
                         None => {
-                            println!("  ⚠️  No token configured");
+                            println!("  {}", t!("⚠️  No token configured"));
                             return Ok(());
                         }
                     },
@@ -399,58 +422,64 @@ pub async fn execute_debug(config_path: Option<PathBuf>) -> Result<()> {
                             PutioApiClient::with_credentials(username, password)
                         }
                         _ => {
-                            println!("  ⚠️  Credentials not fully configured");
+                            println!("  {}", t!("⚠️  Credentials not fully configured"));
                             return Ok(());
                         }
                     },
                 };
                 match client.get_account_info().await {
                     Ok(account) => {
-                        println!("  ✅ API connection successful");
-                        println!("  Account: {}", account.username);
-                        println!("  Account ID: {}", account.user_id);
+                        println!("  {}", t!("✅ API connection successful"));
+                        println!("  {}", t!("Account: {0}", account.username));
+                        println!("  {}", t!("Account ID: {0}", account.user_id));
                     }
                     Err(e) => {
-                        println!("  ❌ API connection failed: {}", e);
+                        println!("  {}", t!("❌ API connection failed: {0}", e));
                     }
                 }
             } else {
-                println!("  ⏭️  No authentication configured, skipping API test");
+                println!(
+                    "  {}",
+                    t!("⏭️  No authentication configured, skipping API test")
+                );
             }
         }
     }
 
     // File system checks
-    println!("\n📁 File System Checks");
+    println!("\n{}", t!("📁 File System Checks"));
     if let Some(ref path) = config_file_path {
         if let Ok(config) = Config::load(path) {
             let target_dir = &config.download.target_directory;
-            println!("  Download target: {}", target_dir.display());
-            println!("    Exists: {}", target_dir.exists());
+            println!("  {}", t!("Download target: {0}", target_dir.display()));
+            println!("    {}", t!("Exists: {0}", target_dir.exists()));
 
             if target_dir.exists() {
-                println!("    Is directory: {}", target_dir.is_dir());
+                println!("    {}", t!("Is directory: {0}", target_dir.is_dir()));
 
                 // Test write permissions
                 let test_file = target_dir.join(".putiosync_write_test");
                 match std::fs::write(&test_file, b"test") {
                     Ok(_) => {
-                        println!("    Writable: ✅");
+                        println!("    {}", t!("Writable: ✅"));
                         let _ = std::fs::remove_file(&test_file);
                     }
                     Err(e) => {
-                        println!("    Writable: ❌ ({})", e);
+                        println!("    {}", t!("Writable: ❌ ({0})", e));
                     }
                 }
 
                 // Check available disk space
                 if let Ok(metadata) = std::fs::metadata(target_dir) {
-                    println!("    Permissions: {:?}", metadata.permissions());
+                    println!(
+                        "    {}",
+                        t!("Permissions: {0}", format!("{:?}", metadata.permissions()))
+                    );
                 }
             }
         }
     }
 
-    println!("\n✅ Debug information collection complete");
+    println!("\n{}", t!("✅ Debug information collection complete"));
     Ok(())
 }

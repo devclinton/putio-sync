@@ -6,9 +6,10 @@ use crate::output::format_bytes;
 use crate::services::Services;
 use anyhow::{Context, Result};
 use putio_sync_core::config::Config;
+use putio_sync_core::t;
 use putio_sync_db::Database;
 use putio_sync_storage::{FreeResult, Plan, StorageService, Trigger};
-use std::io::{self, Write};
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -57,18 +58,18 @@ async fn free_space(
     let plan = storage.plan().await?;
     print_plan(&plan);
     if dry_run {
-        println!("\nDry run mode - no files were deleted");
+        println!("\n{}", t!("Dry run mode - no files were deleted"));
         return Ok(());
     }
     if plan.files.is_empty() {
         return Ok(());
     }
     if !yes && !confirm(plan.files.len(), plan.total_bytes)? {
-        println!("Free-up cancelled");
+        println!("{}", t!("Free-up cancelled"));
         return Ok(());
     }
 
-    println!("\nDeleting files...");
+    println!("\n{}", t!("Deleting files..."));
     let ids: Vec<i64> = plan.files.iter().map(|f| f.id).collect();
     let result = storage.free(Trigger::Manual, &plan.id, &ids).await?;
     print_result(&result);
@@ -82,19 +83,25 @@ async fn free_space(
 fn print_plan(plan: &Plan) {
     if plan.needed_bytes == 0 {
         println!(
-            "{} free; the target ({}) is already met",
-            format_bytes(plan.free_before),
-            format_bytes(plan.target_bytes)
+            "{}",
+            t!(
+                "{0} free; the target ({1}) is already met",
+                format_bytes(plan.free_before),
+                format_bytes(plan.target_bytes)
+            )
         );
         return;
     }
     if plan.files.is_empty() {
-        println!("No files are safe to delete");
+        println!("{}", t!("No files are safe to delete"));
     } else {
-        println!("\nFiles to delete, oldest first:");
+        println!("\n{}", t!("Files to delete, oldest first:"));
         println!(
-            "{:<10} {:<12} {:<20} Path / local copy",
-            "Size", "ID", "Added"
+            "{} {} {} {}",
+            crate::output::pad(&t!("Size"), 10),
+            crate::output::pad(&t!("ID"), 12),
+            crate::output::pad(&t!("Added"), 20),
+            t!("Path / local copy")
         );
         println!("{}", "-".repeat(90));
         for f in &plan.files {
@@ -110,57 +117,67 @@ fn print_plan(plan: &Plan) {
         println!("{}", "-".repeat(90));
     }
     println!(
-        "{} files, {}: free {} → {} (target {})",
-        plan.files.len(),
-        format_bytes(plan.total_bytes),
-        format_bytes(plan.free_before),
-        format_bytes(plan.free_after),
-        format_bytes(plan.target_bytes)
+        "{}",
+        t!(
+            "{0} files, {1}: free {2} → {3} (target {4})",
+            plan.files.len(),
+            format_bytes(plan.total_bytes),
+            format_bytes(plan.free_before),
+            format_bytes(plan.free_after),
+            format_bytes(plan.target_bytes)
+        )
     );
     if plan.shortfall_bytes > 0 {
         println!(
-            "Not enough: {} short of the target",
-            format_bytes(plan.shortfall_bytes)
+            "{}",
+            t!(
+                "Not enough: {0} short of the target",
+                format_bytes(plan.shortfall_bytes)
+            )
         );
     }
     if !plan.complete {
-        println!("The account could not be listed completely; some files were not considered");
+        println!(
+            "{}",
+            t!("The account could not be listed completely; some files were not considered")
+        );
     }
 }
 
 fn print_result(result: &FreeResult) {
     for f in &result.deleted {
-        println!("Deleted {} ({})", f.path, format_bytes(f.size));
+        println!("{}", t!("Deleted {0} ({1})", f.path, format_bytes(f.size)));
     }
     for s in &result.skipped {
-        println!("Skipped {} ({}): {}", s.path, s.id, s.reason);
+        println!("{}", t!("Skipped {0} ({1}): {2}", s.path, s.id, s.reason));
     }
     for f in &result.failed {
-        eprintln!("Failed to delete {} ({}): {}", f.path, f.id, f.error);
+        eprintln!(
+            "{}",
+            t!("Failed to delete {0} ({1}): {2}", f.path, f.id, f.error)
+        );
     }
     println!(
-        "Deleted {} files ({}), skipped {}, failed {}{}",
-        result.deleted.len(),
-        format_bytes(result.bytes_deleted),
-        result.skipped.len(),
-        result.failed.len(),
-        result
-            .free_after
-            .map(|b| format!("; {} free now", format_bytes(b)))
-            .unwrap_or_default()
+        "{}",
+        t!(
+            "Deleted {0} files ({1}), skipped {2}, failed {3}{4}",
+            result.deleted.len(),
+            format_bytes(result.bytes_deleted),
+            result.skipped.len(),
+            result.failed.len(),
+            result
+                .free_after
+                .map(|b| format!("; {} free now", format_bytes(b)))
+                .unwrap_or_default()
+        )
     );
 }
 
 fn confirm(count: usize, bytes: i64) -> Result<bool> {
-    print!(
-        "\nDelete {} files ({}) from Put.io? [y/N] ",
+    println!();
+    Ok(crate::ui::confirm(&t!(
+        "Delete {0} files ({1}) from Put.io?",
         count,
         format_bytes(bytes)
-    );
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let answer = input.trim().to_lowercase();
-    Ok(answer == "y" || answer == "yes")
+    ))?)
 }
