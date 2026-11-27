@@ -1,6 +1,7 @@
 //! Radarr/Sonarr download client (features 011 and 018)
 //!
 //! - POST /transmission/rpc            - Transmission RPC, own Basic auth (public route)
+//! - ANY  /api/v2/*                    - qBittorrent Web API, in `routes/qbit.rs` (067, public route)
 //! - GET  /arr                         - Settings card data (protected)
 //! - PUT  /arr/client                  - Download client form (protected)
 //! - POST /arr/applications/test       - Test unsaved application form values (protected)
@@ -55,6 +56,8 @@ pub struct ArrRpc {
     pub service: Arc<ArrService>,
     /// Value of `X-Transmission-Session-Id` clients must send back
     pub session_id: String,
+    /// The sessions of the qBittorrent API (feature 067)
+    pub qbit: Arc<crate::routes::qbit::Sessions>,
 }
 
 impl ArrRpc {
@@ -63,6 +66,7 @@ impl ArrRpc {
         Self {
             service,
             session_id: uuid::Uuid::new_v4().simple().to_string(),
+            qbit: Arc::default(),
         }
     }
 }
@@ -388,6 +392,8 @@ pub async fn get_arr(
                 "url_base": putio_sync_arr::clients::URL_BASE,
                 "hosts": hosts,
             },
+            // The same client as qBittorrent (067): same hosts, port, username and password
+            "qbittorrent": { "url_base": "", "api": "/api/v2/" },
             "download_dir": download_dir,
         },
         "applications": applications,

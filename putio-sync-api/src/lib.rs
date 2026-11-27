@@ -670,6 +670,8 @@ fn public_routes(state: AppState) -> Router {
             "/transmission/rpc",
             axum::routing::any(routes::arr::transmission_rpc),
         )
+        // The same client as qBittorrent's Web API; a sign-in of its own (feature 067)
+        .route("/api/v2/*path", axum::routing::any(routes::qbit::api))
         .with_state(state)
 }
 

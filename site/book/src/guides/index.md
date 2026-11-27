@@ -36,6 +36,10 @@ All of them finish with [your first sync](first-sync.md), the setup wizard in th
 Add one piece to a running setup:
 
 - [Connect Radarr and Sonarr](radarr-sonarr.md): putio-sync as their download client.
+- [Connect autobrr](autobrr.md): send releases from IRC announces to Put.io.
+- [Connect cross-seed](cross-seed.md): what works with Put.io, and what can't.
+- [Use a qBittorrent phone app](qbittorrent-apps.md): watch and control the queue from a
+  phone.
 - [Choose what downloads](folder-rules.md): presets and folder rules.
 - [Send torrents from a watch folder](watch-folders.md): drop .torrent and .magnet files in a
   folder.

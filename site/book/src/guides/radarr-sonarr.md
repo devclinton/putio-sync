@@ -56,6 +56,15 @@ If the app sees the folder under another path, add a **Remote Path Mapping** in 
    a download.
 3. When it finishes, the app imports it. Its **Activity** page shows the import.
 
+## As a qBittorrent client instead
+
+putio-sync also answers as **qBittorrent**. Radarr and Sonarr work with either type; use
+Transmission unless you have a reason. To add it by hand as qBittorrent: **Settings ›
+Download Clients › + › qBittorrent**, the same host, port (`15432`), user name and password,
+an empty URL base, and a category such as `radarr`. Don't add both types to one app with
+the same category: the app would see every item twice.
+[What the qBittorrent API answers](../radarr-and-sonarr.md#the-qbittorrent-api).
+
 ## Prowlarr
 
 Prowlarr manages indexers, not download clients. Add your indexers in Prowlarr and let it

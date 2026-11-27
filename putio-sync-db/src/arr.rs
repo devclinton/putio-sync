@@ -288,6 +288,24 @@ impl<'a> ArrRepository<'a> {
         Ok(rows.iter().map(item_from_row).collect())
     }
 
+    /// When each item was added and last changed, as Unix seconds by hash (067)
+    pub async fn times(&self) -> DbResult<std::collections::HashMap<String, (i64, i64)>> {
+        let rows: Vec<(String, Option<i64>, Option<i64>)> = sqlx::query_as(
+            "SELECT hash, CAST(strftime('%s', added_at) AS INTEGER), \
+             CAST(strftime('%s', updated_at) AS INTEGER) FROM arr_items",
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to read arr item times"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(hash, added, changed)| {
+                let added = added.unwrap_or(0);
+                (hash, (added, changed.unwrap_or(added)))
+            })
+            .collect())
+    }
+
     /// `(hash, name)` of the magnets held before Put.io (043): no transfer yet, state `putio`,
     /// Put.io status `HELD`
     pub async fn held_names(&self) -> DbResult<Vec<(String, String)>> {

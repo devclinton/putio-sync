@@ -75,7 +75,7 @@ fn status(item: &ArrItem, local: &LocalProgress) -> i64 {
     }
 }
 
-fn eta(item: &ArrItem, local: &LocalProgress) -> i64 {
+pub(crate) fn eta(item: &ArrItem, local: &LocalProgress) -> i64 {
     match item.state {
         ArrState::Putio => item.putio_eta.filter(|e| *e >= 0).unwrap_or(-1),
         ArrState::Local if local.speed_bps > 0 => {
@@ -86,28 +86,32 @@ fn eta(item: &ArrItem, local: &LocalProgress) -> i64 {
     }
 }
 
-/// The Transmission torrent object for `torrent-get`. `gated` is true while the processing
-/// pipeline (038) still has a step to run on the item: it then reads as 99% downloaded, so
-/// the *arr waits instead of importing a half-processed folder.
-pub fn torrent(item: &ArrItem, local: &LocalProgress, target: &Path, gated: bool) -> Value {
-    let gated = gated && matches!(item.state, ArrState::Local | ArrState::Done);
+/// Bytes left and the fraction done (0 to 1), shared by the Transmission and qBittorrent
+/// views. `gated` must already be limited to items on disk; it reads as 99%.
+pub(crate) fn progress(item: &ArrItem, local: &LocalProgress, gated: bool) -> (i64, f64) {
     let left = if gated {
         (item.total_size / 100).max(1)
     } else {
         left_until_done(item, local)
     };
-    let percent_done = if item.total_size > 0 {
+    let fraction = if gated && item.total_size > 0 {
+        0.99
+    } else if item.total_size > 0 {
         1.0 - left as f64 / item.total_size as f64
     } else if item.state == ArrState::Done && !gated {
         1.0
     } else {
         0.0
     };
-    let percent_done = if gated && item.total_size > 0 {
-        0.99
-    } else {
-        percent_done
-    };
+    (left, fraction)
+}
+
+/// The Transmission torrent object for `torrent-get`. `gated` is true while the processing
+/// pipeline (038) still has a step to run on the item: it then reads as 99% downloaded, so
+/// the *arr waits instead of importing a half-processed folder.
+pub fn torrent(item: &ArrItem, local: &LocalProgress, target: &Path, gated: bool) -> Value {
+    let gated = gated && matches!(item.state, ArrState::Local | ArrState::Done);
+    let (left, percent_done) = progress(item, local, gated);
     let failed = item.state == ArrState::Failed;
     json!({
         "id": item.id,

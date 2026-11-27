@@ -1,6 +1,9 @@
 //! Radarr/Sonarr integration (feature 011): putio-sync answers the Transmission RPC the
 //! *arr apps use for a download client, backed by Put.io transfers and the sync's own
-//! downloads.
+//! downloads. Feature 067 answers the qBittorrent Web API from the same items.
+
+// The qBittorrent torrent object (067) is one large `json!`
+#![recursion_limit = "256"]
 
 pub mod arr_api;
 pub mod clients;
@@ -10,6 +13,7 @@ pub mod infohash;
 pub mod media;
 pub mod path_check;
 pub mod path_mapping;
+pub mod qbit;
 pub mod recommend;
 pub mod rpc;
 pub mod service;
@@ -20,5 +24,5 @@ pub use arr_api::{ArrApi, ArrApiError, DownloadClient, SystemStatus};
 pub use contact::Contacts;
 pub use media::ArrMedia;
 pub use service::{
-    unix_now, AddOutcome, AddSource, ArrError, ArrService, ItemId, HELD, REFRESH_INTERVAL,
+    unix_now, AddOutcome, AddSource, ArrError, ArrService, ItemId, Snapshot, HELD, REFRESH_INTERVAL,
 };

@@ -455,7 +455,7 @@ schedule, a setting that needs a restart) and links to the setting that
 caused it. Error messages say what happened and what to do, and link to the
 matching 016 guide. 064 adds its own reasons to the same line.
 
-### 067 qBittorrent API emulation
+### 067 qBittorrent API emulation (done)
 
 putio-sync already answers as Transmission for Radarr and Sonarr (011). Answer
 as qBittorrent too (its Web API v2: sign-in, add, list, properties, files,
