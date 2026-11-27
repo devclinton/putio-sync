@@ -1370,11 +1370,11 @@ addresses, for a plugin server or an indexer on the same machine.
 | `GET /crash-reports`, `GET /crash-reports/{id}`, `POST /crash-reports/{id}/dismiss` | Crash reports (feature 058): the list with `pending` (undismissed in the last 7 days); one report with its `text`, the prefilled GitHub issue `url`, `search_url` and `truncated`; dismiss one. 404 for an unknown id |
 | `GET /whats-new`, `POST /whats-new/seen` | The built-in changelog with each entry marked `new`; record entries as seen (`{"ids": [...]}`) |
 | `POST /local/sync` | Start a folder sync now: 202, 409 while one runs, 503 without a database |
-| `GET /local/queue`, `/local/queue/stats` | Queue rows and counts |
+| `GET /local/queue`, `/local/queue/stats` | Queue rows and counts. Each row has `waiting`: null, or why it is not downloading as `{"code": "disk_space", "setting": "download.min_free_space_mb", "free_bytes": …, "min_free_bytes": …}` (codes in `specs/066-why-waiting/spec.md`) |
 | `POST /local/queue` | `{"file_id": 123}`: queue a file or every file under a folder → 202 with found/queued/skipped/blocked/failed, 404 if unknown |
 | `POST /local/queue/{pause,resume}` | Turn the Pause local downloads switch on or off; answers `{"nas_paused": bool}` |
 | `POST /local/queue/clear` | Remove completed |
-| `GET /active` | The Active pipeline: items by stage and state, counts, `nas_paused` and `recently_finished` |
+| `GET /active` | The Active pipeline: items by stage and state (each with `waiting`, as on queue rows), counts, `nas_paused` and `recently_finished` |
 | `POST /active/{pause,resume}` | `{"keys": ["transfer:12", ...]}`: pause or resume items; one result per key |
 | `POST /local/queue/{file_id}/{move_up,move_down,move_first,move_last,skip}` | Reorder or skip one item |
 | `GET /local/downloads`, `DELETE /local/downloads/{id}` | Active downloads; cancel one (404 if unknown) |
@@ -2546,6 +2546,15 @@ to its transfer and its queue rows.
   download and makes the workers claim nothing until it is turned off. The stopped files go
   back to waiting, not paused; files paused on their own stay paused. The switch survives
   a restart. Radarr and Sonarr see paused items as stopped, not failed.
+- **Why it is waiting**: a row that is not downloading says why in one line, on the Active
+  and Queue pages, with a link to the setting behind it. The reasons are: a timed pause, a
+  bandwidth schedule entry or limit set to paused, the Pause local downloads switch, free
+  space under `min_free_space_mb` (or unreadable), a file too big for the space left, every
+  worker busy, its own pause or hold, Put.io's queue, and waiting for the next sync. A failed
+  row says what failed (network, Put.io error, disk write, full disk, size or checksum) and
+  what to do; after a restart it only says it failed. A pending row with a free worker and
+  nothing in its way shows no reason. Files a filter, folder rule or the release pre-check
+  left out have no row, so the Active page only counts them and links to the rules.
 - **Recently finished** lists items that left the list in the last
   `[transfers] finished_retention_hours` (24 by default, 1 to 720): done, or failed for
   good (a Put.io error on a transfer Put.io no longer has, or a transfer whose files were

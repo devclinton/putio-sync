@@ -496,3 +496,49 @@ async fn queue_filters_by_folder_and_file() {
     assert_eq!(body["total"], 1, "{body}");
     assert_eq!(body["items"][0]["filename"], "other");
 }
+
+/// Feature 066: each row says why it is not downloading, as a code the UI words
+#[tokio::test]
+async fn rows_say_why_they_are_not_downloading() {
+    let app = seeded().await;
+    let reasons = |queue: &Value| -> Vec<Value> {
+        queue["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["waiting"]["code"].clone())
+            .collect()
+    };
+
+    // Workers are free and nothing is in the way: no reason is made up
+    let queue = body_json(app.get("/local/queue").await).await;
+    assert_eq!(reasons(&queue), vec![Value::Null; 4]);
+
+    // A paused row and a failed row say so; the failure from before this run has no kind
+    let (status, _) = action(&app, "/local/queue/2/pause").await;
+    assert_eq!(status, StatusCode::OK);
+    app.db()
+        .queue()
+        .update_status(1, QueueStatus::Failed)
+        .await
+        .unwrap();
+    let queue = body_json(app.get("/local/queue").await).await;
+    assert_eq!(
+        reasons(&queue),
+        [json!(null), json!("paused"), json!("failed"), json!(null)]
+    );
+    assert_eq!(queue["items"][2]["waiting"], json!({ "code": "failed" }));
+
+    // The switch holds every pending row; paused, failed and done rows keep their own
+    action(&app, "/local/queue/pause").await;
+    let queue = body_json(app.get("/local/queue").await).await;
+    assert_eq!(
+        reasons(&queue),
+        [
+            json!("downloads_paused"),
+            json!("paused"),
+            json!("failed"),
+            json!(null)
+        ]
+    );
+}

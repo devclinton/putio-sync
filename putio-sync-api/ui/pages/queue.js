@@ -7,9 +7,10 @@
 // files an Active row stands for.
 
 import { del, get, post, syncNow } from "../api.js";
-import { confirm, empty, h, nasBanner, poll, setNasPaused, toast } from "../app.js";
+import { confirm, empty, h, nasBanner, poll, reasonLine, setNasPaused, toast } from "../app.js";
 import { flagControl, loadFlags } from "../flags.js";
 import { bytes, duration, percent, relative, speed, utc } from "../format.js";
+import { waitingLine } from "../waiting.js";
 
 const REFRESH_MS = 3000;
 const STATES = ["pending", "downloading", "paused", "failed", "completed"];
@@ -462,7 +463,8 @@ function queueRow(item, index, last) {
   return h(
     "tr",
     {},
-    h("td", { class: "name-cell name", "data-label": "Name", text: item.filename }),
+    // 066: why the row is not downloading, with the setting behind it
+    h("td", { class: "name-cell name", "data-label": "Name" }, item.filename, reasonLine(waitingLine(item.waiting))),
     h("td", { class: "num right", "data-label": "Size", text: bytes(item.file_size) }),
     h("td", { class: "name muted", "data-label": "Path", text: item.relative_path || "—" }),
     h("td", { "data-label": "State" }, h("span", { class: `badge ${BADGE[s] || ""}`, text: s || "—" })),

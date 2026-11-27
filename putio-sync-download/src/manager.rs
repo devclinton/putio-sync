@@ -759,6 +759,9 @@ pub struct DownloadManager {
     stopped_partial: Arc<Mutex<HashSet<i64>>>,
     /// In-memory notes per file id
     notes: Arc<Mutex<HashMap<i64, String>>>,
+    /// What the last failure of a file was, by file id, for the queue's reason line
+    /// (feature 066). In memory: after a restart a failed row has no kind.
+    failures: Arc<Mutex<HashMap<i64, &'static str>>>,
     /// The last Put.io transfer list, shared by the Active page, Status and the daemon
     /// loop (feature 039, R3). A plain lock held for a copy, never across the fetch, so
     /// readers (`/status`) never wait on a slow Put.io.
@@ -894,6 +897,7 @@ impl DownloadManager {
             stop_signals: Arc::new(Mutex::new(HashMap::new())),
             stopped_partial: Arc::new(Mutex::new(HashSet::new())),
             notes: Arc::new(Mutex::new(HashMap::new())),
+            failures: Arc::new(Mutex::new(HashMap::new())),
             transfers_cache: Arc::new(Mutex::new(None)),
             transfers_refresh: Arc::new(tokio::sync::Mutex::new(())),
             transfer_events: Arc::new(tokio::sync::Mutex::new(None)),
@@ -941,6 +945,7 @@ impl DownloadManager {
             stop_signals: Arc::new(Mutex::new(HashMap::new())),
             stopped_partial: Arc::new(Mutex::new(HashSet::new())),
             notes: Arc::new(Mutex::new(HashMap::new())),
+            failures: Arc::new(Mutex::new(HashMap::new())),
             transfers_cache: Arc::new(Mutex::new(None)),
             transfers_refresh: Arc::new(tokio::sync::Mutex::new(())),
             transfer_events: Arc::new(tokio::sync::Mutex::new(None)),
@@ -1494,6 +1499,7 @@ impl DownloadManager {
                 relative_path
             ));
             telemetry::download::failed(e.fail_reason());
+            self.note_failure(file_id, &e);
             if let Some(ref callback) = progress_callback {
                 callback.on_file_complete(file_id, &filename, false);
             }
@@ -1592,6 +1598,7 @@ impl DownloadManager {
                     target_path.display()
                 ));
                 telemetry::download::failed(e.fail_reason());
+                self.note_failure(file_id, &e);
                 if let Some(ref callback) = progress_callback {
                     callback.on_file_complete(file_id, &filename, false);
                 }
@@ -1797,6 +1804,7 @@ impl DownloadManager {
                 // A successful result means the temp file was verified and renamed.
                 telemetry::download::completed(duration);
                 locked(&self.notes).remove(&file_id);
+                locked(&self.failures).remove(&file_id);
                 if let Some((kind, detail)) = &outcome {
                     existing.record(&target_path, *kind, detail.as_ref());
                 }
@@ -1890,6 +1898,7 @@ impl DownloadManager {
             }
             Err(e) => {
                 telemetry::download::failed(e.fail_reason());
+                self.note_failure(file_id, &e);
                 error!("Download failed for {}: {}", filename, e);
                 events::emit(Payload::DownloadFailed(events::DownloadFailed {
                     file_id,
@@ -3151,6 +3160,56 @@ impl DownloadManager {
         *locked(&self.low_space)
     }
 
+    /// Remember what failed for `file_id`, for its row's reason line (feature 066)
+    fn note_failure(&self, file_id: i64, error: &DownloadError) {
+        let kind = if error.is_storage_full() {
+            "disk_full"
+        } else {
+            error.fail_reason().as_str()
+        };
+        locked(&self.failures).insert(file_id, kind);
+    }
+
+    /// What the workers check before they claim a row, as of now: the input of the
+    /// queue's and the Active page's reason lines (feature 066)
+    pub async fn queue_state(&self) -> crate::waiting::QueueState {
+        let (min_free_bytes, workers, target) = {
+            let config = self.config.read().await;
+            (
+                config.min_free_space_bytes,
+                config.workers,
+                config.target_directory.clone(),
+            )
+        };
+        let running = match self.database.as_ref() {
+            Some(db) => db
+                .queue()
+                .counts_by_status()
+                .await
+                .map(|counts| {
+                    counts
+                        .iter()
+                        .filter(|(status, _)| status == "downloading")
+                        .map(|(_, n)| usize::try_from(*n).unwrap_or(0))
+                        .sum()
+                })
+                .unwrap_or(0),
+            None => 0,
+        };
+        crate::waiting::QueueState {
+            bandwidth: crate::waiting::bandwidth_hold(&self.bandwidth.status()),
+            nas_paused: self.nas_paused().await,
+            min_free_bytes,
+            free_bytes: (min_free_bytes > 0)
+                .then(|| self.free_bytes(&target))
+                .flatten(),
+            reserved_bytes: self.space.reserved(),
+            workers,
+            running,
+            failures: locked(&self.failures).clone(),
+        }
+    }
+
     /// Put claimed rows back to pending, logging a failure: a row that stays on
     /// "downloading" is only found again by the next restart
     async fn unclaim(&self, file_ids: &[i64]) {
@@ -4054,6 +4113,7 @@ impl DownloadManager {
             stalls,
             transfer_origins,
             notes: self.file_notes(),
+            queue: Some(self.queue_state().await),
             last_sync_start,
             next_sync_at: sync.next_due_at,
             now: SystemTime::now(),
