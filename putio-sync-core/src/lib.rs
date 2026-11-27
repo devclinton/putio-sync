@@ -71,6 +71,9 @@ pub mod sign_in;
 /// Lua plugin settings: validation and secret masking (feature 028)
 pub mod plugins;
 
+/// Languages for text shown to a person: the choice, the catalog, `t!` and `msg!` (feature 060)
+pub mod i18n;
+
 /// Language codes for subtitle names (feature 025)
 pub mod lang;
 

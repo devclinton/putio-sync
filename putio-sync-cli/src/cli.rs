@@ -67,6 +67,15 @@ pub struct Cli {
     )]
     pub quiet: bool,
 
+    /// Language for this run (feature 060)
+    #[arg(
+        long = "lang",
+        value_name = "CODE",
+        global = true,
+        help = "Language for this run, e.g. de (see 'putio-sync languages')"
+    )]
+    pub lang: Option<String>,
+
     /// Subcommand to execute
     #[command(subcommand)]
     pub command: Commands,
@@ -85,6 +94,20 @@ pub enum Commands {
         /// Shell to generate the script for
         #[arg(value_enum)]
         shell: clap_complete::Shell,
+    },
+
+    /// List the languages this build can show
+    #[command(
+        about = "List the languages this build can show",
+        long_about = "List the languages this build can show, and the one in use.\n\
+                      The language is picked from --lang, then PUTIO_SYNC_LANG, then \
+                      [ui] language in the config file, then the system locale. \
+                      Output of --json and --csv, and log files, are always English."
+    )]
+    Languages {
+        /// Output in JSON format
+        #[arg(long = "json", help = "Output in JSON format")]
+        json: bool,
     },
 
     /// Authenticate with Put.io using OAuth token
@@ -855,7 +878,7 @@ pub struct ArchiveCommon {
 }
 
 #[cfg(feature = "server")]
-impl From<ArchiveCommon> for putio_sync_cli::commands::archive::ArchiveCommon {
+impl From<ArchiveCommon> for crate::commands::archive::ArchiveCommon {
     fn from(common: ArchiveCommon) -> Self {
         Self {
             dir: common.dir,
@@ -1453,8 +1476,15 @@ pub enum TransfersCommands {
 
 impl Cli {
     /// Parse command-line arguments
+    ///
+    /// Help and the common argument errors are in the run's language; call
+    /// `crate::i18n::init()` first.
     pub fn parse_args() -> Self {
-        Self::parse()
+        use clap::{CommandFactory, FromArgMatches};
+        let matches = crate::i18n::localize(Self::command())
+            .try_get_matches()
+            .unwrap_or_else(|err| crate::i18n::exit_with(err));
+        Self::from_arg_matches(&matches).unwrap_or_else(|err| err.exit())
     }
 }
 

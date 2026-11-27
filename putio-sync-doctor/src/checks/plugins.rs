@@ -9,6 +9,7 @@
 use super::{count, Ctx};
 use crate::report::{Finding, Item, Status};
 use chrono::{DateTime, Duration, Utc};
+use putio_sync_core::msg;
 use putio_sync_core::step_plugins::StepPlugins;
 use putio_sync_plugins::action::{HealthItem, HealthStatus};
 use putio_sync_plugins::{CallError, PluginState, PluginStatus, PluginsService, RunResult};
@@ -136,17 +137,15 @@ pub(crate) async fn plugins(ctx: &Ctx) -> Finding {
     if broken.is_empty() && !unhealthy.is_empty() {
         return Finding::new(
             Status::Problem,
-            format!("{} failed.", count(unhealthy.len(), "plugin check")),
-        )
-        .suggest("Open Settings › Plugins: check the server address, sign in again, or fix the path rules.")
+            msg!("{0} failed.", count(unhealthy.len(), "plugin check")))
+        .suggest(msg!("Open Settings › Plugins: check the server address, sign in again, or fix the path rules."))
         .items(unhealthy);
     }
     if !broken.is_empty() {
         return Finding::new(
             Status::Problem,
-            format!("{} cannot load.", count(broken.len(), "enabled plugin")),
-        )
-        .suggest("Fix the plugin's plugin.toml or main.lua and press Reload plugins, or turn it off in Settings › Plugins.")
+            msg!("{0} cannot load.", count(broken.len(), "enabled plugin")))
+        .suggest(msg!("Fix the plugin's plugin.toml or main.lua and press Reload plugins, or turn it off in Settings › Plugins."))
         .items(broken);
     }
 
@@ -179,13 +178,8 @@ pub(crate) async fn plugins(ctx: &Ctx) -> Finding {
     if !warnings.is_empty() {
         return Finding::new(
             Status::Warning,
-            format!(
-                "{} {} attention.",
-                count(warnings.len(), "plugin"),
-                if warnings.len() == 1 { "needs" } else { "need" }
-            ),
-        )
-        .suggest("Open Settings › Plugins: save to approve hosts, fill in required settings, use Send test event, or remove a plugin the registry no longer lists.")
+            msg!("{0} {1} attention.", count(warnings.len(), "plugin"), if warnings.len() == 1 { "needs" } else { "need" }))
+        .suggest(msg!("Open Settings › Plugins: save to approve hosts, fill in required settings, use Send test event, or remove a plugin the registry no longer lists."))
         .items(warnings);
     }
 
@@ -194,13 +188,11 @@ pub(crate) async fn plugins(ctx: &Ctx) -> Finding {
         .filter(|p| p.state == PluginState::Enabled)
         .count();
     if on == 0 {
-        return Finding::ok(format!(
-            "{} found, none on.",
-            count(plugins.len(), "plugin")
-        ));
+        return Finding::ok(msg!("{0} found, none on.", count(plugins.len(), "plugin")));
     }
-    Finding::ok(format!(
-        "{} found, {on} on; none failed in the last 24 hours.",
-        count(plugins.len(), "plugin")
+    Finding::ok(msg!(
+        "{0} found, {1} on; none failed in the last 24 hours.",
+        count(plugins.len(), "plugin"),
+        on
     ))
 }

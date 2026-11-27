@@ -4,6 +4,7 @@
 //! prefilled GitHub issue link and opens it in the browser for the person to review.
 
 use putio_sync_core::crash::{self, CrashReport};
+use putio_sync_core::t;
 use std::io::Write;
 use std::path::Path;
 
@@ -32,7 +33,7 @@ pub enum CrashReportCommands {
 /// Run the command, writing to `out`. Exit code: 0 done, 1 no such report or no folder.
 pub fn execute(command: &CrashReportCommands, config: Option<&Path>, out: &mut impl Write) -> i32 {
     let Some(dir) = crash::dir_for(config) else {
-        eprintln!("Could not find the config folder");
+        eprintln!("{}", t!("Could not find the config folder"));
         return 1;
     };
     match command {
@@ -58,7 +59,13 @@ fn find(dir: &Path, id: &str) -> Option<CrashReport> {
 }
 
 fn missing(id: &str) -> i32 {
-    eprintln!("No crash report {id:?}. `putio-sync crash-report list` shows them.");
+    eprintln!(
+        "{}",
+        t!(
+            "No crash report {0}. `putio-sync crash-report list` shows them.",
+            format!("{:?}", id)
+        )
+    );
     1
 }
 
@@ -75,7 +82,7 @@ fn list(reports: &[CrashReport], json: bool, out: &mut impl Write) -> i32 {
             .collect();
         let _ = writeln!(out, "{}", serde_json::Value::Array(rows));
     } else if reports.is_empty() {
-        let _ = writeln!(out, "No crash reports.");
+        let _ = writeln!(out, "{}", t!("No crash reports."));
     } else {
         for r in reports {
             let _ = writeln!(
@@ -102,21 +109,30 @@ fn open(
     let issue = report.issue();
     let _ = writeln!(
         out,
-        "Check the report first: putio-sync crash-report show {}",
-        report.id
-    );
-    let _ = writeln!(out, "Search existing issues: {}", issue.search_url);
-    let _ = writeln!(out, "Report on GitHub: {}", issue.url);
-    if issue.truncated {
-        let _ = writeln!(
-            out,
-            "The report was cut to fit the link: paste the output of `crash-report show {}` into the issue.",
+        "{}",
+        t!(
+            "Check the report first: putio-sync crash-report show {0}",
             report.id
-        );
+        )
+    );
+    let _ = writeln!(
+        out,
+        "{}",
+        t!("Search existing issues: {0}", issue.search_url)
+    );
+    let _ = writeln!(out, "{}", t!("Report on GitHub: {0}", issue.url));
+    if issue.truncated {
+        let _ = writeln!(out, "{}", t!("The report was cut to fit the link: paste the output of `crash-report show {0}` into the issue.", report.id));
     }
     if !no_browser {
         if let Err(e) = opener(&issue.url) {
-            eprintln!("Could not open the browser ({e}): open the link above yourself.");
+            eprintln!(
+                "{}",
+                t!(
+                    "Could not open the browser ({0}): open the link above yourself.",
+                    e
+                )
+            );
         }
     }
     0

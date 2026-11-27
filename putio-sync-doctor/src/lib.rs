@@ -364,6 +364,7 @@ mod tests {
                 item_count: 0,
                 items: Vec::new(),
                 fixes: Vec::new(),
+                local: Default::default(),
             })
             .collect();
         Report::new(Utc::now(), std::time::Duration::ZERO, checks)

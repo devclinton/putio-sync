@@ -1,6 +1,7 @@
 //! `putio-sync plugins check` (feature 059): check a plugin folder the way a reload loads
 //! it, for plugin authors and the plugin registry's checks. Needs no config or token.
 
+use putio_sync_core::t;
 use std::io::Write;
 use std::path::Path;
 
@@ -10,7 +11,7 @@ use putio_sync_plugins::source;
 /// 2 not a folder.
 pub fn execute_check(folder: &Path, json: bool, out: &mut impl Write) -> i32 {
     if !folder.is_dir() {
-        eprintln!("{}: not a folder", folder.display());
+        eprintln!("{}", t!("{0}: not a folder", folder.display()));
         return 2;
     }
     let (manifest, problems) = source::check_folder(folder);
@@ -46,9 +47,9 @@ pub fn execute_check(folder: &Path, json: bool, out: &mut impl Write) -> i32 {
             format!("{} {}", name, version)
         };
         let _ = match problems.len() {
-            0 => writeln!(out, "{}: ok", label),
-            1 => writeln!(out, "{}: 1 problem", label),
-            n => writeln!(out, "{}: {} problems", label, n),
+            0 => writeln!(out, "{}", t!("{0}: ok", label)),
+            1 => writeln!(out, "{}", t!("{0}: 1 problem", label)),
+            n => writeln!(out, "{}", t!("{0}: {1} problems", label, n)),
         };
     }
     i32::from(!problems.is_empty())

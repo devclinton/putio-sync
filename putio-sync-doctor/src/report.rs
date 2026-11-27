@@ -1,6 +1,7 @@
 //! What the doctor reports: checks, their findings and the fixes on offer
 
 use chrono::{DateTime, Utc};
+use putio_sync_core::i18n::Message;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -299,13 +300,13 @@ pub struct FixInfo {
 #[derive(Debug, Clone)]
 pub struct Finding {
     pub status: Status,
-    pub summary: String,
-    pub suggestion: Option<String>,
+    pub summary: Message,
+    pub suggestion: Option<Message>,
     pub items: Vec<Item>,
 }
 
 impl Finding {
-    pub fn new(status: Status, summary: impl Into<String>) -> Self {
+    pub fn new(status: Status, summary: impl Into<Message>) -> Self {
         Self {
             status,
             summary: summary.into(),
@@ -314,15 +315,15 @@ impl Finding {
         }
     }
 
-    pub fn ok(summary: impl Into<String>) -> Self {
+    pub fn ok(summary: impl Into<Message>) -> Self {
         Self::new(Status::Ok, summary)
     }
 
-    pub fn skipped(summary: impl Into<String>) -> Self {
+    pub fn skipped(summary: impl Into<Message>) -> Self {
         Self::new(Status::Skipped, summary)
     }
 
-    pub fn suggest(mut self, suggestion: impl Into<String>) -> Self {
+    pub fn suggest(mut self, suggestion: impl Into<Message>) -> Self {
         self.suggestion = Some(suggestion.into());
         self
     }
@@ -350,6 +351,7 @@ impl Finding {
             .map(|f| f.info())
             .collect();
         let item_count = self.items.len() as u64;
+        let suggestion = self.suggestion.filter(|_| self.status != Status::Ok);
         let mut items = self.items;
         items.truncate(MAX_ITEMS);
         CheckResult {
@@ -357,11 +359,15 @@ impl Finding {
             area: id.area(),
             title: id.title().to_string(),
             status: self.status,
-            summary: self.summary,
-            suggestion: self.suggestion.filter(|_| self.status != Status::Ok),
+            summary: self.summary.english().to_string(),
+            suggestion: suggestion.as_ref().map(|s| s.english().to_string()),
             item_count,
             items,
             fixes,
+            local: LocalText {
+                summary: Some(self.summary),
+                suggestion,
+            },
         }
     }
 }
@@ -381,6 +387,45 @@ pub struct CheckResult {
     pub items: Vec<Item>,
     /// Fixes that apply now
     pub fixes: Vec<FixInfo>,
+    /// The summary and suggestion as translatable messages: only in the process that ran
+    /// the check, never serialized, and not part of equality (feature 060)
+    #[serde(skip)]
+    pub local: LocalText,
+}
+
+/// The translatable form of a [`CheckResult`]'s text (feature 060)
+#[derive(Debug, Clone, Default)]
+pub struct LocalText {
+    /// The summary, when the check ran in this process
+    pub summary: Option<Message>,
+    /// The suggestion, when there is one
+    pub suggestion: Option<Message>,
+}
+
+impl PartialEq for LocalText {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for LocalText {}
+
+impl CheckResult {
+    /// The summary in the run's language; English when it was read from a report
+    pub fn summary_localized(&self) -> String {
+        match &self.local.summary {
+            Some(message) => message.localized(),
+            None => self.summary.clone(),
+        }
+    }
+
+    /// The suggestion in the run's language; English when it was read from a report
+    pub fn suggestion_localized(&self) -> Option<String> {
+        match &self.local.suggestion {
+            Some(message) => Some(message.localized()),
+            None => self.suggestion.clone(),
+        }
+    }
 }
 
 /// Checks per status

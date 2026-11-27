@@ -2,6 +2,7 @@
 
 use super::{count, Ctx};
 use crate::report::{Finding, Item, Status};
+use putio_sync_core::msg;
 
 /// Downloads that gave up on a mismatch within this many days are reported
 const RECENT_DAYS: i64 = 7;
@@ -12,20 +13,19 @@ pub(crate) async fn verification(ctx: &Ctx) -> Finding {
     if !ctx.config.download.verify {
         return Finding::new(
             Status::Warning,
-            "New downloads are not checked against Put.io's CRC32.",
-        )
-        .suggest("Turn on download.verify (Settings › Downloads › Verification) to catch corrupted downloads.");
+            msg!("New downloads are not checked against Put.io's CRC32."))
+        .suggest(msg!("Turn on download.verify (Settings › Downloads › Verification) to catch corrupted downloads."));
     }
     let Some(db) = &ctx.db else {
-        return Finding::skipped("Needs the database.");
+        return Finding::skipped(msg!("Needs the database."));
     };
     let failures = match db.verify().open_download_failures(RECENT_DAYS).await {
         Ok(n) => n,
-        Err(e) => return Finding::skipped(format!("Could not read verify problems: {e}")),
+        Err(e) => return Finding::skipped(msg!("Could not read verify problems: {0}", e)),
     };
     let last_run = match db.verify().latest_run().await {
         Ok(run) => run,
-        Err(e) => return Finding::skipped(format!("Could not read verify runs: {e}")),
+        Err(e) => return Finding::skipped(msg!("Could not read verify runs: {0}", e)),
     };
     let mismatches = match &last_run {
         Some(run) => db.verify().open_mismatches(run.id).await.unwrap_or(0),
@@ -45,7 +45,7 @@ pub(crate) async fn verification(ctx: &Ctx) -> Finding {
         None => " No verify run yet.".to_string(),
     };
     if failures == 0 && mismatches == 0 {
-        return Finding::ok(format!("New downloads are checked.{last}"));
+        return Finding::ok(msg!("New downloads are checked.{0}", last));
     }
     let mut parts = Vec::new();
     if failures > 0 {
@@ -84,6 +84,6 @@ pub(crate) async fn verification(ctx: &Ctx) -> Finding {
         first.make_ascii_uppercase();
     }
     Finding::new(Status::Warning, format!("{summary}.{last}"))
-        .suggest("See History › Verification; a mismatch is downloaded again unless the run was report only.")
+        .suggest(msg!("See History › Verification; a mismatch is downloaded again unless the run was report only."))
         .items(items)
 }

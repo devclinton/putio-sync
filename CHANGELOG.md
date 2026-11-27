@@ -76,6 +76,19 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
   big for the space left, or every worker busy. A failed row says what failed and what to do,
   with a link to the troubleshooting guide. `GET /local/queue` rows and `GET /active` items
   carry the reason as `waiting`: a stable `code` plus its fields.
+- The CLI in the web UI's 26 languages: help, command output, prompts, table headers,
+  the doctor report and the common argument errors. The language is the first of `--lang`,
+  `PUTIO_SYNC_LANG`, `language` under the new `[ui]` config section, the system locale
+  (`LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`) and English. `putio-sync languages` lists
+  the codes and the one in use (`--json` for scripts). A code putio-sync does not have
+  prints one line on standard error and the next choice is used. `--json` and `--csv`
+  output, exit codes, log lines and the names of commands and flags stay the same in every
+  language; yes/no questions take `y`/`yes` and the language's own word. Translations are
+  machine-made and a string without one shows in English. The lite builds carry them too;
+  a build without the new `i18n` feature has English only.
+- `GET` and `PUT /api/v1/settings/ui` read and set `[ui] language`. The web UI's Language
+  card calls its first option "Automatic" (was "Browser default"): the config's language,
+  then the browser's, then English. A language picked in the card still wins in that browser.
 - Tours and help (014): each page shows a short tour the first time you open it in a browser,
   with Next, Back, Skip and "Don't show tours"; it never blocks the page. In Settings, the **?**
   next to each card heading explains that group in plain words and links to its guide.
@@ -122,6 +135,11 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Fixed
 
+- `files list` and the other tables no longer crash on a long name with accented, CJK or
+  emoji characters (the name was cut in the middle of a character), and their columns line
+  up when names hold wide or combining characters.
+- Every yes/no question now takes `yes` as well as `y`; `queue clear` and `transfers cancel`
+  took only `y`.
 - Diagnostics report the free space of the disk the working directory is on, by the longest
   matching mount point, instead of the first disk whose mount point matched (often `/`).
 - Email notifications try again after 30 seconds, 2 minutes and 10 minutes when the mail server

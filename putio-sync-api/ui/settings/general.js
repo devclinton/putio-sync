@@ -49,13 +49,13 @@ function appearance(ctx) {
   return h("section", { class: "card", id: "card-appearance" }, h("h2", { text: "Appearance" }), form, h("p", { class: "muted spaced", text: "Saved in this browser only." }));
 }
 
-/** The UI's language (feature 051): the browser's by default; a change applies at once */
+/** The UI's language (feature 051): Automatic is the config's `[ui] language`, then the browser's (060); a change applies at once */
 function language() {
   const option = (code) => h("option", { value: code, translate: "no", lang: code, text: nativeName(code) });
   const select = h(
     "select",
     { id: "ui-language", onchange: async () => (await setLanguage(select.value)) || toast("Couldn't load that language", "error", "The page stays in English.") },
-    h("option", { value: "", text: "Browser default" }),
+    h("option", { value: "", text: "Automatic" }),
     ["en", ...LANGUAGES].map(option),
   );
   select.value = choice();

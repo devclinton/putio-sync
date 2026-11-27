@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { match } from "../../ui/i18n.js";
+import { match, setConfigured, setLanguage } from "../../ui/i18n.js";
 import { compile, tr } from "../../ui/translate.js";
 import { CATALOG, catalogText, extract, isText, scan, templateKey } from "../../../scripts/i18n-extract.mjs";
 
@@ -31,6 +31,29 @@ test("browser tags match a catalog by region, then by base language", () => {
   assert.equal(match("en-GB"), "en");
   assert.equal(match("ga"), null);
   assert.equal(match(undefined), null);
+});
+
+test("Automatic uses the config's language before the browser's (060)", async () => {
+  const asked = [];
+  const before = { fetch: globalThis.fetch, document: globalThis.document, navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator") };
+  globalThis.fetch = async (url) => (asked.push(url), { ok: false, status: 404 });
+  globalThis.document = { documentElement: {}, dispatchEvent() {} };
+  Object.defineProperty(globalThis, "navigator", { value: { languages: ["fr-FR", "en"] }, configurable: true });
+  try {
+    await setLanguage("", false);
+    setConfigured("de_DE.UTF-8");
+    await setLanguage("", false);
+    // A language picked in the card still wins
+    await setLanguage("ja", false);
+    setConfigured("xx");
+    await setLanguage("", false);
+    setConfigured(null);
+    assert.deepEqual(asked, ["/assets/i18n/fr.json", "/assets/i18n/de.json", "/assets/i18n/ja.json", "/assets/i18n/fr.json"]);
+  } finally {
+    globalThis.fetch = before.fetch;
+    globalThis.document = before.document;
+    if (before.navigator) Object.defineProperty(globalThis, "navigator", before.navigator);
+  }
 });
 
 test("exact strings are translated and keep their surrounding spaces", () => {

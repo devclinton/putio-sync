@@ -4,7 +4,8 @@ use anyhow::{Context, Result};
 use putio_sync_client::{EmptyFolderReport, FailedStep, PutioApiClient};
 use putio_sync_core::cleanup::{CleanupTrigger, EmptyFolderCleanup};
 use putio_sync_core::config::{AuthMethod, Config};
-use std::io::{self, Write};
+use putio_sync_core::t;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -25,7 +26,7 @@ pub async fn execute_clean_empty(
     let preview = cleanup.run(CleanupTrigger::Manual, true).await?;
     print_report(&preview);
     if dry_run {
-        println!("\nDry run mode - no folders were deleted");
+        println!("\n{}", t!("Dry run mode - no folders were deleted"));
         return check_failures(&preview);
     }
     if preview.removed.is_empty() {
@@ -33,11 +34,11 @@ pub async fn execute_clean_empty(
     }
 
     if !yes && !confirm(preview.removed.len())? {
-        println!("Cleanup cancelled");
+        println!("{}", t!("Cleanup cancelled"));
         return Ok(());
     }
 
-    println!("\nDeleting empty folders...");
+    println!("\n{}", t!("Deleting empty folders..."));
     let report = cleanup.run(CleanupTrigger::Manual, false).await?;
     print_report(&report);
     check_failures(&report)
@@ -45,7 +46,7 @@ pub async fn execute_clean_empty(
 
 fn print_report(report: &EmptyFolderReport) {
     if report.removed.is_empty() {
-        println!("No empty folders to remove");
+        println!("{}", t!("No empty folders to remove"));
     } else {
         let heading = if report.dry_run {
             "Empty folders to remove:"
@@ -53,7 +54,12 @@ fn print_report(report: &EmptyFolderReport) {
             "Removed empty folders:"
         };
         println!("\n{heading}");
-        println!("{:<12} {:<10} Path", "ID", "Age");
+        println!(
+            "{} {} {}",
+            crate::output::pad(&t!("ID"), 12),
+            crate::output::pad(&t!("Age"), 10),
+            t!("Path")
+        );
         println!("{}", "-".repeat(70));
         for folder in &report.removed {
             println!(
@@ -67,7 +73,7 @@ fn print_report(report: &EmptyFolderReport) {
     }
     // The preview says what is kept and why (feature 021); the real run would repeat it
     if report.dry_run && !report.kept.is_empty() {
-        println!("\nEmpty folders kept:");
+        println!("\n{}", t!("Empty folders kept:"));
         for folder in &report.kept {
             println!("{:<12} {} ({})", folder.id, folder.path, folder.reason);
         }
@@ -78,24 +84,21 @@ fn print_report(report: &EmptyFolderReport) {
             FailedStep::Delete => "delete",
         };
         eprintln!(
-            "Failed to {} {} ({}): {}",
-            step, failure.path, failure.id, failure.error
+            "{}",
+            t!(
+                "Failed to {0} {1} ({2}): {3}",
+                step,
+                failure.path,
+                failure.id,
+                failure.error
+            )
         );
     }
-    println!(
-        "Scanned {} folders: {} {}, kept {} protected, {} too new, {} by keep settings, {} failed",
-        report.scanned,
-        if report.dry_run {
+    println!("{}", t!("Scanned {0} folders: {1} {2}, kept {3} protected, {4} too new, {5} by keep settings, {6} failed", report.scanned, if report.dry_run {
             "would remove"
         } else {
             "removed"
-        },
-        report.removed.len(),
-        report.kept_protected,
-        report.kept_too_new,
-        report.kept_by_user,
-        report.failures.len()
-    );
+        }, report.removed.len(), report.kept_protected, report.kept_too_new, report.kept_by_user, report.failures.len()));
 }
 
 fn check_failures(report: &EmptyFolderReport) -> Result<()> {
@@ -118,13 +121,11 @@ fn format_age(hours: u64) -> String {
 }
 
 fn confirm(count: usize) -> Result<bool> {
-    print!("\nDelete {} empty folder(s) from Put.io? [y/N] ", count);
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let answer = input.trim().to_lowercase();
-    Ok(answer == "y" || answer == "yes")
+    println!();
+    Ok(crate::ui::confirm(&t!(
+        "Delete {0} empty folder(s) from Put.io?",
+        count
+    ))?)
 }
 
 pub(crate) fn build_client(config: &Config) -> Result<PutioApiClient> {

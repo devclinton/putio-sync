@@ -4,6 +4,7 @@ use super::Ctx;
 use crate::report::{Finding, Status};
 use putio_sync_client::ClientError;
 use putio_sync_core::listen::ListenAddr;
+use putio_sync_core::msg;
 use std::time::Duration;
 
 /// Answers slower than this give a warning
@@ -19,53 +20,64 @@ pub(crate) async fn reachability(ctx: &Ctx) -> Finding {
     let ms = probe.elapsed.as_millis();
     match (&probe.result, probe.http_status) {
         (Err(ClientError::AuthError(_)), None) => {
-            Finding::skipped("No Put.io token is configured, so nothing was sent.")
+            Finding::skipped(msg!("No Put.io token is configured, so nothing was sent."))
         }
         (Err(e), None) => {
-            Finding::new(Status::Problem, format!("Put.io could not be reached: {e}")).suggest(
-                "Check this machine's internet connection and DNS, then run the doctor again.",
+            Finding::new(Status::Problem, msg!("Put.io could not be reached: {0}", e)).suggest(
+                msg!(
+                    "Check this machine's internet connection and DNS, then run the doctor again."
+                ),
             )
         }
         (_, Some(status)) if status.is_server_error() => Finding::new(
             Status::Warning,
-            format!("Put.io answered with an error ({}).", status.as_u16()),
+            msg!("Put.io answered with an error ({0}).", status.as_u16()),
         )
-        .suggest("Put.io may be having trouble; try again later."),
+        .suggest(msg!("Put.io may be having trouble; try again later.")),
         _ if probe.elapsed > SLOW => Finding::new(
             Status::Warning,
-            format!("Put.io answered, but slowly ({ms} ms)."),
+            msg!("Put.io answered, but slowly ({0} ms).", ms),
         )
-        .suggest("Downloads and checks may be slow; if it keeps happening, check the network."),
-        _ => Finding::ok(format!("Put.io answered in {ms} ms.")),
+        .suggest(msg!(
+            "Downloads and checks may be slow; if it keeps happening, check the network."
+        )),
+        _ => Finding::ok(msg!("Put.io answered in {0} ms.", ms)),
     }
 }
 
 pub(crate) async fn rate_limit(ctx: &Ctx) -> Finding {
     let (probe, _) = ctx.probe().await;
     if probe.rate_limited() {
-        return Finding::new(Status::Warning, "Put.io is limiting requests right now.")
-            .suggest("putio-sync slows down on its own; wait a few minutes.");
+        return Finding::new(
+            Status::Warning,
+            msg!("Put.io is limiting requests right now."),
+        )
+        .suggest(msg!(
+            "putio-sync slows down on its own; wait a few minutes."
+        ));
     }
     match probe.rate_limit {
         Some((limit, remaining)) if limit > 0 => {
             let summary = format!("{remaining} of {limit} requests left.");
             if remaining * 100 < limit * RATE_LIMIT_WARNING {
-                Finding::new(Status::Warning, summary).suggest(
-                    "Something is using the Put.io API heavily; check other apps using this token.",
-                )
+                Finding::new(Status::Warning, summary).suggest(msg!(
+                    "Something is using the Put.io API heavily; check other apps using this token."
+                ))
             } else {
                 Finding::ok(summary)
             }
         }
-        _ if probe.http_status.is_some() => Finding::skipped("Put.io did not report a rate limit."),
-        _ => Finding::skipped("Put.io could not be reached."),
+        _ if probe.http_status.is_some() => {
+            Finding::skipped(msg!("Put.io did not report a rate limit."))
+        }
+        _ => Finding::skipped(msg!("Put.io could not be reached.")),
     }
 }
 
 pub(crate) async fn clock_skew(ctx: &Ctx) -> Finding {
     let (probe, answered) = ctx.probe().await;
     let Some(server) = probe.server_date else {
-        return Finding::skipped("Put.io's clock could not be read.");
+        return Finding::skipped(msg!("Put.io's clock could not be read."));
     };
     let skew = (*answered - server).num_seconds();
     let direction = if skew > 0 { "ahead of" } else { "behind" };
@@ -76,10 +88,11 @@ pub(crate) async fn clock_skew(ctx: &Ctx) -> Finding {
     let status = match skew.abs() {
         s if s > SKEW_PROBLEM => Status::Problem,
         s if s > SKEW_WARNING => Status::Warning,
-        _ => return Finding::ok("This machine's clock matches Put.io's."),
+        _ => return Finding::ok(msg!("This machine's clock matches Put.io's.")),
     };
-    Finding::new(status, summary)
-        .suggest("Turn on time sync (NTP) on this machine; ages and schedules depend on the clock.")
+    Finding::new(status, summary).suggest(msg!(
+        "Turn on time sync (NTP) on this machine; ages and schedules depend on the clock."
+    ))
 }
 
 /// Tailscale (feature 036): only graded when sign-in or tailnet-only is on
@@ -97,14 +110,15 @@ pub(crate) async fn tailscale(ctx: &Ctx) -> Finding {
         .map(ListenAddr::port)
         .collect();
     if !cfg.identity_sign_in && tailnet_ports.is_empty() {
-        return Finding::ok("Tailscale sign-in and listening on the tailnet are off.");
+        return Finding::ok(msg!(
+            "Tailscale sign-in and listening on the tailnet are off."
+        ));
     }
     if cfg.identity_sign_in && cfg.allowed_users.is_empty() {
         return Finding::new(
             Status::Warning,
-            "Tailscale sign-in is on, but no Tailscale user is allowed, so nobody gets in that way.",
-        )
-        .suggest("Add Tailscale logins under Allowed users in Settings, Tailscale.");
+            msg!("Tailscale sign-in is on, but no Tailscale user is allowed, so nobody gets in that way."))
+        .suggest(msg!("Add Tailscale logins under Allowed users in Settings, Tailscale."));
     }
     let built;
     let ts = match &ctx.tailscale {
@@ -150,7 +164,11 @@ pub(crate) async fn tailscale(ctx: &Ctx) -> Finding {
             };
             return Finding::new(
                 Status::Warning,
-                format!("{feature} is on, but there is no tailnet address: {reason}."),
+                msg!(
+                    "{0} is on, but there is no tailnet address: {1}.",
+                    feature,
+                    reason
+                ),
             )
             .suggest(fix);
         }
@@ -160,7 +178,7 @@ pub(crate) async fn tailscale(ctx: &Ctx) -> Finding {
         .clone()
         .or_else(|| status.ipv4().map(|ip| ip.to_string()))
         .unwrap_or_else(|| "this machine".to_string());
-    Finding::ok(format!("Tailscale is running as {name}."))
+    Finding::ok(msg!("Tailscale is running as {0}.", name))
 }
 
 /// Shown when identity sign-in is on and the API listens on loopback (as the API's
@@ -175,9 +193,11 @@ pub(crate) async fn listen(ctx: &Ctx) -> Finding {
         Err(e) => {
             return Finding::new(
                 Status::Warning,
-                format!("The API addresses are invalid: {e}."),
+                msg!("The API addresses are invalid: {0}.", e),
             )
-            .suggest("Fix [api] bind in the config file or Settings, Network.")
+            .suggest(msg!(
+                "Fix [api] bind in the config file or Settings, Network."
+            ))
         }
     };
     let mut lists = vec![("API", api.clone())];
@@ -203,16 +223,14 @@ pub(crate) async fn listen(ctx: &Ctx) -> Finding {
     if !waiting.is_empty() {
         return Finding::new(
             Status::Warning,
-            format!("No address now for {}.", waiting.join("; ")),
-        )
-        .suggest("Check the interface name (ip addr) or change the entry in Settings, Network; putio-sync keeps checking and listens once it has an address.");
+            msg!("No address now for {0}.", waiting.join("; ")))
+        .suggest(msg!("Check the interface name (ip addr) or change the entry in Settings, Network; putio-sync keeps checking and listens once it has an address."));
     }
     if ctx.config.tailscale.identity_sign_in && api.iter().any(ListenAddr::is_loopback) {
         return Finding::new(Status::Warning, LOOPBACK_IDENTITY).suggest(
-            "Keep Tailscale sign-in off when another reverse proxy on this machine forwards to putio-sync.",
-        );
+            msg!("Keep Tailscale sign-in off when another reverse proxy on this machine forwards to putio-sync."));
     }
-    Finding::ok(format!("Listening on {}.", on.join(", ")))
+    Finding::ok(msg!("Listening on {0}.", on.join(", ")))
 }
 
 #[cfg(test)]

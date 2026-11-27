@@ -144,9 +144,9 @@ jobs:
           PUTIO_SYNC_GIT_SHA: ${{ github.sha }}
         run: |
           cargo build --release --locked --target aarch64-apple-darwin --package putio-sync-cli \
-            --no-default-features --features hooks --target-dir target/lite
+            --no-default-features --features hooks,i18n --target-dir target/lite
           cargo build --release --locked --target aarch64-apple-darwin --package putio-sync-cli \
-            --no-default-features --features hooks,plugins --target-dir target/lite-plugins
+            --no-default-features --features hooks,plugins,i18n --target-dir target/lite-plugins
           target/lite/aarch64-apple-darwin/release/putio-sync --version
           target/lite-plugins/aarch64-apple-darwin/release/putio-sync --version
 
@@ -219,9 +219,9 @@ jobs:
           rustup target add ${{ matrix.target }}
           cargo build --release --locked --target ${{ matrix.target }} --package putio-sync-cli
           cargo build --release --locked --target ${{ matrix.target }} --package putio-sync-cli `
-            --no-default-features --features hooks --target-dir target/lite
+            --no-default-features --features hooks,i18n --target-dir target/lite
           cargo build --release --locked --target ${{ matrix.target }} --package putio-sync-cli `
-            --no-default-features --features hooks,plugins --target-dir target/lite-plugins
+            --no-default-features --features hooks,plugins,i18n --target-dir target/lite-plugins
 
       - name: Check it runs
         if: matrix.arch == 'x64'

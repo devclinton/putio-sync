@@ -5,6 +5,7 @@ use crate::report::{Finding, FixId, Item, Status};
 use putio_sync_client::{ClientError, Transfer};
 use putio_sync_core::cleanup::{CleanupError, CleanupTrigger};
 use putio_sync_core::config::Config;
+use putio_sync_core::msg;
 use putio_sync_core::setup::{resolve_app_id, APP_ID_HELP};
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
@@ -34,38 +35,38 @@ pub(crate) fn is_errored(transfer: &Transfer) -> bool {
 pub(crate) async fn auth(ctx: &Ctx) -> Finding {
     let (probe, _) = ctx.probe().await;
     match &probe.result {
-        Ok(info) => Finding::ok(format!("Signed in as {}.", info.username)),
+        Ok(info) => Finding::ok(msg!("Signed in as {0}.", info.username)),
         Err(ClientError::AuthError(_)) => {
-            Finding::new(Status::Problem, "No Put.io token is configured.")
+            Finding::new(Status::Problem, msg!("No Put.io token is configured."))
                 .suggest(sign_in_hint(&ctx.config))
         }
         Err(_) if probe.unauthorized() => Finding::new(
             Status::Problem,
-            "Put.io rejected the token; it may have expired or been revoked.",
+            msg!("Put.io rejected the token; it may have expired or been revoked."),
         )
         .suggest(sign_in_hint(&ctx.config)),
-        Err(_) if probe.rate_limited() => Finding::skipped(
-            "Put.io is limiting requests right now, so the sign-in could not be checked.",
-        ),
-        Err(_) if probe.unreachable() => {
-            Finding::skipped("Put.io could not be reached; see the reachability check.")
-        }
+        Err(_) if probe.rate_limited() => Finding::skipped(msg!(
+            "Put.io is limiting requests right now, so the sign-in could not be checked."
+        )),
+        Err(_) if probe.unreachable() => Finding::skipped(msg!(
+            "Put.io could not be reached; see the reachability check."
+        )),
         Err(e) => Finding::new(
             Status::Warning,
-            format!("Put.io gave an unexpected answer: {e}"),
+            msg!("Put.io gave an unexpected answer: {0}", e),
         )
-        .suggest("Try again in a few minutes."),
+        .suggest(msg!("Try again in a few minutes.")),
     }
 }
 
 pub(crate) async fn storage(ctx: &Ctx) -> Finding {
     let (probe, _) = ctx.probe().await;
     let Ok(info) = &probe.result else {
-        return Finding::skipped("Put.io could not be used.");
+        return Finding::skipped(msg!("Put.io could not be used."));
     };
     let disk = &info.disk;
     if disk.size <= 0 {
-        return Finding::skipped("Put.io did not report the account size.");
+        return Finding::skipped(msg!("Put.io did not report the account size."));
     }
     let pct = disk.used as f64 * 100.0 / disk.size as f64;
     let free_pct = 100.0 - pct;
@@ -88,19 +89,19 @@ pub(crate) async fn storage(ctx: &Ctx) -> Finding {
     } else {
         format!("{summary} Less than {warn}% is free.")
     };
-    Finding::new(status, summary).suggest(
+    Finding::new(status, summary).suggest(msg!(
         "Use Free up space on the Put.io page to delete the oldest files that are already \
          downloaded, or delete files you no longer need; new transfers fail when the account \
-         is full.",
-    )
+         is full."
+    ))
 }
 
 pub(crate) async fn transfers(ctx: &Ctx) -> Finding {
     let transfers = match ctx.transfers().await {
         Ok(t) => t,
         Err(e) => {
-            return Finding::new(Status::Warning, format!("Could not list transfers: {e}"))
-                .suggest("Try again in a few minutes.")
+            return Finding::new(Status::Warning, msg!("Could not list transfers: {0}", e))
+                .suggest(msg!("Try again in a few minutes."))
         }
     };
     let mut errored = Vec::new();
@@ -153,7 +154,9 @@ pub(crate) async fn transfers(ctx: &Ctx) -> Finding {
     };
     errored.extend(stalled);
     Finding::new(status, summary)
-        .suggest("Retry failed transfers. Re-add stalled ones to look for peers again.")
+        .suggest(msg!(
+            "Retry failed transfers. Re-add stalled ones to look for peers again."
+        ))
         .items(errored)
 }
 
@@ -195,17 +198,19 @@ pub(crate) async fn empty_folders(ctx: &Ctx) -> Finding {
                 Status::Warning
             };
             Finding::new(status, summary)
-                .suggest("Clean them up; you will see the list before anything is deleted.")
+                .suggest(msg!(
+                    "Clean them up; you will see the list before anything is deleted."
+                ))
                 .items(items)
         }
         Err(CleanupError::AlreadyRunning) => {
-            Finding::skipped("An empty-folder cleanup is running right now.")
+            Finding::skipped(msg!("An empty-folder cleanup is running right now."))
         }
         Err(e) => Finding::new(
             Status::Warning,
-            format!("Could not look for empty folders: {e}"),
+            msg!("Could not look for empty folders: {0}", e),
         )
-        .suggest("Try again in a few minutes."),
+        .suggest(msg!("Try again in a few minutes.")),
     }
 }
 
@@ -259,14 +264,14 @@ pub(crate) async fn duplicates(ctx: &Ctx) -> Finding {
         Status::Warning
     };
     Finding::new(status, summary + incomplete_note(walk.complete))
-        .suggest("Delete the copies you don't need from Put.io.")
+        .suggest(msg!("Delete the copies you don't need from Put.io."))
         .items(items)
 }
 
 pub(crate) async fn orphaned_torrents(ctx: &Ctx) -> Finding {
     let names: HashSet<String> = match ctx.transfers().await {
         Ok(t) => t.iter().map(|t| t.name.to_lowercase()).collect(),
-        Err(e) => return Finding::skipped(format!("Could not list transfers: {e}")),
+        Err(e) => return Finding::skipped(msg!("Could not list transfers: {0}", e)),
     };
     let walk = ctx.walk().await;
     let items: Vec<Item> = walk
@@ -294,21 +299,25 @@ pub(crate) async fn orphaned_torrents(ctx: &Ctx) -> Finding {
         Status::Warning
     };
     Finding::new(status, summary + incomplete_note(walk.complete))
-        .suggest("Add them as transfers if you still want them, or delete them from Put.io.")
+        .suggest(msg!(
+            "Add them as transfers if you still want them, or delete them from Put.io."
+        ))
         .items(items)
 }
 
 pub(crate) async fn stuck_watch_files(ctx: &Ctx) -> Finding {
     let watch = &ctx.config.watch;
     if !watch.enabled {
-        return Finding::skipped("Watching for .torrent and .magnet files is off.");
+        return Finding::skipped(msg!("Watching for .torrent and .magnet files is off."));
     }
     let Some(db) = &ctx.db else {
-        return Finding::skipped("Needs the database to know which files were uploaded.");
+        return Finding::skipped(msg!(
+            "Needs the database to know which files were uploaded."
+        ));
     };
     let processed = match db.processed_torrents().paths().await {
         Ok(paths) => paths,
-        Err(e) => return Finding::skipped(format!("Could not read the database: {e}")),
+        Err(e) => return Finding::skipped(msg!("Could not read the database: {0}", e)),
     };
     let processed_names: HashSet<&str> = processed
         .iter()
@@ -349,7 +358,7 @@ pub(crate) async fn stuck_watch_files(ctx: &Ctx) -> Finding {
     .await;
     let (files, unreadable_dirs) = match listed {
         Ok(listed) => listed,
-        Err(e) => return Finding::skipped(format!("Could not read the watch folders: {e}")),
+        Err(e) => return Finding::skipped(msg!("Could not read the watch folders: {0}", e)),
     };
     unreadable.extend(unreadable_dirs);
     for (path, is_file, modified) in files {
@@ -385,7 +394,9 @@ pub(crate) async fn stuck_watch_files(ctx: &Ctx) -> Finding {
         Status::Warning
     };
     Finding::new(status, summary)
-        .suggest("Check the putio-sync logs for upload errors; the file may be invalid.")
+        .suggest(msg!(
+            "Check the putio-sync logs for upload errors; the file may be invalid."
+        ))
         .items(items)
 }
 

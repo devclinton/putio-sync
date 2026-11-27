@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{AuthMethod, Config};
 use putio_sync_core::filter::FileFilter;
+use putio_sync_core::t;
 use putio_sync_db::models::{QueueItem, QueueStatus};
 use putio_sync_db::pipeline::NAS_DOWNLOADS_PAUSED;
 use putio_sync_db::{Database, QueueStats};
@@ -124,7 +125,7 @@ pub async fn execute_add(
     };
 
     if files_to_add.is_empty() {
-        println!("No files to add to queue");
+        println!("{}", t!("No files to add to queue"));
         return Ok(());
     }
 
@@ -153,10 +154,13 @@ pub async fn execute_add(
             .with_context(|| format!("Failed to add file {} to queue", file.id))?;
 
         added += 1;
-        println!("Added to queue: {} (priority: {})", file.name, priority);
+        println!(
+            "{}",
+            t!("Added to queue: {0} (priority: {1})", file.name, priority)
+        );
     }
 
-    println!("\nAdded {} file(s) to download queue", added);
+    println!("\n{}", t!("Added {0} file(s) to download queue", added));
 
     Ok(())
 }
@@ -175,7 +179,10 @@ pub async fn execute_pause(file_ids: Vec<i64>, config_path: Option<PathBuf>) -> 
             .set_bool(NAS_DOWNLOADS_PAUSED, true)
             .await
             .context("Failed to turn the Pause local downloads switch on")?;
-        println!("Pause local downloads is on; `queue resume` turns it off");
+        println!(
+            "{}",
+            t!("Pause local downloads is on; `queue resume` turns it off")
+        );
         return Ok(());
     } else {
         // Pause specific files
@@ -190,7 +197,7 @@ pub async fn execute_pause(file_ids: Vec<i64>, config_path: Option<PathBuf>) -> 
         paused
     };
 
-    println!("Paused {} queue item(s)", count);
+    println!("{}", t!("Paused {0} queue item(s)", count));
 
     Ok(())
 }
@@ -209,7 +216,7 @@ pub async fn execute_resume(file_ids: Vec<i64>, config_path: Option<PathBuf>) ->
             .set_bool(NAS_DOWNLOADS_PAUSED, false)
             .await
             .context("Failed to turn the Pause local downloads switch off")?;
-        println!("Pause local downloads is off");
+        println!("{}", t!("Pause local downloads is off"));
         return Ok(());
     } else {
         // Resume specific files
@@ -224,7 +231,7 @@ pub async fn execute_resume(file_ids: Vec<i64>, config_path: Option<PathBuf>) ->
         resumed
     };
 
-    println!("Resumed {} queue item(s)", count);
+    println!("{}", t!("Resumed {0} queue item(s)", count));
 
     Ok(())
 }
@@ -246,10 +253,10 @@ pub async fn execute_remove(file_ids: Vec<i64>, config_path: Option<PathBuf>) ->
             .remove(*file_id)
             .await
             .with_context(|| format!("Failed to remove file {} from queue", file_id))?;
-        println!("Removed file {} from queue", file_id);
+        println!("{}", t!("Removed file {0} from queue", file_id));
     }
 
-    println!("\nRemoved {} file(s) from queue", file_ids.len());
+    println!("\n{}", t!("Removed {0} file(s) from queue", file_ids.len()));
 
     Ok(())
 }
@@ -270,25 +277,21 @@ pub async fn execute_clear(yes: bool, config_path: Option<PathBuf>) -> Result<()
         .count();
 
     if completed_count == 0 {
-        println!("No completed items to clear");
+        println!("{}", t!("No completed items to clear"));
         return Ok(());
     }
 
     // Confirm deletion unless --yes flag is provided
     if !yes {
         println!(
-            "This will remove {} completed item(s) from the queue.",
-            completed_count
+            "{}",
+            t!(
+                "This will remove {0} completed item(s) from the queue.",
+                completed_count
+            )
         );
-        print!("Continue? [y/N] ");
-        use std::io::{self, Write};
-        io::stdout().flush()?;
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-
-        if !input.trim().eq_ignore_ascii_case("y") {
-            println!("Cancelled");
+        if !crate::ui::confirm(&t!("Continue?"))? {
+            println!("{}", t!("Cancelled"));
             return Ok(());
         }
     }
@@ -298,7 +301,10 @@ pub async fn execute_clear(yes: bool, config_path: Option<PathBuf>) -> Result<()
         .await
         .context("Failed to clear completed items")?;
 
-    println!("Cleared {} completed item(s) from queue", cleared);
+    println!(
+        "{}",
+        t!("Cleared {0} completed item(s) from queue", cleared)
+    );
 
     Ok(())
 }
@@ -320,7 +326,10 @@ pub async fn execute_priority(
         .await
         .with_context(|| format!("Failed to update priority for file {}", file_id))?;
 
-    println!("Updated priority for file {} to {}", file_id, priority);
+    println!(
+        "{}",
+        t!("Updated priority for file {0} to {1}", file_id, priority)
+    );
 
     Ok(())
 }
@@ -348,14 +357,50 @@ pub async fn execute_stats(output_format: String, config_path: Option<PathBuf>) 
             println!("{}", json);
         }
         _ => {
-            println!("\nQueue Statistics");
+            println!("\n{}", t!("Queue Statistics"));
             println!("{}", "═".repeat(50));
-            println!("Total Items:          {:>12}", display_stats.total);
-            println!("Pending:              {:>12}", display_stats.pending);
-            println!("Downloading:          {:>12}", display_stats.downloading);
-            println!("Paused:               {:>12}", display_stats.paused);
-            println!("Completed:            {:>12}", display_stats.completed);
-            println!("Failed:               {:>12}", display_stats.failed);
+            println!(
+                "{}",
+                t!(
+                    "Total Items:          {0}",
+                    format!("{:>12}", display_stats.total)
+                )
+            );
+            println!(
+                "{}",
+                t!(
+                    "Pending:              {0}",
+                    format!("{:>12}", display_stats.pending)
+                )
+            );
+            println!(
+                "{}",
+                t!(
+                    "Downloading:          {0}",
+                    format!("{:>12}", display_stats.downloading)
+                )
+            );
+            println!(
+                "{}",
+                t!(
+                    "Paused:               {0}",
+                    format!("{:>12}", display_stats.paused)
+                )
+            );
+            println!(
+                "{}",
+                t!(
+                    "Completed:            {0}",
+                    format!("{:>12}", display_stats.completed)
+                )
+            );
+            println!(
+                "{}",
+                t!(
+                    "Failed:               {0}",
+                    format!("{:>12}", display_stats.failed)
+                )
+            );
             println!("{}", "═".repeat(50));
             println!();
         }
@@ -415,11 +460,11 @@ async fn open_database(config: &Config, config_path: Option<&Path>) -> Result<Da
 /// Display queue items in table format
 fn display_queue_table(items: &[QueueItem]) -> Result<()> {
     if items.is_empty() {
-        println!("Queue is empty");
+        println!("{}", t!("Queue is empty"));
         return Ok(());
     }
 
-    println!("\nDownload Queue");
+    println!("\n{}", t!("Download Queue"));
     println!("{}", "═".repeat(100));
     println!(
         "{:<8} {:<10} {:<40} {:>12} {:>8}",
@@ -445,7 +490,7 @@ fn display_queue_table(items: &[QueueItem]) -> Result<()> {
     }
 
     println!("{}", "═".repeat(100));
-    println!("Total: {} item(s)\n", items.len());
+    println!("{}\n", t!("Total: {0} item(s)", items.len()));
 
     Ok(())
 }

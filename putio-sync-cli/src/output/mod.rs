@@ -66,6 +66,42 @@ pub fn format_and_output(
     Ok(())
 }
 
+/// How many terminal columns `s` takes: CJK characters count 2, combining marks 0
+pub fn width(s: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(s)
+}
+
+/// `s` followed by spaces up to `columns` terminal columns (never cut)
+pub fn pad(s: &str, columns: usize) -> String {
+    format!("{s}{}", " ".repeat(columns.saturating_sub(width(s))))
+}
+
+/// `s` after spaces up to `columns` terminal columns (never cut)
+pub fn pad_left(s: &str, columns: usize) -> String {
+    format!("{}{s}", " ".repeat(columns.saturating_sub(width(s))))
+}
+
+/// `s` cut to at most `columns` terminal columns, ending in `...` when it was cut. Cuts
+/// between characters, never inside one.
+pub fn truncate(s: &str, columns: usize) -> String {
+    if width(s) <= columns {
+        return s.to_string();
+    }
+    let room = columns.saturating_sub(3);
+    let mut out = String::new();
+    let mut used = 0;
+    for c in s.chars() {
+        let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        if used + w > room {
+            break;
+        }
+        used += w;
+        out.push(c);
+    }
+    out.push_str("...");
+    out
+}
+
 /// Format bytes into human-readable size
 pub fn format_bytes(bytes: i64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB", "PB"];

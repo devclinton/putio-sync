@@ -3,11 +3,14 @@
 use super::Ctx;
 use crate::report::{Finding, Item, Status};
 use putio_sync_core::crash::{self, CrashReport, Kind};
+use putio_sync_core::msg;
 use std::path::Path;
 
 pub(crate) async fn crashes(ctx: &Ctx) -> Finding {
     let Some(dir) = crash::dir_for(ctx.config_path.as_deref()) else {
-        return Finding::skipped("Skipped: there is no config folder to keep crash reports in.");
+        return Finding::skipped(msg!(
+            "Skipped: there is no config folder to keep crash reports in."
+        ));
     };
     let recent = tokio::task::spawn_blocking(move || recent(&dir))
         .await
@@ -21,10 +24,7 @@ fn recent(dir: &Path) -> Vec<CrashReport> {
 
 pub(crate) fn finding(recent: &[CrashReport]) -> Finding {
     if recent.is_empty() {
-        return Finding::ok(format!(
-            "No crashes in the last {} days.",
-            crash::RECENT_DAYS
-        ));
+        return Finding::ok(msg!("No crashes in the last {0} days.", crash::RECENT_DAYS));
     }
     let items = recent
         .iter()
@@ -41,8 +41,8 @@ pub(crate) fn finding(recent: &[CrashReport]) -> Finding {
         .collect();
     Finding::new(
         Status::Warning,
-        format!(
-            "putio-sync crashed or stopped unexpectedly {} in the last {} days.",
+        msg!(
+            "putio-sync crashed or stopped unexpectedly {0} in the last {1} days.",
             if recent.len() == 1 {
                 "once".to_string()
             } else {
@@ -51,10 +51,10 @@ pub(crate) fn finding(recent: &[CrashReport]) -> Finding {
             crash::RECENT_DAYS
         ),
     )
-    .suggest(
+    .suggest(msg!(
         "Open the notice in the web UI, or run `putio-sync crash-report list`, check the report \
-         and file it on GitHub if you like. Dismiss it to clear this warning.",
-    )
+         and file it on GitHub if you like. Dismiss it to clear this warning."
+    ))
     .items(items)
 }
 

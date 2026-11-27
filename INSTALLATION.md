@@ -319,8 +319,12 @@ putio-sync login
 From source, pick the features (leave them out for a CLI with neither):
 
 ```bash
-cargo build --release -p putio-sync-cli --no-default-features --features hooks,plugins
+cargo build --release -p putio-sync-cli --no-default-features --features hooks,plugins,i18n
 ```
+
+`i18n` holds the CLI's translations (about 280 KiB in the binary). Leave it out for an
+English-only build: `--lang de` then prints `putio-sync: this build has English only.` and
+goes on in English.
 
 ---
 

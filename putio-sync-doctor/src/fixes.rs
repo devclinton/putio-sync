@@ -88,7 +88,7 @@ async fn per_item(ctx: &Ctx, fix: FixId, keys: &[String]) -> Applied {
     let finding = checks::finding(ctx, fix.check()).await;
     if finding.status == Status::Skipped {
         for key in keys {
-            out.skip(key, &finding.summary);
+            out.skip(key, finding.summary.english());
         }
         return out;
     }

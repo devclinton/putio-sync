@@ -5,6 +5,7 @@ use chrono::NaiveDate;
 use putio_sync_client::{FileEntry, PutioApiClient};
 use putio_sync_core::config::{AuthMethod, Config};
 use putio_sync_core::pattern::Pattern;
+use putio_sync_core::t;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use tracing::{debug, info};
@@ -83,7 +84,7 @@ pub async fn execute_delete(
     };
 
     if files_to_delete.is_empty() {
-        println!("No files to delete");
+        println!("{}", t!("No files to delete"));
         return Ok(());
     }
 
@@ -91,8 +92,14 @@ pub async fn execute_delete(
     let total_size: i64 = files_to_delete.iter().map(|f| f.size).sum();
 
     // Display files to be deleted
-    println!("\nFiles to be deleted:");
-    println!("{:<12} {:<50} {:<15} Type", "ID", "Name", "Size");
+    println!("\n{}", t!("Files to be deleted:"));
+    println!(
+        "{} {} {} {}",
+        crate::output::pad(&t!("ID"), 12),
+        crate::output::pad(&t!("Name"), 50),
+        crate::output::pad(&t!("Size"), 15),
+        t!("Type")
+    );
     println!("{}", "-".repeat(90));
     for file in &files_to_delete {
         let file_type = if file.is_folder { "Folder" } else { "File" };
@@ -106,31 +113,34 @@ pub async fn execute_delete(
     }
     println!("{}", "-".repeat(90));
     println!(
-        "Total: {} file(s), {} to be freed",
-        files_to_delete.len(),
-        format_bytes(total_size)
+        "{}",
+        t!(
+            "Total: {0} file(s), {1} to be freed",
+            files_to_delete.len(),
+            format_bytes(total_size)
+        )
     );
 
     // Dry run - just show what would be deleted
     if dry_run {
-        println!("\nDry run mode - no files were deleted");
+        println!("\n{}", t!("Dry run mode - no files were deleted"));
         return Ok(());
     }
 
     // Confirmation prompt (unless --yes flag is set)
     if !yes && !confirm_deletion(&files_to_delete)? {
-        println!("Deletion cancelled");
+        println!("{}", t!("Deletion cancelled"));
         return Ok(());
     }
 
     // Delete files
-    println!("\nDeleting files...");
+    println!("\n{}", t!("Deleting files..."));
     let mut deleted_count = 0;
     let mut deleted_size = 0i64;
     let mut errors = Vec::new();
 
     for file in &files_to_delete {
-        print!("  Deleting {} ... ", file.name);
+        print!("  {} ", t!("Deleting {0} ...", file.name));
         io::stdout().flush()?;
 
         let result = if file.is_folder && recursive {
@@ -154,16 +164,19 @@ pub async fn execute_delete(
 
     // Display summary
     println!("\n{}", "=".repeat(90));
-    println!("Deletion Summary:");
+    println!("{}", t!("Deletion Summary:"));
     println!(
-        "  Files deleted: {}/{}",
-        deleted_count,
-        files_to_delete.len()
+        "  {}",
+        t!(
+            "Files deleted: {0}/{1}",
+            deleted_count,
+            files_to_delete.len()
+        )
     );
-    println!("  Space freed:   {}", format_bytes(deleted_size));
+    println!("  {}", t!("Space freed:   {0}", format_bytes(deleted_size)));
 
     if !errors.is_empty() {
-        println!("\nErrors encountered:");
+        println!("\n{}", t!("Errors encountered:"));
         for error in &errors {
             println!("  • {}", error);
         }
@@ -256,16 +269,11 @@ fn parse_date(date_str: &str) -> Result<NaiveDate> {
 
 /// Confirm deletion with user
 fn confirm_deletion(files: &[FileEntry]) -> Result<bool> {
-    print!(
-        "\nAre you sure you want to delete {} file(s)? [y/N] ",
+    println!();
+    Ok(crate::ui::confirm(&t!(
+        "Are you sure you want to delete {0} file(s)?",
         files.len()
-    );
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-
-    Ok(input.trim().to_lowercase() == "y" || input.trim().to_lowercase() == "yes")
+    ))?)
 }
 
 /// Format bytes as human-readable string

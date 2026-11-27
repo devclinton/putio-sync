@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use putio_sync_core::config::Config;
+use putio_sync_core::t;
 use putio_sync_db::{Database, StatsRepository};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -158,46 +159,58 @@ fn validate_and_format_date(date_str: Option<&str>) -> Result<Option<String>> {
 
 /// Display statistics in table format
 fn display_table(stats: &Stats, since: Option<&str>, until: Option<&str>) -> Result<()> {
-    println!("\nDownload Statistics");
+    println!("\n{}", t!("Download Statistics"));
     println!("{}", "═".repeat(65));
 
     // Show date range if specified
     if since.is_some() || until.is_some() {
-        print!("Date Range:           ");
+        print!("{}           ", t!("Date Range:"));
         if let Some(s) = since {
-            print!("Since {}", s);
+            print!("{}", t!("Since {0}", s));
         }
         if let Some(u) = until {
             if since.is_some() {
                 print!(" ");
             }
-            print!("Until {}", u);
+            print!("{}", t!("Until {0}", u));
         }
         println!();
         println!("{}", "─".repeat(65));
     }
 
     println!(
-        "Total Downloads:      {:>12}",
-        format_count(stats.total_downloads)
+        "{}",
+        t!(
+            "Total Downloads:      {0}",
+            format!("{:>12}", format_count(stats.total_downloads))
+        )
     );
     println!(
-        "Total Size:           {:>12}",
-        format_bytes(stats.total_bytes)
+        "{}",
+        t!(
+            "Total Size:           {0}",
+            format!("{:>12}", format_bytes(stats.total_bytes))
+        )
     );
     println!(
-        "Total Time:           {:>12}",
-        format_duration(stats.total_seconds)
+        "{}",
+        t!(
+            "Total Time:           {0}",
+            format!("{:>12}", format_duration(stats.total_seconds))
+        )
     );
     println!(
-        "Average Speed:        {:>12}",
-        format_speed(stats.average_speed)
+        "{}",
+        t!(
+            "Average Speed:        {0}",
+            format!("{:>12}", format_speed(stats.average_speed))
+        )
     );
 
     // Show extension breakdown if available
     if let Some(ref ext_stats) = stats.by_extension {
         if !ext_stats.is_empty() {
-            println!("\nBy Extension:");
+            println!("\n{}", t!("By Extension:"));
             println!("{}", "─".repeat(65));
             println!(
                 "{:<12} {:>10} {:>15} {:>12}",

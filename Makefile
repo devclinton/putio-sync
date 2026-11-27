@@ -1,4 +1,4 @@
-.PHONY: help build test clean fmt lint ci install run-cli dev release check doc i18n i18n-translate \
+.PHONY: help build test clean fmt lint ci install run-cli dev release check doc i18n i18n-translate i18n-cli \
 	dist-linux dist-macos docker-dhi release-patches \
 	docker-build docker-test docker-run docker-push docker-clean \
 	build-deb build-snap build-flatpak packages \
@@ -99,11 +99,15 @@ ci: ## Run all CI checks locally (format, lint, test, build)
 	@echo "Running local CI checks..."
 	@$(CI_SCRIPT)
 
-i18n: ## Refresh the web UI's English catalog from its strings (feature 051)
+i18n: i18n-cli ## Refresh the English catalogs of the web UI (051) and the CLI (060) from their strings
 	node scripts/i18n-extract.mjs
 
-i18n-translate: i18n ## Translate the web UI's missing strings (needs atranslate-cli and ATRANSLATE_URL)
+i18n-translate: i18n ## Translate the missing strings of the web UI and the CLI (needs atranslate-cli and ATRANSLATE_URL)
 	node scripts/i18n-translate.mjs $(LANGS)
+	node scripts/i18n-translate.mjs --catalog-dir putio-sync-cli/i18n $(LANGS)
+
+i18n-cli: ## Refresh the CLI's catalogs from its strings (feature 060)
+	UPDATE_I18N=1 cargo test -p putio-sync-cli --test i18n_catalog
 
 check: ## Quick check that the code compiles
 	@echo "Checking compilation..."

@@ -508,6 +508,38 @@ If a release has critical issues:
 
 ---
 
+## Translations
+
+Two sets of catalogs, both keyed by the English text and filled by the same service:
+
+- Web UI (051): `putio-sync-api/ui/i18n/<code>.json`, extracted by `scripts/i18n-extract.mjs`.
+- CLI (060): `putio-sync-cli/i18n/<code>.json`, extracted by the `i18n_catalog` test from
+  every `t!` and `msg!` literal in the CLI, doctor and core crates, the clap help text, and
+  the doctor's titles and fix labels.
+
+In Rust, `t!("Deleted {0} files", n)` gives the text in the run's language, for printing to
+a terminal. `msg!(…)` gives a `Message` for a doctor finding: English where it is stored or
+serialized (reports, the API, logs), translated where the CLI prints it. Placeholders are
+numbered, and the macro fails the build when their count differs from the arguments.
+
+Never translate: `--json` and `--csv` output, anything given to a `tracing` macro, error
+chains (only the `Error:` prefix is translated), and names of commands, flags and values.
+`i18n_catalog` fails when `output/json.rs`, `output/csv.rs` or a log call uses `t!`.
+
+After changing a string:
+
+```bash
+make i18n                 # refresh both en.json files; make ci fails until they are current
+ATRANSLATE_URL=http://<host>:8400 make i18n-translate   # fill the gaps, both sets
+```
+
+The CLI run copies a translation the web UI already has, leaves `"y|yes"` (the words that
+answer yes, lower-case, `|` between them) to be written by hand, and drops a translation
+whose `{0}` placeholders differ from its key. The service has no model for da, fi, he, ms,
+nb, pt-PT and sv; those catalogs are written by hand.
+
+---
+
 ## Resources
 
 - [Release Script](scripts/pre-release-check.sh)
