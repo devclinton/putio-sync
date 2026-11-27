@@ -48,6 +48,14 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Pick files inside a transfer (070): **Choose files** on a transfer, an Active item or a
+  queue row shows the transfer's files as a tree with sizes and tick boxes, with **Only this**
+  and **All but this** on each file. The choice is for that transfer only, wins over its folder
+  rules and filters, survives restarts, and leaves unticked files on Put.io. **Choose files
+  first** on the add form shows a `.torrent`'s files before it is added, and holds a magnet
+  link so nothing of it downloads until its files are chosen. New routes:
+  `GET /putio/transfers/{id}/files`, `PUT` and `DELETE /putio/transfers/{id}/choice`,
+  `POST /putio/transfers/preview`; `POST /putio/transfers` takes `choice` or `choose_first`.
 - Why a row is waiting (066): each row on the Active and Queue pages that is not downloading
   says why in one line, and links to the setting behind it: a paused bandwidth schedule or
   limit, a timed pause, the Pause local downloads switch, the free space floor, a file too

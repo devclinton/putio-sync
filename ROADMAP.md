@@ -488,7 +488,7 @@ subtitle lookup, folders on providers without them) are turned off for it
 and said so. To settle in the spec: one provider per install or several at
 once, and what the project is called when it is not only Put.io.
 
-### 070 Pick files inside a transfer
+### 070 Pick files inside a transfer (done)
 
 Choose which files of one transfer to download, without writing a folder
 rule: a file tree with sizes and tick boxes on the transfer and queue rows,

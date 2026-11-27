@@ -1,6 +1,7 @@
 //! Download manager for orchestrating downloads
 
 use crate::arrived::{self, ArrivedFile, ArrivedStep};
+use crate::choice::{self, Choices, Node, Nodes};
 use crate::error::{DownloadError, DownloadResult};
 use crate::files::{
     check_resume, cleanup_partial, crc32_file, crc32_prefix, crc_equal, create_temp_path,
@@ -27,7 +28,7 @@ use putio_sync_core::stall::StallTracker;
 use putio_sync_core::sync_hooks::{FilterAnswer, Hook, HookFile, SyncHooks};
 use putio_sync_db::models::{DownloadSource, DownloadStatus, Origin, QueueStatus, SourceType};
 use putio_sync_db::pipeline::{FileState, NAS_DOWNLOADS_PAUSED, TRANSFER_EVENTS_SEEN};
-use putio_sync_db::Database;
+use putio_sync_db::{Choice, Database};
 use putio_sync_telemetry::{self as telemetry, PipelineAction, RuleDecision, SyncKind, SyncResult};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -512,6 +513,28 @@ pub struct TreeFile {
     pub decision: TreeDecision,
 }
 
+/// One file of a transfer, for the file picker (feature 070)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransferFile {
+    /// Put.io file id
+    pub file_id: i64,
+    /// Path under the item the transfer made on Put.io
+    pub path: String,
+    /// Bytes
+    pub size: i64,
+}
+
+/// Result of [`DownloadManager::transfer_files`]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TransferFiles {
+    /// The transfer's name
+    pub name: String,
+    /// The file or folder the transfer made on Put.io, once it has
+    pub root_file_id: Option<i64>,
+    /// Its files, by path
+    pub files: Vec<TransferFile>,
+}
+
 /// Result of [`DownloadManager::enqueue_tree_report`]
 #[derive(Debug, Clone, Default)]
 pub struct TreeReport {
@@ -729,6 +752,8 @@ pub struct DownloadManager {
     next_worker_id: Arc<RwLock<usize>>,
     /// File IDs a rule already decided, so each is logged and recorded once per process
     decided: Arc<Mutex<HashSet<i64>>>,
+    /// File IDs a transfer's file choice left out, recorded once per process (feature 070)
+    choice_noted: Arc<Mutex<HashSet<i64>>>,
     /// State of the folder sync, for the status page
     sync_status: Arc<RwLock<SyncStatus>>,
     /// Wakes `run_sync_loop` for "sync now"
@@ -886,6 +911,7 @@ impl DownloadManager {
             workers: Arc::new(RwLock::new(HashMap::new())),
             next_worker_id: Arc::new(RwLock::new(0)),
             decided: Arc::new(Mutex::new(HashSet::new())),
+            choice_noted: Arc::new(Mutex::new(HashSet::new())),
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
             work_notify: Arc::new(Notify::new()),
@@ -934,6 +960,7 @@ impl DownloadManager {
             workers: Arc::new(RwLock::new(HashMap::new())),
             next_worker_id: Arc::new(RwLock::new(0)),
             decided: Arc::new(Mutex::new(HashSet::new())),
+            choice_noted: Arc::new(Mutex::new(HashSet::new())),
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             sync_notify: Arc::new(Notify::new()),
             work_notify: Arc::new(Notify::new()),
@@ -2408,6 +2435,27 @@ impl DownloadManager {
             .collect();
         // Fetched the first time a file is queued, so a sync with nothing new costs no call
         let mut transfers: Option<HashMap<i64, Transfer>> = None;
+        // File choices (feature 070) apply to the sync only: an explicit "Download" and
+        // the *arr still take every file. With no choice stored this costs one query.
+        let choices = if honour_stream {
+            self.load_choices(db, &parents, root_id == 0).await
+        } else {
+            Choices::default()
+        };
+        let nodes: Nodes = if choices.is_empty() {
+            Nodes::new()
+        } else {
+            files_with_paths
+                .iter()
+                .map(|(f, _)| {
+                    let node = Node {
+                        parent: f.parent_id,
+                        name: sanitize_filename(&f.name),
+                    };
+                    (f.id, node)
+                })
+                .collect()
+        };
 
         // Filter to only actual files (not folders)
         let downloadable_files: Vec<_> = files_with_paths
@@ -2503,12 +2551,32 @@ impl DownloadManager {
             let rules = folders
                 .entry(relative_path.clone())
                 .or_insert_with(|| config.effective(&relative_path));
-            let mut decision = rules.decide(&file.name);
+            let known = completed_ids.contains(&file.id) || queued_ids.contains_key(&file.id);
+            // A choice made for the file's transfer wins over the rules, the filters,
+            // stream mode and filter plugins (feature 070)
+            let chosen = choices.wanted(file.id, &nodes);
+            if chosen == Some(false) {
+                if known {
+                    // Already downloaded, or its download is running
+                    stats.files_skipped += 1;
+                    decide(TreeDecision::Known);
+                } else {
+                    stats.files_blocked += 1;
+                    decide(TreeDecision::Skipped);
+                    self.note_choice(db, file.id, &file.name, &relative_path)
+                        .await;
+                }
+                continue;
+            }
+            let mut decision = if chosen == Some(true) {
+                Decision::Download
+            } else {
+                rules.decide(&file.name)
+            };
             // A file already downloaded or queued is skipped whatever a plugin says about
             // it, so the hook is only asked about candidates (one plugin round trip each)
-            let known = completed_ids.contains(&file.id) || queued_ids.contains_key(&file.id);
-            let ask_hook =
-                !(known && matches!(decision, Decision::Download | Decision::Stream { .. }));
+            let ask_hook = chosen.is_none()
+                && !(known && matches!(decision, Decision::Download | Decision::Stream { .. }));
             if let Some(hooks) = filter_hooks.as_ref().filter(|_| ask_hook) {
                 decision = filtered(hooks.as_ref(), &file, &relative_path, decision).await;
             }
@@ -2735,6 +2803,259 @@ impl DownloadManager {
         }
     }
 
+    /// The choices the sync applies (feature 070). A choice made before Put.io created
+    /// the transfer's files learns its root item here; one whose transfer or files are
+    /// gone from Put.io is forgotten (`full`: the pass lists the whole account).
+    async fn load_choices(
+        &self,
+        db: &Database,
+        listed: &HashMap<i64, Option<i64>>,
+        full: bool,
+    ) -> Choices {
+        let repo = db.choices();
+        let mut choices = match repo.all().await {
+            Ok(choices) => choices,
+            Err(e) => {
+                warn!(error = %e, "Failed to read transfer file choices");
+                return Choices::default();
+            }
+        };
+        if choices.is_empty() {
+            return Choices::default();
+        }
+        if choices.iter().any(|c| c.root_file_id.is_none()) {
+            match self.client.list_transfers().await {
+                Ok(response) => {
+                    let roots: HashMap<i64, Option<i64>> = response
+                        .transfers
+                        .iter()
+                        .map(|t| (t.id, t.file_id))
+                        .collect();
+                    for choice in choices.iter_mut().filter(|c| c.root_file_id.is_none()) {
+                        match roots.get(&choice.transfer_id) {
+                            Some(Some(root)) => {
+                                choice.root_file_id = Some(*root);
+                                if let Err(e) = repo.set_root(choice.transfer_id, *root).await {
+                                    warn!(transfer_id = choice.transfer_id, error = %e, "Failed to record the root of a file choice");
+                                }
+                            }
+                            // Put.io has not made its files yet
+                            Some(None) => {}
+                            None => {
+                                info!(
+                                    transfer_id = choice.transfer_id,
+                                    "Forgot the file choice of a transfer no longer on Put.io"
+                                );
+                                if let Err(e) = repo.remove(choice.transfer_id).await {
+                                    warn!(transfer_id = choice.transfer_id, error = %e, "Failed to forget a file choice");
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %error_chain(&e), "Failed to list transfers; file choices not yet matched wait for the next sync")
+                }
+            }
+        }
+        if full {
+            for choice in &choices {
+                let gone = choice
+                    .root_file_id
+                    .is_some_and(|r| !listed.contains_key(&r));
+                if gone {
+                    debug!(
+                        transfer_id = choice.transfer_id,
+                        "Forgot the file choice of files no longer on Put.io"
+                    );
+                    if let Err(e) = repo.remove(choice.transfer_id).await {
+                        warn!(transfer_id = choice.transfer_id, error = %e, "Failed to forget a file choice");
+                    }
+                }
+            }
+        }
+        Choices::new(choices)
+    }
+
+    /// Record a file its transfer's choice leaves on Put.io, the first time this process
+    /// sees it (feature 070). It is never deleted from Put.io.
+    async fn note_choice(&self, db: &Database, file_id: i64, name: &str, folder: &str) {
+        let first_time = self
+            .choice_noted
+            .lock()
+            .map(|mut noted| noted.insert(file_id))
+            .unwrap_or(true);
+        if !first_time {
+            return;
+        }
+        telemetry::sync::rule_decision(RuleDecision::Skipped);
+        info!(file_id, name = %name, folder = %folder, "Left on Put.io by your choice");
+        if let Err(e) = db
+            .rule_decisions()
+            .record(
+                file_id,
+                name,
+                folder,
+                RuleDecision::Skipped,
+                choice::REASON,
+                None,
+            )
+            .await
+        {
+            warn!(file_id, error = %e, "Failed to record a file left out by choice");
+        }
+    }
+
+    /// The files of a transfer for the file picker (feature 070): each with its path
+    /// under the item the transfer made on Put.io. `root_file_id` is `None`, and the
+    /// list empty, until Put.io has made that item. A transfer cleared from Put.io's
+    /// list is still found through its stored choice.
+    pub async fn transfer_files(&self, transfer_id: i64) -> DownloadResult<TransferFiles> {
+        let stored_root = match self.database.as_ref() {
+            Some(db) => db
+                .choices()
+                .get(transfer_id)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|c| c.root_file_id),
+            None => None,
+        };
+        let (name, root) = match self.client.get_transfer_info(transfer_id).await {
+            Ok(response) => (
+                Some(response.transfer.name),
+                response.transfer.file_id.or(stored_root),
+            ),
+            Err(_) if stored_root.is_some() => (None, stored_root),
+            Err(e) => return Err(DownloadError::ClientError(e)),
+        };
+        let Some(root) = root else {
+            return Ok(TransferFiles {
+                name: name.unwrap_or_default(),
+                root_file_id: None,
+                files: Vec::new(),
+            });
+        };
+        let (listed, root_name) = self.list_tree(root).await?;
+        let nodes: Nodes = listed
+            .iter()
+            .map(|(f, _)| {
+                let node = Node {
+                    parent: f.parent_id,
+                    name: sanitize_filename(&f.name),
+                };
+                (f.id, node)
+            })
+            .collect();
+        let mut files: Vec<TransferFile> = listed
+            .iter()
+            .filter(|(f, _)| f.file_type != "FOLDER")
+            .filter_map(|(f, _)| {
+                let (_, path) = choice::locate(f.id, &nodes, |id| id == root)?;
+                Some(TransferFile {
+                    file_id: f.id,
+                    path,
+                    size: f.size,
+                })
+            })
+            .collect();
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(TransferFiles {
+            name: name.or(root_name).unwrap_or_default(),
+            root_file_id: Some(root),
+            files,
+        })
+    }
+
+    /// Save the file choice of a transfer and apply it now (feature 070): files it
+    /// leaves out and that wait in the queue (pending, paused or failed) are removed
+    /// from it, and a sync is asked for so newly wanted files are queued. A running
+    /// download is left to finish. Returns how many queue rows were removed.
+    pub async fn set_choice(&self, mut choice: Choice) -> DownloadResult<usize> {
+        let db = self.database.as_ref().ok_or_else(|| {
+            DownloadError::InternalError("Database required for file choices".to_string())
+        })?;
+        // Before Put.io has made the files the choice is stored as it is; the sync
+        // matches it later
+        let listed = match self.transfer_files(choice.transfer_id).await {
+            Ok(listed) => listed,
+            Err(e) => {
+                debug!(transfer_id = choice.transfer_id, error = %error_chain(&e), "File choice saved without a listing");
+                TransferFiles::default()
+            }
+        };
+        if choice.root_file_id.is_none() {
+            choice.root_file_id = listed.root_file_id;
+        }
+        db.choices()
+            .set(&choice)
+            .await
+            .map_err(|e| DownloadError::InternalError(e.to_string()))?;
+
+        let statuses: HashMap<i64, String> = db
+            .queue()
+            .statuses()
+            .await
+            .map(|rows| rows.into_iter().collect())
+            .unwrap_or_default();
+        let mut removed = 0;
+        for file in &listed.files {
+            if choice.wants(&file.path) {
+                self.forget_choice_note(db, file.file_id).await;
+                continue;
+            }
+            let waiting = statuses
+                .get(&file.file_id)
+                .is_some_and(|s| matches!(s.as_str(), "pending" | "paused" | "failed"));
+            if waiting {
+                match db.queue().remove(file.file_id).await {
+                    Ok(()) => removed += 1,
+                    Err(e) => {
+                        warn!(file_id = file.file_id, error = %e, "Failed to remove a file left out by choice from the queue")
+                    }
+                }
+            }
+        }
+        // Refused while a sync runs; the next pass applies the choice either way
+        let _ = self.request_sync().await;
+        Ok(removed)
+    }
+
+    /// Forget the file choice of a transfer, so the folder rules decide again (feature
+    /// 070). Returns whether it had one.
+    pub async fn clear_choice(&self, transfer_id: i64) -> DownloadResult<bool> {
+        let db = self.database.as_ref().ok_or_else(|| {
+            DownloadError::InternalError("Database required for file choices".to_string())
+        })?;
+        let listed = self.transfer_files(transfer_id).await.unwrap_or_default();
+        let had = db
+            .choices()
+            .remove(transfer_id)
+            .await
+            .map_err(|e| DownloadError::InternalError(e.to_string()))?;
+        if had {
+            for file in &listed.files {
+                self.forget_choice_note(db, file.file_id).await;
+            }
+            let _ = self.request_sync().await;
+        }
+        Ok(had)
+    }
+
+    /// Drop the "left out by your choice" record of a file the choice no longer leaves out
+    async fn forget_choice_note(&self, db: &Database, file_id: i64) {
+        if let Ok(mut noted) = self.choice_noted.lock() {
+            noted.remove(&file_id);
+        }
+        if let Err(e) = db
+            .rule_decisions()
+            .remove_reason(file_id, choice::REASON)
+            .await
+        {
+            warn!(file_id, error = %e, "Failed to remove a file choice record");
+        }
+    }
+
     /// Log, count and record a rule decision the first time this process sees the file
     async fn note_decision(
         &self,
@@ -2789,11 +3110,17 @@ impl DownloadManager {
 
     /// A file is queued after all: drop its decision so a later block is noted again
     async fn forget_decision(&self, db: &Database, file_id: i64) {
+        let was_left_out = self
+            .choice_noted
+            .lock()
+            .map(|mut noted| noted.remove(&file_id))
+            .unwrap_or(true);
         let was_decided = self
             .decided
             .lock()
             .map(|mut decided| decided.remove(&file_id))
-            .unwrap_or(true);
+            .unwrap_or(true)
+            || was_left_out;
         if was_decided {
             if let Err(e) = db.rule_decisions().remove(file_id).await {
                 warn!(file_id, error = %e, "Failed to remove rule decision");
@@ -4109,6 +4436,14 @@ impl DownloadManager {
             transfers,
             files,
             holds: holds.into_iter().map(|h| h.transfer_id).collect(),
+            choices: db
+                .choices()
+                .all()
+                .await
+                .map_err(internal)?
+                .into_iter()
+                .map(|c| (c.transfer_id, c.pending))
+                .collect(),
             progress,
             stalls,
             transfer_origins,

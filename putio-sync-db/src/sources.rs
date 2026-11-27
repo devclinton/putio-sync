@@ -49,6 +49,20 @@ impl<'a> SourcesRepository<'a> {
         Ok(())
     }
 
+    /// The transfer of every file that has one, by file id (feature 070)
+    pub async fn transfer_ids(&self) -> DbResult<std::collections::HashMap<i64, i64>> {
+        let rows = sqlx::query(
+            "SELECT file_id, transfer_id FROM download_sources WHERE transfer_id IS NOT NULL",
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(tracked(DbOp::Other, "Failed to read download sources"))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get("file_id"), row.get("transfer_id")))
+            .collect())
+    }
+
     /// The recorded source of a file, if any
     pub async fn get(&self, file_id: i64) -> DbResult<Option<DownloadSource>> {
         let row = sqlx::query(

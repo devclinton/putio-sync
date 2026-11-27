@@ -102,3 +102,16 @@ test("a Put.io error row says where to act", () => {
   assert.match(line.text, /Transfers page/);
   assert.equal(line.guide.slug, "guides/troubleshooting");
 });
+
+test("a file choice says so, on the transfer and on what it left out (070)", () => {
+  const wait = waitingLine({ code: "choose_files" });
+  assert.match(wait.text, /choose its files/);
+  assert.equal(wait.tone, "warn");
+  assert.equal(wait.link, null);
+  assert.match(waitingLine({ code: "not_chosen" }).text, /your choice/);
+  const one = skippedLine({ skipped: 1 }, true);
+  assert.equal(one.text, "Left out by your choice of files: 1 file. It stays on Put.io.");
+  assert.equal(one.link, null);
+  assert.equal(skippedLine({ skipped: 3 }, true).text, "Left out by your choice of files: 3 files. They stay on Put.io.");
+  assert.equal(skippedLine({ skipped: 0 }, true), null);
+});

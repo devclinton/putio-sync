@@ -49,6 +49,10 @@ pub struct QueueItemResponse {
     /// 066); read-only
     #[serde(default, skip_deserializing)]
     pub waiting: Option<putio_sync_download::Waiting>,
+    /// The Put.io transfer the file came from, when known, so its files can be picked
+    /// (feature 070); read-only
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub transfer_id: Option<i64>,
 }
 
 /// Queue response
@@ -148,9 +152,12 @@ async fn get_queue(
 
     // One snapshot of what the workers check, so every row's reason agrees
     let queue_state = state.download_manager.queue_state().await;
+    // A missing source only hides the "Choose files" button
+    let transfers = db.sources().transfer_ids().await.unwrap_or_default();
     let response_items: Vec<QueueItemResponse> = items
         .into_iter()
         .map(|item| QueueItemResponse {
+            transfer_id: transfers.get(&item.file_id).copied(),
             waiting: queue_state.for_row(&item.status, item.file_id, item.file_size),
             id: item.id,
             file_id: item.file_id,

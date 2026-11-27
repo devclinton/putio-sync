@@ -5,6 +5,7 @@
 
 pub mod arrived;
 pub mod blocklist;
+pub mod choice;
 pub mod dry_run;
 pub mod error;
 pub mod files;
@@ -33,8 +34,9 @@ pub use files::{
 pub use manager::{
     ActiveDownload, DeferFuture, DownloadConfig, DownloadFile, DownloadManager,
     DownloadOperationResult, PathRedirect, PreviewDownload, PreviewItem, RedirectFuture,
-    RemoteDeleteGate, RemoteDeletes, RulePreview, SyncStats, TransfersSnapshot, TreeDecision,
-    TreeFile, TreeReport, VerifySettings, WorkerStats, PREVIEW_DOWNLOADS, PREVIEW_ITEMS,
+    RemoteDeleteGate, RemoteDeletes, RulePreview, SyncStats, TransferFile, TransferFiles,
+    TransfersSnapshot, TreeDecision, TreeFile, TreeReport, VerifySettings, WorkerStats,
+    PREVIEW_DOWNLOADS, PREVIEW_ITEMS,
 };
 pub use organise::{MoveOutcome, OrganiseStep, Organiser};
 pub use progress::{DownloadProgress, OverallProgress, ProgressCallback, ProgressTracker};

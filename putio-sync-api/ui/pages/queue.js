@@ -9,6 +9,7 @@
 import { del, get, post, syncNow } from "../api.js";
 import { confirm, empty, h, nasBanner, poll, reasonLine, setNasPaused, toast } from "../app.js";
 import { flagControl, loadFlags } from "../flags.js";
+import { chooseButton } from "../pick_dialog.js";
 import { bytes, duration, percent, relative, speed, utc } from "../format.js";
 import { waitingLine } from "../waiting.js";
 
@@ -459,6 +460,8 @@ function queueRow(item, index, last) {
       "Remove",
     ),
   );
+  // 070: the files of the transfer this row came from
+  buttons.unshift(chooseButton(item.transfer_id, item.filename, () => load().catch(() => {})));
   buttons.unshift(flagControl(flags, { target: { file_id: id }, name: item.filename, onChange: reflag }));
   return h(
     "tr",

@@ -354,6 +354,8 @@ mod tests {
             url: Some("magnet:?xt=urn:btih:test".to_string()),
             file_data: None,
             parent_id: 123,
+            choice: None,
+            choose_first: false,
         };
 
         assert_eq!(request.url, Some("magnet:?xt=urn:btih:test".to_string()));

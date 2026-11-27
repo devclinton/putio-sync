@@ -71,6 +71,17 @@ impl<'a> RuleDecisionsRepository<'a> {
         Ok(())
     }
 
+    /// Forget a file's decision when it has this reason
+    pub async fn remove_reason(&self, file_id: i64, reason: &str) -> DbResult<()> {
+        sqlx::query("DELETE FROM rule_decisions WHERE file_id = ? AND reason = ?")
+            .bind(file_id)
+            .bind(reason)
+            .execute(self.pool)
+            .await
+            .map_err(tracked(DbOp::Other, "Failed to remove rule decision"))?;
+        Ok(())
+    }
+
     /// Forget a file's decision (it was queued after all)
     pub async fn remove(&self, file_id: i64) -> DbResult<()> {
         sqlx::query("DELETE FROM rule_decisions WHERE file_id = ?")

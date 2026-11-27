@@ -10,6 +10,7 @@
 import { get, post } from "../api.js";
 import { confirm, empty, fill, h, nasBanner, poll, reasonLine, refill, setNasPaused, toast } from "../app.js";
 import { bytes, dateTime, duration, percent, relative, speed, utc } from "../format.js";
+import { chooseButton } from "../pick_dialog.js";
 import { selection } from "../select.js";
 import { stepLine } from "../timeline.js";
 import { timelineView } from "../timeline_view.js";
@@ -381,7 +382,7 @@ function row(i) {
     // 066: why it is not downloading here, with the setting behind it
     reasonLine(waitingLine(i.waiting)),
     i.held && !i.waiting ? h("small", { class: "muted block", text: "Put.io keeps downloading; local download held" }) : null,
-    reasonLine(skippedLine(i.files)),
+    reasonLine(skippedLine(i.files, i.chosen)),
     i.step ? h("small", { class: i.state === "waiting_for_operator" || i.step.state === "failed" ? "error-text block" : "muted block", text: stepLine(i.step, i.state) }) : null,
   ];
   return h(
@@ -407,7 +408,7 @@ function row(i) {
     h("td", { class: "num right", "data-label": "Size", text: bytes(i.size) }),
     h("td", { class: "num right", "data-label": "Speed", text: !i.paused && i.speed_bps ? speed(i.speed_bps) : "—" }),
     h("td", { class: "num right", "data-label": "Time left", text: i.paused && i.stage === "nas" ? "Paused" : i.eta_seconds != null && i.eta_seconds > 0 ? duration(i.eta_seconds) : "—" }),
-    h("td", { class: "actions-cell", "data-label": "Actions" }, h("div", { class: "row-actions" }, pauseButton(i), stepsButton(i), links(i))),
+    h("td", { class: "actions-cell", "data-label": "Actions" }, h("div", { class: "row-actions" }, pauseButton(i), stepsButton(i), i.stage === "putio" || i.stage === "nas" ? chooseButton(i.transfer_id, i.name, () => load().catch(() => {})) : null, links(i))),
   );
 }
 

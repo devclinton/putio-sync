@@ -205,6 +205,30 @@ CREATE TABLE IF NOT EXISTS pipeline_holds (
 )
 "#;
 
+/// SQL to create the transfer_choices table (feature 070): the files picked for one
+/// transfer. `others` says what happens to a file with no row in `transfer_choice_files`;
+/// `pending` marks a transfer added to wait until its files are picked.
+pub const CREATE_TRANSFER_CHOICES_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS transfer_choices (
+    transfer_id INTEGER PRIMARY KEY,
+    root_file_id INTEGER,
+    others TEXT NOT NULL DEFAULT 'download' CHECK(others IN ('download', 'skip')),
+    pending INTEGER NOT NULL DEFAULT 0,
+    chosen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"#;
+
+/// SQL to create the transfer_choice_files table (feature 070): the wanted flag of one
+/// file, by its path under the transfer's root item
+pub const CREATE_TRANSFER_CHOICE_FILES_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS transfer_choice_files (
+    transfer_id INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    wanted INTEGER NOT NULL,
+    PRIMARY KEY (transfer_id, path)
+)
+"#;
+
 /// SQL to create the daemon_flags table (feature 039): runtime switches that survive a
 /// restart. `value` is "1" or "0"; a missing key means off.
 pub const CREATE_DAEMON_FLAGS_TABLE: &str = r#"
@@ -589,6 +613,8 @@ mod tests {
         assert!(CREATE_RULE_DECISIONS_TABLE.contains("CREATE TABLE"));
         assert!(CREATE_STREAM_FILES_TABLE.contains("CREATE TABLE"));
         assert!(CREATE_ORGANISE_MOVES_TABLE.contains("CREATE TABLE"));
+        assert!(CREATE_TRANSFER_CHOICES_TABLE.contains("CREATE TABLE"));
+        assert!(CREATE_TRANSFER_CHOICE_FILES_TABLE.contains("CREATE TABLE"));
     }
 
     #[test]

@@ -11,6 +11,7 @@ import { del, get, post } from "../api.js";
 import { confirm, copyText, empty, h, poll, refill, toast } from "../app.js";
 import { bytes, duration, percent, speed, utc } from "../format.js";
 import { listControls } from "../listctl.js";
+import { chooseButton, pickFromList } from "../pick_dialog.js";
 import { selection } from "../select.js";
 
 const REFRESH_MS = 5000;
@@ -56,6 +57,8 @@ export function mount(el, { query } = {}) {
     url: h("input", { type: "text", class: "input grow", name: "url", placeholder: "Magnet link or torrent URL", "aria-label": "Magnet link or torrent URL", autocomplete: "off" }),
     file: h("input", { type: "file", class: "input", accept: ".torrent,application/x-bittorrent", "aria-label": "Torrent file" }),
     add: h("button", { type: "submit", class: "btn btn-primary" }, "Add"),
+    // 070: pick the files before anything downloads
+    choose: h("input", { type: "checkbox" }),
     list: h("section", { class: "card wide" }, h("p", { class: "muted", text: "Loading…" })),
   };
   current = [];
@@ -71,7 +74,9 @@ export function mount(el, { query } = {}) {
     h(
       "div",
       { class: "stack" },
-      h("form", { class: "card add-form", onsubmit: onAdd }, h("h2", { text: "Add a transfer" }), h("div", { class: "toolbar" }, els.url, els.file, els.add)),
+      h("form", { class: "card add-form", onsubmit: onAdd }, h("h2", { text: "Add a transfer" }), h("div", { class: "toolbar" }, els.url, els.file, els.add),
+        h("label", { class: "pick-later" }, els.choose, h("span", {}, "Choose files first", h("small", { class: "muted block", text: "A .torrent file shows its files before it is added. A magnet link or URL is added and held: nothing of it downloads until you choose its files here, once Put.io has listed them." }))),
+      ),
       h("div", { class: "toolbar" }, ctl.filter, ctl.menu),
       els.list,
     ),
@@ -154,10 +159,26 @@ async function onAdd(ev) {
   els.add.disabled = true;
   try {
     const body = file ? { file_data: await base64(file) } : { url };
+    let held = false;
+    if (els.choose.checked && file) {
+      const preview = await post("/putio/transfers/preview", { file_data: body.file_data });
+      const choice = await pickFromList(preview);
+      if (!choice) {
+        if (els) els.add.disabled = false;
+        return;
+      }
+      body.choice = choice;
+    } else if (els.choose.checked) {
+      body.choose_first = true;
+      held = true;
+    }
     const t = await post("/putio/transfers", body);
-    toast(`Added ${(t && t.name) || "transfer"}`);
-    els.url.value = "";
-    els.file.value = "";
+    toast(`Added ${(t && t.name) || "transfer"}`, "ok", held ? "Nothing of it downloads until you choose its files: use Choose files on its row once Put.io has listed them." : null);
+    if (els) {
+      els.url.value = "";
+      els.file.value = "";
+      els.choose.checked = false;
+    }
   } catch (e) {
     if (e.status !== 401 && e.status !== 429) toast("Couldn't add the transfer", "error", reason(e && e.error ? e : { error: String(e) }));
   }
@@ -338,6 +359,9 @@ function row(t) {
       t.name,
       t.error_message ? h("small", { class: "error-text block", text: t.error_message }) : null,
       stall ? h("small", { class: "warn-text block", text: `No progress for ${duration(stall.seconds)}: ${stall.reason}` }) : null,
+      // 070: its files were picked by hand, or wait for that
+      t.choice === "pending" ? h("small", { class: "warn-text block", text: "Waiting for you to choose its files; nothing of it downloads until then." }) : null,
+      t.choice === "chosen" ? h("small", { class: "muted block", text: "You chose its files; the folder rules don't decide for it." }) : null,
     ),
     h(
       "td",
@@ -360,6 +384,7 @@ function row(t) {
         { class: "row-actions" },
         RETRYABLE.has(s) ? h("button", { type: "button", class: "btn btn-small", "aria-label": `Retry ${t.name}`, onclick: (ev) => onRetry(ev.currentTarget, t) }, "Retry") : null,
         stall && t.magnet ? h("button", { type: "button", class: "btn btn-small", "aria-label": `Re-add ${t.name}`, onclick: (ev) => onReadd(ev.currentTarget, t) }, "Re-add") : null,
+        chooseButton(t.id, t.name, refresh),
         t.magnet ? h("button", { type: "button", class: "btn btn-small", "aria-label": `Copy magnet link of ${t.name}`, onclick: () => onCopyMagnet(t) }, "Copy magnet") : null,
         h("button", { type: "button", class: "btn btn-small", "aria-label": `Remove ${t.name}`, onclick: (ev) => onRemove(ev.currentTarget, t) }, "Remove"),
       ),
