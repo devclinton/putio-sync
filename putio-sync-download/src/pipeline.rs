@@ -147,6 +147,9 @@ pub struct PipelineItem {
     /// Why it is not downloading to the NAS, when something known holds it back
     /// (feature 066)
     pub waiting: Option<Waiting>,
+    /// Its files were picked by hand, so the folder rules don't decide for it (feature
+    /// 070)
+    pub chosen: bool,
     pub links: Links,
 }
 
@@ -208,6 +211,8 @@ pub struct BuildInput {
     pub files: Vec<PipelineFile>,
     /// Held transfer ids
     pub holds: HashSet<i64>,
+    /// Transfers with a file choice (feature 070), and whether it still waits to be made
+    pub choices: HashMap<i64, bool>,
     /// Live progress of running files, by file id
     pub progress: HashMap<i64, FileProgress>,
     /// Stall verdicts, by transfer id
@@ -234,6 +239,7 @@ impl Default for BuildInput {
             transfers: Vec::new(),
             files: Vec::new(),
             holds: HashSet::new(),
+            choices: HashMap::new(),
             progress: HashMap::new(),
             stalls: HashMap::new(),
             transfer_origins: HashMap::new(),
@@ -483,9 +489,14 @@ fn transfer_item(
         phase: None,
         waiting: if held {
             Some(Waiting::new(code::HELD))
+        } else if state == State::Queued {
+            Some(Waiting::new(code::PUTIO_QUEUE))
         } else {
-            (state == State::Queued).then(|| Waiting::new(code::PUTIO_QUEUE))
+            // 070: its files will not be queued here until they are picked
+            let choosing = input.choices.get(&transfer.id).copied().unwrap_or(false);
+            (choosing && state != State::Error).then(|| Waiting::new(code::CHOOSE_FILES))
         },
+        chosen: input.choices.contains_key(&transfer.id),
         links: links(&key, Some(transfer.id)),
         key,
     })
@@ -495,7 +506,10 @@ fn transfer_item(
 /// the last sync run started (or no sync has run), else not active (R6)
 fn waiting_item(input: &BuildInput, transfer: &Transfer, key: String) -> Option<PipelineItem> {
     let finished = transfer.finished_at.as_deref().and_then(parse_putio_time);
+    // Added to wait for its files to be picked: it stays until they are
+    let choosing = input.choices.get(&transfer.id).copied().unwrap_or(false);
     let waiting = match (input.last_sync_start, finished) {
+        _ if choosing => true,
         (None, _) => true,
         (Some(start), Some(finished)) => finished > start,
         (Some(_), None) => false,
@@ -528,12 +542,15 @@ fn waiting_item(input: &BuildInput, transfer: &Transfer, key: String) -> Option<
         phase: None,
         waiting: Some(if held {
             Waiting::new(code::HELD)
+        } else if choosing {
+            Waiting::new(code::CHOOSE_FILES)
         } else {
             Waiting {
                 until: input.next_sync_at.map(rfc3339),
                 ..Waiting::new(code::WAITING_FOR_SYNC)
             }
         }),
+        chosen: input.choices.contains_key(&transfer.id),
         links: links(&key, Some(transfer.id)),
         key,
     })
@@ -643,6 +660,7 @@ fn nas_item(
             .copied()
             .filter(|p| *p != "downloading" && phases.iter().all(|q| q == p)),
         waiting: nas_waiting(input, state, held, files),
+        chosen: transfer_id.is_some_and(|id| input.choices.contains_key(&id)),
         links: links(&key, transfer_id),
         key,
     })
@@ -872,6 +890,36 @@ mod tests {
             now: at(200),
             ..BuildInput::default()
         }
+    }
+
+    /// Feature 070: a transfer added to wait for its files to be picked stays on the
+    /// page with that reason, however long ago Put.io finished it
+    #[test]
+    fn a_transfer_waiting_for_its_files_to_be_picked_says_so() {
+        let mut input = input(vec![transfer(1, "COMPLETED", Some(50))], vec![]);
+        assert!(build(&input).items.is_empty());
+        input.choices.insert(1, true);
+        let pipeline = build(&input);
+        let item = only(&pipeline);
+        assert_eq!(item.state, State::WaitingForSync);
+        assert_eq!(item.waiting.as_ref().unwrap().code, code::CHOOSE_FILES);
+        assert!(item.chosen);
+        // Once picked, it is an ordinary finished transfer again
+        input.choices.insert(1, false);
+        assert!(build(&input).items.is_empty());
+    }
+
+    /// While Put.io still downloads it, the row says the same: nothing is queued here
+    #[test]
+    fn a_held_choice_shows_while_putio_downloads() {
+        let mut input = input(vec![transfer(1, "DOWNLOADING", None)], vec![]);
+        assert!(only(&build(&input)).waiting.is_none());
+        input.choices.insert(1, true);
+        let pipeline = build(&input);
+        assert_eq!(
+            only(&pipeline).waiting.as_ref().unwrap().code,
+            code::CHOOSE_FILES
+        );
     }
 
     fn only(pipeline: &Pipeline) -> &PipelineItem {

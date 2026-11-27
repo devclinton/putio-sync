@@ -1370,7 +1370,7 @@ addresses, for a plugin server or an indexer on the same machine.
 | `GET /crash-reports`, `GET /crash-reports/{id}`, `POST /crash-reports/{id}/dismiss` | Crash reports (feature 058): the list with `pending` (undismissed in the last 7 days); one report with its `text`, the prefilled GitHub issue `url`, `search_url` and `truncated`; dismiss one. 404 for an unknown id |
 | `GET /whats-new`, `POST /whats-new/seen` | The built-in changelog with each entry marked `new`; record entries as seen (`{"ids": [...]}`) |
 | `POST /local/sync` | Start a folder sync now: 202, 409 while one runs, 503 without a database |
-| `GET /local/queue`, `/local/queue/stats` | Queue rows and counts. Each row has `waiting`: null, or why it is not downloading as `{"code": "disk_space", "setting": "download.min_free_space_mb", "free_bytes": …, "min_free_bytes": …}` (codes in `specs/066-why-waiting/spec.md`) |
+| `GET /local/queue`, `/local/queue/stats` | Queue rows and counts. Each row has `waiting`: null, or why it is not downloading as `{"code": "disk_space", "setting": "download.min_free_space_mb", "free_bytes": …, "min_free_bytes": …}` (codes in `specs/066-why-waiting/spec.md`), and `transfer_id` when the file came from a Put.io transfer |
 | `POST /local/queue` | `{"file_id": 123}`: queue a file or every file under a folder → 202 with found/queued/skipped/blocked/failed, 404 if unknown |
 | `POST /local/queue/{pause,resume}` | Turn the Pause local downloads switch on or off; answers `{"nas_paused": bool}` |
 | `POST /local/queue/clear` | Remove completed |
@@ -1381,8 +1381,12 @@ addresses, for a plugin server or an indexer on the same machine.
 | `GET /putio/files?parent_id=`, `GET /putio/files/{id}` | Browse Put.io |
 | `DELETE /putio/files/{id}` | Delete from Put.io; 409 when the file is queued, downloading or paused |
 | `POST /putio/files/delete` | `{"file_ids": [1, 2]}`: delete several with one Put.io call; 409 (nothing deleted, names in `details`) when any is queued, downloading or paused; 400 for an empty list |
-| `GET`/`POST /putio/transfers`, `DELETE /putio/transfers/{id}` | List, add (`{"url"}` or `{"file_data"}`), remove transfers |
+| `GET`/`POST /putio/transfers`, `DELETE /putio/transfers/{id}` | List, add (`{"url"}` or `{"file_data"}`, with an optional `"choice"` as in `PUT …/choice`, or `"choose_first": true` to hold it until its files are picked), remove transfers. Listed transfers carry `choice`: `"pending"` or `"chosen"` when their files were picked by hand |
 | `POST /putio/transfers/{id}/retry` | Retry a failed transfer; answers with the transfer |
+| `GET /putio/transfers/{id}/files` | The transfer's files for the file picker → `{"transfer_id", "name", "ready", "choice": null \| {"others", "pending"}, "files": [{"file_id", "path", "size", "wanted", "state", "waiting"}]}`. `ready` is false while Put.io has no files for it; `state` is `none`, a queue status or `done` |
+| `PUT /putio/transfers/{id}/choice` | Pick its files: `{"others": "download" \| "skip", "files": [{"path", "wanted"}]}`; `others` is for files not named. `{"others": "skip", "pending": true}` holds it until files are picked. Answers `{"message", "removed"}` (queue rows taken out) |
+| `DELETE /putio/transfers/{id}/choice` | Forget the choice, so the folder rules decide again; 404 when it has none |
+| `POST /putio/transfers/preview` | `{"file_data": "<base64 .torrent>"}` → `{"name", "files": [{"path", "size"}]}` with the paths a choice uses; nothing is sent to Put.io. 422 when it is not a torrent |
 | `POST /putio/transfers/remove` | `{"transfer_ids": [1, 2]}`: remove several with one Put.io cancel |
 | `POST /putio/transfers/retry` | `{"transfer_ids": [1, 2]}`: retry each → `{"retried": [ids], "failed": [{"id", "error"}]}` |
 | `POST /putio/transfers/clear` | `{"status": "completed" \| "failed" \| "finished", "dry_run": true}`: the transfers in that group → `{"count", "transfers"}`; with `false`, removes them from the transfer list (one Put.io clean, then one cancel for any it left) |
@@ -2555,6 +2559,19 @@ to its transfer and its queue rows.
   what to do; after a restart it only says it failed. A pending row with a free worker and
   nothing in its way shows no reason. Files a filter, folder rule or the release pre-check
   left out have no row, so the Active page only counts them and links to the rules.
+- **Choose files** (on a transfer, an Active item or a queue row) opens the transfer's files
+  as a tree with sizes and tick boxes. Ticked files download and the rest stay on Put.io;
+  **Only this** and **All but this** do it in one click. The choice is for that transfer
+  only and wins over the folder rules and filters for it, so a ticked file downloads even
+  if a filter would block it. It is kept in the database: it survives a restart and applies
+  to files that sync later, and it is forgotten once the transfer's files are gone from
+  Put.io. Saving takes unticked files out of the queue (pending, paused or failed); one that
+  is downloading finishes, and one already downloaded stays. **Let the rules decide**
+  forgets the choice. On the Transfers page, **Choose files first** shows a `.torrent`'s
+  files before it is added; a magnet link or URL has no file list yet, so it is added and
+  held, and nothing of it downloads until you choose its files from its row. A choice
+  covers what the sync picks up: **Download** on the Put.io page, and Radarr and Sonarr,
+  still take every file.
 - **Recently finished** lists items that left the list in the last
   `[transfers] finished_retention_hours` (24 by default, 1 to 720): done, or failed for
   good (a Put.io error on a transfer Put.io no longer has, or a transfer whose files were

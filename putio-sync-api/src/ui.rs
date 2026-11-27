@@ -86,6 +86,8 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("hooks.js", JS, include_bytes!("../ui/hooks.js")),
     ("timeline.js", JS, include_bytes!("../ui/timeline.js")),
     ("waiting.js", JS, include_bytes!("../ui/waiting.js")),
+    ("pick.js", JS, include_bytes!("../ui/pick.js")),
+    ("pick_dialog.js", JS, include_bytes!("../ui/pick_dialog.js")),
     (
         "timeline_view.js",
         JS,

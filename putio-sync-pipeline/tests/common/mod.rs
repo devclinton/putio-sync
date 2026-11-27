@@ -108,6 +108,7 @@ pub fn active(key: &str, transfer_id: Option<i64>, stage: Stage, state: State) -
         note: None,
         phase: None,
         waiting: None,
+        chosen: false,
         links: Links {
             transfers: None,
             queue: String::new(),

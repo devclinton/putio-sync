@@ -11,6 +11,9 @@
 //! older downloads, evening-heavy, with sources and origins, fill the Stats page.
 //! "Remove empty folders" on the Put.io page finds `Movies/Extras` (empty); the mocked
 //! delete succeeds but the listing still shows it.
+//! Feature 070: on `#/transfers`, "Choose files" on Big.Buck.Bunny.2008.1080p opens the file
+//! picker over a folder with a sample and subtitles; on Sintel it offers to hold the transfer
+//! until its files are listed.
 //! On `#/transfers`, transfer 5 is stalled at 97% (feature 007), transfer 1 downloads
 //! normally and the failed transfer 4 has no magnet link.
 //! Feature 008: tick rows on `#/putio/100` (Big.Buck.Bunny is queued, so its box is
@@ -324,6 +327,66 @@ async fn mock_putio(server: &mut mockito::ServerGuard) -> Vec<mockito::Mock> {
             format!("/files/{}", f["id"]),
             json!({ "status": "OK", "file": f }).to_string(),
         ));
+    }
+
+    // Feature 070: "Choose files" on Big.Buck.Bunny (transfer 6) lists a folder with a
+    // sample and subtitles. Only the single transfer names the folder, so no sync walks it.
+    let mut picked = transfers[3].clone();
+    picked["file_id"] = json!(600);
+    let pick_root = file(600, "Big.Buck.Bunny.2008.1080p", 0, "FOLDER", 0);
+    let pick_sample = file(601, "Sample", 0, "FOLDER", 600);
+    let pick_subs = file(602, "Subs", 0, "FOLDER", 600);
+    for (path, body) in [
+        (
+            "/transfers/6".to_string(),
+            json!({ "status": "OK", "transfer": picked }).to_string(),
+        ),
+        // Sintel is still downloading on Put.io: no files to pick yet, so it can be held
+        (
+            "/transfers/1".to_string(),
+            json!({ "status": "OK", "transfer": transfers[0] }).to_string(),
+        ),
+        (
+            "/files/600".to_string(),
+            json!({ "status": "OK", "file": pick_root }).to_string(),
+        ),
+        (
+            "/files/list?parent_id=600".to_string(),
+            listing(
+                pick_root,
+                vec![
+                    pick_sample.clone(),
+                    pick_subs.clone(),
+                    file(
+                        610,
+                        "Big.Buck.Bunny.2008.1080p.mkv",
+                        2_147_000_000,
+                        "VIDEO",
+                        600,
+                    ),
+                    file(611, "release.nfo", 4_096, "TEXT", 600),
+                ],
+            ),
+        ),
+        (
+            "/files/list?parent_id=601".to_string(),
+            listing(
+                pick_sample,
+                vec![file(612, "sample.mkv", 31_457_280, "VIDEO", 601)],
+            ),
+        ),
+        (
+            "/files/list?parent_id=602".to_string(),
+            listing(
+                pick_subs,
+                vec![
+                    file(613, "English.srt", 61_440, "TEXT", 602),
+                    file(614, "German.srt", 63_488, "TEXT", 602),
+                ],
+            ),
+        ),
+    ] {
+        mocks.push(json_mock("GET", path, body));
     }
 
     // The Shows listing answers after 3 s, so a "sync now" (which walks every folder)

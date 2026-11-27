@@ -644,6 +644,21 @@ dialog p { margin: 0 0 24px; color: var(--muted); word-break: break-word; }
 .news li.new::marker { color: var(--accent); font-weight: 700; }
 .dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 
+/* File picker of a transfer (feature 070) */
+dialog.pick-panel { width: min(720px, calc(100vw - 32px)); }
+.pick-panel p { margin-bottom: 12px; }
+.pick-tree { max-height: min(50vh, 460px); margin: 0 0 16px; padding: 4px 8px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.pick-list { margin: 0; padding: 0; list-style: none; }
+.pick-list .pick-list { padding-inline-start: 28px; }
+.pick-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; min-height: 40px; padding: 2px 0; }
+.pick-name { display: flex; flex: 1 1 200px; align-items: flex-start; gap: 8px; min-width: 0; cursor: pointer; }
+.pick-name .name { min-width: 0; overflow-wrap: anywhere; }
+.pick-name input, .pick-later input { flex: none; width: 18px; height: 18px; margin: 2px 0 0; }
+.pick-quick { display: flex; gap: 6px; }
+.pick-arrow { flex: none; min-width: 28px; min-height: 28px; border: 0; background: transparent; }
+.pick-later { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; cursor: pointer; }
+.pick-count { font-variant-numeric: tabular-nums; }
+
 /* Command palette (feature 061): near the top, so results grow downwards */
 dialog.palette { width: min(620px, calc(100vw - 32px)); max-height: min(560px, calc(100dvh - 32px)); margin: 12vh auto auto; padding: 0; overflow: hidden; }
 .palette-box { display: flex; flex-direction: column; max-height: inherit; }

@@ -32,6 +32,7 @@
 
 pub mod analytics;
 pub mod arr;
+pub mod choices;
 pub mod decisions;
 pub mod downloads;
 pub mod error;
@@ -54,6 +55,7 @@ pub mod verify;
 pub mod whats_new;
 
 pub use arr::{ArrItem, ArrRepository, ArrState, BlocklistState, NewArrItem, PutioProgress};
+pub use choices::{Choice, ChoicesRepository};
 pub use decisions::{RuleDecisionRecord, RuleDecisionsRepository};
 pub use downloads::DownloadRepository;
 pub use error::{DbError, DbResult};
@@ -270,6 +272,11 @@ impl Database {
     /// Get the held magnets repository (feature 043)
     pub fn held(&self) -> HeldRepository<'_> {
         HeldRepository::new(&self.pool)
+    }
+
+    /// Get the transfer file choices repository (feature 070)
+    pub fn choices(&self) -> ChoicesRepository<'_> {
+        ChoicesRepository::new(&self.pool)
     }
 
     /// Get a rule decisions repository (feature 009)
@@ -519,6 +526,15 @@ impl Database {
             (
                 schema::CREATE_PIPELINE_HOLDS_TABLE,
                 "Failed to create pipeline_holds table",
+            ),
+            // Pick files inside a transfer (feature 070)
+            (
+                schema::CREATE_TRANSFER_CHOICES_TABLE,
+                "Failed to create transfer_choices table",
+            ),
+            (
+                schema::CREATE_TRANSFER_CHOICE_FILES_TABLE,
+                "Failed to create transfer_choice_files table",
             ),
             (
                 schema::CREATE_DAEMON_FLAGS_TABLE,

@@ -16,6 +16,108 @@ pub struct AddTransferRequest {
     /// Parent folder ID (default: 0 for root)
     #[serde(default)]
     pub parent_id: i64,
+    /// Which of its files to download (feature 070), for a `.torrent` whose file list
+    /// the preview gave
+    #[serde(default)]
+    pub choice: Option<ChoiceRequest>,
+    /// Download nothing until the files are picked (feature 070): for a magnet link,
+    /// whose file list is not known until Put.io has fetched it
+    #[serde(default)]
+    pub choose_first: bool,
+}
+
+/// What a file choice does with a file it does not name (feature 070)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Others {
+    Download,
+    Skip,
+}
+
+/// One file of a choice
+#[derive(Debug, Clone, Deserialize)]
+pub struct FileFlag {
+    /// Path under the item the transfer makes on Put.io
+    pub path: String,
+    pub wanted: bool,
+}
+
+/// Which files of a transfer to download: `PUT /putio/transfers/{id}/choice`
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChoiceRequest {
+    /// Files not named in `files`, such as ones that show up later
+    pub others: Others,
+    #[serde(default)]
+    pub files: Vec<FileFlag>,
+    /// Download nothing until the files are picked: only with `others: "skip"` and no
+    /// files, for a transfer Put.io has not listed the files of yet
+    #[serde(default)]
+    pub pending: bool,
+}
+
+/// The stored choice of a transfer
+#[derive(Debug, Serialize)]
+pub struct ChoiceView {
+    pub others: Others,
+    /// Added to wait until its files are picked, and not picked yet
+    pub pending: bool,
+}
+
+/// One file of a transfer in the file picker
+#[derive(Debug, Serialize)]
+pub struct TransferFileResponse {
+    pub file_id: i64,
+    /// Path under the item the transfer made on Put.io
+    pub path: String,
+    pub size: i64,
+    /// Whether the choice downloads it; `true` with no choice (the rules decide)
+    pub wanted: bool,
+    /// `done`, a queue status (`pending`, `downloading`, `paused`, `failed`), or `none`
+    pub state: String,
+    /// `not_chosen` for a file the choice leaves on Put.io
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<putio_sync_download::Waiting>,
+}
+
+/// `GET /putio/transfers/{id}/files`
+#[derive(Debug, Serialize)]
+pub struct TransferFilesResponse {
+    pub transfer_id: i64,
+    pub name: String,
+    /// Put.io has made the transfer's files, so they can be listed
+    pub ready: bool,
+    pub choice: Option<ChoiceView>,
+    pub files: Vec<TransferFileResponse>,
+}
+
+/// `PUT /putio/transfers/{id}/choice`
+#[derive(Debug, Serialize)]
+pub struct ChoiceSavedResponse {
+    pub message: String,
+    /// Queue rows removed because the choice leaves their file out
+    pub removed: usize,
+}
+
+/// `POST /putio/transfers/preview`
+#[derive(Debug, Deserialize)]
+pub struct PreviewRequest {
+    /// Torrent file data (base64 encoded)
+    pub file_data: String,
+}
+
+/// One file of a `.torrent`
+#[derive(Debug, Serialize)]
+pub struct PreviewFile {
+    /// The path it will have in a choice
+    pub path: String,
+    pub size: u64,
+}
+
+/// The files of a `.torrent`, before it is added
+#[derive(Debug, Serialize)]
+pub struct PreviewResponse {
+    pub name: String,
+    pub files: Vec<PreviewFile>,
 }
 
 /// Request to cancel transfers
@@ -64,6 +166,10 @@ pub struct TransferResponse {
     /// Set while the transfer is stalled (feature 007)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stall: Option<StallInfo>,
+    /// `chosen` when its files were picked by hand, `pending` while it waits for that
+    /// (feature 070); set by the transfer list
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub choice: Option<String>,
 }
 
 /// A stalled transfer's verdict as the API reports it
@@ -190,6 +296,7 @@ impl From<putio_sync_client::Transfer> for TransferResponse {
                 .filter(|_| !transfer.is_private)
                 .map(str::to_string),
             stall: None,
+            choice: None,
             id: transfer.id,
             name: transfer.name,
             status: transfer.status,
@@ -285,6 +392,7 @@ mod tests {
             availability: None,
             magnet: None,
             stall: None,
+            choice: None,
         };
 
         let json = serde_json::to_string(&response).unwrap();

@@ -83,6 +83,10 @@ export function waitingLine(w) {
       return line("Waiting in Put.io's queue; Put.io has not started it yet.");
     case "waiting_for_sync":
       return line(w.until ? `Done on Put.io; the next sync ${relative(w.until)} picks it up` : "Done on Put.io; the next sync picks it up");
+    case "choose_files":
+      return line("Waiting for you to choose its files; nothing of it downloads until then.", "warn", null);
+    case "not_chosen":
+      return line("Left out by your choice of files; it stays on Put.io.", "muted", null);
     case "failed":
       return line(FAILED[w.kind] || "Failed. Retry it; the log says what went wrong.", "error", w.kind === "io" ? settingLink("download.target_directory") : w.kind === "disk_full" ? settingLink("download.min_free_space_mb") : null, guide("troubleshooting"));
     default:
@@ -92,11 +96,15 @@ export function waitingLine(w) {
 
 /**
  * The line for an Active item's skipped files (`files.skipped`): they have no queue row,
- * so the API cannot say which rule left each one out. Null when none was skipped.
+ * so the API cannot say which rule left each one out. Null when none was skipped. For a
+ * transfer whose files were picked by hand (`chosen`, feature 070) the choice left them out.
  */
-export function skippedLine(files) {
+export function skippedLine(files, chosen = false) {
   const n = files ? Number(files.skipped) || 0 : 0;
   if (n < 1) return null;
+  if (chosen) {
+    return { text: n === 1 ? "Left out by your choice of files: 1 file. It stays on Put.io." : `Left out by your choice of files: ${n} files. They stay on Put.io.`, tone: "muted", link: null, guide: null };
+  }
   return {
     text: n === 1 ? "Left out by a filter or folder rule, or removed from the queue: 1 file." : `Left out by a filter or folder rule, or removed from the queue: ${n} files.`,
     tone: "muted",

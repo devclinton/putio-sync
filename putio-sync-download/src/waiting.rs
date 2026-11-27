@@ -41,6 +41,11 @@ pub mod code {
     pub const PUTIO_QUEUE: &str = "putio_queue";
     /// Put.io is done; the next sync queues its files (`until`)
     pub const WAITING_FOR_SYNC: &str = "waiting_for_sync";
+    /// The transfer was added to wait until its files are picked (feature 070)
+    pub const CHOOSE_FILES: &str = "choose_files";
+    /// The file was left out by the choice made for its transfer; it stays on Put.io
+    /// (feature 070)
+    pub const NOT_CHOSEN: &str = "not_chosen";
 }
 
 /// The config keys a reason points at
