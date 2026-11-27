@@ -13,7 +13,7 @@ function panel(id, help) {
     "div",
     { class: "help-panel", id, role: "note" },
     h("p", { text: help.text }),
-    guide ? h("p", { class: "small" }, docs(guide.slug, "", `Guide: ${guide.title}`)) : null,
+    guide ? h("p", { class: "small" }, docs(guide.slug, "", guide.kind === "index" ? guide.title : `Guide: ${guide.title}`)) : null,
   );
 }
 
