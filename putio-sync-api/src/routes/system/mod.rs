@@ -15,6 +15,7 @@ pub mod media_server;
 pub mod network;
 pub mod organise;
 pub mod plugins;
+pub mod profile;
 pub mod rules;
 pub mod settings;
 pub mod signin;

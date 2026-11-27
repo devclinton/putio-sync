@@ -764,6 +764,7 @@ pub fn router() -> Router<AppState> {
         .merge(super::organise::settings_router())
         .merge(super::translation::settings_router())
         .merge(super::signin::settings_router())
+        .merge(super::profile::router())
         .merge(assistant::router())
 }
 

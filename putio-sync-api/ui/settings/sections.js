@@ -6,8 +6,8 @@ export const SECTIONS = [
   {
     id: "general",
     title: "General",
-    help: "How this page looks in this browser, its language, which credentials are set, and update checks.",
-    cards: [["appearance", "Appearance"], ["language", "Language"], ["credentials", "Credentials"], ["updates", "Updates"]],
+    help: "How this page looks in this browser, its language, how you use putio-sync, which credentials are set, and update checks.",
+    cards: [["appearance", "Appearance"], ["language", "Language"], ["profile", "Usage profile"], ["credentials", "Credentials"], ["updates", "Updates"]],
   },
   {
     id: "notifications",

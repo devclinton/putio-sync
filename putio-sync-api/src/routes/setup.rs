@@ -5,7 +5,7 @@
 
 use crate::error::ApiError;
 use crate::routes::arr::{browser_host, generate_password, target_of, SetupRequest, SetupTarget};
-use crate::setup::{new_api_token, AccountSummary, LinkState, SetupState};
+use crate::setup::{new_api_token, AccountSummary, LinkState, ProfileDraft, SetupState};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -15,6 +15,7 @@ use putio_sync_arr::setup::{self as arr_setup, Outcome, SetupInput};
 use putio_sync_client::oob::{DeviceLink, OobCheck, LINK_URL};
 use putio_sync_client::PutioApiClient;
 use putio_sync_core::config::{ArrConfig, ArrServer, ArrSettings, Config};
+use putio_sync_core::profile;
 use putio_sync_core::setup::{
     app_id_with_source, check_folder, check_preset, in_container, preset_choices, resolve_app_id,
     suggest_download_dir, suggest_watch_dir, FolderCheck, FolderChoice, APP_ID_HELP, APP_ID_VAR,
@@ -309,7 +310,12 @@ pub async fn download_set(
     let mut choices = session.choices.clone();
     choices.preset = preset;
     choices.folders = body.folder_rules;
-    validate(&session.base, &choices, session.arr.as_ref())?;
+    validate(
+        &session.base,
+        &choices,
+        session.arr.as_ref(),
+        session.profile.as_ref(),
+    )?;
     session.choices = choices;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -359,7 +365,12 @@ pub async fn extras_set(
     if let Some(bind) = body.metrics_bind.filter(|b| !b.trim().is_empty()) {
         choices.metrics_bind = Some(bind.trim().to_string());
     }
-    validate(&session.base, &choices, session.arr.as_ref())?;
+    validate(
+        &session.base,
+        &choices,
+        session.arr.as_ref(),
+        session.profile.as_ref(),
+    )?;
     session.choices = choices;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -369,6 +380,7 @@ fn validate(
     base: &Config,
     choices: &putio_sync_core::setup::SetupChoices,
     arr: Option<&ArrConfig>,
+    profile: Option<&ProfileDraft>,
 ) -> Result<Config, ApiError> {
     let mut choices = choices.clone();
     if let Some(arr) = arr {
@@ -378,7 +390,134 @@ fn validate(
     choices
         .apply(&mut config)
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    if let Some(draft) = profile {
+        config = with_profile(&config, draft)?.0;
+    }
     Ok(config)
+}
+
+/// `config` with the usage profile applied, and the recommendations it came from
+pub(crate) fn with_profile(
+    config: &Config,
+    draft: &ProfileDraft,
+) -> Result<(Config, Vec<profile::Recommendation>, profile::Diff), ApiError> {
+    let bad = |e: putio_sync_core::error::CoreError| ApiError::BadRequest(e.to_string());
+    let recs = profile::plan(&draft.answers, &draft.found, &draft.overrides).map_err(bad)?;
+    let (next, diff) = profile::rerun(config, &draft.answers, &draft.found, &recs).map_err(bad)?;
+    // The rules only: the watch folder is made at finish, so the full check would refuse it
+    putio_sync_core::rules::validate(&next.download.rules, &next.download.presets).map_err(bad)?;
+    Ok((next, recs, diff))
+}
+
+/// The top-level Put.io folder names
+async fn top_folders(state: &SetupState) -> Result<Vec<String>, ApiError> {
+    let client = putio_client(state).await?;
+    let listing = client
+        .list_files(0)
+        .await
+        .map_err(|e| ApiError::ServiceUnavailable(e.to_string()))?;
+    Ok(listing
+        .files
+        .into_iter()
+        .filter(|f| f.file_type == "FOLDER")
+        .map(|f| f.name)
+        .collect())
+}
+
+/// Whether the Tailscale socket is there, for the review screen's note
+pub(crate) fn tailscale_found(config: &Config) -> bool {
+    Path::new(&config.tailscale.socket_path()).exists()
+}
+
+/// GET /setup/profile/detect: the kinds the Put.io folders suggest (feature 056)
+pub async fn profile_detect(State(state): State<SetupState>) -> Result<Json<Value>, ApiError> {
+    let folders = top_folders(&state).await?;
+    let found = profile::detect(&folders);
+    let base = state.inner.session.lock().await.base.clone();
+    Ok(Json(json!({
+        "found": found,
+        "folders": folders,
+        "watch_dir": suggest_watch_dir(Some(&base)),
+        "tailscale": tailscale_found(&base),
+    })))
+}
+
+/// Body of `POST /setup/profile` and the Settings profile routes
+#[derive(Debug, Deserialize)]
+pub struct ProfileBody {
+    /// None goes back to the manual path
+    pub answers: Option<profile::Answers>,
+    #[serde(default)]
+    pub overrides: std::collections::BTreeMap<String, profile::Override>,
+}
+
+/// The review screen for `config` with `draft` applied
+pub(crate) fn review(config: &Config, draft: &ProfileDraft) -> Result<(Config, Value), ApiError> {
+    let (next, recs, diff) = with_profile(config, draft)?;
+    let risks = putio_sync_core::assistant::risks_between(config, &next);
+    let notes = profile::notes(&draft.answers, tailscale_found(config));
+    Ok((
+        next,
+        json!({
+            "recommendations": recs,
+            "risks": risks,
+            "notes": notes,
+            "changes": diff.changes,
+            "kept": diff.kept,
+        }),
+    ))
+}
+
+/// The answers with the watch folder as the setup saves it
+pub(crate) fn normalized(mut answers: profile::Answers) -> profile::Answers {
+    answers.watch = answers
+        .watch
+        .filter(|w| !w.as_os_str().is_empty())
+        .map(|w| absolute(&w.to_string_lossy()));
+    answers
+}
+
+/// POST /setup/profile: store the usage profile and return the review (feature 056)
+pub async fn profile_set(
+    State(state): State<SetupState>,
+    Json(body): Json<ProfileBody>,
+) -> Result<Response, ApiError> {
+    let Some(answers) = body.answers.map(normalized) else {
+        let mut session = state.inner.session.lock().await;
+        session.profile = None;
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    };
+    answers
+        .validate()
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    if let Some(watch) = &answers.watch {
+        if !check_folder(watch, None, false).usable() {
+            return Err(ApiError::BadRequest(
+                "The watch folder can't be used".into(),
+            ));
+        }
+    }
+    // Detect again rather than trust the client; an unreachable Put.io gives no folders
+    let folders = top_folders(&state).await.unwrap_or_default();
+    let draft = ProfileDraft {
+        found: profile::detect(&folders),
+        answers,
+        overrides: body.overrides,
+    };
+    let mut session = state.inner.session.lock().await;
+    let mut choices = session.choices.clone();
+    if let Some(watch) = &draft.answers.watch {
+        // Made at finish like the manual path's watch folder
+        choices.watch_dir = Some(Some(watch.clone()));
+    }
+    let mut base = session.base.clone();
+    choices
+        .apply(&mut base)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let (_, review) = review(&base, &draft)?;
+    session.choices = choices;
+    session.profile = Some(draft);
+    Ok(Json(review).into_response())
 }
 
 /// The `[arr]` draft and what it resolves to
@@ -520,7 +659,12 @@ pub async fn dry_run(State(state): State<SetupState>) -> Result<Json<Value>, Api
                 "Choose the download folder first".into(),
             ));
         }
-        validate(&session.base, &session.choices, session.arr.as_ref())?
+        validate(
+            &session.base,
+            &session.choices,
+            session.arr.as_ref(),
+            session.profile.as_ref(),
+        )?
     };
     let client = putio_client(&state).await?;
     let download = crate::extract_download_config(&config);
@@ -554,7 +698,12 @@ pub async fn finish(State(state): State<SetupState>) -> Result<Response, ApiErro
     let mut choices = session.choices.clone();
     let created = (!state.api_token_configured()).then(new_api_token);
     choices.api_token = created.clone();
-    let config = validate(&session.base, &choices, session.arr.as_ref())?;
+    let config = validate(
+        &session.base,
+        &choices,
+        session.arr.as_ref(),
+        session.profile.as_ref(),
+    )?;
     let watch = choices.watch_dir.clone().flatten();
     for (what, dir) in [("download", &choices.download_dir), ("watch", &watch)] {
         let Some(dir) = dir else { continue };
@@ -576,9 +725,15 @@ pub async fn finish(State(state): State<SetupState>) -> Result<Response, ApiErro
         })?;
     session.finished = true;
     drop(session);
+    let kinds: Vec<&str> = config
+        .profile
+        .iter()
+        .flat_map(|p| p.kinds.iter().map(|k| k.as_str()))
+        .collect();
     info!(
         path = %state.inner.config_path.display(),
         api_token_created = created.is_some(),
+        profile = %kinds.join(","),
         "Setup finished; config saved"
     );
     state.mark_finished();
