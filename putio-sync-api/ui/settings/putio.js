@@ -1,8 +1,11 @@
 // Put.io section (feature 046): the app ID for linking with a code, storage, cleanup of empty
 // folders and the torrent watcher.
 
+import { post } from "../api.js";
 import { h } from "../app.js";
-import { groupCard } from "./form.js";
+import { budgetLocked, budgetPreviewLines } from "../download_limits.js";
+import { bytes } from "../format.js";
+import { groupCard, quiet, reason } from "./form.js";
 
 const APP_ID_FROM = { environment: "the environment (PUTIO_SYNC_APP_ID)", config: "this setting", built_in: "this build" };
 
@@ -24,8 +27,11 @@ const GROUPS = [
       ["target_free_percent", "Free up to (% free)", "Free up space deletes old downloaded files until this is free; up to 90", "n", 2, 90],
       ["run_at", "Daily run at", "24-hour local time, HH:MM", "s"],
       ["auto_free", "Automatic free-up", "Once a day, free up space when below the warning level (daemon only)", "b"],
+      ["budget_used_percent", "Storage budget (% used)", "The share of the account the storage budget keeps it under; 10 to 99", "n", 10, 99],
     ],
     advanced: ["run_at"],
+    owns: ["budget_enabled"],
+    extra: budgetExtra,
   },
   {
     id: "cleanup",
@@ -76,4 +82,67 @@ function putioExtra(data) {
     h("p", { class: "muted small" }, register, " (account menu → API → Create App; any website and callback URL will do), then enter the number Put.io shows for it."),
   );
   return { nodes, read: () => ({}) };
+}
+
+const BUDGET_SHOWN = 50;
+
+/**
+ * The storage budget's switch (feature 064). It deletes files, so it can be turned on
+ * only after a preview of the budget entered, which lists what would go and deletes
+ * nothing.
+ */
+function budgetExtra(data) {
+  let previewed = null;
+  const percent = () => {
+    const input = document.getElementById("set-storage-budget_used_percent");
+    return input ? Number(input.value) : data.budget_used_percent;
+  };
+  const box = h("input", { type: "checkbox", id: "set-storage-budget_enabled", checked: Boolean(data.budget_enabled) });
+  const hint = h("small");
+  const result = h("div", { class: "spaced", role: "status" });
+  // Called on every edit of the card: a budget that was not previewed can't be on
+  const sync = () => {
+    const locked = budgetLocked(data, percent(), previewed);
+    if (locked) box.checked = false;
+    box.disabled = locked;
+    hint.textContent = locked
+      ? "Preview this budget first; then it can be turned on."
+      : "Deletes the oldest files that are confirmed downloaded, about every 15 minutes while Put.io is over the budget (daemon only). Each deletion is logged and listed under Recent runs on the Put.io page.";
+    return box.checked;
+  };
+  const preview = h("button", { type: "button", class: "btn btn-small" }, "Preview what it would delete");
+  preview.addEventListener("click", async () => {
+    const p = percent();
+    preview.disabled = true;
+    try {
+      const plan = await post("/putio/storage/budget/preview", { used_percent: p });
+      previewed = p;
+      const more = plan.files.length - BUDGET_SHOWN;
+      const lines = [
+        ...budgetPreviewLines(plan, p).map((text) => h("p", { text })),
+        plan.complete ? null : h("p", { class: "warn-text", text: "Put.io could not be read in full, so more files may qualify." }),
+        plan.files.length ? h("ul", { class: "paths" }, plan.files.slice(0, BUDGET_SHOWN).map((f) => h("li", { text: `${f.path} (${bytes(f.size)}) → kept at ${f.local_path}` }))) : null,
+        more > 0 ? h("p", { class: "muted", text: `…and ${more} more` }) : null,
+        h("p", { class: "muted small", text: "Nothing was deleted. A file not confirmed downloaded here is never deleted." }),
+      ].filter(Boolean);
+      result.replaceChildren(...lines);
+    } catch (e) {
+      if (!quiet(e)) result.replaceChildren(h("p", { class: "error-text", text: reason(e) }));
+    } finally {
+      preview.disabled = false;
+      sync();
+      box.closest("form")?.dispatchEvent(new Event("change"));
+    }
+  });
+  sync();
+  const nodes = h(
+    "div",
+    { class: "spaced" },
+    h("h3", { class: "sub", text: "Storage budget" }),
+    h("p", { class: "muted", text: "Keeps Put.io under the budget above by deleting the oldest finished files that are already downloaded, by the same rules as Free up space. Off unless you turn it on." }),
+    h("label", { class: "field check", for: "set-storage-budget_enabled" }, box, h("span", {}, "Keep Put.io under the storage budget", hint)),
+    h("div", { class: "toolbar" }, preview),
+    result,
+  );
+  return { nodes, read: () => ({ budget_enabled: sync() }) };
 }

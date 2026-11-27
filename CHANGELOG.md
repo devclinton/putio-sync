@@ -48,6 +48,20 @@ changelogs, such as [putio-sync-cli/CHANGELOG.md](putio-sync-cli/CHANGELOG.md).
 
 ### Added
 
+- Download hours (064): `[[download.windows]]` sets the hours downloads may run in, per
+  weekday. Outside them the queue waits, running downloads pause, and each waiting row
+  says when the hours reopen.
+- Disk pause (064): `download.pause_free_space_mb` pauses every download while the
+  download folder has less free space, and `download.resume_free_space_mb` (default: 1024 MB
+  above it) is where they go on.
+- Storage budget (064): `storage.budget_enabled` keeps the Put.io account under
+  `storage.budget_used_percent` (default 90) by deleting the oldest files that are
+  confirmed downloaded. Off by default; Settings › Put.io › Put.io storage previews what it
+  would delete before it can be turned on, and `POST /putio/storage/budget/preview` does
+  the same. Runs are listed under Recent runs as "storage budget".
+- Forecast (064): the Stats page says when the download disk and the Put.io account fill
+  at the rate of the last week, or that it can't tell yet (`GET /stats/forecast`).
+- All four are in Settings and apply without a restart.
 - Pick files inside a transfer (070): **Choose files** on a transfer, an Active item or a
   queue row shows the transfer's files as a tree with sizes and tick boxes, with **Only this**
   and **All but this** on each file. The choice is for that transfer only, wins over its folder

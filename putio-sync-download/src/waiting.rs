@@ -8,6 +8,7 @@
 //! tested without a daemon. A feature that adds a new way to hold a row back adds a code
 //! in [`code`] and a check here.
 
+use crate::gates::Hold;
 use crate::manager::below_free_space_floor;
 use putio_sync_core::bandwidth::{self, OverrideMode, Source};
 use serde::Serialize;
@@ -21,6 +22,11 @@ pub mod code {
     pub const BANDWIDTH_SCHEDULE: &str = "bandwidth_schedule";
     /// The default bandwidth limit is "paused"
     pub const BANDWIDTH_LIMIT: &str = "bandwidth_limit";
+    /// Outside every download window (`until_local`: when the next one starts; feature 064)
+    pub const DOWNLOAD_WINDOW: &str = "download_window";
+    /// Free space fell below the pause level (`free_bytes`, `min_free_bytes`: the pause
+    /// level, `resume_bytes`; feature 064)
+    pub const DISK_PAUSE: &str = "disk_pause";
     /// The Pause local downloads switch is on
     pub const DOWNLOADS_PAUSED: &str = "downloads_paused";
     /// Free space is below the floor (`free_bytes`, `min_free_bytes`)
@@ -55,6 +61,8 @@ mod setting {
     pub const MIN_FREE: &str = "download.min_free_space_mb";
     pub const TARGET: &str = "download.target_directory";
     pub const WORKERS: &str = "download.workers";
+    pub const WINDOWS: &str = "download.windows";
+    pub const PAUSE_FREE: &str = "download.pause_free_space_mb";
 }
 
 /// Why a row is not downloading
@@ -78,6 +86,9 @@ pub struct Waiting {
     pub free_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_free_bytes: Option<u64>,
+    /// The free space that ends a `disk_pause`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_bytes: Option<u64>,
     /// `download.workers`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workers: Option<usize>,
@@ -123,11 +134,34 @@ pub fn bandwidth_hold(status: &bandwidth::Status) -> Option<Waiting> {
     })
 }
 
+/// The reason a closed download window or the free-space pause gives (feature 064)
+pub fn rule_hold(hold: Hold) -> Waiting {
+    match hold {
+        Hold::Window { reopens } => Waiting {
+            until_local: reopens.map(|t| t.format("%Y-%m-%dT%H:%M").to_string()),
+            ..Waiting::new(code::DOWNLOAD_WINDOW).setting(setting::WINDOWS)
+        },
+        Hold::Space {
+            free_bytes,
+            pause_bytes,
+            resume_bytes,
+        } => Waiting {
+            free_bytes: Some(free_bytes),
+            min_free_bytes: Some(pause_bytes),
+            resume_bytes: Some(resume_bytes),
+            ..Waiting::new(code::DISK_PAUSE).setting(setting::PAUSE_FREE)
+        },
+    }
+}
+
 /// What the workers check before they claim a row, at one moment
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueueState {
     /// [`bandwidth_hold`] of the limit in force
     pub bandwidth: Option<Waiting>,
+    /// [`rule_hold`] of the download window or free-space pause in force (feature 064).
+    /// It stops running downloads too.
+    pub rule: Option<Waiting>,
     /// The Pause local downloads switch
     pub nas_paused: bool,
     /// `download.min_free_space_mb` in bytes; 0 is off
@@ -147,7 +181,7 @@ pub struct QueueState {
 impl QueueState {
     /// What holds every pending row back, in the order `process_queue` checks
     pub fn gate(&self) -> Option<Waiting> {
-        if let Some(hold) = &self.bandwidth {
+        if let Some(hold) = self.bandwidth.as_ref().or(self.rule.as_ref()) {
             return Some(hold.clone());
         }
         if self.nas_paused {
@@ -182,8 +216,15 @@ impl QueueState {
             "paused" => Some(Waiting::new(code::PAUSED)),
             "failed" => Some(self.failed(&[file_id])),
             "pending" => self.gate().or_else(|| self.for_pending(size)),
+            "downloading" => self.stopped(),
             _ => None,
         }
+    }
+
+    /// Why a row that is downloading gets no bytes: a closed download window or the
+    /// free-space pause, which stop running downloads in place (feature 064)
+    pub fn stopped(&self) -> Option<Waiting> {
+        self.rule.clone()
     }
 
     /// A failed row or item: the first of `file_ids` with a known failure names the kind
@@ -446,5 +487,64 @@ mod tests {
     fn only_the_fields_a_reason_has_are_sent() {
         let json = serde_json::to_value(Waiting::new(code::PAUSED)).unwrap();
         assert_eq!(json, serde_json::json!({ "code": "paused" }));
+    }
+
+    fn closed_window() -> Waiting {
+        rule_hold(Hold::Window {
+            reopens: chrono::NaiveDate::from_ymd_opt(2026, 11, 28)
+                .unwrap()
+                .and_hms_opt(1, 0, 0),
+        })
+    }
+
+    #[test]
+    fn a_closed_window_says_when_it_opens_and_names_its_setting() {
+        let hold = closed_window();
+        assert_eq!(hold.code, code::DOWNLOAD_WINDOW);
+        assert_eq!(hold.until_local.as_deref(), Some("2026-11-28T01:00"));
+        assert_eq!(hold.setting, Some("download.windows"));
+        let json = serde_json::to_value(&hold).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"code": "download_window", "setting": "download.windows", "until_local": "2026-11-28T01:00"})
+        );
+    }
+
+    #[test]
+    fn the_space_pause_carries_both_levels() {
+        let hold = rule_hold(Hold::Space {
+            free_bytes: 3 * GB,
+            pause_bytes: 5 * GB,
+            resume_bytes: 8 * GB,
+        });
+        assert_eq!(hold.code, code::DISK_PAUSE);
+        assert_eq!(hold.setting, Some("download.pause_free_space_mb"));
+        assert_eq!(
+            (hold.free_bytes, hold.min_free_bytes, hold.resume_bytes),
+            (Some(3 * GB), Some(5 * GB), Some(8 * GB))
+        );
+    }
+
+    #[test]
+    fn a_rule_holds_pending_and_running_rows_but_a_bandwidth_pause_is_named_first() {
+        let mut state = QueueState {
+            rule: Some(closed_window()),
+            nas_paused: true,
+            ..open()
+        };
+        let code_of = |s: &QueueState, status: &str| s.for_row(status, 1, 10).map(|w| w.code);
+        assert_eq!(code_of(&state, "pending"), Some(code::DOWNLOAD_WINDOW));
+        assert_eq!(code_of(&state, "downloading"), Some(code::DOWNLOAD_WINDOW));
+        assert_eq!(code_of(&state, "paused"), Some(code::PAUSED));
+        assert_eq!(
+            state.for_pending_files([10]).map(|w| w.code),
+            Some(code::DOWNLOAD_WINDOW)
+        );
+        state.bandwidth = bandwidth_hold(&status(Limit::Paused, Source::Default));
+        assert_eq!(code_of(&state, "pending"), Some(code::BANDWIDTH_LIMIT));
+        // A running row is told about the rule only: 066 gives it no bandwidth line
+        assert_eq!(code_of(&state, "downloading"), Some(code::DOWNLOAD_WINDOW));
+        state.rule = None;
+        assert_eq!(code_of(&state, "downloading"), None);
     }
 }

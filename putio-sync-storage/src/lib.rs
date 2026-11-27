@@ -4,6 +4,10 @@
 //! run), the API (and so the web UI) and the CLI. It reports what fills the account, builds
 //! a preview of the oldest files that are safe to delete, and deletes exactly the files of
 //! a preview after checking each again. One preview or free-up runs at a time.
+//!
+//! Feature 064 adds the storage budget (keep the account under a share of its size, with
+//! the same rules and the same per-file check) and the samples behind the Stats page's
+//! forecast of when the download disk and the account fill.
 
 pub mod plan;
 
@@ -11,11 +15,13 @@ use plan::{Candidate, Inputs};
 use putio_sync_client::{ClientError, PutioApiClient};
 use putio_sync_core::config::{Config, StorageConfig};
 use putio_sync_core::events::{self, Payload};
+use putio_sync_core::forecast::{self, Forecast};
 use putio_sync_db::models::HistoryAction;
 use putio_sync_db::{Database, DbError, NewRunFile, StorageRun};
 use putio_sync_telemetry::{storage as metrics, SyncResult};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use thiserror::Error;
@@ -37,6 +43,17 @@ const DELETE_BATCH: usize = 100;
 const TOP_ITEMS: usize = 10;
 /// Runs `runs()` lists
 pub const RECENT_RUNS: i64 = 20;
+/// The recorded run's `trigger` for a storage-budget run (feature 064)
+pub const BUDGET_TRIGGER: &str = "budget";
+/// The `reason` of the `cleanup.deleted` event a budget run sends
+pub const BUDGET_REASON: &str = "storage_budget";
+/// After a budget run that could delete nothing, the account is not walked again for
+/// this long
+const BUDGET_RETRY: Duration = Duration::from_secs(60 * 60);
+/// Usage samples are at least this far apart
+const SAMPLE_GAP_SECS: i64 = 3600;
+const SAMPLE_PUTIO: &str = "putio";
+const SAMPLE_LOCAL: &str = "local";
 
 /// Why a preview or run did not happen
 #[derive(Debug, Error)]
@@ -49,6 +66,8 @@ pub enum StorageError {
     PlanExpired,
     #[error("No files were chosen")]
     NothingChosen,
+    #[error("The storage budget must be between {min} and {max} percent")]
+    BadBudget { min: u8, max: u8 },
     #[error(transparent)]
     Client(#[from] ClientError),
     #[error(transparent)]
@@ -79,6 +98,13 @@ pub struct Summary {
     pub target_free_percent: u8,
     pub auto_free: bool,
     pub run_at: String,
+    /// The storage budget deletes files (feature 064)
+    pub budget_enabled: bool,
+    /// The share of the account the budget keeps it under
+    pub budget_used_percent: u8,
+    /// Bytes used over the budget; 0 at or under it. Reported whether the budget is on
+    /// or off.
+    pub over_budget_bytes: i64,
     /// Up to 10 root items, largest first
     pub top: Vec<TopItem>,
 }
@@ -126,6 +152,33 @@ pub struct FreeResult {
     pub failed: Vec<Failed>,
 }
 
+/// When a disk fills, with the numbers it was worked out from (feature 064)
+#[derive(Debug, Clone, Serialize)]
+pub struct DiskForecast {
+    /// The latest reading; `None` before the first one
+    pub total_bytes: Option<i64>,
+    pub used_bytes: Option<i64>,
+    #[serde(flatten)]
+    pub forecast: Forecast,
+}
+
+/// When the download disk and the Put.io account fill at the rate of the last week
+#[derive(Debug, Clone, Serialize)]
+pub struct Forecasts {
+    pub local: DiskForecast,
+    pub putio: DiskForecast,
+}
+
+/// `(free, total)` bytes of the disk holding a folder; `None` when it can't be read
+pub type DiskReader = Arc<dyn Fn(&Path) -> Option<(u64, u64)> + Send + Sync>;
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 struct StoredPlan {
     plan: Plan,
     made: Instant,
@@ -141,6 +194,11 @@ pub struct StorageService {
     /// The last reading was low, so `storage.low` is not sent again until it recovers
     /// (feature 027, R7)
     low: std::sync::atomic::AtomicBool,
+    /// The download folder, whose disk is sampled for the forecast (feature 064)
+    download_dir: RwLock<PathBuf>,
+    disk: DiskReader,
+    /// A budget run found nothing it may delete; no new walk before this
+    budget_retry_at: Mutex<Option<Instant>>,
 }
 
 fn free_of(size: i64, used: i64) -> i64 {
@@ -173,12 +231,27 @@ impl StorageService {
             running: tokio::sync::Mutex::new(()),
             latest: Mutex::new(None),
             low: std::sync::atomic::AtomicBool::new(false),
+            download_dir: RwLock::new(config.download.target_directory.clone()),
+            disk: Arc::new(|dir| putio_sync_telemetry::gauges::disk_usage(dir).ok()),
+            budget_retry_at: Mutex::new(None),
         }
+    }
+
+    /// Read the download disk with `disk` instead of the filesystem (tests)
+    pub fn with_disk_reader(mut self, disk: DiskReader) -> Self {
+        self.disk = disk;
+        self
     }
 
     /// Take new settings after a settings save
     pub fn configure(&self, config: &Config) {
         *self.config.write().unwrap_or_else(|e| e.into_inner()) = config.storage.clone();
+        *self.download_dir.write().unwrap_or_else(|e| e.into_inner()) =
+            config.download.target_directory.clone();
+        *self
+            .budget_retry_at
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     /// The current `[storage]` settings
@@ -218,7 +291,76 @@ impl StorageService {
                 Payload::StorageRecovered(reading)
             });
         }
+        self.sample(disk.size, disk.used, now_secs()).await;
         Ok((disk.size, disk.used))
+    }
+
+    /// Keep one reading an hour of the account and of the download disk, for the
+    /// forecast. A failure only costs a sample.
+    async fn sample(&self, size: i64, used: i64, at: i64) {
+        let Some(db) = self.db.as_deref() else {
+            return;
+        };
+        let repo = db.storage();
+        if let Err(e) = repo
+            .add_sample(SAMPLE_PUTIO, at, used, size, SAMPLE_GAP_SECS)
+            .await
+        {
+            warn!(error = %e, "Could not record Put.io storage use");
+        }
+        let dir = self
+            .download_dir
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some((free, total)) = (self.disk)(&dir) {
+            let (free, total) = (free.min(i64::MAX as u64), total.min(i64::MAX as u64));
+            let used = total.saturating_sub(free) as i64;
+            if let Err(e) = repo
+                .add_sample(SAMPLE_LOCAL, at, used, total as i64, SAMPLE_GAP_SECS)
+                .await
+            {
+                warn!(error = %e, "Could not record download disk use");
+            }
+        }
+    }
+
+    /// When the download disk and the account fill, from the samples of the last week.
+    /// Reads the database only.
+    pub async fn forecast(&self) -> Result<Forecasts, StorageError> {
+        self.forecast_at(now_secs()).await
+    }
+
+    async fn forecast_at(&self, now: i64) -> Result<Forecasts, StorageError> {
+        Ok(Forecasts {
+            local: self.forecast_of(SAMPLE_LOCAL, now).await?,
+            putio: self.forecast_of(SAMPLE_PUTIO, now).await?,
+        })
+    }
+
+    async fn forecast_of(&self, kind: &str, now: i64) -> Result<DiskForecast, StorageError> {
+        let rows = match self.db.as_deref() {
+            Some(db) => {
+                db.storage()
+                    .samples(kind, now - forecast::WINDOW_SECS)
+                    .await?
+            }
+            None => Vec::new(),
+        };
+        let latest = rows.last().copied();
+        let samples: Vec<forecast::Sample> = rows
+            .iter()
+            .map(|r| forecast::Sample {
+                at: r.taken_at,
+                used: r.used.max(0) as u64,
+            })
+            .collect();
+        let total = latest.map_or(0, |r| r.total.max(0) as u64);
+        Ok(DiskForecast {
+            total_bytes: latest.map(|r| r.total),
+            used_bytes: latest.map(|r| r.used),
+            forecast: forecast::fill(&samples, total, now),
+        })
     }
 
     /// Storage use and the largest top-level items; sets the gauges
@@ -246,6 +388,9 @@ impl StorageService {
             target_free_percent: config.target_free_percent,
             auto_free: config.auto_free,
             run_at: config.run_at,
+            budget_enabled: config.budget_enabled,
+            budget_used_percent: config.budget_used_percent,
+            over_budget_bytes: plan::over_budget(size, used, config.budget_used_percent),
             top: top
                 .into_iter()
                 .map(|f| TopItem {
@@ -303,12 +448,20 @@ impl StorageService {
     }
 
     async fn plan_locked(&self) -> Result<Plan, StorageError> {
-        let db = self.db()?;
         let target_percent = self.config().target_free_percent;
         let (size, used) = self.refresh().await?;
         let free = free_of(size, used);
         let target = plan::target_bytes(size, target_percent);
         let needed = plan::needed_bytes(size, free, target_percent);
+        let plan = self.build_plan(free, target, needed).await?;
+        self.keep(&plan);
+        Ok(plan)
+    }
+
+    /// The preview that frees `needed` bytes: the oldest files that pass every rule of
+    /// [`plan::eligible`]. Deletes nothing and is not kept.
+    async fn build_plan(&self, free: i64, target: i64, needed: i64) -> Result<Plan, StorageError> {
+        let db = self.db()?;
 
         let (files, total, complete) = if needed == 0 {
             (Vec::new(), 0, true)
@@ -350,11 +503,110 @@ impl StorageService {
             complete = plan.complete,
             "Put.io free-up preview built"
         );
+        Ok(plan)
+    }
+
+    /// Make `plan` the one a free-up may confirm
+    fn keep(&self, plan: &Plan) {
         *self.latest.lock().unwrap_or_else(|e| e.into_inner()) = Some(StoredPlan {
             plan: plan.clone(),
             made: Instant::now(),
         });
-        Ok(plan)
+    }
+
+    /// What the storage budget would delete now to bring the account under `percent` of
+    /// its size (the saved `budget_used_percent` when `None`). Deletes nothing, works
+    /// with the budget on or off, and cannot be confirmed by [`Self::free`].
+    pub async fn budget_preview(&self, percent: Option<u8>) -> Result<Plan, StorageError> {
+        let percent = percent.unwrap_or_else(|| self.config().budget_used_percent);
+        let range = putio_sync_core::config::STORAGE_BUDGET_RANGE;
+        if !range.contains(&percent) {
+            return Err(StorageError::BadBudget {
+                min: *range.start(),
+                max: *range.end(),
+            });
+        }
+        let _guard = self
+            .running
+            .try_lock()
+            .map_err(|_| StorageError::AlreadyRunning)?;
+        let (size, used) = self.refresh().await?;
+        self.budget_plan(size, used, percent).await
+    }
+
+    async fn budget_plan(&self, size: i64, used: i64, percent: u8) -> Result<Plan, StorageError> {
+        let needed = plan::over_budget(size, used, percent);
+        let free = free_of(size, used);
+        self.build_plan(free, free + needed, needed).await
+    }
+
+    /// The storage budget: when `budget_enabled` is on and the account is over
+    /// `budget_used_percent`, delete the oldest downloaded files until it is under.
+    /// Every file passes the rules of a free-up and is checked again right before its
+    /// delete. `None` when it is off, the account is under budget, or nothing may be
+    /// deleted.
+    pub async fn budget_run(&self) -> Result<Option<FreeResult>, StorageError> {
+        let config = self.config();
+        if !config.budget_enabled {
+            return Ok(None);
+        }
+        let waiting = |at: &Option<Instant>| at.is_some_and(|at| Instant::now() < at);
+        if waiting(
+            &self
+                .budget_retry_at
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        ) {
+            return Ok(None);
+        }
+        let _guard = self
+            .running
+            .try_lock()
+            .map_err(|_| StorageError::AlreadyRunning)?;
+        let (size, used) = self.refresh().await?;
+        if plan::over_budget(size, used, config.budget_used_percent) == 0 {
+            return Ok(None);
+        }
+        let plan = self
+            .budget_plan(size, used, config.budget_used_percent)
+            .await?;
+        info!(
+            budget_used_percent = config.budget_used_percent,
+            over_bytes = plan.needed_bytes,
+            files = plan.files.len(),
+            "Put.io account is over the storage budget"
+        );
+        let result = if plan.files.is_empty() {
+            None
+        } else {
+            let ids: Vec<i64> = plan.files.iter().map(|f| f.id).collect();
+            self.keep(&plan);
+            Some(
+                self.free_locked(Trigger::Schedule, BUDGET_TRIGGER, &plan.id, &ids)
+                    .await?,
+            )
+        };
+        let deleted: Vec<i64> = result
+            .iter()
+            .flat_map(|r| r.deleted.iter().map(|c| c.id))
+            .collect();
+        if deleted.is_empty() {
+            info!(
+                over_bytes = plan.needed_bytes,
+                "The storage budget found no file it may delete; it looks again in an hour"
+            );
+            *self
+                .budget_retry_at
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(Instant::now() + BUDGET_RETRY);
+        } else {
+            events::emit(Payload::CleanupDeleted(events::CleanupDeleted {
+                count: deleted.len() as u64,
+                file_ids: deleted,
+                reason: BUDGET_REASON.into(),
+            }));
+        }
+        Ok(result)
     }
 
     /// Delete the chosen files of preview `plan_id`, checking each again first
@@ -368,12 +620,15 @@ impl StorageService {
             .running
             .try_lock()
             .map_err(|_| StorageError::AlreadyRunning)?;
-        self.free_locked(trigger, plan_id, file_ids).await
+        self.free_locked(trigger, trigger.as_str(), plan_id, file_ids)
+            .await
     }
 
+    /// `label` is the recorded run's trigger and the one in the log; `trigger` the metric's
     async fn free_locked(
         &self,
         trigger: Trigger,
+        label: &str,
         plan_id: &str,
         file_ids: &[i64],
     ) -> Result<FreeResult, StorageError> {
@@ -394,7 +649,7 @@ impl StorageService {
             }
         };
         info!(
-            trigger = trigger.as_str(),
+            trigger = label,
             files = file_ids.len(),
             "Put.io free-up started"
         );
@@ -446,7 +701,7 @@ impl StorageService {
                             path = %c.path,
                             size = c.size,
                             local_path = %c.local_path,
-                            trigger = trigger.as_str(),
+                            trigger = label,
                             "Deleted Put.io file to free space"
                         );
                         if let Err(e) = db
@@ -500,7 +755,7 @@ impl StorageService {
                 .collect();
             Some(
                 db.storage()
-                    .record_run(trigger.as_str(), &files, failed.len(), free_after)
+                    .record_run(label, &files, failed.len(), free_after)
                     .await?,
             )
         };
@@ -511,7 +766,7 @@ impl StorageService {
         };
         metrics::record_run(trigger, result, deleted.len(), bytes_deleted.max(0) as u64);
         info!(
-            trigger = trigger.as_str(),
+            trigger = label,
             deleted = deleted.len(),
             bytes_deleted,
             skipped = skipped.len(),
@@ -602,9 +857,14 @@ impl StorageService {
             return Ok(None);
         }
         let ids: Vec<i64> = plan.files.iter().map(|f| f.id).collect();
-        self.free_locked(Trigger::Schedule, &plan.id, &ids)
-            .await
-            .map(Some)
+        self.free_locked(
+            Trigger::Schedule,
+            Trigger::Schedule.as_str(),
+            &plan.id,
+            &ids,
+        )
+        .await
+        .map(Some)
     }
 }
 

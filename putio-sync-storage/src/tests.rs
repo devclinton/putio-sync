@@ -528,3 +528,221 @@ async fn storage_low_is_sent_on_the_way_down_only() {
     w.svc.refresh().await.unwrap();
     assert_eq!(lows(&mut rx).len(), 1, "low again after recovering");
 }
+
+// Feature 064: the storage budget and the forecast
+
+fn budget_config(percent: u8) -> Config {
+    let mut config = Config::default();
+    config.storage.budget_enabled = true;
+    config.storage.budget_used_percent = percent;
+    config
+}
+
+async fn no_deletes(w: &mut World) -> Mock {
+    w.server
+        .mock("POST", "/files/delete")
+        .expect(0)
+        .create_async()
+        .await
+}
+
+#[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
+async fn budget_is_off_by_default_and_never_deletes_then() {
+    // 95% used against the default 90% budget, every file downloaded
+    let mut w = full_world().await;
+    for id in 1..=5 {
+        w.downloaded(id, 5 * GB).await;
+    }
+    let delete = no_deletes(&mut w).await;
+    assert!(!w.svc.config().budget_enabled);
+    assert!(w.svc.budget_run().await.unwrap().is_none());
+    delete.assert_async().await;
+    let summary = w.svc.summary().await.unwrap();
+    assert!(!summary.budget_enabled);
+    assert_eq!(summary.over_budget_bytes, 5 * GB);
+}
+
+#[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
+async fn budget_preview_lists_oldest_downloaded_and_deletes_nothing() {
+    let mut w = full_world().await;
+    // 4 and 5 are on Put.io only
+    for id in 1..=3 {
+        w.downloaded(id, 5 * GB).await;
+    }
+    let delete = no_deletes(&mut w).await;
+
+    // 95 GB used, 85% allowed: 10 GB over, the two oldest
+    let plan = w.svc.budget_preview(Some(85)).await.unwrap();
+    assert_eq!(plan.needed_bytes, 10 * GB);
+    assert_eq!(ids(&plan.files), vec![1, 2]);
+    assert_eq!(plan.shortfall_bytes, 0);
+
+    // 70% allowed: 25 GB over, but only what is downloaded may go
+    let plan = w.svc.budget_preview(Some(70)).await.unwrap();
+    assert_eq!(ids(&plan.files), vec![1, 2, 3]);
+    assert_eq!(plan.shortfall_bytes, 10 * GB);
+
+    // The saved percent (90) when none is given
+    let saved = w.svc.budget_preview(None).await.unwrap();
+    assert_eq!(ids(&saved.files), vec![1]);
+
+    // Under budget: an empty preview
+    assert!(w
+        .svc
+        .budget_preview(Some(99))
+        .await
+        .unwrap()
+        .files
+        .is_empty());
+
+    // A budget preview can't be confirmed as a free-up
+    assert!(matches!(
+        w.svc.free(Trigger::Manual, &plan.id, &[1]).await,
+        Err(StorageError::PlanExpired)
+    ));
+    assert!(matches!(
+        w.svc.budget_preview(Some(5)).await,
+        Err(StorageError::BadBudget { min: 10, max: 99 })
+    ));
+    delete.assert_async().await;
+    assert!(w.svc.runs(5).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
+async fn budget_run_deletes_the_oldest_downloaded_file_and_records_it() {
+    let mut rx = events::subscribe();
+    let mut w = World::new(budget_config(90)).await;
+    w.account(100 * GB, 95 * GB).await;
+    w.root(&[
+        // The oldest is not downloaded, so it stays
+        entry(7, 0, "f7.mkv", 5 * GB, false, "2025-01-01T00:00:00"),
+        entry(8, 0, "f8.mkv", 5 * GB, false, "2026-01-01T00:00:00"),
+        entry(9, 0, "f9.mkv", 5 * GB, false, "2026-02-01T00:00:00"),
+    ])
+    .await;
+    w.transfers(&[]).await;
+    w.downloaded(8, 5 * GB).await;
+    w.downloaded(9, 5 * GB).await;
+    w.details(8, 5 * GB).await;
+    let delete = w.delete("8").await;
+
+    let result = w.svc.budget_run().await.unwrap().unwrap();
+    delete.assert_async().await;
+    assert_eq!(ids(&result.deleted), vec![8]);
+    assert_eq!(result.bytes_deleted, 5 * GB);
+    let runs = w.svc.runs(5).await.unwrap();
+    assert_eq!(runs[0].trigger, BUDGET_TRIGGER);
+    assert_eq!(runs[0].files, 1);
+
+    let mut sent = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if let Payload::CleanupDeleted(d) = &event.payload {
+            if d.reason == BUDGET_REASON {
+                sent.push(d.clone());
+            }
+        }
+    }
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].file_ids, vec![8]);
+    assert_eq!(sent[0].count, 1);
+}
+
+#[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
+async fn budget_run_keeps_files_without_a_confirmed_local_copy() {
+    // Under budget: nothing, and no walk
+    let mut w = World::new(budget_config(90)).await;
+    w.account(100 * GB, 50 * GB).await;
+    assert!(w.svc.budget_run().await.unwrap().is_none());
+
+    // Over budget: one file never downloaded, one whose local copy is gone, one whose
+    // local copy has another size
+    let mut w = World::new(budget_config(90)).await;
+    let account = w.account(100 * GB, 95 * GB).await;
+    w.root(&[
+        entry(1, 0, "f1.mkv", 5 * GB, false, "2026-01-01T00:00:00"),
+        entry(2, 0, "f2.mkv", 5 * GB, false, "2026-01-02T00:00:00"),
+        entry(3, 0, "f3.mkv", 5 * GB, false, "2026-01-03T00:00:00"),
+    ])
+    .await;
+    w.transfers(&[]).await;
+    let gone = w.downloaded(2, 5 * GB).await;
+    std::fs::remove_file(gone).unwrap();
+    let cut = w.downloaded(3, 5 * GB).await;
+    std::fs::File::create(cut).unwrap().set_len(1).unwrap();
+    let delete = no_deletes(&mut w).await;
+
+    assert!(w.svc.budget_run().await.unwrap().is_none());
+    // It waits an hour before it walks the account again
+    account.remove_async().await;
+    assert!(w.svc.budget_run().await.unwrap().is_none());
+    delete.assert_async().await;
+    assert!(w.svc.runs(5).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+#[cfg_attr(windows, ignore = "set_len makes real, not sparse, files on Windows")]
+async fn budget_run_checks_each_file_again_before_its_delete() {
+    // Downloaded and old, but Put.io now says it is shared
+    let mut w = World::new(budget_config(90)).await;
+    w.account(100 * GB, 95 * GB).await;
+    w.root(&[entry(1, 0, "f1.mkv", 5 * GB, false, "2026-01-01T00:00:00")])
+        .await;
+    w.transfers(&[]).await;
+    w.downloaded(1, 5 * GB).await;
+    w.server
+        .mock("GET", "/files/1")
+        .with_body(
+            r#"{"status":"OK","file":{"id":1,"name":"f1.mkv","size":5368709120,
+               "file_type":"VIDEO","parent_id":0,"is_folder":false,"is_shared":true,
+               "created_at":"2026-01-01T00:00:00"}}"#,
+        )
+        .create_async()
+        .await;
+    let delete = no_deletes(&mut w).await;
+    let result = w.svc.budget_run().await.unwrap().unwrap();
+    assert!(result.deleted.is_empty());
+    assert_eq!(result.skipped[0].reason, "shared");
+    delete.assert_async().await;
+}
+
+#[tokio::test]
+async fn forecast_says_when_each_disk_fills_or_that_it_cannot_tell() {
+    const HOUR: i64 = 3600;
+    let now = 1_795_737_600; // 2026-11-27T00:00:00Z
+    let w = World::new(Config::default()).await;
+    let client = Arc::new(PutioApiClient::with_base_url("t".into(), w.server.url()));
+    // A download disk of 1000 GB with 400 GB free, never changing
+    let svc = StorageService::from_config(client, Some(w.db.clone()), &Config::default())
+        .with_disk_reader(Arc::new(|_| Some((400 * GB as u64, 1000 * GB as u64))));
+
+    let none = svc.forecast_at(now).await.unwrap();
+    assert_eq!(none.putio.forecast.state, forecast::State::NotEnoughData);
+    assert_eq!(none.putio.total_bytes, None);
+    assert_eq!(none.local.forecast.state, forecast::State::NotEnoughData);
+
+    // The account grows 1 GB a day for two days, sampled hourly: 40 GB used of 100
+    for h in 0..=48 {
+        svc.sample(100 * GB, 38 * GB + h * GB / 24, now - (48 - h) * HOUR)
+            .await;
+    }
+    // A reading inside the hour is not kept
+    svc.sample(100 * GB, 99 * GB, now + 60).await;
+
+    let f = svc.forecast_at(now).await.unwrap();
+    assert_eq!(f.putio.forecast.state, forecast::State::Filling);
+    assert_eq!(f.putio.forecast.samples, 49);
+    assert_eq!(f.putio.used_bytes, Some(40 * GB));
+    assert_eq!(f.putio.total_bytes, Some(100 * GB));
+    assert_eq!(f.putio.forecast.days_left, Some(60.0));
+    assert_eq!(f.local.forecast.state, forecast::State::NotGrowing);
+    assert_eq!(f.local.used_bytes, Some(600 * GB));
+
+    let json = serde_json::to_value(&f).unwrap();
+    assert_eq!(json["putio"]["state"], "filling");
+    assert_eq!(json["local"]["state"], "not_growing");
+    assert!(json["local"]["full_at"].is_null());
+}

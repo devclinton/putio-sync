@@ -139,6 +139,18 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
                 "New downloads wait while the download folder has less free space than this",
             ),
             (
+                "windows",
+                "Hours downloads may run in, per weekday, in the daemon's local time; empty is always",
+            ),
+            (
+                "pause_free_space_mb",
+                "Every download pauses while the download folder has less free space than this; 0 is off",
+            ),
+            (
+                "resume_free_space_mb",
+                "A free-space pause ends at this much free space; 0 is 1024 MB above the pause level",
+            ),
+            (
                 "delete_empty_folders",
                 "Removes Put.io folders left empty after a delete",
             ),
@@ -221,6 +233,14 @@ const AFFECTS: &[(&str, &[(&str, &str)])] = &[
                 "Frees space once a day when below the warning level",
             ),
             ("run_at", "Time of day the automatic free-up runs"),
+            (
+                "budget_enabled",
+                "Deletes the oldest downloaded files from Put.io to stay under the budget; off by default",
+            ),
+            (
+                "budget_used_percent",
+                "The share of the Put.io account the storage budget keeps it under",
+            ),
         ],
     ),
     (

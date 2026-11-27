@@ -9,6 +9,7 @@
 
 import { get, previewSettings, put, settingsAssistant } from "../api.js";
 import { describeEntry } from "../bandwidth.js";
+import { describeWindow } from "../download_limits.js";
 import { docs, h, toast } from "../app.js";
 
 let assist = null;
@@ -31,7 +32,7 @@ export const riskList = (risks) =>
   });
 
 const shown = (v) => {
-  const item = (x) => (x && typeof x === "object" ? ("days" in x ? describeEntry(x) : JSON.stringify(x)) : x);
+  const item = (x) => (x && typeof x === "object" ? ("days" in x ? ("limit" in x ? describeEntry(x) : describeWindow(x)) : JSON.stringify(x)) : x);
   const s = v == null ? "empty" : Array.isArray(v) ? v.map(item).join(", ") || "none" : typeof v === "object" ? JSON.stringify(v) : String(v);
   const max = Array.isArray(v) ? 200 : 60;
   return s.length > max ? `${s.slice(0, max - 3)}…` : s;

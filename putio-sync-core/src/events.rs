@@ -917,7 +917,7 @@ pub struct CleanupDeleted {
     pub file_ids: Vec<i64>,
     /// How many ids
     pub count: u64,
-    /// Always downloaded for now
+    /// `downloaded` (delete after download) or `storage_budget` (feature 064)
     pub reason: String,
 }
 

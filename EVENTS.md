@@ -975,13 +975,13 @@ A translation attempt failed or got no answer in time; an optional step that is 
 
 ### `cleanup.deleted`
 
-putio-sync deleted files from Put.io after downloading them (`download.delete_after_download`). Sent once per delete call that Put.io accepted.
+putio-sync deleted files from Put.io: after downloading them (`download.delete_after_download`), or to keep the account under the storage budget (`storage.budget_enabled`). Sent once per delete call that Put.io accepted.
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `file_ids` | array of integer | the Put.io ids deleted |
 | `count` | integer | how many ids |
-| `reason` | string | always `downloaded` for now |
+| `reason` | string | `downloaded`, or `storage_budget` for a budget run |
 
 ```json
 {

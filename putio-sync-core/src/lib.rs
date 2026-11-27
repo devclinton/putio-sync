@@ -22,6 +22,12 @@ pub mod csv_field;
 /// Bandwidth schedules, limits and timed overrides (feature 032)
 pub mod bandwidth;
 
+/// Download windows and the free-space pause (feature 064)
+pub mod download_window;
+
+/// When a disk fills at the rate it grows (feature 064)
+pub mod forecast;
+
 /// Configuration management
 pub mod config;
 

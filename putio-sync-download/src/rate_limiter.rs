@@ -13,6 +13,10 @@ use tokio::time::Instant;
 /// The daemon's wall clock; tests pass a fixed one
 pub type Clock = Arc<dyn Fn() -> DateTime<FixedOffset> + Send + Sync>;
 
+/// Whether something other than the bandwidth settings stops every download at this
+/// time (feature 064: download windows and the free-space pause)
+pub type Gate = Arc<dyn Fn(DateTime<FixedOffset>) -> bool + Send + Sync>;
+
 /// How long the limit in force is reused before the schedule is read again
 const RECHECK: Duration = Duration::from_secs(1);
 
@@ -28,6 +32,10 @@ struct State {
     override_: Option<Override>,
     /// The limit in force and when it was read; `None` before the first read
     current: Option<(Current, Instant)>,
+    /// Asked at every read of the limit; while it answers true the limit is "paused"
+    gate: Option<Gate>,
+    /// The gate's last answer
+    held: bool,
     /// Bytes that may be sent now; negative is debt. At most one second's worth.
     tokens: f64,
     last_refill: Instant,
@@ -68,6 +76,8 @@ impl RateLimiter {
                 policy,
                 override_: None,
                 current: None,
+                gate: None,
+                held: false,
                 tokens: 0.0,
                 last_refill: Instant::now(),
             })),
@@ -86,6 +96,15 @@ impl RateLimiter {
             state.policy = policy;
             state.refresh(&self.clock, Instant::now(), true);
         }
+    }
+
+    /// Ask `gate` at every read of the limit: while it answers true every download is
+    /// paused, whatever the schedule says. [`status`](Self::status) still reports the
+    /// bandwidth settings alone.
+    pub fn set_gate(&self, gate: Gate) {
+        let mut state = self.lock();
+        state.gate = Some(gate);
+        state.refresh(&self.clock, Instant::now(), true);
     }
 
     /// Start (`Some`) or end (`None`) a timed pause or slow-down
@@ -107,7 +126,7 @@ impl RateLimiter {
         self.lock().refresh(&self.clock, now, true)
     }
 
-    /// Whether downloads are paused now (by the schedule or a pause)
+    /// Whether downloads are paused now (by the schedule, a pause or the gate)
     pub fn is_paused(&self) -> bool {
         self.current().limit == Limit::Paused
     }
@@ -156,10 +175,17 @@ impl State {
     fn refresh(&mut self, clock: &Clock, now: Instant, force: bool) -> Current {
         if let Some((current, at)) = self.current {
             if !force && now.duration_since(at) < RECHECK {
-                return current;
+                return self.gated(current);
             }
         }
         let local = clock();
+        let held = self.gate.as_ref().is_some_and(|gate| gate(local));
+        if held != self.held {
+            self.held = held;
+            // No burst saved up while the gate held
+            self.tokens = 0.0;
+            self.last_refill = now;
+        }
         let utc = local.with_timezone(&Utc);
         if self.override_.is_some_and(|o| !o.active(utc)) {
             self.override_ = None;
@@ -181,7 +207,19 @@ impl State {
             putio_sync_telemetry::download::bandwidth_override(self.override_.is_some());
         }
         self.current = Some((next, now));
-        next
+        self.gated(next)
+    }
+
+    /// `current` as the downloads see it: paused while the gate holds
+    fn gated(&self, current: Current) -> Current {
+        if self.held {
+            Current {
+                limit: Limit::Paused,
+                ..current
+            }
+        } else {
+            current
+        }
     }
 
     fn refill(&mut self, now: Instant, rate: f64) {

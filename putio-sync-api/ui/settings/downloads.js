@@ -1,9 +1,11 @@
 // Downloads section (feature 046): the Download settings group shown as three cards, each
 // saving its own fields on top of the rest of the group. The bandwidth schedule is feature 032.
 // Stream mode (feature 022) warns when the media server can't show the streamed files.
+// Download hours and the disk pause are feature 064.
 
 import { get, put } from "../api.js";
 import { entryFromRow, move, rowFromEntry } from "../bandwidth.js";
+import { windowEntry, windowRow } from "../download_limits.js";
 import { h, toast } from "../app.js";
 import { fixMediaServer, gapText, mediaServerGap, streamUsed } from "../stream_mode.js";
 import { groupCard } from "./form.js";
@@ -53,6 +55,21 @@ const BANDWIDTH = {
   extra: (data) => {
     const schedule = scheduleEditor(data.bandwidth_schedule || []);
     return { nodes: schedule.node, read: () => ({ bandwidth_schedule: schedule.read() }) };
+  },
+};
+const HOURS = {
+  id: "hours",
+  key: "download",
+  part: true,
+  title: "Download hours and disk pause",
+  fields: [
+    ["pause_free_space_mb", "Pause below free space (MB)", "Every download pauses while the download folder has less free space, running ones too; 0 turns it off", "n", 0],
+    ["resume_free_space_mb", "Resume at free space (MB)", "A pause ends once this much is free; 0 means 1024 MB above the pause level", "n", 0],
+  ],
+  owns: ["windows"],
+  extra: (data) => {
+    const hours = windowEditor(data.windows || []);
+    return { nodes: hours.node, read: () => ({ windows: hours.read() }) };
   },
 };
 const STREAM = {
@@ -116,8 +133,8 @@ const VERIFY = {
 };
 
 /** The groups whose fields the settings catalog lists (061) */
-export const groups = [DOWNLOAD, STREAM, BANDWIDTH, VERIFY];
-export const cards = (ctx) => [...[DOWNLOAD, STREAM, BANDWIDTH, VERIFY].map((g) => groupCard(g, ctx)), ...subtitleCards(ctx), ...translationCards(ctx)];
+export const groups = [DOWNLOAD, STREAM, BANDWIDTH, HOURS, VERIFY];
+export const cards = (ctx) => [...[DOWNLOAD, STREAM, BANDWIDTH, HOURS, VERIFY].map((g) => groupCard(g, ctx)), ...subtitleCards(ctx), ...translationCards(ctx)];
 
 const LIMIT_KINDS = [
   ["rate", "MB/s"],
@@ -198,4 +215,73 @@ function scheduleEditor(entries) {
     h("button", { type: "button", class: "btn btn-small spaced", onclick: add }, "Add entry"),
   );
   return { node, read: () => rows.map(entryFromRow) };
+}
+
+/**
+ * Download hours (feature 064): rows of days, start and end. Downloads run only inside
+ * one of them; with no rows they run at any time.
+ */
+function windowEditor(entries) {
+  let rows = entries.map(windowRow);
+  const body = h("tbody");
+  const table = h(
+    "table",
+    { class: "table override-table schedule-table" },
+    h("thead", {}, h("tr", {}, ["Days", "Start", "End", ""].map((t) => h("th", { text: t })))),
+    body,
+  );
+  const none = h("p", { class: "muted", text: "No hours set: downloads run at any time." });
+  const changed = () => table.closest("form")?.dispatchEvent(new Event("change"));
+  const input = (row, key, label, placeholder) =>
+    h("input", { class: "input", value: row[key], placeholder, "aria-label": label, autocomplete: "off", spellcheck: "false", oninput: (ev) => (row[key] = ev.currentTarget.value) });
+  const draw = () => {
+    body.replaceChildren(
+      ...rows.map((row, i) =>
+        h(
+          "tr",
+          {},
+          h("td", { "data-label": "Days" }, input(row, "days", "Days", "daily, mon-fri, sat,sun")),
+          h("td", { class: "time", "data-label": "Start" }, input(row, "start", "Start", "23:00")),
+          h("td", { class: "time", "data-label": "End" }, input(row, "end", "End", "07:00")),
+          h(
+            "td",
+            { class: "actions-cell" },
+            h(
+              "button",
+              {
+                type: "button",
+                class: "btn btn-small",
+                "aria-label": `Remove hours ${i + 1}`,
+                onclick: () => {
+                  rows = rows.filter((_, j) => j !== i);
+                  draw();
+                  changed();
+                },
+              },
+              "Remove",
+            ),
+          ),
+        ),
+      ),
+    );
+    table.hidden = !rows.length;
+    none.hidden = rows.length > 0;
+  };
+  draw();
+  const add = () => {
+    rows = [...rows, { days: "daily", start: "23:00", end: "07:00" }];
+    draw();
+    changed();
+    body.lastChild.querySelector("input").focus();
+  };
+  const node = h(
+    "div",
+    { class: "spaced" },
+    h("h3", { class: "sub", text: "Download hours" }),
+    h("p", { class: "muted", text: "Downloads run only inside these hours, in the daemon's local time (see Daemon time on the Status page); outside them the queue waits and running downloads pause. An end before the start runs past midnight." }),
+    table,
+    none,
+    h("button", { type: "button", class: "btn btn-small spaced", onclick: add }, "Add hours"),
+  );
+  return { node, read: () => rows.map(windowEntry) };
 }

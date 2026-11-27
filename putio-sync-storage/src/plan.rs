@@ -52,6 +52,15 @@ pub fn needed_bytes(size: i64, free: i64, target_percent: u8) -> i64 {
     (target_bytes(size, target_percent) - free).max(0)
 }
 
+/// Bytes used over a budget of `percent` of `size` (feature 064); 0 at or under it
+pub fn over_budget(size: i64, used: i64, percent: u8) -> i64 {
+    if size <= 0 {
+        return 0;
+    }
+    let allowed = (size as i128 * percent as i128 / 100) as i64;
+    (used - allowed).max(0)
+}
+
 /// Ids whose own entry, or an ancestor's, is shared or belongs to an unfinished transfer
 fn protected(files: &[WalkedFile], unfinished: &HashSet<i64>) -> HashSet<i64> {
     let by_id: HashMap<i64, &WalkedFile> = files.iter().map(|f| (f.id, f)).collect();
@@ -226,6 +235,17 @@ mod tests {
                 .map(|c| c.id)
                 .collect()
         }
+    }
+
+    #[test]
+    fn over_budget_is_what_is_used_above_the_share() {
+        assert_eq!(over_budget(1000, 950, 90), 50);
+        assert_eq!(over_budget(1000, 900, 90), 0);
+        assert_eq!(over_budget(1000, 100, 90), 0);
+        // The allowed share rounds down
+        assert_eq!(over_budget(999, 900, 90), 1);
+        assert_eq!(over_budget(0, 10, 90), 0);
+        assert!(over_budget(i64::MAX, i64::MAX, 99) > 0);
     }
 
     #[test]

@@ -478,6 +478,19 @@ CREATE TABLE IF NOT EXISTS storage_run_files (
 CREATE INDEX IF NOT EXISTS idx_storage_run_files_run ON storage_run_files(run_id)
 "#;
 
+/// SQL to create the usage_samples table (feature 064): how full the download disk
+/// (`kind` `local`) and the Put.io account (`putio`) were, about once an hour, for the
+/// Stats page's forecast. `taken_at` is Unix seconds.
+pub const CREATE_USAGE_SAMPLES_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS usage_samples (
+    kind TEXT NOT NULL,
+    taken_at INTEGER NOT NULL,
+    used INTEGER NOT NULL,
+    total INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_usage_samples_kind ON usage_samples(kind, taken_at)
+"#;
+
 /// SQL to create the verify_runs table (feature 034): each "verify everything" run.
 /// `state` is `running` while it goes, then `finished`, `stopped` or `failed`.
 pub const CREATE_VERIFY_RUNS_TABLE: &str = r#"

@@ -455,6 +455,18 @@ pub struct DownloadSettings {
     /// body leaves it unchanged.
     #[serde(default)]
     pub min_free_space_mb: Option<u64>,
+    /// Hours downloads may run in, per weekday (feature 064); empty is always. Missing in
+    /// a PUT body leaves it unchanged.
+    #[serde(default)]
+    pub windows: Option<Vec<putio_sync_core::download_window::WindowEntry>>,
+    /// Pause every download under this much free space, in MB; 0 is off. Missing in a PUT
+    /// body leaves it unchanged.
+    #[serde(default)]
+    pub pause_free_space_mb: Option<u64>,
+    /// A space pause ends at this much free space, in MB; 0 is 1024 MB above the pause
+    /// level. Missing in a PUT body leaves it unchanged.
+    #[serde(default)]
+    pub resume_free_space_mb: Option<u64>,
     /// Download verification (feature 034). Each missing in a PUT body leaves it
     /// unchanged.
     #[serde(default)]
@@ -541,6 +553,12 @@ pub struct StorageSettings {
     pub target_free_percent: u8,
     pub auto_free: bool,
     pub run_at: String,
+    /// The storage budget deletes files (feature 064). Missing in a PUT body leaves it
+    /// unchanged, like the percent.
+    #[serde(default)]
+    pub budget_enabled: Option<bool>,
+    #[serde(default)]
+    pub budget_used_percent: Option<u8>,
 }
 
 /// Event hooks (`[[hooks]]`, feature 027). The view masks every header and env value
@@ -916,6 +934,9 @@ const DOWNLOAD_LIVE: &[&str] = &[
     "max_retries",
     "retry_initial_delay_secs",
     "min_free_space_mb",
+    "windows",
+    "pause_free_space_mb",
+    "resume_free_space_mb",
     "on_existing",
     "resume_enabled",
     "delete_after_download",
@@ -967,6 +988,9 @@ fn download_view(config: &Config) -> DownloadSettings {
         delete_empty_folders: config.download.delete_empty_folders,
         verify: Some(config.download.verify),
         min_free_space_mb: Some(config.download.min_free_space_mb),
+        windows: Some(config.download.windows.clone()),
+        pause_free_space_mb: Some(config.download.pause_free_space_mb),
+        resume_free_space_mb: Some(config.download.resume_free_space_mb),
         verify_max_redownloads: Some(config.download.verify_max_redownloads),
         verify_read_limit_mb_per_sec: Some(config.download.verify_read_limit_mb_per_sec),
         verify_follow_bandwidth_pause: Some(config.download.verify_follow_bandwidth_pause),
@@ -1020,6 +1044,8 @@ fn storage_view(config: &Config) -> StorageSettings {
         warn_free_percent: config.storage.warn_free_percent,
         target_free_percent: config.storage.target_free_percent,
         auto_free: config.storage.auto_free,
+        budget_enabled: Some(config.storage.budget_enabled),
+        budget_used_percent: Some(config.storage.budget_used_percent),
         run_at: config.storage.run_at.clone(),
     }
 }
@@ -1202,6 +1228,15 @@ fn apply_download(settings: DownloadSettings, config: &mut Config) -> Result<(),
     config.download.delete_empty_folders = settings.delete_empty_folders;
     if let Some(min) = settings.min_free_space_mb {
         config.download.min_free_space_mb = min;
+    }
+    if let Some(windows) = settings.windows {
+        config.download.windows = windows;
+    }
+    if let Some(pause) = settings.pause_free_space_mb {
+        config.download.pause_free_space_mb = pause;
+    }
+    if let Some(resume) = settings.resume_free_space_mb {
+        config.download.resume_free_space_mb = resume;
     }
     if let Some(verify) = settings.verify {
         config.download.verify = verify;
@@ -1797,6 +1832,9 @@ async fn update_storage_settings(
     if state.engine == Engine::Server && changed.iter().any(|c| c == "auto_free" || c == "run_at") {
         notes.push("The automatic run happens only under `daemon`.".to_string());
     }
+    if state.engine == Engine::Server && changed.iter().any(|c| c.starts_with("budget_")) {
+        notes.push("The storage budget runs only under `daemon`.".to_string());
+    }
     let (live, when) = live_storage(&state);
 
     Ok(Json(SuccessResponse {
@@ -1811,6 +1849,12 @@ fn apply_storage(settings: StorageSettings, config: &mut Config) -> Result<(), A
         target_free_percent: settings.target_free_percent,
         auto_free: settings.auto_free,
         run_at: settings.run_at,
+        budget_enabled: settings
+            .budget_enabled
+            .unwrap_or(config.storage.budget_enabled),
+        budget_used_percent: settings
+            .budget_used_percent
+            .unwrap_or(config.storage.budget_used_percent),
     };
     Ok(())
 }
@@ -1823,6 +1867,8 @@ pub(crate) fn live_storage(state: &AppState) -> (&'static [&'static str], &'stat
             "target_free_percent",
             "auto_free",
             "run_at",
+            "budget_enabled",
+            "budget_used_percent",
         ],
         Engine::Server => &["warn_free_percent", "target_free_percent"],
     };

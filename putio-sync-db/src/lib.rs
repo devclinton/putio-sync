@@ -72,7 +72,7 @@ pub use releases::{
 };
 pub use sources::SourcesRepository;
 pub use stats::{ExtensionStats, StatsRepository};
-pub use storage::{NewRunFile, StorageRepository, StorageRun, StorageRunFile};
+pub use storage::{NewRunFile, StorageRepository, StorageRun, StorageRunFile, UsageSample};
 pub use stream_files::{StreamFile, StreamFilesRepository};
 pub use torrents::ProcessedTorrentsRepository;
 pub use updates::{UpdateState, UpdatesRepository};
@@ -606,6 +606,11 @@ impl Database {
             (
                 schema::CREATE_STORAGE_RUN_FILES_TABLE,
                 "Failed to create storage_run_files table",
+            ),
+            // Disk and account use over time (feature 064)
+            (
+                schema::CREATE_USAGE_SAMPLES_TABLE,
+                "Failed to create usage_samples table",
             ),
             // Download verification (feature 034)
             (

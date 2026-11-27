@@ -10,6 +10,7 @@ pub mod dry_run;
 pub mod error;
 pub mod files;
 pub mod finished;
+pub mod gates;
 pub mod manager;
 pub mod organise;
 pub mod pipeline;

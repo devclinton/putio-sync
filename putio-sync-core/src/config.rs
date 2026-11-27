@@ -1071,6 +1071,18 @@ pub struct DownloadConfig {
     /// waits too. 0 turns the check off (default 5120, 5 GB)
     #[serde(default = "default_min_free_space_mb")]
     pub min_free_space_mb: u64,
+    /// Hours downloads may run in (`[[download.windows]]`, feature 064), in the daemon's
+    /// local time. Outside every entry nothing downloads; none means always.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<crate::download_window::WindowEntry>,
+    /// Pause every download while the download folder has less than this much free
+    /// space, in MB; 0 turns it off (feature 064)
+    #[serde(default)]
+    pub pause_free_space_mb: u64,
+    /// Downloads paused by `pause_free_space_mb` start again once this much is free, in
+    /// MB; 0 means `pause_free_space_mb` plus 1024
+    #[serde(default)]
+    pub resume_free_space_mb: u64,
     /// Maximum number of retry attempts for failed downloads (default: 3)
     pub max_retries: u32,
     /// Initial retry delay in seconds (doubles with each retry)
@@ -1294,6 +1306,9 @@ impl Default for DownloadConfig {
             verify_read_limit_mb_per_sec: Self::DEFAULT_VERIFY_READ_LIMIT_MB,
             verify_follow_bandwidth_pause: true,
             min_free_space_mb: Self::DEFAULT_MIN_FREE_SPACE_MB,
+            windows: Vec::new(),
+            pause_free_space_mb: 0,
+            resume_free_space_mb: 0,
             max_retries: 3,              // 3 retries by default
             retry_initial_delay_secs: 1, // Start with 1 second delay
             delete_empty_folders: true,  // Delete empty folders by default
@@ -1312,6 +1327,26 @@ impl DownloadConfig {
     pub const MAX_VERIFY_REDOWNLOADS: u32 = 5;
     /// Default `min_free_space_mb` (5 GB)
     pub const DEFAULT_MIN_FREE_SPACE_MB: u64 = 5120;
+
+    /// What `resume_free_space_mb` adds to the pause level when it is 0, in MB
+    pub const RESUME_MARGIN_MB: u64 = 1024;
+
+    /// `pause_free_space_mb` in bytes (0 = off)
+    pub fn pause_free_space_bytes(&self) -> u64 {
+        self.pause_free_space_mb.saturating_mul(1024 * 1024)
+    }
+
+    /// The free space that ends a `pause_free_space_mb` pause, in bytes: always above
+    /// the pause level
+    pub fn resume_free_space_bytes(&self) -> u64 {
+        let mb = if self.resume_free_space_mb == 0 {
+            self.pause_free_space_mb
+                .saturating_add(Self::RESUME_MARGIN_MB)
+        } else {
+            self.resume_free_space_mb
+        };
+        mb.saturating_mul(1024 * 1024)
+    }
 
     /// `min_free_space_mb` in bytes (0 = the check is off)
     pub fn min_free_space_bytes(&self) -> u64 {
@@ -1683,6 +1718,7 @@ impl Config {
     /// ```no_run
     pub fn validate(&self) -> CoreResult<()> {
         crate::bandwidth::validate(&self.download).map_err(CoreError::ConfigError)?;
+        crate::download_window::validate(&self.download).map_err(CoreError::ConfigError)?;
         self.download
             .validate_verify()
             .map_err(CoreError::ConfigError)?;
@@ -2168,7 +2204,16 @@ pub struct StorageConfig {
     pub auto_free: bool,
     /// Daily run time, 24h `HH:MM` local time
     pub run_at: String,
+    /// Keep the account under `budget_used_percent` by deleting the oldest files that
+    /// are already downloaded (feature 064). It deletes from Put.io, so it is off until
+    /// turned on.
+    pub budget_enabled: bool,
+    /// The share of the account the budget keeps it under, in percent used
+    pub budget_used_percent: u8,
 }
+
+/// Lowest and highest `[storage] budget_used_percent`
+pub const STORAGE_BUDGET_RANGE: std::ops::RangeInclusive<u8> = 10..=99;
 
 impl Default for StorageConfig {
     fn default() -> Self {
@@ -2177,6 +2222,8 @@ impl Default for StorageConfig {
             target_free_percent: 20,
             auto_free: false,
             run_at: "02:30".to_string(),
+            budget_enabled: false,
+            budget_used_percent: 90,
         }
     }
 }
@@ -2204,6 +2251,13 @@ impl StorageConfig {
             return Err(CoreError::ConfigError(format!(
                 "storage target_free_percent must not exceed {}",
                 MAX_STORAGE_TARGET_PERCENT
+            )));
+        }
+        if !STORAGE_BUDGET_RANGE.contains(&self.budget_used_percent) {
+            return Err(CoreError::ConfigError(format!(
+                "storage budget_used_percent must be between {} and {}",
+                STORAGE_BUDGET_RANGE.start(),
+                STORAGE_BUDGET_RANGE.end()
             )));
         }
         Ok(())
@@ -3375,6 +3429,9 @@ mod tests {
                 verify_read_limit_mb_per_sec: 50,
                 verify_follow_bandwidth_pause: true,
                 min_free_space_mb: 5120,
+                windows: Vec::new(),
+                pause_free_space_mb: 0,
+                resume_free_space_mb: 0,
                 max_retries: 3,
                 retry_initial_delay_secs: 1,
                 delete_empty_folders: true,

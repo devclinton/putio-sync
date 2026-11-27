@@ -145,7 +145,7 @@ pub struct Window {
 impl Window {
     /// Whether minute `m` of weekday `wd` (Monday 0) is inside. A window ending before
     /// it starts runs past midnight; its days name the day it starts on.
-    fn contains_at(&self, wd: usize, m: u16) -> bool {
+    pub(crate) fn contains_at(&self, wd: usize, m: u16) -> bool {
         if self.start < self.end {
             self.days[wd] && (self.start..self.end).contains(&m)
         } else {
@@ -159,11 +159,11 @@ impl Window {
     }
 }
 
-fn weekday(t: NaiveDateTime) -> usize {
+pub(crate) fn weekday(t: NaiveDateTime) -> usize {
     t.weekday().num_days_from_monday() as usize
 }
 
-fn minute(t: NaiveDateTime) -> u16 {
+pub(crate) fn minute(t: NaiveDateTime) -> u16 {
     (t.hour() * 60 + t.minute()) as u16
 }
 

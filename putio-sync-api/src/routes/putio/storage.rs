@@ -4,6 +4,8 @@
 //! - POST /putio/storage/plan - Preview what a free-up would delete (deletes nothing)
 //! - POST /putio/storage/free - Delete the chosen files of a preview
 //! - GET /putio/storage/runs - Latest free-up runs with the files they deleted
+//! - POST /putio/storage/budget/preview - What the storage budget would delete now
+//!   (feature 064; deletes nothing)
 
 use crate::error::ApiError;
 use axum::{
@@ -24,6 +26,7 @@ pub fn router() -> Router<AppState> {
         .route("/plan", post(plan))
         .route("/free", post(free))
         .route("/runs", get(runs))
+        .route("/budget/preview", post(budget_preview))
 }
 
 fn api_error(e: StorageError) -> ApiError {
@@ -32,7 +35,9 @@ fn api_error(e: StorageError) -> ApiError {
             ApiError::Conflict(e.to_string())
         }
         StorageError::NoDatabase => ApiError::ServiceUnavailable(e.to_string()),
-        StorageError::NothingChosen => ApiError::BadRequest(e.to_string()),
+        StorageError::NothingChosen | StorageError::BadBudget { .. } => {
+            ApiError::BadRequest(e.to_string())
+        }
         StorageError::Client(e) => ApiError::Client(e),
         StorageError::Db(e) => ApiError::Internal(e.to_string()),
     }
@@ -79,6 +84,33 @@ async fn runs(State(state): State<AppState>) -> Result<Json<Vec<StorageRun>>, Ap
     state
         .storage
         .runs(RECENT_RUNS)
+        .await
+        .map(Json)
+        .map_err(api_error)
+}
+
+/// Body of POST /putio/storage/budget/preview; may be missing or `{}`
+#[derive(Debug, Default, Deserialize)]
+pub struct BudgetPreviewRequest {
+    /// The budget to try, 10–99; the saved `storage.budget_used_percent` when missing
+    #[serde(default)]
+    pub used_percent: Option<u8>,
+}
+
+/// POST /putio/storage/budget/preview `{"used_percent": 80}`
+///
+/// The files the storage budget would delete now to bring the account under that share:
+/// the oldest that are downloaded, under the rules of a free-up. It deletes nothing,
+/// works with the budget off, and its `id` can't be passed to `/free`. 400 for a percent
+/// outside 10–99; 409 while a free-up is going; 503 without a database.
+async fn budget_preview(
+    State(state): State<AppState>,
+    request: Option<Json<BudgetPreviewRequest>>,
+) -> Result<Json<Plan>, ApiError> {
+    let percent = request.and_then(|Json(r)| r.used_percent);
+    state
+        .storage
+        .budget_preview(percent)
         .await
         .map(Json)
         .map_err(api_error)

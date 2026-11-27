@@ -6,6 +6,7 @@
 
 import { get, post } from "./api.js";
 import { confirm, fill, h, toast } from "./app.js";
+import { runBy } from "./download_limits.js";
 import { bytes, dateTime, percent, utc } from "./format.js";
 
 const BASE = "/putio/storage";
@@ -47,6 +48,7 @@ export function storageCard(onFreed = () => {}) {
       h("p", { class: "muted" }, `${bytes(s.used)} used of ${bytes(s.size)} · ${percent(s.used_percent)} used`),
       h("div", { class: `bar ${tone(s)}` }, h("span", { style: `width:${clamp(s.used_percent)}%` })),
       s.low ? h("p", { class: "storage-warn", role: "status" }, `Low on space: ${bytes(s.free)} free, below the ${s.warn_free_percent}% warning level.`) : null,
+      s.budget_enabled ? h("p", { class: "muted", role: "status" }, `Storage budget on: the oldest downloaded files are deleted while more than ${s.budget_used_percent}% is used.`) : null,
       s.top.length ? h("ul", { class: "storage-top" }, s.top.map(topRow)) : h("p", { class: "muted spaced", text: "Nothing on Put.io yet" }),
       h(
         "div",
@@ -170,7 +172,7 @@ export function storageCard(onFreed = () => {}) {
   }
 
   function runRow(run) {
-    const by = run.trigger === "schedule" ? "automatic" : "manual";
+    const by = runBy(run.trigger);
     const failed = run.failed ? `, ${run.failed} failed` : "";
     return h(
       "li",

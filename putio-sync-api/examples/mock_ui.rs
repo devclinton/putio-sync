@@ -648,6 +648,25 @@ async fn seed_stats(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Five days of hourly readings for the Stats page's forecast (feature 064): the Put.io
+/// account (930 GB of 1000 GB, as the mocked account says) grows 6 GB a day, so it fills
+/// in about 12 days; the download disk stays level, so it has no date
+async fn seed_forecast(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
+    const GB: i64 = 1_000_000_000;
+    let now = chrono::Utc::now().timestamp();
+    let storage = db.storage();
+    for h in 0..=120 {
+        let at = now - (120 - h) * 3600;
+        storage
+            .add_sample("putio", at, 930 * GB - (120 - h) * GB / 4, 1000 * GB, 3600)
+            .await?;
+        storage
+            .add_sample("local", at, 2600 * GB, 4000 * GB, 3600)
+            .await?;
+    }
+    Ok(())
+}
+
 /// A week of release checks for the Stats page's release tiles (feature 042), with one
 /// older reject that only the 30d range and longer count
 async fn seed_releases(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
@@ -1122,6 +1141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         seed_stats(&db).await?;
         seed_releases(&db).await?;
         seed_held(&db).await?;
+        seed_forecast(&db).await?;
         seed_partial(&root)?;
         db.rule_decisions()
             .record(
