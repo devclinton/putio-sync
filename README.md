@@ -882,7 +882,7 @@ H = histogram.
 | `putio_sync_hook_runs_total` | counter | `hook`, `event`, `result` | Hook runs: `success`, `failure`, `timeout` |
 | `putio_sync_hook_run_duration_seconds` | H | `hook` | Duration of each hook run, retries included |
 | `putio_sync_hook_events_dropped_total` | counter | `hook` | Events dropped because the hook's queue was full |
-| `putio_sync_plugin_runs_total` | counter | `plugin`, `event`, `result` | Plugin calls (an event type, `tick`, `init`, `action` or `health`): `success`, `failure`, `timeout` |
+| `putio_sync_plugin_runs_total` | counter | `plugin`, `event`, `result` | Plugin calls (an event type, `tick`, `init`, `action`, `health`, `item`, `config_changed` or `unload`): `success`, `failure`, `timeout` |
 | `putio_sync_plugin_run_duration_seconds` | H | `plugin` | Duration of each plugin call |
 | `putio_sync_plugin_events_dropped_total` | counter | `plugin` | Events dropped because the plugin's queue was full |
 | `putio_sync_plugin_counter_total` | counter | `plugin`, `name` | A plugin's own counts, such as the media plugins' `refreshes`, `folders_grouped`, `skipped` and `refresh_failures` |
@@ -1881,6 +1881,22 @@ enabled = true                          # false keeps it without running it
 ```
 
 [examples/hooks/on-download.py](examples/hooks/on-download.py) is a small command hook.
+
+Beyond downloads and transfers there are events for (feature 057):
+
+- **An item being ready.** `pipeline.finished` is sent once per item when it leaves the
+  pipeline (downloaded, subtitled, translated), with `result` `success`, `warnings` or
+  `skipped`.
+- **Trouble and its end.** `putio.unreachable` / `putio.recovered` (once per outage, after
+  60 seconds of failed calls), `auth.expired` (Put.io refused the token),
+  `storage.recovered`, `local_disk.low` / `local_disk.recovered` for the download folder's
+  disk, and `arr.unreachable` / `arr.recovered` per Radarr or Sonarr server.
+- **Each part of the work.** `sync.started`, `download.started`, `subtitles.found` /
+  `subtitles.missing`, `translation.finished` / `translation.failed` and `cleanup.deleted`.
+  `download.progress` is sent at most once per file per 10 seconds and only to a hook or
+  plugin that lists it by name; `"*"` does not include it.
+- **The daemon itself.** `daemon.started`, `daemon.stopping` and `config.changed`, which
+  names the config sections that changed and never their values.
 Settings › Integrations › Event hooks edits the same list and applies it at once; **Send test event**
 sends one `hook.test` event to a hook and shows how it went. Mistakes are refused with
 the hook and field named. Up to 32 hooks.
@@ -1945,8 +1961,12 @@ history_days = 30                # days History keeps a finished item's steps
   its item is kept, `history_days` after it finished. The output of each step is kept for
   `[transfers] finished_retention_hours` (a day by default), then cleared.
 
-The hook's input, results and the `pipeline.step_failed` and `pipeline.completed` events
-are in [EVENTS.md](EVENTS.md#pipeline-step-hooks). Settings › Integrations edits the steps
+A step can also be a plugin: `plugin = "name"` in place of `command` or `url` calls that
+plugin's `on_item(item, stage)`, which passes, skips (`pre_download`) or fails the step.
+See [PLUGINS.md](PLUGINS.md#pipeline-steps).
+
+The hook's input, results and the `pipeline.step_failed`, `pipeline.completed` and
+`pipeline.finished` events are in [EVENTS.md](EVENTS.md#pipeline-step-hooks). Settings › Integrations edits the steps
 and the pipeline settings.
 
 <!-- ANCHOR_END: processing-pipeline -->
@@ -2080,7 +2100,8 @@ encryption and no login, and groups repeats the same way. It runs under `daemon`
 
 **Plex**, **Jellyfin** and **Emby** plugins rescan just the folder of each finished
 download, so new episodes show up within seconds. Files landing in the same folder are
-grouped into one rescan. Plex signs in with a code at plex.tv/link (no token to paste),
+grouped into one rescan, and under the daemon an item is rescanned once, when its pipeline
+has finished (subtitles and translations included). Plex signs in with a code at plex.tv/link (no token to paste),
 both pickers load from the server, and path rules cover a server that sees the downloads
 under another path. The doctor checks the server, the token and the path rules.
 
@@ -2258,7 +2279,7 @@ daemon also runs it 2 minutes after it starts and then every `interval_minutes`.
 | | Config file | Unknown keys, or settings that are probably a mistake |
 | | Crashes | putio-sync panicked or stopped without a report in the last 7 days and the report is not dismissed (warning) |
 | | Event hooks | An enabled command hook's program is missing or not executable (problem); a hook's last run failed in the last 24 hours (warning; needs the daemon) |
-| | Plugins | An enabled plugin can't load (problem); a plugin needs host approval or a required setting, settings name a plugin that isn't found, or an enabled plugin's last run failed in the last 24 hours (warning) |
+| | Plugins | An enabled plugin can't load (problem); a plugin needs host approval or a required setting, settings name a plugin that isn't found, a pipeline step names a plugin that is missing, off, broken or has no `on_item`, or an enabled plugin's last run failed in the last 24 hours (warning) |
 | Connection | Put.io reachability | Put.io can't be reached (problem), errors or is slow (warning) |
 | | Rate limit | Under 10% of requests left, or Put.io is limiting now |
 | | Clock | This machine's clock is over 60 s off Put.io's (warning), 300 s (problem) |

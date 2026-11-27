@@ -285,6 +285,18 @@ impl Store {
         Ok(added)
     }
 
+    /// Seconds since the item was created, by the database's clock (feature 057)
+    pub async fn age_seconds(&self, key: &str) -> Result<f64> {
+        let age: Option<f64> = sqlx::query_scalar(
+            "SELECT (julianday('now') - julianday(created_at)) * 86400.0 FROM pipeline_items WHERE key = ?",
+        )
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+        Ok(age.unwrap_or(0.0).max(0.0))
+    }
+
     pub async fn item(&self, key: &str) -> Result<Option<ItemRow>> {
         Ok(sqlx::query("SELECT * FROM pipeline_items WHERE key = ?")
             .bind(key)

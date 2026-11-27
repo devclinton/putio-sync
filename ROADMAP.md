@@ -283,7 +283,11 @@ docs book, the starters in `examples/plugins/`, and docs links from the UI. The 
 workbench loads with `import()`, outside the always-loaded UI. See
 `specs/055-plugin-workbench/`.
 
-### 057 More plugin hooks and events
+### 057 More plugin hooks and events (done)
+
+Done, see `specs/057-plugin-hooks-events/`. `transfer.stalled` is the existing
+`transfer.stuck` and `doctor.problem` was already sent, so neither was added again; the
+`archive.*` events wait for archive extraction, which putio-sync does not do yet.
 
 Plugins can only watch today: the 14 event types in EVENTS.md, plus
 `on_tick`, `on_action` and `health`. This adds events and callbacks, in this

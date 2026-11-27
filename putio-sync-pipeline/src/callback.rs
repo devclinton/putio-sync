@@ -245,6 +245,7 @@ impl Pipeline {
             key = %item.key, job = %job.job_id, language = %job.target_lang,
             "translation received from the callback service"
         );
+        crate::translate::translation_event(&item, &step.name, &job.target_lang, Ok(&message));
         self.conclude(
             &item,
             &step,
@@ -304,6 +305,7 @@ impl Pipeline {
                 key = %item.key, job = %job.job_id, language = %job.target_lang,
                 "translation callback did not arrive in time"
             );
+            crate::translate::translation_event(&item, &step.name, &job.target_lang, Err(&message));
             self.give_up(&item, &step, n, message).await;
             self.inner.wake.notify_one();
         }
@@ -391,6 +393,7 @@ impl Pipeline {
             key = %item.key, job = %job.job_id, language = %job.target_lang,
             error = %message, "translation from the callback service failed"
         );
+        crate::translate::translation_event(item, &step.name, &job.target_lang, Err(&message));
         self.conclude(
             item,
             step,

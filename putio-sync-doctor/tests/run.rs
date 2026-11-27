@@ -224,3 +224,58 @@ async fn the_database_check_writes_a_probe() {
     // Run again: nothing was left behind to clash with
     env.db.write_probe().await.unwrap();
 }
+
+/// Feature 057: the Disk space check going bad sends `local_disk.low` once, and going
+/// back to fine sends `local_disk.recovered` once
+#[tokio::test]
+async fn a_low_local_disk_is_announced_once_and_its_recovery_once() {
+    use putio_sync_core::events::{self, Payload};
+
+    // More than any disk has free, so the check is a problem
+    let mut env = Env::with_config(|c| c.download.min_free_space_mb = u64::MAX / (1 << 21)).await;
+    env.healthy().await;
+    let path = env.downloads().display().to_string();
+    let mut rx = events::subscribe();
+    let mut mine = move || {
+        let mut out = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            match &event.payload {
+                Payload::LocalDiskLow(d) if d.path == path => out.push(("low", d.clone())),
+                Payload::LocalDiskRecovered(d) if d.path == path => {
+                    out.push(("recovered", d.clone()))
+                }
+                _ => {}
+            }
+        }
+        out
+    };
+
+    let report = env.doctor.run().await;
+    assert_eq!(status(&report, CheckId::DiskSpace), Status::Problem);
+    env.doctor.run().await;
+    let sent = mine();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    let (kind, disk) = &sent[0];
+    assert_eq!(*kind, "low");
+    assert!(disk.total_bytes > 0 && disk.free_bytes <= disk.total_bytes);
+    assert!((0.0..=100.0).contains(&disk.free_percent));
+    assert_eq!(
+        disk.summary,
+        report.check(CheckId::DiskSpace).unwrap().summary
+    );
+
+    let mut config = putio_sync_core::config::Config::default();
+    config.download.target_directory = env.downloads();
+    config.download.min_free_space_mb = 0;
+    env.doctor.configure(&config);
+    let report = env.doctor.run().await;
+    env.doctor.run().await;
+    let sent = mine();
+    // A test machine with a nearly full disk stays low
+    if status(&report, CheckId::DiskSpace) == Status::Ok {
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0].0, "recovered");
+    } else {
+        assert!(sent.is_empty(), "{sent:?}");
+    }
+}

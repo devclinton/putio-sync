@@ -202,6 +202,37 @@ async fn a_subtitle_is_saved_next_to_the_video() {
     assert_eq!(step.attempts[0].output, "en: opensubtitles; es: missing");
 }
 
+/// Feature 057: `subtitles.found` for what was saved, `subtitles.missing` for the rest
+#[tokio::test]
+async fn a_saved_subtitle_and_a_missing_language_are_announced() {
+    use putio_sync_core::events::{self, Payload};
+    let env = env_subs(subs(&["en", "es"], &[])).await;
+    let video = env.dir.path().join("Movie.2020.mkv");
+    big_file(&video, BIG);
+    downloaded(&env, 5, &video).await;
+    downloaded_item_named(&env, "file:5", "ev-subtitles", &video).await;
+    env.pipeline.set_subtitle_source(Fake::offering(&["en"]));
+    let mut rx = events::subscribe();
+    env.pipeline.run_due().await;
+    let (mut found, mut missing) = (Vec::new(), Vec::new());
+    while let Ok(event) = rx.try_recv() {
+        match &event.payload {
+            Payload::SubtitlesFound(p) if p.name == "ev-subtitles" => found.push(p.clone()),
+            Payload::SubtitlesMissing(p) if p.name == "ev-subtitles" => missing.push(p.clone()),
+            _ => {}
+        }
+    }
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].key, "file:5");
+    assert_eq!(found[0].video, "Movie.2020.mkv");
+    assert_eq!(found[0].languages, vec!["en"]);
+    let saved = env.dir.path().join("Movie.2020.en.srt");
+    assert_eq!(found[0].files, vec![saved.display().to_string()]);
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0].video, "Movie.2020.mkv");
+    assert_eq!(missing[0].languages, vec!["es"]);
+}
+
 #[tokio::test]
 async fn each_saved_subtitle_is_recorded_with_its_source() {
     let env = env_subs(subs(&["en"], &[])).await;

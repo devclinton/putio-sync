@@ -96,6 +96,9 @@ Each has these settings:
   matching folder wins. A Windows path on the right (`D:\Media`) is joined with `\`.
 - **Wait for more files** (`delay_seconds`, default 20) and **Longest wait**
   (`max_wait_seconds`, default 300).
+- **Wait for the pipeline** (`wait_for_pipeline`, default on): under the daemon, refresh an
+  item's folder once when its `pipeline.finished` arrives, so the server scans after
+  subtitles and translations are in place and not after each file.
 
 How a refresh is sent:
 
@@ -108,6 +111,12 @@ How a refresh is sent:
    folder in no chosen library is skipped and logged. Plex gets one rescan per folder;
    Jellyfin and Emby get every due folder in one request.
 4. A failed refresh is tried once more after another wait, then dropped and counted.
+
+With **Wait for the pipeline** on and the daemon running, steps 1 and 2 change: the files
+of an item wait for its `pipeline.finished` (feature 057), and its folder is then sent at
+once, one refresh per item. A file whose item never finishes is still sent after **Longest
+wait**. A skipped item sends nothing. A one-off `putio-sync sync` has no pipeline, so there
+the folders are grouped as in steps 1 and 2.
 
 Waiting folders are kept in the plugin's store, so a restart or reload does not lose them.
 Up to 500 folders wait at once.
@@ -545,6 +554,75 @@ Without it, plugins can be read and run but not changed. The guide,
 - **Secrets** are shown as `********` in the API, Settings and the export. Saving the mask
   keeps the stored value. Secret values are replaced with `********` in a plugin's errors
   and log lines, in case it prints one.
+
+## Pipeline steps
+
+A plugin can be a step of a pipeline stage (feature 057), where a command or a webhook
+would run. Say so in `plugin.toml` and return an `on_item`:
+
+```toml
+name = "small-item-step"
+version = "0.1.0"
+step = true                    # `events` may then be left out
+```
+
+```lua
+function plugin.on_item(item, stage)   -- stage: "pre_download", "pre_processing", "post_processing"
+  if #item.files == 0 then return { fail = "no files" } end
+  return "done"
+end
+```
+
+Then name it in a `[[hooks]]` entry with a `stage`, in the config file or in Settings ›
+Integrations › Event hooks (**Runs as** a pipeline step, **Runs**: Plugin):
+
+```toml
+[[hooks]]
+name = "no-small-items"
+stage = "pre_download"
+plugin = "small-item-step"     # in place of command or url
+required = false
+```
+
+- `item` has the fields a command step gets as JSON: `key`, `name`, `category`, `source`,
+  `dir`, `stage`, `transfer_id` and `files` (`{relative_path, size, putio_id}`). See
+  [Pipeline step hooks](EVENTS.md#pipeline-step-hooks).
+- Return nothing, `true` or `"done"` to pass; `"skip"` to skip the item (in `pre_download`
+  only; later it counts as done); `{ fail = "why" }` to fail the step. An error, a timeout
+  and a memory stop fail it too.
+- The order in the stage, `required`, `categories`, the retries of an optional step and
+  **Retry** / **Skip** on the Active page work as for any step.
+- The call waits its turn on the plugin's own queue, behind its events, and runs under the
+  plugin's time and memory limits. A slow step plugin holds up its own work only.
+- A step that names a plugin that is not installed, off, broken or without `on_item` fails
+  with a message that names the plugin. The doctor's Plugins check reports it before an item
+  gets there.
+
+Example: [`small-item-step`](examples/plugins/small-item-step/).
+
+## Lifecycle callbacks
+
+Two optional functions (feature 057) tell a plugin about itself:
+
+```lua
+-- The plugin's own settings were saved. `config` is the new values (what putio.config
+-- holds after a reload). Called once per save, and not for other plugins' saves.
+function plugin.on_config_changed(config)
+end
+
+-- Last call before this state is dropped: a reload, the plugin being turned off, or the
+-- daemon stopping. Send or save what is still held in memory.
+function plugin.on_unload()
+end
+```
+
+Both run with a short time limit, the plugin's own at most. A reload or a stop waits for
+`on_unload` no longer than that, then goes on. A state that already broke or timed out gets
+no `on_unload`. Three events say what the daemon itself does: `daemon.started`,
+`daemon.stopping` and `config.changed` (the names of the config sections that changed,
+never values).
+
+Example: [`batch-digest`](examples/plugins/batch-digest/).
 
 ## Watching plugins
 

@@ -86,7 +86,9 @@ pub use cleanup::{
     CleanupFailure, EmptyFolderOptions, EmptyFolderReport, FailedStep, KeepFolders, KeptFolder,
     RemovedFolder,
 };
-pub use client::{error_chain, PutioApiClient, RetryPolicy, DEFAULT_BASE_URL, DEFAULT_UPLOAD_URL};
+pub use client::{
+    error_chain, AttemptObserver, PutioApiClient, RetryPolicy, DEFAULT_BASE_URL, DEFAULT_UPLOAD_URL,
+};
 pub use error::{ClientError, ClientResult};
 pub use models::{
     AccountInfo, AccountInfoResponse, ApiError, ApiResponse, DiskInfo, FileEntry, FileResponse,

@@ -173,6 +173,9 @@ pub struct ArrService {
     blocklist_lock: Mutex<()>,
     /// One discovery at a time (feature 018, R9)
     discovery: Mutex<()>,
+    /// Per application, whether it is in an announced outage (feature 057)
+    outages: std::sync::Mutex<HashMap<String, Arc<putio_sync_core::health::Outage>>>,
+    outage_threshold: Duration,
     /// Put.io folder ids by category, to skip the folder listing on each add
     category_folders: std::sync::Mutex<HashMap<String, (i64, Instant)>>,
     /// What each saved application has for putio-sync, by [`url_key`] (feature 018, R4)
@@ -218,6 +221,62 @@ impl ArrService {
             not_found_since: Mutex::new(HashMap::new()),
             not_found_window: NOT_FOUND_WINDOW,
             gate: std::sync::RwLock::new(None),
+            outages: std::sync::Mutex::new(HashMap::new()),
+            outage_threshold: putio_sync_core::health::OUTAGE_THRESHOLD,
+        }
+    }
+
+    /// How long an application must stay unreachable before `arr.unreachable` is sent
+    pub fn with_outage_threshold(mut self, threshold: Duration) -> Self {
+        self.outage_threshold = threshold;
+        self
+    }
+
+    /// Send `arr.unreachable` / `arr.recovered` from one read of `server` (feature 057):
+    /// `error` is the failure's kind, `None` when it answered
+    fn note_reachability(&self, server: &ArrServer, error: Option<&'static str>) {
+        use putio_sync_core::events::{self, Payload};
+        use putio_sync_core::health::{Edge, Outage};
+        let outage = self
+            .outages
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(url_key(&server.url))
+            .or_insert_with(|| Arc::new(Outage::new(self.outage_threshold)))
+            .clone();
+        // Any answer, a refused key included, means it is reachable
+        let down = error.filter(|kind| matches!(*kind, "unreachable" | "timed_out"));
+        let edge = match down {
+            Some(_) => outage.failed(),
+            None => outage.ok(),
+        };
+        let kind = server.kind.as_str().to_string();
+        // Scheme, host and port only: the path can hold a secret
+        let url = putio_sync_core::redact::url(&server.url)
+            .trim_end_matches('…')
+            .trim_end_matches('/')
+            .to_string();
+        match edge {
+            Some(Edge::Down { since }) => {
+                events::emit(Payload::ArrUnreachable(events::ArrUnreachable {
+                    kind,
+                    url,
+                    since,
+                    error: down.unwrap_or("unreachable").to_string(),
+                }));
+            }
+            Some(Edge::Up {
+                since,
+                outage_seconds,
+            }) => {
+                events::emit(Payload::ArrRecovered(events::ArrRecovered {
+                    kind,
+                    url,
+                    since,
+                    outage_seconds,
+                }));
+            }
+            None => {}
         }
     }
 
@@ -256,6 +315,7 @@ impl ArrService {
         if let Some(error) = info.last_error {
             warn!(url = %server.url, error, "Could not read the categories from the arr");
         }
+        self.note_reachability(server, info.last_error);
         self.clients
             .write()
             .unwrap_or_else(|e| e.into_inner())

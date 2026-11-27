@@ -3,7 +3,7 @@
 // Send test event button; header and env values are shown only as set, with a Replace button.
 
 import { get, post } from "../api.js";
-import { RUNS_AS, blankHook, changedCommands, eventChoices, fromSettings, moveRow, runLabel, stagePosition, targetLabel, toSettings } from "../hooks.js";
+import { RUNS_AS, blankHook, changedCommands, eventChoices, fromSettings, kindChoices, moveRow, runLabel, stagePosition, targetLabel, toSettings } from "../hooks.js";
 import { confirm, docs, h, toast } from "../app.js";
 import { relative } from "../format.js";
 import { arrCard } from "./arr.js";
@@ -141,7 +141,7 @@ function hooksExtra(data) {
   const runsAs = (row) =>
     h(
       "select",
-      { class: "input", "aria-label": "Runs as", onchange: (ev) => ((row.stage = ev.currentTarget.value), redraw()) },
+      { class: "input", "aria-label": "Runs as", onchange: (ev) => ((row.stage = ev.currentTarget.value), !row.stage && row.kind === "plugin" && (row.kind = "command"), redraw()) },
       RUNS_AS.map(([v, t]) => h("option", { value: v, selected: row.stage === v, text: t })),
     );
   const stepFields = (row, i) =>
@@ -165,10 +165,12 @@ function hooksExtra(data) {
     const kind = h(
       "select",
       { class: "input", onchange: (ev) => ((row.kind = ev.currentTarget.value), redraw()) },
-      [["command", "Command"], ["url", "Webhook URL"]].map(([v, t]) => h("option", { value: v, selected: row.kind === v, text: t })),
+      kindChoices(row).map(([v, t]) => h("option", { value: v, selected: row.kind === v, text: t })),
     );
     const target =
-      row.kind === "url"
+      row.kind === "plugin"
+        ? [field("Plugin", text(row, "plugin", { placeholder: "tv-folders", pattern: "[A-Za-z0-9_\\-]{1,40}" }), "The name of an installed plugin with a step; its on_item runs for each item at this stage")]
+        : row.kind === "url"
         ? [field("URL", text(row, "url", { type: "url", placeholder: "https://ha.local:8123/api/webhook/…" }), (row.url || "").endsWith("…") ? "Shown cut down so its secrets stay hidden; leave it to keep the saved URL" : "Gets a POST with the event as JSON; shown cut down in logs")]
         : [
             field("Program", text(row, "program", { placeholder: "/config/hooks/on-download.py" }), "Absolute path; gets the event as JSON on stdin and runs as the daemon's user"),
@@ -191,7 +193,7 @@ function hooksExtra(data) {
         enabled,
       ),
       row.stage ? stepFields(row, i) : events(row),
-      pairsTable(row),
+      row.kind === "plugin" ? null : pairsTable(row),
       testBox(row),
       h("div", { class: "toolbar spaced" }, h("button", { type: "button", class: "btn btn-small", onclick: () => ((rows = rows.filter((_, j) => j !== i)), redraw()) }, "Remove hook")),
     );

@@ -25,6 +25,26 @@
         "pipeline.step_failed",
         "pipeline.completed",
         "doctor.problem",
+        "pipeline.finished",
+        "putio.unreachable",
+        "putio.recovered",
+        "auth.expired",
+        "storage.recovered",
+        "local_disk.low",
+        "local_disk.recovered",
+        "arr.unreachable",
+        "arr.recovered",
+        "sync.started",
+        "download.started",
+        "download.progress",
+        "subtitles.found",
+        "subtitles.missing",
+        "translation.finished",
+        "translation.failed",
+        "cleanup.deleted",
+        "daemon.started",
+        "daemon.stopping",
+        "config.changed",
         "hook.test",
         "plugin.test"
       ]
@@ -56,6 +76,26 @@
     { "properties": { "type": { "const": "pipeline.step_failed" }, "data": { "$ref": "#/$defs/pipeline_step_failed" } } },
     { "properties": { "type": { "const": "pipeline.completed" }, "data": { "$ref": "#/$defs/pipeline_completed" } } },
     { "properties": { "type": { "const": "doctor.problem" }, "data": { "$ref": "#/$defs/doctor_problem" } } },
+    { "properties": { "type": { "const": "pipeline.finished" }, "data": { "$ref": "#/$defs/pipeline_finished" } } },
+    { "properties": { "type": { "const": "putio.unreachable" }, "data": { "$ref": "#/$defs/putio_unreachable" } } },
+    { "properties": { "type": { "const": "putio.recovered" }, "data": { "$ref": "#/$defs/putio_recovered" } } },
+    { "properties": { "type": { "const": "auth.expired" }, "data": { "$ref": "#/$defs/auth_expired" } } },
+    { "properties": { "type": { "const": "storage.recovered" }, "data": { "$ref": "#/$defs/storage_low" } } },
+    { "properties": { "type": { "const": "local_disk.low" }, "data": { "$ref": "#/$defs/local_disk" } } },
+    { "properties": { "type": { "const": "local_disk.recovered" }, "data": { "$ref": "#/$defs/local_disk" } } },
+    { "properties": { "type": { "const": "arr.unreachable" }, "data": { "$ref": "#/$defs/arr_unreachable" } } },
+    { "properties": { "type": { "const": "arr.recovered" }, "data": { "$ref": "#/$defs/arr_recovered" } } },
+    { "properties": { "type": { "const": "sync.started" }, "data": { "$ref": "#/$defs/sync_started" } } },
+    { "properties": { "type": { "const": "download.started" }, "data": { "$ref": "#/$defs/download_started" } } },
+    { "properties": { "type": { "const": "download.progress" }, "data": { "$ref": "#/$defs/download_progress" } } },
+    { "properties": { "type": { "const": "subtitles.found" }, "data": { "$ref": "#/$defs/subtitles_found" } } },
+    { "properties": { "type": { "const": "subtitles.missing" }, "data": { "$ref": "#/$defs/subtitles_missing" } } },
+    { "properties": { "type": { "const": "translation.finished" }, "data": { "$ref": "#/$defs/translation_finished" } } },
+    { "properties": { "type": { "const": "translation.failed" }, "data": { "$ref": "#/$defs/translation_failed" } } },
+    { "properties": { "type": { "const": "cleanup.deleted" }, "data": { "$ref": "#/$defs/cleanup_deleted" } } },
+    { "properties": { "type": { "const": "daemon.started" }, "data": { "$ref": "#/$defs/daemon_started" } } },
+    { "properties": { "type": { "const": "daemon.stopping" }, "data": { "$ref": "#/$defs/daemon_stopping" } } },
+    { "properties": { "type": { "const": "config.changed" }, "data": { "$ref": "#/$defs/config_changed" } } },
     { "properties": { "type": { "const": "hook.test" }, "data": { "$ref": "#/$defs/hook_test" } } },
     { "properties": { "type": { "const": "plugin.test" }, "data": { "$ref": "#/$defs/plugin_test" } } }
   ],
@@ -214,6 +254,180 @@
         "free_bytes": { "type": "integer" },
         "free_percent": { "type": "number" },
         "warn_free_percent": { "type": "integer" }
+      }
+    },
+    "pipeline_finished": {
+      "type": "object",
+      "required": ["key", "name", "category", "source", "folder", "files", "result", "warnings", "duration_seconds"],
+      "properties": {
+        "key": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": ["string", "null"] },
+        "source": { "type": "string" },
+        "folder": { "type": "string" },
+        "files": { "type": "array", "items": { "type": "string" } },
+        "result": { "enum": ["success", "warnings", "skipped"] },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "duration_seconds": { "type": "number" }
+      }
+    },
+    "putio_unreachable": {
+      "type": "object",
+      "required": ["since", "error"],
+      "properties": {
+        "since": { "type": "string", "format": "date-time" },
+        "error": { "enum": ["network_error", "server_error"] }
+      }
+    },
+    "putio_recovered": {
+      "type": "object",
+      "required": ["since", "outage_seconds"],
+      "properties": {
+        "since": { "type": "string", "format": "date-time" },
+        "outage_seconds": { "type": "number" }
+      }
+    },
+    "auth_expired": {
+      "type": "object",
+      "required": ["message"],
+      "properties": {
+        "message": { "type": "string" }
+      }
+    },
+    "local_disk": {
+      "type": "object",
+      "required": ["path", "total_bytes", "free_bytes", "free_percent", "summary"],
+      "properties": {
+        "path": { "type": "string" },
+        "total_bytes": { "type": "integer" },
+        "free_bytes": { "type": "integer" },
+        "free_percent": { "type": "number" },
+        "summary": { "type": "string" }
+      }
+    },
+    "arr_unreachable": {
+      "type": "object",
+      "required": ["kind", "url", "since", "error"],
+      "properties": {
+        "kind": { "enum": ["radarr", "sonarr"] },
+        "url": { "type": "string" },
+        "since": { "type": "string", "format": "date-time" },
+        "error": { "type": "string" }
+      }
+    },
+    "arr_recovered": {
+      "type": "object",
+      "required": ["kind", "url", "since", "outage_seconds"],
+      "properties": {
+        "kind": { "enum": ["radarr", "sonarr"] },
+        "url": { "type": "string" },
+        "since": { "type": "string", "format": "date-time" },
+        "outage_seconds": { "type": "number" }
+      }
+    },
+    "sync_started": {
+      "type": "object",
+      "required": ["trigger", "started_at"],
+      "properties": {
+        "trigger": { "enum": ["schedule", "manual"] },
+        "started_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "download_started": {
+      "type": "object",
+      "required": ["file_id", "name", "relative_path", "size_bytes", "resumed", "resumed_from_bytes"],
+      "properties": {
+        "file_id": { "type": "integer" },
+        "name": { "type": "string" },
+        "relative_path": { "type": "string" },
+        "size_bytes": { "type": "integer" },
+        "resumed": { "type": "boolean" },
+        "resumed_from_bytes": { "type": "integer" }
+      }
+    },
+    "download_progress": {
+      "type": "object",
+      "required": ["file_id", "name", "relative_path", "size_bytes", "downloaded_bytes", "percent"],
+      "properties": {
+        "file_id": { "type": "integer" },
+        "name": { "type": "string" },
+        "relative_path": { "type": "string" },
+        "size_bytes": { "type": "integer" },
+        "downloaded_bytes": { "type": "integer" },
+        "percent": { "type": "number" }
+      }
+    },
+    "subtitles_found": {
+      "type": "object",
+      "required": ["key", "name", "video", "languages", "files"],
+      "properties": {
+        "key": { "type": "string" },
+        "name": { "type": "string" },
+        "video": { "type": "string" },
+        "languages": { "type": "array", "items": { "type": "string" } },
+        "files": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "subtitles_missing": {
+      "type": "object",
+      "required": ["key", "name", "video", "languages"],
+      "properties": {
+        "key": { "type": "string" },
+        "name": { "type": "string" },
+        "video": { "type": "string" },
+        "languages": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "translation_finished": {
+      "type": "object",
+      "required": ["key", "name", "video", "language", "detail"],
+      "properties": {
+        "key": { "type": "string" },
+        "name": { "type": "string" },
+        "video": { "type": "string" },
+        "language": { "type": "string" },
+        "detail": { "type": "string" }
+      }
+    },
+    "translation_failed": {
+      "type": "object",
+      "required": ["key", "name", "video", "language", "error"],
+      "properties": {
+        "key": { "type": "string" },
+        "name": { "type": "string" },
+        "video": { "type": "string" },
+        "language": { "type": "string" },
+        "error": { "type": "string" }
+      }
+    },
+    "cleanup_deleted": {
+      "type": "object",
+      "required": ["file_ids", "count", "reason"],
+      "properties": {
+        "file_ids": { "type": "array", "items": { "type": "integer" } },
+        "count": { "type": "integer" },
+        "reason": { "type": "string" }
+      }
+    },
+    "daemon_started": {
+      "type": "object",
+      "required": ["pid"],
+      "properties": {
+        "pid": { "type": "integer" }
+      }
+    },
+    "daemon_stopping": {
+      "type": "object",
+      "required": ["uptime_seconds"],
+      "properties": {
+        "uptime_seconds": { "type": "number" }
+      }
+    },
+    "config_changed": {
+      "type": "object",
+      "required": ["sections"],
+      "properties": {
+        "sections": { "type": "array", "items": { "type": "string" } }
       }
     },
     "hook_test": {

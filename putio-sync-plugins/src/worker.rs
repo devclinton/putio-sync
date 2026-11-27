@@ -20,7 +20,6 @@ use mlua::{Function, Lua, Table, Value as LuaValue};
 use putio_sync_core::events::Event;
 use putio_sync_core::net_guard::Reach;
 use putio_sync_core::plugins::PluginSettings;
-use putio_sync_core::sync_hooks::Hook;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::oneshot;
@@ -219,6 +218,15 @@ pub struct Slot {
     queue: Mutex<Queue>,
     ready: Condvar,
     has_tick: AtomicBool,
+    /// Whether the module has `on_item` (057); known once the state is built
+    has_item: AtomicBool,
+    /// Whether the module has `on_unload` (057); known once the state is built
+    has_unload: AtomicBool,
+    /// A plugin's long-lived worker, which gets `on_unload` (057). Test, workbench and
+    /// sync-hook workers do not.
+    lifecycle: AtomicBool,
+    /// Set when the thread has ended
+    exited: AtomicBool,
     testing: AtomicBool,
     load_error: Mutex<Option<String>>,
     /// The generation whose state is built; `u64::MAX` before the first
@@ -252,6 +260,10 @@ impl Slot {
             }),
             ready: Condvar::new(),
             has_tick: AtomicBool::new(false),
+            has_item: AtomicBool::new(false),
+            has_unload: AtomicBool::new(false),
+            lifecycle: AtomicBool::new(false),
+            exited: AtomicBool::new(false),
             testing: AtomicBool::new(false),
             load_error: Mutex::new(None),
             built: AtomicU64::new(u64::MAX),
@@ -280,14 +292,37 @@ impl Slot {
             .clone()
     }
 
-    /// Swap the spec; the worker rebuilds before its next job
+    /// Swap the spec; the worker rebuilds before its next job. A plugin with `on_unload`
+    /// rebuilds now, so what it holds is sent before the reload and not at its next event.
     pub fn update(&self, spec: Spec) {
         *self.tick_every.lock().unwrap_or_else(|e| e.into_inner()) =
             Duration::from_secs(spec.manifest.tick_every());
-        let mut q = self.queue.lock().unwrap_or_else(|e| e.into_inner());
-        q.spec = Arc::new(spec);
-        q.generation += 1;
-        *self.load_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        {
+            let mut q = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+            q.spec = Arc::new(spec);
+            q.generation += 1;
+            *self.load_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+        if self.lifecycle.load(Ordering::Relaxed) && self.has_unload.load(Ordering::Relaxed) {
+            self.push(Job::Load);
+        }
+    }
+
+    /// Mark this as the plugin's long-lived worker: its state gets `on_unload` before a
+    /// rebuild and when the thread stops (057). Call before [`Slot::spawn`].
+    pub fn with_lifecycle(self: Arc<Self>) -> Arc<Self> {
+        self.lifecycle.store(true, Ordering::Relaxed);
+        self
+    }
+
+    /// Whether the module has `on_item` (known once the state is built)
+    pub fn has_item(&self) -> bool {
+        self.has_item.load(Ordering::Relaxed)
+    }
+
+    /// Whether the thread has ended (after [`Slot::stop`] or [`Slot::finish`])
+    pub fn exited(&self) -> bool {
+        self.exited.load(Ordering::Acquire)
     }
 
     /// Queue a job: tests go first, a second tick is not queued, and past
@@ -446,6 +481,8 @@ struct Worker {
     deadline: Deadline,
     store: Option<SharedStore>,
     state: Option<(u64, Loaded)>,
+    /// The time limit of the spec the state was built from
+    limit: Duration,
     broken: Option<(u64, String)>,
 }
 
@@ -457,8 +494,42 @@ impl Worker {
             deadline: Rc::new(Cell::new(None)),
             store: None,
             state: None,
+            limit: Duration::from_secs(5),
             broken: None,
         }
+    }
+
+    /// Call `on_unload` on the state about to be dropped (057): once, under the plugin's
+    /// time limit, and only on the plugin's long-lived worker. A state that broke is
+    /// already gone, so it gets no call.
+    fn unload(&mut self) {
+        let Some((_, mut loaded)) = self.state.take() else {
+            return;
+        };
+        if !self.slot.lifecycle.load(Ordering::Relaxed) || !loaded.defines("on_unload") {
+            return;
+        }
+        let started_at = now_text();
+        let started = Instant::now();
+        let (out, _) = call(
+            &self.deadline,
+            &mut loaded,
+            "on_unload",
+            Vec::new(),
+            self.limit,
+            false,
+        );
+        let took = started.elapsed();
+        let run = PluginRun {
+            event_type: "unload".to_string(),
+            event_id: String::new(),
+            started_at,
+            duration_ms: millis(took),
+            result: out.result,
+            error: out.error,
+            logs: Vec::new(),
+        };
+        self.finished(&run, took, run.result == RunResult::Success);
     }
 
     fn run(mut self) {
@@ -468,7 +539,7 @@ impl Worker {
         while let Some((job, generation, spec)) = self.slot.next() {
             let _done = Done(self.slot.clone());
             if self.state.as_ref().is_some_and(|(g, _)| *g != generation) {
-                self.state = None;
+                self.unload();
             }
             if self.state.is_none() {
                 if let Some((g, error)) = &self.broken {
@@ -491,6 +562,8 @@ impl Worker {
             }
             self.execute(job, &spec);
         }
+        self.unload();
+        self.slot.exited.store(true, Ordering::Release);
     }
 
     /// A job for a state that cannot be built: a test gets the error, the rest is dropped
@@ -595,9 +668,18 @@ impl Worker {
                 return Err(format!("{}: {} has no {} {}", m.entry, what, hook, table));
             }
         }
+        if m.step && !loaded.defines("on_item") {
+            return Err(format!("{}: {} has no on_item {}", m.entry, what, table));
+        }
         self.slot
             .has_tick
             .store(loaded.defines("on_tick"), Ordering::Relaxed);
+        self.slot
+            .has_item
+            .store(loaded.defines("on_item"), Ordering::Relaxed);
+        self.slot
+            .has_unload
+            .store(loaded.defines("on_unload"), Ordering::Relaxed);
         if loaded.defines("init") {
             let started_at = now_text();
             let (out, _) = call(
@@ -626,6 +708,7 @@ impl Worker {
             }
         }
         self.state = Some((generation, loaded));
+        self.limit = timeout;
         self.slot.built.store(generation, Ordering::Release);
         Ok(())
     }
@@ -870,9 +953,11 @@ impl Worker {
     }
 }
 
-/// Whether a call's kind is a settings action or health check, not a sync hook
+/// Whether a call's kind is a settings action or health check, whose failures the
+/// person sees where they pressed the button. A failed sync hook, pipeline step (`item`)
+/// or `config_changed` call is kept with the runs.
 fn kind_is_settings(kind: &str) -> bool {
-    kind.parse::<Hook>().is_err()
+    matches!(kind, "action" | "health")
 }
 
 /// Call `function` with `args` under the time limit: the outcome and, when `want` is set,

@@ -56,6 +56,7 @@ pub mod filter;
 pub mod email;
 
 /// Event hook config: validation and secret masking (feature 027)
+pub mod health;
 pub mod hooks;
 
 /// `[sign_in]`: password and OAuth sign-in settings and the allow-list (feature 019)
@@ -124,6 +125,7 @@ pub mod setup;
 pub mod stall;
 
 /// Sync extension points plugins provide: file filters, rename and folder rules
+pub mod step_plugins;
 pub mod sync_hooks;
 
 /// Re-export commonly used types

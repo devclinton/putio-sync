@@ -410,6 +410,24 @@ async fn execute(inner: &Inner, hook: &HookConfig, event: &Event, delays: &[Dura
     let mut run = match hook.kind() {
         HookKind::Command => command::run(hook, event).await,
         HookKind::Url => webhook::run(&inner.client, hook, event, delays).await,
+        // A plugin step is run by the pipeline through the plugins service (feature
+        // 057); it has no event run, so the test button says where to test it.
+        HookKind::Plugin => HookRun {
+            event_type: event.event_type().as_str().to_string(),
+            event_id: event.id.clone(),
+            started_at: chrono::Utc::now(),
+            duration_ms: 0,
+            result: RunResult::Failure,
+            attempts: 1,
+            exit_code: None,
+            http_status: None,
+            error: Some(format!(
+                "this step runs the plugin \"{}\"; test it on the Plugins page",
+                hook.plugin.as_deref().unwrap_or_default()
+            )),
+            stdout: String::new(),
+            stderr: String::new(),
+        },
     };
     scrub(hook, &mut run);
     metrics::record_run(

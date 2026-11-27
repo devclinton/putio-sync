@@ -1,7 +1,7 @@
 name = "emby"
 version = "1.0.0"
 description = "Asks Emby to rescan just the folder of each finished download, so new episodes and movies show up within seconds."
-events = ["download.finished", "sync.completed"]
+events = ["download.finished", "pipeline.finished", "daemon.started", "sync.completed"]
 tick_seconds = 5
 
 author = "devclinton"
@@ -48,6 +48,13 @@ key = "path_map"
 type = "path_map"
 label = "Path rules"
 help = "When Emby sees the download folder under another path: this machine's folder => Emby's folder"
+
+[[config]]
+key = "wait_for_pipeline"
+type = "boolean"
+label = "Refresh when the item is ready"
+help = "Under the daemon, refresh an item's folder once, when its subtitles, translation and your own steps are done; off refreshes after each quiet folder"
+default = true
 
 [[config]]
 key = "delay_seconds"

@@ -10,9 +10,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use putio_sync_core::events::{self, Payload, PipelineCompleted, PipelineStepFailed};
+use putio_sync_core::events::{
+    self, Payload, PipelineCompleted, PipelineFinished, PipelineStepFailed,
+};
+use putio_sync_core::hooks::HookConfig;
 use putio_sync_core::log_redact;
-use putio_sync_hooks::step::{self, ItemPayload, StepResult};
+use putio_sync_core::step_plugins::StepAnswer;
+use putio_sync_hooks::step::{self, ItemPayload, StepResult, StepRun};
 use tokio::sync::Notify;
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::{info, warn};
@@ -216,9 +220,15 @@ impl Pipeline {
             events::emit(Payload::PipelineCompleted(PipelineCompleted {
                 key: item.key.clone(),
                 name: item.name.clone(),
-                warnings,
+                warnings: warnings.clone(),
             }));
         }
+        let result = if warnings.is_empty() {
+            "success"
+        } else {
+            "warnings"
+        };
+        self.emit_finished(item, result, warnings).await;
         info!(key = %item.key, state = state.as_str(), "Pipeline item finished");
         self.refresh_gate().await;
     }
@@ -294,7 +304,7 @@ impl Pipeline {
         };
         let started = Instant::now();
         let run = tokio::select! {
-            run = step::run_step(&self.inner.client, &hook, &payload) => Some(run),
+            run = self.run_target(&hook, &payload) => Some(run),
             _ = cancel.notified() => None,
         };
         let took = started.elapsed();
@@ -474,6 +484,77 @@ impl Pipeline {
             .set_item(&item.key, Stage::PreDownload, ItemState::Skipped)
             .await;
         info!(key = %item.key, "Pipeline item skipped by a pre-download hook");
+        self.emit_finished(item, "skipped", Vec::new()).await;
+    }
+
+    /// Tell the event bus the item has left the pipeline (feature 057): every step has
+    /// run, or a pre-download step skipped it. The folder and files are read again, since
+    /// a staged item has just moved into place.
+    async fn emit_finished(&self, item: &ItemRow, result: &str, warnings: Vec<String>) {
+        let store = &self.inner.store;
+        let now = store.item(&item.key).await.ok().flatten();
+        let item = now.as_ref().unwrap_or(item);
+        let files = if item.dir.is_empty() || result == "skipped" {
+            Vec::new()
+        } else {
+            let retention = self.settings().retention_hours;
+            let ids = locate::local_paths(&self.inner.db, &item.key, retention).await;
+            let dir = std::path::PathBuf::from(&item.dir);
+            tokio::task::spawn_blocking(move || locate::list_files(&dir, &ids))
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|f| f.relative_path)
+                .collect()
+        };
+        events::emit(Payload::PipelineFinished(PipelineFinished {
+            key: item.key.clone(),
+            name: item.name.clone(),
+            category: item.category.clone(),
+            source: item.source.clone(),
+            folder: item.dir.clone(),
+            files,
+            result: result.to_string(),
+            warnings,
+            duration_seconds: store.age_seconds(&item.key).await.unwrap_or(0.0),
+        }));
+    }
+
+    /// Run a hook step: a command, a URL, or a plugin's `on_item` (feature 057)
+    async fn run_target(&self, hook: &HookConfig, payload: &ItemPayload) -> StepRun {
+        let Some(plugin) = hook.plugin.as_deref() else {
+            return step::run_step(&self.inner.client, hook, payload).await;
+        };
+        let started = Instant::now();
+        let plugins = self
+            .inner
+            .step_plugins
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let answer = match plugins {
+            None => StepAnswer::Failed(format!(
+                "the plugin \"{plugin}\" cannot run here: plugins are not running"
+            )),
+            Some(plugins) => {
+                let item = serde_json::from_str(&payload.json).unwrap_or_default();
+                plugins.run_item(plugin, &item, &payload.stage).await
+            }
+        };
+        let (result, error) = match answer {
+            StepAnswer::Done => (StepResult::Done, None),
+            StepAnswer::Skip => (StepResult::Skip, None),
+            StepAnswer::Failed(why) => (StepResult::Failed, Some(why)),
+            StepAnswer::Timeout(why) => (StepResult::Timeout, Some(why)),
+        };
+        StepRun {
+            result,
+            exit_code: None,
+            http_status: None,
+            output: String::new(),
+            error,
+            duration_ms: started.elapsed().as_millis() as u64,
+        }
     }
 
     /// The item as a hook gets it (research R3)
