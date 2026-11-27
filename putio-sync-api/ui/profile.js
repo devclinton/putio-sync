@@ -31,6 +31,23 @@ export function codeFromHash(hash) {
   }
 }
 
+/**
+ * The saved applications to check after start (T019): those the wizard set up, matched on
+ * their address as the daemon saves it. `setUp` is `[{url, host}]` from `/setup/arr/run`;
+ * `applications` is the Radarr / Sonarr card's list. Each is `{index, kind, name, host}`.
+ */
+export function afterStartApps(applications, setUp) {
+  const normal = (u) => (u || "").trim().replace(/\/+$/, "").toLowerCase();
+  const out = [];
+  for (const app of applications || []) {
+    if (!app.api_key_set) continue;
+    const done = (setUp || []).find((s) => normal(s.url) && normal(s.url) === normal(app.url));
+    if (!done || out.some((o) => o.index === app.index)) continue;
+    out.push({ index: app.index, kind: app.kind, name: app.name || (app.kind === "sonarr" ? "Sonarr" : "Radarr"), host: done.host || null });
+  }
+  return out;
+}
+
 /** The kinds to tick first: those whose folders are in the Put.io account */
 export function startKinds(found) {
   const have = Object.keys(found || {}).filter((k) => (found[k] || []).length);

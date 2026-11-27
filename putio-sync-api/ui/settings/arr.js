@@ -480,22 +480,31 @@ const RECOMMEND = {
   import_extra_files: "Import Extra Files with srt, so subtitles come too",
 };
 
+const okLine = (t) => h("p", {}, h("span", { class: "dot ok" }), t);
+
 /**
  * After a setup `r`: one line per step (client, folder, recommended settings), with the
  * mapping to confirm and the settings to turn on (049). Done reloads the card.
  */
 function guided(base, box, r, reload) {
-  const okLine = (t) => h("p", {}, h("span", { class: "dot ok" }), t);
+  const verb = r.outcome === "updated" ? "Updated" : r.outcome === "unchanged" ? "Already set up:" : "Created";
+  const client = okLine(`${verb} ${r.client_name} in ${r.app}${r.category ? `, category ${r.category}` : ""}, host ${r.host}`);
+  box.replaceChildren(client, arrChecks(base, r.app), h("div", { class: "form-foot" }, h("button", { type: "button", class: "btn", onclick: () => reload() }, "Done")));
+}
+
+/**
+ * The folder mapping and the recommended settings of the *arr `base` names (049), each with
+ * its button; nothing changes in the app without a click. Also run by the setup wizard after
+ * start (056). Returns the element; the check starts at once.
+ */
+export function arrChecks(base, app) {
   const bad = (f) => h("p", { class: "error-text", text: `${arrReason(f.reason)}${f.detail ? `: ${f.detail}` : ""}. ${arrNext(f.reason) || ""}`.trim() });
   const caught = (el) => (e) => {
     if (e.status !== 401 && e.status !== 429) el.append(h("p", { class: "error-text", text: reason(e) }));
   };
-  const verb = r.outcome === "updated" ? "Updated" : r.outcome === "unchanged" ? "Already set up:" : "Created";
-  const client = okLine(`${verb} ${r.client_name} in ${r.app}${r.category ? `, category ${r.category}` : ""}, host ${r.host}`);
   const folder = h("div", { role: "status" });
   const recs = h("div", { role: "status" });
-  const app = r.app;
-  box.replaceChildren(client, folder, recs, h("div", { class: "form-foot" }, h("button", { type: "button", class: "btn", onclick: () => reload() }, "Done")));
+  const box = h("div", {}, folder, recs);
 
   const showRecs = (list) =>
     recs.replaceChildren(
@@ -565,6 +574,7 @@ function guided(base, box, r, reload) {
     folder.replaceChildren(h("p", { class: "warn-text", text: what }), h("div", { class: "form-foot" }, btn));
   };
   check();
+  return box;
 }
 
 /** What putio-sync knows about an application's categories (R4) */

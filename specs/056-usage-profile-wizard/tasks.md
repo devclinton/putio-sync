@@ -42,7 +42,7 @@
 ## Phase 5: User Story 2 — Radarr and Sonarr (P1)
 
 - [x] T018 [US2] Usage screen runs `/setup/arr/discover`; review checks each ticked app with `/setup/arr/preview`; Start syncing runs `/setup/arr/run` (remember) before finish, in putio-sync-api/ui/pages/setup.js
-- [ ] T019 [US2] (Deferred: the Radarr / Sonarr settings card already runs these checks after start) After start, for each saved application call `/arr/setup/check` and offer the 049 mapping and recommendation buttons, in putio-sync-api/ui/pages/setup.js
+- [x] T019 [US2] After start, for each saved application call `/arr/setup/check` and offer the 049 mapping and recommendation buttons, in putio-sync-api/ui/pages/setup.js (the check is the Settings card's, exported as `arrChecks` from putio-sync-api/ui/settings/arr.js; `afterStartApps` in putio-sync-api/ui/profile.js picks the apps, tested in putio-sync-api/tests/ui/profile.test.mjs)
 
 ## Phase 6: User Story 4 — set it up myself (P2)
 

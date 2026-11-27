@@ -7,12 +7,14 @@
 // how putio-sync is used and shows what that sets up; "I'll set it up myself" keeps the
 // step-by-step wizard.
 
+import { arrStatus } from "../api.js";
 import { docs, fill, h, toast } from "../app.js";
 import { guideFor } from "../guides.js";
 import { bytes } from "../format.js";
 import { LANGUAGES, choice, nativeName, setLanguage } from "../i18n.js";
-import { codeFromHash, startAnswers } from "../profile.js";
+import { afterStartApps, codeFromHash, startAnswers } from "../profile.js";
 import { reviewList, usageForm } from "../profile_view.js";
+import { arrChecks } from "../settings/arr.js";
 
 const CODE_KEY = "putio-sync.setup-code";
 const TOKEN_KEY = "putio-sync.token";
@@ -68,7 +70,7 @@ async function call(method, path, body) {
 
 export function mount(el) {
   root = el;
-  state = { step: -1, code: stored("sessionStorage", CODE_KEY), session: null, busy: false, path: "quick", needFolder: false, detect: null, profile: null, overrides: {}, review: null, arr: {}, linked: false };
+  state = { step: -1, code: stored("sessionStorage", CODE_KEY), session: null, busy: false, path: "quick", needFolder: false, detect: null, profile: null, overrides: {}, review: null, arr: {}, arrSetUp: [], linked: false };
   // The code from the setup link; the fragment is dropped so it isn't kept in history
   const linked = codeFromHash(window.location.hash);
   if (linked) {
@@ -509,6 +511,7 @@ async function startSyncing(err) {
       return;
     }
     a.done = true;
+    state.arrSetUp.push({ url: r.url || a.url, host: r.host || null });
     state.session.arr_enabled = true;
   }
   await finish(err);
@@ -695,7 +698,10 @@ function arrSection(box) {
         run(async () => {
           const r = await call("POST", "/setup/arr/run", req());
           const ok = r.outcome !== "failed";
-          if (ok) s.arr_enabled = true;
+          if (ok) {
+            s.arr_enabled = true;
+            state.arrSetUp.push({ url: r.url || req().target.url, host: r.host || null });
+          }
           out.replaceChildren(h("p", { class: ok ? "notice" : "error-text", text: ok ? "Set up." : r.detail || r.reason }));
         }),
       ),
@@ -775,16 +781,52 @@ async function finish(err) {
   if (res && res.api_token) stored("localStorage", TOKEN_KEY, res.api_token);
   render(
     h("h1", { text: "Starting…" }),
-    res && res.api_token
-      ? [
-          h("p", {}, "This is your API token. It signs you in to this page and the API; this browser keeps it."),
-          h("p", { class: "setup-code", text: res.api_token }),
-          h("p", { class: "muted", text: "It is saved in the config file as [api] auth_token." }),
-        ]
-      : h("p", { class: "muted", text: "Sign in with your API token once the daemon has started." }),
+    res && res.api_token ? tokenLines(res.api_token) : h("p", { class: "muted", text: "Sign in with your API token once the daemon has started." }),
     h("p", { class: "muted", role: "status", text: "Waiting for the daemon to start…" }),
   );
   waitForDaemon(res && res.api_token);
+}
+
+/** The new API token, shown until the wizard leaves */
+function tokenLines(token) {
+  return [
+    h("p", {}, "This is your API token. It signs you in to this page and the API; this browser keeps it."),
+    h("p", { class: "setup-code", text: token }),
+    h("p", { class: "muted", text: "It is saved in the config file as [api] auth_token." }),
+  ];
+}
+
+function leave(withToken) {
+  window.location.hash = withToken ? "#/status" : "#/login";
+  window.location.reload();
+}
+
+/**
+ * After start: each Radarr / Sonarr the wizard set up, with its folder mapping and the
+ * recommended settings to fix or turn on (049). Nothing changes in the app without a click.
+ */
+async function afterStart(token) {
+  const done = h("button", { type: "button", class: "btn btn-primary", onclick: () => leave(true) }, "Continue");
+  const body = h("div", { role: "status" }, h("p", { class: "muted", text: "Loading…" }));
+  render(
+    h("h1", { text: "Radarr and Sonarr" }),
+    tokenLines(token),
+    h("p", { class: "muted", text: "putio-sync has started. Check each app's download folder and settings below; nothing changes in the app until you press its button." }),
+    body,
+    h("div", { class: "form-foot" }, done),
+  );
+  let apps = [];
+  try {
+    apps = afterStartApps((await arrStatus()).applications, state.arrSetUp);
+  } catch (e) {
+    if (e.status === 401 || e.status === 429) return leave(true);
+    return body.replaceChildren(h("p", { class: "error-text", text: e.error || String(e) }), h("p", { class: "muted", text: "Run Set up for each app in Settings › Radarr / Sonarr later." }));
+  }
+  if (!apps.length) return leave(true);
+  body.replaceChildren(
+    ...apps.map((a) => h("section", { class: "setup-arr-check" }, h("h3", { class: "sub", text: a.name }), arrChecks({ target: { application: a.index }, ...(a.host ? { host: a.host } : {}) }, a.kind === "sonarr" ? "Sonarr" : "Radarr"))),
+  );
+  done.focus();
 }
 
 function waitForDaemon(withToken) {
@@ -793,9 +835,9 @@ function waitForDaemon(withToken) {
       const res = await fetch("/auth/status");
       const s = await res.json();
       if (!s.setup_required) {
-        window.location.hash = withToken ? "#/status" : "#/login";
-        window.location.reload();
-        return;
+        // The folder mapping and recommendations need the running daemon (T019)
+        if (withToken && state.arrSetUp.length) return afterStart(withToken);
+        return leave(withToken);
       }
     } catch {
       // restarting: try again
