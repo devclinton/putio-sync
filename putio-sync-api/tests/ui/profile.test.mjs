@@ -31,11 +31,14 @@ test("each reason code has words", () => {
   }
   assert.match(reason({ reason: "found", params: { folder: "Movies" } }), /Movies/);
   assert.equal(reason({ reason: "nope", params: {} }), "");
+  // The *arr folder names only the app that uses it
+  assert.equal(reason({ reason: "arr_category", kind: "movies", params: { folder: "radarr" } }), "Radarr sends its downloads to radarr.");
+  assert.equal(reason({ reason: "arr_category", kind: "tv", params: { folder: "tv-sonarr" } }), "Sonarr sends its downloads to tv-sonarr.");
 });
 
 test("titles name the folder of a rule", () => {
   assert.equal(title({ id: "rule:Movies", params: { folder: "Movies" } }), "Folder Movies");
-  assert.equal(title({ id: "delete", params: {} }), "Delete from Put.io after download");
+  assert.equal(title({ id: "delete", params: {} }), "Files on Put.io after download");
 });
 
 test("setting keys read as words", () => {

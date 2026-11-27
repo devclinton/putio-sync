@@ -32,10 +32,10 @@ export function usageForm({ start, found = {}, onArr = () => {} }) {
   const node = h(
     "div",
     { class: "profile-questions" },
-    h("fieldset", { class: "choice" }, h("legend", { text: "What do you download?" }), kinds.map((k) => k.node)),
+    h("fieldset", { class: "profile-group" }, h("legend", { text: "What do you download?" }), kinds.map((k) => k.node)),
     h(
       "fieldset",
-      { class: "choice" },
+      { class: "profile-group" },
       h("legend", { text: "How do downloads reach Put.io?" }),
       arr.map((a) => a.node),
       h("label", { class: "field check" }, byHand, h("span", {}, "I add them on Put.io myself", h("small", { text: "From the Put.io site or app." }))),

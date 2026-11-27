@@ -51,7 +51,7 @@ export function title(rec) {
     {
       watch: "Watch folder",
       precheck_watch: "Release check for the watch folder",
-      delete: "Delete from Put.io after download",
+      delete: "Files on Put.io after download",
       subtitles: "Subtitles",
     }[rec.id] || rec.id
   );
@@ -64,7 +64,7 @@ export function reason(rec) {
     case "found":
       return `A folder named ${folder} is in your Put.io account.`;
     case "arr_category":
-      return `Radarr and Sonarr send their downloads to ${folder}.`;
+      return rec.kind === "tv" ? `Sonarr sends its downloads to ${folder}.` : `Radarr sends its downloads to ${folder}.`;
     case "new_folder":
       return `Put files you add by hand in ${folder}; it is created when needed.`;
     case "detected":
